@@ -216,6 +216,7 @@ export async function POST(
     }
     const msgData = msgSnap.data() as {
       type?: string;
+      text?: string;
       predictionOptions?: string[];
       questions?: { question: string; options: { text: string; emoji?: string }[] }[];
       battleQuestions?: { question?: string; playerA: { name: string }; playerB: { name: string } }[];
@@ -354,7 +355,7 @@ export async function POST(
         reason,
         points:        2,
         transactionId,
-        metadata: { postId: msgId, roomId, vote, type: msgType, ...(isMultiQuestion && { questionIndex: qIndex }) },
+        metadata: { postId: msgId, roomId, vote, type: msgType,  statement: (msgData as any).text ?? "", ...(isMultiQuestion && { questionIndex: qIndex }) },
       }).catch((err) => {
         console.warn(`[vote] Failed to award ${reason} points:`, err);
       });

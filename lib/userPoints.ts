@@ -96,8 +96,8 @@ export async function getUserInfo(
       const userName = d.firstName
         ? [d.firstName, d.lastName].filter(Boolean).join(" ")
         : d.name ||
-          (d.email ? d.email.split("@")[0] : fallbackName) ||
-          "User";
+        (d.email ? d.email.split("@")[0] : fallbackName) ||
+        "User";
       resolvedProfile = {
         userName,
         userEmail: d.email || fallbackEmail || "",
@@ -375,7 +375,7 @@ function calculateGlobalRank(totalXP: number, tiers: GlobalLevel[]): { globalTie
   const rangeSize = (tier.maxXP - tier.minXP + 1) / 3;
   const progress = totalXP - tier.minXP;
   const subIndex = Math.min(Math.floor(progress / rangeSize) + 1, 3);
-  
+
   const subRank = subIndex === 1 ? "I" : subIndex === 2 ? "II" : "III";
   return { globalTier: tier.id, subRank };
 }
@@ -430,7 +430,17 @@ function getFeatureCategory(reason: string): string {
     AMA_JOIN: "ama",
     BOOK_PLAYER_SESSION: "player_sessions",
     LISTEN_AUDIO_DROP: "drops",
-    WATCH_VIDEO_DROP: "drops"
+    WATCH_VIDEO_DROP: "drops",
+    ROAR_DEBATE_PARTICIPATE: "debate_participate",
+    ROAR_PREDICTION_PARTICIPATE: "prediction_participate",
+    ROAR_TRIVIA_CORRECT: "trivia",
+    ROAR_BATTLE_PARTICIPATE: "battles",
+    ROAR_POST: "post",
+    ROAR_HOT_TAKE: "post",
+    ROAR_DEBATE: "debate",
+    ROAR_PREDICTION: "predictions",
+    ROAR_RAW_REACTIONS: "post",
+    ROAR_QUIZ: "trivia",
   };
   return map[reason] || "";
 }
@@ -535,8 +545,8 @@ export async function awardUserPoints({
       if (reason === "DAILY_LOGIN" && lastActiveTimestamp > 0) {
         const daysDifference = (now - lastActiveTimestamp) / (24 * 60 * 60 * 1000);
         if (daysDifference >= 14) {
-          welcomeBackXP = 50; 
-          streakFreezeCount += 1; 
+          welcomeBackXP = 50;
+          streakFreezeCount += 1;
           console.log(`[PointsEngine] Welcome Back grace triggered. +50 XP and 1 Streak Freeze granted.`);
         }
       }
@@ -553,7 +563,7 @@ export async function awardUserPoints({
 
         if (lastActiveTimestamp > 0) {
           const yesterdayStr = getDayString(now - 24 * 60 * 60 * 1000);
-          
+
           if (lastActiveDate === todayStr) {
             // Already logged in today, streak unchanged
           } else if (lastActiveDate === yesterdayStr) {
@@ -569,7 +579,7 @@ export async function awardUserPoints({
         } else {
           currentLoginStreak = 1;
         }
-        
+
         loginStreakMultiplier = matchStreakMultiplier(currentLoginStreak, config.multipliers.streakCurve);
       }
 
@@ -711,12 +721,24 @@ export async function awardUserPoints({
         entityId: metadata?.entityId ?? "",
         createdAt: now,
       });
+      //12.b
+      const activityLogRef = userRef.collection("activityLog").doc(transactionId);
+      transaction.set(activityLogRef, {
+        type: reason,
+        // label: metadata?.label ?? reason,
+         label: metadata?.statement ?? metadata?.label ?? reason,
+        points: finalTotalXPGained,
+        metadata: metadata ?? {},
+        roomId: metadata?.roomId ?? null,
+        matchId: metadata?.matchId ?? null,
+        createdAt: now,
+      });
 
       // 13. Update master users document (Atomic sync for three-way consistency)
       const updatePayload: Record<string, any> = {
         totalXP,
-        totalPoints: totalXP, 
-        reputationScore: totalXP, 
+        totalPoints: totalXP,
+        reputationScore: totalXP,
         globalTier: rankState.globalTier,
         subRank: rankState.subRank,
         lastActiveTimestamp: now,
@@ -747,7 +769,7 @@ export async function awardUserPoints({
       if (referredBy && rankState.globalTier === "Chant" && !unlockedMilestones.includes("CLAIMED_CHANT_PAYOUT")) {
         unlockedMilestones.push("CLAIMED_CHANT_PAYOUT");
         updatePayload.unlockedMilestones = unlockedMilestones;
-        
+
         const payoutTxId = `ref_chant_payout_${transactionId}`;
         db.collection("users").doc(referredBy).get().then(refSnap => {
           if (refSnap.exists) {
@@ -782,7 +804,7 @@ export async function awardUserPoints({
       if (referredBy && finalTotalXPGained > 0) {
         const referredCreatedAt = userDoc.createdAt ?? 0;
         const daysActive = (now - referredCreatedAt) / (24 * 60 * 60 * 1000);
-        
+
         if (daysActive <= 30) {
           const referrerCommissionXP = Math.round(finalTotalXPGained * 0.05);
           if (referrerCommissionXP > 0) {
@@ -813,6 +835,6 @@ export async function awardUserPoints({
     return success;
   } catch (error) {
     console.error("[PointsEngine] Transaction failed gracefully:", error);
-    return false; 
+    return false;
   }
 }

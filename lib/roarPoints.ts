@@ -1,3 +1,5 @@
+//lib/roarPoints.ts
+
 import { awardUserPoints } from "@/lib/userPoints";
 import type { PostType } from "@/app/models/Post";
 
