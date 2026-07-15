@@ -1397,6 +1397,24 @@ export async function POST(
     const roarPostType = ROOM_TYPE_TO_POST_TYPE[type] ?? "post";
     const transactionId = `roar_room_${msgRef.id}`;
 
+    let watchAlongRoomId = null;
+    let roarRoomId = null;
+
+    if (isWatchalongFallback) {
+      watchAlongRoomId = roomId;
+      const roarRoomSnap = await db.collection("roarRooms")
+        .where("watchAlongRoomId", "==", roomId)
+        .limit(1)
+        .get();
+      if (!roarRoomSnap.empty) {
+        roarRoomId = roarRoomSnap.docs[0].id;
+      }
+    } else {
+      roarRoomId = roomId;
+      const roomData = roomSnap.data();
+      watchAlongRoomId = roomData?.watchAlongRoomId ?? null;
+    }
+
     awardRoarPoints({
       actualUserId: resolvedUserId,
       authUserId: user.userId,
@@ -1410,6 +1428,8 @@ export async function POST(
         roomId,
         type,
         statement: text.trim(),
+        watchAlongRoomId,
+        roarRoomId,
         ...(sideA && { sideA }),
         ...(sideB && { sideB }),
         ...(type === "prediction" && Array.isArray(predictionOptions) && {

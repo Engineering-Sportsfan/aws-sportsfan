@@ -50,9 +50,22 @@ export async function POST(
     }
 
     const info = await getUserInfo(user.userId, user.name, user.email);
-    const msgRef = db.collection("roarRooms").doc(roomId).collection("messages").doc(msgId);
-    const msgSnap = await msgRef.get();
-    if (!msgSnap.exists) return NextResponse.json({ error: "Message not found" }, { status: 404 });
+    let roomRef = db.collection("roarRooms").doc(roomId);
+    let isWatchalongFallback = false;
+
+    let msgSnap = await roomRef.collection("messages").doc(msgId).get();
+    if (!msgSnap.exists) {
+      const fallbackRef = db.collection("watchAlongRooms").doc(roomId);
+      const fallbackSnap = await fallbackRef.collection("messages").doc(msgId).get();
+      if (fallbackSnap.exists) {
+        roomRef = fallbackRef;
+        msgSnap = fallbackSnap;
+        isWatchalongFallback = true;
+      } else {
+        return NextResponse.json({ error: "Message not found" }, { status: 404 });
+      }
+    }
+    const msgRef = roomRef.collection("messages").doc(msgId);
 
     const message = msgSnap.data() as ResolvableRoomPrediction;
     if (message.type !== "prediction") {
@@ -128,6 +141,26 @@ export async function POST(
       const userEmail = userData.email || "";
 
       if (isCorrect) {
+        let watchAlongRoomId = null;
+        let roarRoomId = null;
+
+        if (isWatchalongFallback) {
+          watchAlongRoomId = roomId;
+          const roarRoomSnap = await db.collection("roarRooms")
+            .where("watchAlongRoomId", "==", roomId)
+            .limit(1)
+            .get();
+          if (!roarRoomSnap.empty) {
+            roarRoomId = roarRoomSnap.docs[0].id;
+          }
+        } else {
+          roarRoomId = roomId;
+          const roarRoomDoc = await db.collection("roarRooms").doc(roomId).get();
+          if (roarRoomDoc.exists) {
+            watchAlongRoomId = roarRoomDoc.data()?.watchAlongRoomId ?? null;
+          }
+        }
+
         await awardRoarPointsByReason({
           actualUserId: voterId,
           authUserId: voterId,
@@ -137,7 +170,14 @@ export async function POST(
           reason: "ROAR_PREDICTION_CORRECT",
           points: ACCURACY_POINTS,
           transactionId: `roar_room_prediction_correct_${roomId}_${msgId}_${voterId}`,
-          metadata: { roomId, postId: msgId, vote, correctVote },
+          metadata: { 
+            roomId, 
+            postId: msgId, 
+            vote, 
+            correctVote,
+            watchAlongRoomId,
+            roarRoomId
+          },
         }).catch((err) => console.error("[room prediction resolve] point award failed:", err));
       }
 

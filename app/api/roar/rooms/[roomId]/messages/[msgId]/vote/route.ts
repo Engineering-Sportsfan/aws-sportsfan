@@ -201,19 +201,22 @@ export async function POST(
     const info = await getUserInfo(user.userId, undefined, user.email);
     const resolvedUserId = info.exists ? info.actualUserId : user.userId;
 
-    const msgRef = db
-      .collection("roarRooms")
-      .doc(roomId)
-      .collection("messages")
-      .doc(msgId);
+    let roomRef = db.collection("roarRooms").doc(roomId);
+    let isWatchalongFallback = false;
 
-    // ── Read message type first — needed to know if this message hosts     ──
-    // ── multiple questions (predictions_live / battle) before we can build ──
-    // ── the correct vote-doc id / validate the option bounds.              ──
-    const msgSnap = await msgRef.get();
+    let msgSnap = await roomRef.collection("messages").doc(msgId).get();
     if (!msgSnap.exists) {
-      return NextResponse.json({ error: "Message not found" }, { status: 404 });
+      const fallbackRef = db.collection("watchAlongRooms").doc(roomId);
+      const fallbackSnap = await fallbackRef.collection("messages").doc(msgId).get();
+      if (fallbackSnap.exists) {
+        roomRef = fallbackRef;
+        msgSnap = fallbackSnap;
+        isWatchalongFallback = true;
+      } else {
+        return NextResponse.json({ error: "Message not found" }, { status: 404 });
+      }
     }
+    const msgRef = roomRef.collection("messages").doc(msgId);
     const msgData = msgSnap.data() as {
       type?: string;
       text?: string;
@@ -340,6 +343,26 @@ export async function POST(
         : null;
 
     if (reason) {
+      let watchAlongRoomId = null;
+      let roarRoomId = null;
+
+      if (isWatchalongFallback) {
+        watchAlongRoomId = roomId;
+        const roarRoomSnap = await db.collection("roarRooms")
+          .where("watchAlongRoomId", "==", roomId)
+          .limit(1)
+          .get();
+        if (!roarRoomSnap.empty) {
+          roarRoomId = roarRoomSnap.docs[0].id;
+        }
+      } else {
+        roarRoomId = roomId;
+        const roarRoomDoc = await db.collection("roarRooms").doc(roomId).get();
+        if (roarRoomDoc.exists) {
+          watchAlongRoomId = roarRoomDoc.data()?.watchAlongRoomId ?? null;
+        }
+      }
+
       // Include the question index in the transaction id so each question in
       // a multi-question post can earn points once, independently.
       const transactionId = isMultiQuestion
@@ -355,7 +378,16 @@ export async function POST(
         reason,
         points:        2,
         transactionId,
-        metadata: { postId: msgId, roomId, vote, type: msgType,  statement: (msgData as any).text ?? "", ...(isMultiQuestion && { questionIndex: qIndex }) },
+        metadata: {
+          postId: msgId,
+          roomId,
+          vote,
+          type: msgType,
+          statement: (msgData as any).text ?? "",
+          watchAlongRoomId,
+          roarRoomId,
+          ...(isMultiQuestion && { questionIndex: qIndex })
+        },
       }).catch((err) => {
         console.warn(`[vote] Failed to award ${reason} points:`, err);
       });

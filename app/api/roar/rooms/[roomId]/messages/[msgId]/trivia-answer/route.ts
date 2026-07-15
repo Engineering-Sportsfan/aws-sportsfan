@@ -25,11 +25,24 @@ export async function POST(
     if (!info.exists) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
     const resolvedUserId = info.actualUserId;
 
-    const msgRef = db.collection("roarRooms").doc(roomId).collection("messages").doc(msgId);
-    const answerRef = msgRef.collection("triviaAnswers").doc(`${resolvedUserId}_${questionIndex}`);
+    let roomRef = db.collection("roarRooms").doc(roomId);
+    let isWatchalongFallback = false;
 
-    const [msgSnap, existingAnswer] = await Promise.all([msgRef.get(), answerRef.get()]);
-    if (!msgSnap.exists) return NextResponse.json({ error: "Message not found" }, { status: 404 });
+    let msgSnap = await roomRef.collection("messages").doc(msgId).get();
+    if (!msgSnap.exists) {
+      const fallbackRef = db.collection("watchAlongRooms").doc(roomId);
+      const fallbackSnap = await fallbackRef.collection("messages").doc(msgId).get();
+      if (fallbackSnap.exists) {
+        roomRef = fallbackRef;
+        msgSnap = fallbackSnap;
+        isWatchalongFallback = true;
+      } else {
+        return NextResponse.json({ error: "Message not found" }, { status: 404 });
+      }
+    }
+    const msgRef = roomRef.collection("messages").doc(msgId);
+    const answerRef = msgRef.collection("triviaAnswers").doc(`${resolvedUserId}_${questionIndex}`);
+    const existingAnswer = await answerRef.get();
 
     const data = msgSnap.data() as any;
     if (data.type !== "trivia") return NextResponse.json({ error: "Not a trivia message" }, { status: 400 });
@@ -67,6 +80,26 @@ export async function POST(
     await batch.commit();
 
     if (isCorrect) {
+      let watchAlongRoomId = null;
+      let roarRoomId = null;
+
+      if (isWatchalongFallback) {
+        watchAlongRoomId = roomId;
+        const roarRoomSnap = await db.collection("roarRooms")
+          .where("watchAlongRoomId", "==", roomId)
+          .limit(1)
+          .get();
+        if (!roarRoomSnap.empty) {
+          roarRoomId = roarRoomSnap.docs[0].id;
+        }
+      } else {
+        roarRoomId = roomId;
+        const roarRoomDoc = await db.collection("roarRooms").doc(roomId).get();
+        if (roarRoomDoc.exists) {
+          watchAlongRoomId = roarRoomDoc.data()?.watchAlongRoomId ?? null;
+        }
+      }
+
       awardRoarPoints({
         actualUserId: resolvedUserId,
         authUserId: user.userId,
@@ -75,7 +108,13 @@ export async function POST(
         userExists: true,
         postType: "quiz",
         transactionId: `roar_trivia_${msgId}_${questionIndex}_${resolvedUserId}`,
-        metadata: { postId: msgId, roomId, questionIndex },
+        metadata: { 
+            postId: msgId, 
+            roomId, 
+            questionIndex,
+            watchAlongRoomId,
+            roarRoomId
+        },
       }).catch((err) => console.warn("[trivia-answer] award points failed:", err));
     }
 

@@ -232,9 +232,22 @@ export async function POST(
         const { username, avatarUrl, badge } = await resolveUserInfo(resolvedAuthorId, user.name, user.email);
         const now = Date.now();
 
-        const commentRef = db
-            .collection("roarRooms")
-            .doc(roomId)
+        let roomRef = db.collection("roarRooms").doc(roomId);
+        let isWatchalongFallback = false;
+
+        const msgSnap = await roomRef.collection("messages").doc(msgId).get();
+        if (!msgSnap.exists) {
+            const fallbackRef = db.collection("watchAlongRooms").doc(roomId);
+            const fallbackSnap = await fallbackRef.collection("messages").doc(msgId).get();
+            if (fallbackSnap.exists) {
+                roomRef = fallbackRef;
+                isWatchalongFallback = true;
+            } else {
+                return NextResponse.json({ error: "Message not found" }, { status: 404 });
+            }
+        }
+
+        const commentRef = roomRef
             .collection("messages")
             .doc(msgId)
             .collection("comments")
@@ -252,6 +265,26 @@ export async function POST(
             roomId,
         });
 
+        let watchAlongRoomId = null;
+        let roarRoomId = null;
+
+        if (isWatchalongFallback) {
+            watchAlongRoomId = roomId;
+            const roarRoomSnap = await db.collection("roarRooms")
+                .where("watchAlongRoomId", "==", roomId)
+                .limit(1)
+                .get();
+            if (!roarRoomSnap.empty) {
+                roarRoomId = roarRoomSnap.docs[0].id;
+            }
+        } else {
+            roarRoomId = roomId;
+            const roarRoomDoc = await db.collection("roarRooms").doc(roomId).get();
+            if (roarRoomDoc.exists) {
+                watchAlongRoomId = roarRoomDoc.data()?.watchAlongRoomId ?? null;
+            }
+        }
+
         awardRoarPointsByReason({
             actualUserId: resolvedAuthorId,
             authUserId: user.userId,
@@ -261,12 +294,17 @@ export async function POST(
             reason: "ROAR_COMMENT",
             points: 8, // §3 updated Comment value
             transactionId: `comment_${commentRef.id}`,
-            metadata: { roomId, msgId, commentId: commentRef.id },
+            metadata: {
+                roomId,
+                msgId,
+                commentId: commentRef.id,
+                watchAlongRoomId,
+                roarRoomId
+            },
         }).catch(() => { });
 
         // Increment replyCount on the message
-        db.collection("roarRooms")
-            .doc(roomId)
+        roomRef
             .collection("messages")
             .doc(msgId)
             .update({ replyCount: FieldValue.increment(1) })

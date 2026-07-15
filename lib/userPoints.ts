@@ -719,6 +719,8 @@ export async function awardUserPoints({
         appliedMultiplier: isStreakEligible ? activeMultiplier : 1.0,
         isMatchDay,
         entityId: metadata?.entityId ?? "",
+        watchAlongRoomId: metadata?.watchAlongRoomId ?? null,
+        roarRoomId: metadata?.roarRoomId ?? null,
         createdAt: now,
       });
       //12.b
