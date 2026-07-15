@@ -695,7 +695,7 @@ async function sendBattleInviteEmails(
 ) {
   if (!invitedFriends || invitedFriends.length === 0) return { sent: 0, failed: [] };
 
-  const appUrl = "https://sportsfan-frontend.vercel.app";
+  const appUrl = process.env.NEXT_PUBLIC_FRONTEND_URL || "https://sportsfan360.com";
   const battleUrl = `${appUrl}/MainModules/Fantasy`;
 
   const emailPromises = invitedFriends.map(({ email, name }) =>
@@ -797,7 +797,7 @@ async function sendBattleInviteEmails(
                     <p style="margin:0;text-align:center;font-size:13px;color:#555;">
                       Or visit
                       <a href="${appUrl}" style="color:#d75a2d;text-decoration:none;margin-left:4px;">
-                        sportsfan-frontend.vercel.app
+                        sportsfan360.com
                       </a>
                     </p>
                   </td>

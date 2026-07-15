@@ -127,7 +127,7 @@ export default function AudioListPage() {
     try {
       setLoading(true);
       const res = await axios.get(
-        `http://localhost:3001/api/cloudinary/audio${search ? `?search=${search}` : ""}`
+        `/api/cloudinary/audio${search ? `?search=${search}` : ""}`
       );
       setAudioFiles(res.data.audioFiles || []);
     } catch (err) {
