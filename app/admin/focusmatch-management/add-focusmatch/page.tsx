@@ -50,9 +50,10 @@ export default function AddFocusMatchPage() {
         throw new Error(resData.error || "Failed to save match.");
       }
 
-      // Auto-trigger pre-match research pipeline in the background on Dolly's Render server
+      // Auto-trigger pre-match research pipeline in the background on Dolly's AWS Lambda / Render server
       try {
-        await fetch(`https://sportsfan360-sentiment.onrender.com/run-research?match_id=${resData.id}&team_a=${encodeURIComponent(teamA)}&team_b=${encodeURIComponent(teamB)}&sport=${sport}&competition=${encodeURIComponent(competition)}`, {
+        const sentimentUrl = process.env.NEXT_PUBLIC_SENTIMENT_URL || "https://sportsfan360-sentiment.onrender.com";
+        await fetch(`${sentimentUrl}/run-research?match_id=${resData.id}&team_a=${encodeURIComponent(teamA)}&team_b=${encodeURIComponent(teamB)}&sport=${sport}&competition=${encodeURIComponent(competition)}`, {
           method: "POST"
         });
       } catch (triggerErr) {

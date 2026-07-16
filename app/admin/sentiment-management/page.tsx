@@ -4,7 +4,7 @@ import axios from "axios";
 import { useEffect, useState } from "react";
 import { Eye, FileJson, Calendar, Play, Download, Loader2 } from "lucide-react";
 
-const API_BASE_URL = "https://sportsfan360-sentiment.onrender.com";
+const API_BASE_URL = process.env.NEXT_PUBLIC_SENTIMENT_URL || "https://sportsfan360-sentiment.onrender.com";
 
 export default function SentimentManagementPage() {
   const [sport, setSport] = useState<"FIFA_WC_2026" | "WT20W_WC_2026">("FIFA_WC_2026");
