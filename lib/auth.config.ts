@@ -118,10 +118,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
   callbacks: {
     async signIn({ user }) {
+      console.log(">> signIn callback triggered for user:", user.email);
       try {
         const email = user.email!;
+        console.log(">> Fetching user document from Firestore...");
         const userRef = db.collection("users").doc(email);
         const userDoc = await userRef.get();
+        console.log(">> userDoc.exists:", userDoc.exists);
 
         const consistentUserId = generateConsistentUserId(email);
         const nameParts = (user.name ?? "").split(" ");
@@ -129,7 +132,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const lastName = nameParts.slice(1).join(" ") ?? "";
 
         if (!userDoc.exists) {
-            // Create new user with consistent ID
+            console.log(">> Creating new user document...");
             await userRef.set({
                 email,
                 userId: consistentUserId, // Consistent ID, not google_xxx
@@ -147,31 +150,36 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 updatedAt: Date.now(),
                 lastLoginAt: Date.now(),
             });
+            console.log(">> User created successfully!");
         } else {
             const data = userDoc.data()!;
-            if (data.status === "disabled") return false;
+            console.log(">> User found! Status:", data.status, "Role:", data.role);
+            if (data.status === "disabled") {
+                console.log(">> User is disabled! Returning false.");
+                return false;
+            }
             
-            // Update existing user
             const updateData: Record<string, unknown> = {
                 lastLoginAt: Date.now(),
                 updatedAt: Date.now(),
             };
             
-            // If userId is inconsistent, fix it
             if (data.userId && data.userId.startsWith("google_")) {
                 updateData.userId = consistentUserId;
             }
             
-            // Add Google as auth provider if not already
             if (!data.authProviders?.google) {
                 updateData['authProviders.google'] = true;
             }
             
+            console.log(">> Updating user document with:", updateData);
             await userRef.update(updateData);
+            console.log(">> User updated successfully!");
         }
+        console.log(">> signIn callback finished successfully. Returning true.");
         return true;
       } catch (error) {
-        console.error("Google signIn error:", error);
+        console.error(">> Google signIn error CAUGHT IN CATCH BLOCK:", error);
         return false;
       }
     },
