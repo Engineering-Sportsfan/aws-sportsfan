@@ -9,7 +9,8 @@ const nextConfig: NextConfig = {
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
-    AUTH_SECRET: process.env.NEXTAUTH_SECRET, // Added AUTH_SECRET fallback for NextAuth v5
+    AUTH_SECRET: process.env.NEXTAUTH_SECRET,
+    AUTH_TRUST_HOST: "true",
   },
   eslint: {
     ignoreDuringBuilds: true,
