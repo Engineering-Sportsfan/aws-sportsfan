@@ -33,6 +33,8 @@ export interface RoomMessage {
   accuracyAwarded?: boolean;
   memGifUrl?: string;
   memTag?: string;
+  channelId?: string | null;
+  channelSlug?: string | null;
   triviaQuestions?: TriviaQuestion[];
   battleQuestions?: BattleQuestion[];
   triviaParticipants?: Record<number, number>; // questionIndex -> count

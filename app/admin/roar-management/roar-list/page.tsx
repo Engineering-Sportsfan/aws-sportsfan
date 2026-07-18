@@ -191,6 +191,21 @@ export default function RoarListPage() {
                         >
                           Stop Dolly 🐬
                         </button>
+
+                        {/* ⭐ ADD THE MANAGE CHANNELS BUTTON HERE ⭐ */}
+                        <Link href={`/admin/roar-management/rooms/${room.roomId}/channels`}>
+                          <button
+                            className="p-2 rounded-md bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition"
+                            title="Manage Channels"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                              <line x1="12" y1="22.08" x2="12" y2="12" />
+                            </svg>
+                          </button>
+                        </Link>
+
                         {/* Delete Room button */}
                         <button
                           onClick={() => handleDelete(room.roomId)}
@@ -204,6 +219,8 @@ export default function RoarListPage() {
                             <Trash2 size={16} />
                           )}
                         </button>
+
+
                       </div>
                     </td>
                   </tr>
@@ -246,7 +263,7 @@ export default function RoarListPage() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">
                 Live Chat Messages ({messages.length})
               </h3>
-              
+
               {loadingMessages ? (
                 <div className="text-center py-6 text-gray-400">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-pink-500 mx-auto mb-2"></div>
@@ -272,13 +289,12 @@ export default function RoarListPage() {
                             {message.authorBadge}
                           </span>
                           {message.type && (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${
-                              message.type === "hot_take" || message.type === "hottake"
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${message.type === "hot_take" || message.type === "hottake"
                                 ? "bg-red-500/10 text-red-400 border border-red-500/20"
                                 : message.type === "prediction"
-                                ? "bg-orange-500/10 text-orange-400 border border-orange-500/20"
-                                : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                            }`}>
+                                  ? "bg-orange-500/10 text-orange-400 border border-orange-500/20"
+                                  : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                              }`}>
                               {message.type}
                             </span>
                           )}
@@ -295,7 +311,7 @@ export default function RoarListPage() {
                           <span>🙅‍♂️ {message.noChanceCount || 0}</span>
                         </div>
                       </div>
-                      
+
                       <button
                         onClick={() => handleDeleteMessage(message.msgId)}
                         disabled={deletingMsgId === message.msgId}

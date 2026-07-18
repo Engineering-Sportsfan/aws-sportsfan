@@ -1,0 +1,2639 @@
+{
+  "gurindervir-singh": {
+    "name": "Gurindervir Singh",
+    "sport": "100m Sprint",
+    "flag": "🇮🇳",
+    "age": 25,
+    "country": "India",
+    "achievementLabel": "Asian U18 Champion",
+    "unit": "s",
+    "metricLabel": "Time",
+    "heroStat": "10.09s",
+    "heroLabel": "Personal Best",
+    "beforeCoach": "10.38s",
+    "afterCoach": "10.09s",
+    "coachJoinYear": "2025",
+    "coachImprovement": "Data not available",
+    "peakZoneLabel": "10.2–10.3s · 36% success rate",
+    "consistencyNote": "National Record holder; consistent sub-10.2 performer",
+    "stats": {
+      "olympicGold": 1,
+      "personalBest": "10.09s",
+      "worldRank": "#~Top 30 Asia",
+      "bestYear": "2026",
+      "totalGold": 4,
+      "totalSilver": 2,
+      "totalBronze": 1
+    },
+    "seasonalData": [
+      {
+        "year": "2021",
+        "value": 10.38,
+        "event": "National Championships",
+        "rank": 2,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2022",
+        "value": 10.3,
+        "event": "Federation Cup",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2023",
+        "value": 10.25,
+        "event": "National Championships",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2024",
+        "value": 10.2,
+        "event": "Federation Cup",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2025",
+        "value": 10.17,
+        "event": "Federation Cup Semi",
+        "rank": 2,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2026",
+        "value": 10.09,
+        "event": "Federation Cup Ranchi",
+        "rank": 1,
+        "highlight": true,
+        "glow": true
+      }
+    ],
+    "coachImpactData": [
+      {
+        "year": 2021,
+        "value": 10.38,
+        "period": "before"
+      },
+      {
+        "year": 2022,
+        "value": 10.3,
+        "period": "before"
+      },
+      {
+        "year": 2023,
+        "value": 10.25,
+        "period": "before"
+      },
+      {
+        "year": 2024,
+        "value": 10.2,
+        "period": "before"
+      },
+      {
+        "year": 2025,
+        "value": 10.17,
+        "period": "after"
+      },
+      {
+        "year": 2026,
+        "value": 10.09,
+        "period": "after"
+      }
+    ],
+    "yAxisDomain": [
+      9.5,
+      11
+    ],
+    "tooltipValueSuffix": "s",
+    "medalData": [
+      {
+        "year": "2022",
+        "gold": 1,
+        "silver": 1,
+        "bronze": 0
+      },
+      {
+        "year": "2023",
+        "gold": 2,
+        "silver": 0,
+        "bronze": 1
+      },
+      {
+        "year": "2024",
+        "gold": 1,
+        "silver": 1,
+        "bronze": 0
+      },
+      {
+        "year": "2025",
+        "gold": 1,
+        "silver": 0,
+        "bronze": 1
+      },
+      {
+        "year": "2026",
+        "gold": 1,
+        "silver": 0,
+        "bronze": 0
+      }
+    ],
+    "consistencyData": [
+      {
+        "range": "10.0–10.1s",
+        "count": 1,
+        "throws": 1,
+        "percentage": 5,
+        "peak": false
+      },
+      {
+        "range": "10.1–10.2s",
+        "count": 4,
+        "throws": 4,
+        "percentage": 18,
+        "peak": true
+      },
+      {
+        "range": "10.2–10.3s",
+        "count": 8,
+        "throws": 8,
+        "percentage": 36,
+        "peak": true
+      },
+      {
+        "range": "10.3–10.4s",
+        "count": 5,
+        "throws": 5,
+        "percentage": 23,
+        "peak": true
+      },
+      {
+        "range": "10.4–10.5s",
+        "count": 3,
+        "throws": 3,
+        "percentage": 14,
+        "peak": false
+      },
+      {
+        "range": "10.5–10.6s",
+        "count": 1,
+        "throws": 1,
+        "percentage": 4,
+        "peak": false
+      }
+    ],
+    "consistencyBarLabel": "attempts",
+    "postsContent": [
+      {
+        "text": "Training hard for Commonwealth Games 2026! 🏆",
+        "likes": "12.3K",
+        "comments": "234",
+        "time": "2d ago"
+      },
+      {
+        "text": "Every session counts 💪",
+        "likes": "8.5K",
+        "comments": "156",
+        "time": "1w ago"
+      },
+      {
+        "text": "Ready to represent India! 🇮🇳",
+        "likes": "15.2K",
+        "comments": "445",
+        "time": "3d ago"
+      }
+    ],
+    "videosContent": [
+      {
+        "title": "Gurindervir Singh - Training Highlights 2024",
+        "duration": "8:30",
+        "views": "1.2M",
+        "thumb": "/gurindervir-singh.png"
+      },
+      {
+        "title": "Gurindervir Singh - Competition Footage",
+        "duration": "5:15",
+        "views": "856K",
+        "thumb": "/gurindervir-singh.png"
+      },
+      {
+        "title": "Gurindervir Singh - Technique Breakdown",
+        "duration": "12:45",
+        "views": "543K",
+        "thumb": "/gurindervir-singh.png"
+      },
+      {
+        "title": "Gurindervir Singh - CWG 2026 Preparation",
+        "duration": "6:20",
+        "views": "2.1M",
+        "thumb": "/gurindervir-singh.png"
+      }
+    ],
+    "highlights": [
+      {
+        "icon": "trophy",
+        "color": "#c9115f",
+        "title": "CWG 2026 Squad",
+        "sub": "Selected for Glasgow"
+      },
+      {
+        "icon": "star",
+        "color": "#c9115f",
+        "title": "Career Best",
+        "sub": "10.09s"
+      },
+      {
+        "icon": "medal",
+        "color": "#C0C0C0",
+        "title": "Gold Medals: 4",
+        "sub": "Career achievements"
+      },
+      {
+        "icon": "award",
+        "color": "#c9115f",
+        "title": "National Champion",
+        "sub": "Top performer"
+      }
+    ],
+    "radarData": [
+      {
+        "metric": "Avg Distance",
+        "value": 10,
+        "fullMark": 100
+      },
+      {
+        "metric": "Best Throw",
+        "value": 11,
+        "fullMark": 100
+      },
+      {
+        "metric": "Consistency",
+        "value": 88,
+        "fullMark": 100
+      },
+      {
+        "metric": "Clutch",
+        "value": 85,
+        "fullMark": 100
+      },
+      {
+        "metric": "Growth",
+        "value": 50,
+        "fullMark": 100
+      }
+    ],
+    "heatmapData": [
+      {
+        "tournament": "Olympics",
+        "years": {}
+      },
+      {
+        "tournament": "World Champ",
+        "years": {}
+      },
+      {
+        "tournament": "National Champ",
+        "years": {}
+      }
+    ],
+    "dropsContent": [
+      {
+        "path": "/video/gurindervir-singh",
+        "date": "3d ago",
+        "type": "Video",
+        "meta": "10 min",
+        "color": "#ff5900",
+        "views": "234K",
+        "title": "Gurindervir Singh Training Breakdown"
+      },
+      {
+        "type": "Audio",
+        "date": "5d ago",
+        "path": "/audio/gurindervir-singh",
+        "color": "#c9115f",
+        "meta": "15 min",
+        "views": "189K",
+        "title": "Mental Toughness: Gurindervir Speaks 🎧"
+      },
+      {
+        "type": "Article",
+        "date": "1w ago",
+        "path": "/articles/gurindervir-singh-100m-national-record",
+        "color": "#4ade80",
+        "meta": "6 min read",
+        "views": "567K",
+        "title": "10.09s: India's Sprint Revolution"
+      }
+    ],
+    "image": "/Gurindervir-Singh-article.avif"
+  },
+  "murali-sreeshankar": {
+    "name": "Murali Sreeshankar",
+    "sport": "Long Jump",
+    "flag": "🇮🇳",
+    "age": 27,
+    "country": "India",
+    "achievementLabel": "CWG 2022 Silver – 8.08m",
+    "unit": "m",
+    "metricLabel": "Distance",
+    "heroStat": "8.41m",
+    "heroLabel": "Personal Best",
+    "beforeCoach": "8.20m",
+    "afterCoach": "8.15m",
+    "coachJoinYear": "2023",
+    "coachImprovement": "Data not available",
+    "peakZoneLabel": "8.20–8.30m · 26% success rate",
+    "consistencyNote": "Personal best 8.41m (Indian NR: 8.42m held by Jeswin Aldrin); CWG silver & Asian Games silver",
+    "stats": {
+      "olympicGold": 2,
+      "personalBest": "8.41m",
+      "worldRank": "#23 (Long Jump)",
+      "bestYear": "2023",
+      "totalGold": 6,
+      "totalSilver": 4,
+      "totalBronze": 2
+    },
+    "seasonalData": [
+      {
+        "year": "2018",
+        "value": 8.2,
+        "event": "National Open Championships",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2020",
+        "value": 8.26,
+        "event": "Federation Cup",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2021",
+        "value": 8.26,
+        "event": "Federation Cup",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2022",
+        "value": 8.31,
+        "event": "Int'l Jumping Meeting",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2023",
+        "value": 8.41,
+        "event": "World Athletics C'ship Final",
+        "rank": 8,
+        "highlight": true,
+        "glow": true
+      },
+      {
+        "year": "2026",
+        "value": 8.15,
+        "event": "Indian Athletics Series",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      }
+    ],
+    "coachImpactData": [
+      {
+        "year": 2018,
+        "value": 8.2,
+        "period": "before"
+      },
+      {
+        "year": 2020,
+        "value": 8.26,
+        "period": "before"
+      },
+      {
+        "year": 2021,
+        "value": 8.26,
+        "period": "before"
+      },
+      {
+        "year": 2022,
+        "value": 8.31,
+        "period": "before"
+      },
+      {
+        "year": 2023,
+        "value": 8.41,
+        "period": "after"
+      },
+      {
+        "year": 2026,
+        "value": 8.15,
+        "period": "after"
+      }
+    ],
+    "yAxisDomain": [
+      7,
+      8.8
+    ],
+    "tooltipValueSuffix": "m",
+    "medalData": [
+      {
+        "year": "2021",
+        "gold": 2,
+        "silver": 1,
+        "bronze": 0
+      },
+      {
+        "year": "2022",
+        "gold": 3,
+        "silver": 1,
+        "bronze": 1
+      },
+      {
+        "year": "2023",
+        "gold": 3,
+        "silver": 2,
+        "bronze": 0
+      },
+      {
+        "year": "2026",
+        "gold": 1,
+        "silver": 0,
+        "bronze": 0
+      }
+    ],
+    "consistencyData": [
+      {
+        "range": "8.30–8.41m",
+        "count": 4,
+        "throws": 4,
+        "percentage": 17,
+        "peak": true
+      },
+      {
+        "range": "8.20–8.30m",
+        "count": 6,
+        "throws": 6,
+        "percentage": 26,
+        "peak": true
+      },
+      {
+        "range": "8.10–8.20m",
+        "count": 5,
+        "throws": 5,
+        "percentage": 22,
+        "peak": true
+      },
+      {
+        "range": "8.00–8.10m",
+        "count": 4,
+        "throws": 4,
+        "percentage": 17,
+        "peak": true
+      },
+      {
+        "range": "7.90–8.00m",
+        "count": 2,
+        "throws": 2,
+        "percentage": 9,
+        "peak": false
+      },
+      {
+        "range": "7.80–7.90m",
+        "count": 2,
+        "throws": 2,
+        "percentage": 9,
+        "peak": false
+      }
+    ],
+    "consistencyBarLabel": "attempts",
+    "postsContent": [
+      {
+        "text": "Training hard for Commonwealth Games 2026! 🏆",
+        "likes": "12.3K",
+        "comments": "234",
+        "time": "2d ago"
+      },
+      {
+        "text": "Every session counts 💪",
+        "likes": "8.5K",
+        "comments": "156",
+        "time": "1w ago"
+      },
+      {
+        "text": "Ready to represent India! 🇮🇳",
+        "likes": "15.2K",
+        "comments": "445",
+        "time": "3d ago"
+      }
+    ],
+    "videosContent": [
+      {
+        "title": "Murali Sreeshankar - Training Highlights 2024",
+        "duration": "8:30",
+        "views": "1.2M",
+        "thumb": "/murali-sreeshankar.png"
+      },
+      {
+        "title": "Murali Sreeshankar - Competition Footage",
+        "duration": "5:15",
+        "views": "856K",
+        "thumb": "/murali-sreeshankar.png"
+      },
+      {
+        "title": "Murali Sreeshankar - Technique Breakdown",
+        "duration": "12:45",
+        "views": "543K",
+        "thumb": "/murali-sreeshankar.png"
+      },
+      {
+        "title": "Murali Sreeshankar - CWG 2026 Preparation",
+        "duration": "6:20",
+        "views": "2.1M",
+        "thumb": "/murali-sreeshankar.png"
+      }
+    ],
+    "highlights": [
+      {
+        "icon": "trophy",
+        "color": "#c9115f",
+        "title": "CWG 2026 Squad",
+        "sub": "Selected for Glasgow"
+      },
+      {
+        "icon": "star",
+        "color": "#c9115f",
+        "title": "Career Best",
+        "sub": "8.41m"
+      },
+      {
+        "icon": "medal",
+        "color": "#C0C0C0",
+        "title": "Gold Medals: 6",
+        "sub": "Career achievements"
+      },
+      {
+        "icon": "award",
+        "color": "#c9115f",
+        "title": "National Champion",
+        "sub": "Top performer"
+      }
+    ],
+    "radarData": [
+      {
+        "metric": "Avg Distance",
+        "value": 8,
+        "fullMark": 100
+      },
+      {
+        "metric": "Best Throw",
+        "value": 9,
+        "fullMark": 100
+      },
+      {
+        "metric": "Consistency",
+        "value": 88,
+        "fullMark": 100
+      },
+      {
+        "metric": "Clutch",
+        "value": 95,
+        "fullMark": 100
+      },
+      {
+        "metric": "Growth",
+        "value": 50,
+        "fullMark": 100
+      }
+    ],
+    "heatmapData": [
+      {
+        "tournament": "Olympics",
+        "years": {}
+      },
+      {
+        "tournament": "World Champ",
+        "years": {}
+      },
+      {
+        "tournament": "National Champ",
+        "years": {}
+      }
+    ],
+    "dropsContent": [
+      {
+        "path": "/video/murali-sreeshankar",
+        "date": "3d ago",
+        "type": "Video",
+        "meta": "10 min",
+        "color": "#ff5900",
+        "views": "234K",
+        "title": "Murali Sreeshankar Training Breakdown"
+      },
+      {
+        "title": "The Long Jump Comeback 🎧",
+        "views": "189K",
+        "color": "#c9115f",
+        "meta": "15 min",
+        "date": "5d ago",
+        "type": "Audio",
+        "path": "/audio/murali-sreeshankar"
+      },
+      {
+        "title": "How Sreeshankar Beat Pain & Returned",
+        "path": "/articles/sreeshankar-mamba-mentality-world-athletics-2025",
+        "date": "1w ago",
+        "type": "Article",
+        "views": "567K",
+        "color": "#4ade80",
+        "meta": "6 min read"
+      }
+    ],
+    "image": "/Sreeshankar-article.jpeg"
+  },
+  "neeraj-chopra": {
+    "name": "Neeraj Chopra",
+    "sport": "Javelin Throw",
+    "flag": "🇮🇳",
+    "age": 26,
+    "country": "India",
+    "achievementLabel": "Tokyo 2020 Olympic Gold",
+    "unit": "m",
+    "metricLabel": "Distance",
+    "heroStat": "90.23m (NR – Doha DL, May 2025)",
+    "heroLabel": "Personal Best",
+    "beforeCoach": "78.50m",
+    "afterCoach": "90.23m",
+    "coachJoinYear": "2018",
+    "coachImprovement": "+11.73m (+14.9%)",
+    "peakZoneLabel": "83-85m · 24% success rate",
+    "consistencyNote": "Most throws fall between 85m–89m; first Indian to throw 90m+ (May 2025)",
+    "stats": {
+      "olympicGold": 6,
+      "personalBest": "90.23m (NR – Doha DL, May 2025)",
+      "worldRank": "#1",
+      "bestYear": "2025",
+      "totalGold": 13,
+      "totalSilver": 6,
+      "totalBronze": 3
+    },
+    "seasonalData": [
+      {
+        "year": "2016",
+        "value": 78.5,
+        "event": "Junior Nationals",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2017",
+        "value": 81.2,
+        "event": "Asian Championships",
+        "rank": 2,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2018",
+        "value": 86.47,
+        "event": "Commonwealth Games Gold Coast",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2019",
+        "value": 84.2,
+        "event": "Diamond League",
+        "rank": 2,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2020",
+        "value": 86.5,
+        "event": "Diamond League",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2021",
+        "value": 87.58,
+        "event": "Tokyo Olympics",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2023",
+        "value": 88.17,
+        "event": "World Championships",
+        "rank": 1,
+        "highlight": true,
+        "glow": true
+      },
+      {
+        "year": "2024",
+        "value": 89.45,
+        "event": "Paris Olympics",
+        "rank": 2,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2025",
+        "value": 90.23,
+        "event": "Doha Diamond League 2025 (NR)",
+        "rank": 2,
+        "highlight": true,
+        "glow": true
+      }
+    ],
+    "coachImpactData": [
+      {
+        "year": 2016,
+        "value": 78.5,
+        "period": "before"
+      },
+      {
+        "year": 2017,
+        "value": 81.2,
+        "period": "before"
+      },
+      {
+        "year": 2018,
+        "value": 86.47,
+        "period": "after"
+      },
+      {
+        "year": 2019,
+        "value": 84.2,
+        "period": "after"
+      },
+      {
+        "year": 2020,
+        "value": 86.5,
+        "period": "after"
+      },
+      {
+        "year": 2021,
+        "value": 87.58,
+        "period": "after"
+      },
+      {
+        "year": 2023,
+        "value": 88.17,
+        "period": "after"
+      },
+      {
+        "year": 2024,
+        "value": 89.45,
+        "period": "after"
+      },
+      {
+        "year": 2025,
+        "value": 90.23,
+        "period": "after"
+      }
+    ],
+    "yAxisDomain": [
+      80.23,
+      95.23
+    ],
+    "tooltipValueSuffix": "m",
+    "medalData": [
+      {
+        "year": "2020",
+        "gold": 2,
+        "silver": 1,
+        "bronze": 1
+      },
+      {
+        "year": "2021",
+        "gold": 1,
+        "silver": 2,
+        "bronze": 0
+      },
+      {
+        "year": "2022",
+        "gold": 3,
+        "silver": 1,
+        "bronze": 1
+      },
+      {
+        "year": "2023",
+        "gold": 4,
+        "silver": 0,
+        "bronze": 1
+      },
+      {
+        "year": "2024",
+        "gold": 3,
+        "silver": 2,
+        "bronze": 0
+      }
+    ],
+    "consistencyData": [
+      {
+        "range": "77-79m",
+        "count": 8,
+        "throws": 8,
+        "percentage": 6,
+        "peak": false
+      },
+      {
+        "range": "79-81m",
+        "count": 15,
+        "throws": 15,
+        "percentage": 11,
+        "peak": false
+      },
+      {
+        "range": "81-83m",
+        "count": 22,
+        "throws": 22,
+        "percentage": 17,
+        "peak": true
+      },
+      {
+        "range": "83-85m",
+        "count": 32,
+        "throws": 32,
+        "percentage": 24,
+        "peak": true
+      },
+      {
+        "range": "85-87m",
+        "count": 28,
+        "throws": 28,
+        "percentage": 21,
+        "peak": true
+      },
+      {
+        "range": "87-89m",
+        "count": 18,
+        "throws": 18,
+        "percentage": 14,
+        "peak": false
+      },
+      {
+        "range": "89m+",
+        "count": 9,
+        "throws": 9,
+        "percentage": 7,
+        "peak": false
+      }
+    ],
+    "consistencyBarLabel": "throws",
+    "postsContent": [
+      {
+        "author": "Neeraj Chopra",
+        "text": "Ready for Commonwealth Games 2026! Glasgow, here we come 🏆",
+        "likes": "48.2K",
+        "comments": "1.2K",
+        "time": "2h ago"
+      },
+      {
+        "author": "Neeraj Chopra",
+        "text": "Training in perfect conditions today. Every session counts. 💪",
+        "likes": "32.1K",
+        "comments": "876",
+        "time": "1d ago"
+      },
+      {
+        "author": "Neeraj Chopra",
+        "text": "Grateful for the support from all Indian fans. You fuel my motivation!",
+        "likes": "94.5K",
+        "comments": "3.4K",
+        "time": "3d ago"
+      }
+    ],
+    "videosContent": [
+      {
+        "title": "Tokyo 2020 Gold Medal Throw — Replay",
+        "duration": "4:22",
+        "views": "8.4M",
+        "thumb": "/neeraj-chopra.png",
+        "path": "/video/tokyo-2020-gold-medal-throw"
+      },
+      {
+        "title": "Training Session Highlights 2024",
+        "duration": "15:30",
+        "views": "2.1M",
+        "thumb": "/neeraj-chopra.png",
+        "path": "/video/training-session-highlights-2024"
+      },
+      {
+        "title": "Birmingham CWG 2022 — Behind the Scenes",
+        "duration": "22:10",
+        "views": "1.3M",
+        "thumb": "/neeraj-chopra.png",
+        "path": "/video/birmingham-cwg-2022-behind-the-scenes"
+      },
+      {
+        "title": "Paris 2024 Silver Medal Throw",
+        "duration": "3:55",
+        "views": "5.7M",
+        "thumb": "/neeraj-chopra.png",
+        "path": "/video/paris-2024-silver-medal-throw"
+      }
+    ],
+    "highlights": [
+      {
+        "icon": "trophy",
+        "color": "#c9115f",
+        "title": "CWG 2026 Squad",
+        "sub": "Selected for Glasgow"
+      },
+      {
+        "icon": "star",
+        "color": "#c9115f",
+        "title": "Career Best",
+        "sub": "90.23m (NR – Doha DL, May 2025)"
+      },
+      {
+        "icon": "medal",
+        "color": "#C0C0C0",
+        "title": "Gold Medals: 13",
+        "sub": "Career achievements"
+      },
+      {
+        "icon": "award",
+        "color": "#c9115f",
+        "title": "National Champion",
+        "sub": "Top performer"
+      }
+    ],
+    "radarData": [
+      {
+        "metric": "Avg Distance",
+        "value": 94,
+        "fullMark": 100
+      },
+      {
+        "metric": "Best Throw",
+        "value": 100,
+        "fullMark": 100
+      },
+      {
+        "metric": "Consistency",
+        "value": 91,
+        "fullMark": 100
+      },
+      {
+        "metric": "Clutch",
+        "value": 100,
+        "fullMark": 100
+      },
+      {
+        "metric": "Growth",
+        "value": 14,
+        "fullMark": 100
+      }
+    ],
+    "heatmapData": [
+      {
+        "tournament": "Olympics",
+        "years": {}
+      },
+      {
+        "tournament": "World Champ",
+        "years": {}
+      },
+      {
+        "tournament": "National Champ",
+        "years": {}
+      }
+    ],
+    "dropsContent": [
+      {
+        "path": "/video/neeraj-chopra",
+        "date": "3d ago",
+        "type": "Video",
+        "color": "#ff5900",
+        "meta": "10 min",
+        "views": "234K",
+        "title": "Neeraj Chopra Training Breakdown"
+      },
+      {
+        "title": "India's Golden Arm: Tokyo to 90m 🎧",
+        "path": "/audio/neeraj-chopra",
+        "type": "Audio",
+        "date": "5d ago",
+        "views": "189K",
+        "color": "#c9115f",
+        "meta": "15 min"
+      },
+      {
+        "title": "The Day Neeraj Crossed 90 Metres",
+        "date": "1w ago",
+        "type": "Article",
+        "path": "/articles/india-commonwealth-games-2026-athletics-squad",
+        "views": "567K",
+        "color": "#4ade80",
+        "meta": "6 min read"
+      }
+    ],
+    "image": "/Neeraj-Chopra-article.avif"
+  },
+  "parul-chaudhary": {
+    "name": "Parul Chaudhary",
+    "sport": "3000m Steeplechase",
+    "flag": "🇮🇳",
+    "age": 31,
+    "country": "India",
+    "achievementLabel": "Asian Games Gold – 5000m",
+    "unit": "s",
+    "metricLabel": "Time",
+    "heroStat": "9:13.39 (3000mSC NR)",
+    "heroLabel": "Personal Best",
+    "beforeCoach": "9.43s",
+    "afterCoach": "9.13s",
+    "coachJoinYear": "2024",
+    "coachImprovement": "Data not available",
+    "peakZoneLabel": "9:25–9:35 · 28% success rate",
+    "consistencyNote": "National Record holder in 3000mSC and 5000m; Asian Games gold (5000m) and silver (3000mSC)",
+    "stats": {
+      "olympicGold": 0,
+      "personalBest": "9:13.39 (3000mSC NR)",
+      "worldRank": "#20 (3000mSC)",
+      "bestYear": "2023",
+      "totalGold": 5,
+      "totalSilver": 4,
+      "totalBronze": 2
+    },
+    "seasonalData": [
+      {
+        "year": "2021",
+        "value": 9.43,
+        "event": "National Championships 3000mSC",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2022",
+        "value": 9.35,
+        "event": "National Inter-State 3000mSC",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2023",
+        "value": 9.15,
+        "event": "World Athletics C'ship Budapest",
+        "rank": 1,
+        "highlight": true,
+        "glow": true
+      },
+      {
+        "year": "2024",
+        "value": 9.27,
+        "event": "Paris Olympics 3000mSC",
+        "rank": 10,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2025",
+        "value": 9.1339,
+        "event": "Doha Diamond League 3000mSC (NR 9:13.39)",
+        "rank": 6,
+        "highlight": true,
+        "glow": false
+      }
+    ],
+    "coachImpactData": [
+      {
+        "year": 2021,
+        "value": 9.43,
+        "period": "before"
+      },
+      {
+        "year": 2022,
+        "value": 9.35,
+        "period": "before"
+      },
+      {
+        "year": 2023,
+        "value": 9.15,
+        "period": "before"
+      },
+      {
+        "year": 2024,
+        "value": 9.27,
+        "period": "after"
+      },
+      {
+        "year": 2025,
+        "value": 9.1339,
+        "period": "after"
+      }
+    ],
+    "yAxisDomain": [
+      9,
+      30
+    ],
+    "tooltipValueSuffix": "s",
+    "medalData": [
+      {
+        "year": "2022",
+        "gold": 2,
+        "silver": 1,
+        "bronze": 0
+      },
+      {
+        "year": "2023",
+        "gold": 3,
+        "silver": 2,
+        "bronze": 0
+      },
+      {
+        "year": "2024",
+        "gold": 0,
+        "silver": 1,
+        "bronze": 1
+      },
+      {
+        "year": "2025",
+        "gold": 1,
+        "silver": 1,
+        "bronze": 0
+      }
+    ],
+    "consistencyData": [
+      {
+        "range": "9:10–9:15 (3000mSC)",
+        "count": 2,
+        "throws": 2,
+        "percentage": 8,
+        "peak": false
+      },
+      {
+        "range": "9:15–9:25",
+        "count": 4,
+        "throws": 4,
+        "percentage": 16,
+        "peak": true
+      },
+      {
+        "range": "9:25–9:35",
+        "count": 7,
+        "throws": 7,
+        "percentage": 28,
+        "peak": true
+      },
+      {
+        "range": "9:35–9:50",
+        "count": 6,
+        "throws": 6,
+        "percentage": 24,
+        "peak": true
+      },
+      {
+        "range": "9:50–10:10",
+        "count": 3,
+        "throws": 3,
+        "percentage": 12,
+        "peak": false
+      },
+      {
+        "range": "10:10s+",
+        "count": 3,
+        "throws": 3,
+        "percentage": 12,
+        "peak": false
+      }
+    ],
+    "consistencyBarLabel": "attempts",
+    "postsContent": [
+      {
+        "text": "Training hard for Commonwealth Games 2026! 🏆",
+        "likes": "12.3K",
+        "comments": "234",
+        "time": "2d ago"
+      },
+      {
+        "text": "Every session counts 💪",
+        "likes": "8.5K",
+        "comments": "156",
+        "time": "1w ago"
+      },
+      {
+        "text": "Ready to represent India! 🇮🇳",
+        "likes": "15.2K",
+        "comments": "445",
+        "time": "3d ago"
+      }
+    ],
+    "videosContent": [
+      {
+        "title": "Parul Chaudhary - Training Highlights 2024",
+        "duration": "8:30",
+        "views": "1.2M",
+        "thumb": "/parul-chaudhary.png"
+      },
+      {
+        "title": "Parul Chaudhary - Competition Footage",
+        "duration": "5:15",
+        "views": "856K",
+        "thumb": "/parul-chaudhary.png"
+      },
+      {
+        "title": "Parul Chaudhary - Technique Breakdown",
+        "duration": "12:45",
+        "views": "543K",
+        "thumb": "/parul-chaudhary.png"
+      },
+      {
+        "title": "Parul Chaudhary - CWG 2026 Preparation",
+        "duration": "6:20",
+        "views": "2.1M",
+        "thumb": "/parul-chaudhary.png"
+      }
+    ],
+    "highlights": [
+      {
+        "icon": "trophy",
+        "color": "#c9115f",
+        "title": "CWG 2026 Squad",
+        "sub": "Selected for Glasgow"
+      },
+      {
+        "icon": "star",
+        "color": "#c9115f",
+        "title": "Career Best",
+        "sub": "9:13.39 (3000mSC NR)"
+      },
+      {
+        "icon": "medal",
+        "color": "#C0C0C0",
+        "title": "Gold Medals: 5",
+        "sub": "Career achievements"
+      },
+      {
+        "icon": "award",
+        "color": "#c9115f",
+        "title": "National Champion",
+        "sub": "Top performer"
+      }
+    ],
+    "radarData": [
+      {
+        "metric": "Avg Distance",
+        "value": 9,
+        "fullMark": 100
+      },
+      {
+        "metric": "Best Throw",
+        "value": 10,
+        "fullMark": 100
+      },
+      {
+        "metric": "Consistency",
+        "value": 88,
+        "fullMark": 100
+      },
+      {
+        "metric": "Clutch",
+        "value": 75,
+        "fullMark": 100
+      },
+      {
+        "metric": "Growth",
+        "value": 50,
+        "fullMark": 100
+      }
+    ],
+    "heatmapData": [
+      {
+        "tournament": "Olympics",
+        "years": {}
+      },
+      {
+        "tournament": "World Champ",
+        "years": {}
+      },
+      {
+        "tournament": "National Champ",
+        "years": {}
+      }
+    ],
+    "dropsContent": [
+      {
+        "title": "Parul Chaudhary Training Breakdown",
+        "views": "234K",
+        "color": "#ff5900",
+        "meta": "10 min",
+        "path": "/video/parul-chaudhary",
+        "date": "3d ago",
+        "type": "Video"
+      },
+      {
+        "date": "5d ago",
+        "type": "Audio",
+        "path": "/audio/parul-chaudhary",
+        "color": "#c9115f",
+        "meta": "15 min",
+        "views": "189K",
+        "title": "India's Steeplechase Queen 🎧"
+      },
+      {
+        "path": "/articles/doha-diamond-league-2025-neeraj-parul-world-championships",
+        "date": "1w ago",
+        "type": "Article",
+        "meta": "6 min read",
+        "views": "567K",
+        "color": "#4ade80",
+        "title": "Parul's NR Night in Doha"
+      }
+    ],
+    "image": "/Parul_Chaudhary_article.avif"
+  },
+  "pooja-singh": {
+    "name": "Pooja Singh",
+    "sport": "High Jump",
+    "flag": "🇮🇳",
+    "age": 20,
+    "country": "India",
+    "achievementLabel": "U20 Asian Champion",
+    "unit": "m",
+    "metricLabel": "Distance",
+    "heroStat": "1.93m",
+    "heroLabel": "Personal Best",
+    "beforeCoach": "1.80m",
+    "afterCoach": "1.93m",
+    "coachJoinYear": "2024",
+    "coachImprovement": "+0.13m (+7.2%)",
+    "peakZoneLabel": "1.81–1.84m · 27% success rate",
+    "consistencyNote": "Indian women's high jump national record holder (1.93m); U20 Asian Athletics C'ship gold 2026",
+    "stats": {
+      "olympicGold": 1,
+      "personalBest": "1.93m",
+      "worldRank": "Top 5 Asia (junior)",
+      "bestYear": "2026",
+      "totalGold": 4,
+      "totalSilver": 2,
+      "totalBronze": 1
+    },
+    "seasonalData": [
+      {
+        "year": "2023",
+        "value": 1.8,
+        "event": "National Junior Championships",
+        "rank": 2,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2024",
+        "value": 1.85,
+        "event": "National Junior Championships",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2025",
+        "value": 1.9,
+        "event": "National Championships",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2026",
+        "value": 1.93,
+        "event": "U20 Asian C'ship Hong Kong",
+        "rank": 1,
+        "highlight": true,
+        "glow": true
+      }
+    ],
+    "coachImpactData": [
+      {
+        "year": 2023,
+        "value": 1.8,
+        "period": "before"
+      },
+      {
+        "year": 2024,
+        "value": 1.85,
+        "period": "after"
+      },
+      {
+        "year": 2025,
+        "value": 1.9,
+        "period": "after"
+      },
+      {
+        "year": 2026,
+        "value": 1.93,
+        "period": "after"
+      }
+    ],
+    "yAxisDomain": [
+      1.8,
+      2.4
+    ],
+    "tooltipValueSuffix": "m",
+    "medalData": [
+      {
+        "year": "2023",
+        "gold": 0,
+        "silver": 1,
+        "bronze": 0
+      },
+      {
+        "year": "2024",
+        "gold": 1,
+        "silver": 0,
+        "bronze": 0
+      },
+      {
+        "year": "2025",
+        "gold": 2,
+        "silver": 1,
+        "bronze": 0
+      },
+      {
+        "year": "2026",
+        "gold": 1,
+        "silver": 0,
+        "bronze": 0
+      }
+    ],
+    "consistencyData": [
+      {
+        "range": "1.90–1.93m",
+        "count": 2,
+        "throws": 2,
+        "percentage": 9,
+        "peak": false
+      },
+      {
+        "range": "1.87–1.90m",
+        "count": 4,
+        "throws": 4,
+        "percentage": 18,
+        "peak": true
+      },
+      {
+        "range": "1.84–1.87m",
+        "count": 5,
+        "throws": 5,
+        "percentage": 23,
+        "peak": true
+      },
+      {
+        "range": "1.81–1.84m",
+        "count": 6,
+        "throws": 6,
+        "percentage": 27,
+        "peak": true
+      },
+      {
+        "range": "1.78–1.81m",
+        "count": 3,
+        "throws": 3,
+        "percentage": 14,
+        "peak": false
+      },
+      {
+        "range": "1.75–1.78m",
+        "count": 2,
+        "throws": 2,
+        "percentage": 9,
+        "peak": false
+      }
+    ],
+    "consistencyBarLabel": "attempts",
+    "postsContent": [
+      {
+        "text": "Training hard for Commonwealth Games 2026! 🏆",
+        "likes": "12.3K",
+        "comments": "234",
+        "time": "2d ago"
+      },
+      {
+        "text": "Every session counts 💪",
+        "likes": "8.5K",
+        "comments": "156",
+        "time": "1w ago"
+      },
+      {
+        "text": "Ready to represent India! 🇮🇳",
+        "likes": "15.2K",
+        "comments": "445",
+        "time": "3d ago"
+      }
+    ],
+    "videosContent": [
+      {
+        "title": "Pooja Singh - Training Highlights 2024",
+        "duration": "8:30",
+        "views": "1.2M",
+        "thumb": "/pooja-singh.png"
+      },
+      {
+        "title": "Pooja Singh - Competition Footage",
+        "duration": "5:15",
+        "views": "856K",
+        "thumb": "/pooja-singh.png"
+      },
+      {
+        "title": "Pooja Singh - Technique Breakdown",
+        "duration": "12:45",
+        "views": "543K",
+        "thumb": "/pooja-singh.png"
+      },
+      {
+        "title": "Pooja Singh - CWG 2026 Preparation",
+        "duration": "6:20",
+        "views": "2.1M",
+        "thumb": "/pooja-singh.png"
+      }
+    ],
+    "dropsContent": [
+      {
+        "type": "Video",
+        "title": "Pooja Singh Training Breakdown",
+        "meta": "10 min",
+        "date": "3d ago",
+        "views": "234K",
+        "color": "#ff5900",
+        "path": "/video/pooja-singh"
+      },
+      {
+        "type": "Audio",
+        "title": "Pooja Singh's Story 🎧",
+        "meta": "15 min",
+        "date": "5d ago",
+        "views": "189K",
+        "color": "#c9115f",
+        "path": "/audio/pooja-singh"
+      },
+      {
+        "type": "Article",
+        "title": "My Journey",
+        "meta": "6 min read",
+        "date": "1w ago",
+        "views": "567K",
+        "color": "#4ade80",
+        "path": "/articles/pooja-singh"
+      }
+    ],
+    "highlights": [
+      {
+        "icon": "trophy",
+        "color": "#c9115f",
+        "title": "CWG 2026 Squad",
+        "sub": "Selected for Glasgow"
+      },
+      {
+        "icon": "star",
+        "color": "#c9115f",
+        "title": "Career Best",
+        "sub": "1.93m"
+      },
+      {
+        "icon": "medal",
+        "color": "#C0C0C0",
+        "title": "Gold Medals: 4",
+        "sub": "Career achievements"
+      },
+      {
+        "icon": "award",
+        "color": "#c9115f",
+        "title": "National Champion",
+        "sub": "Top performer"
+      }
+    ],
+    "radarData": [
+      {
+        "metric": "Avg Distance",
+        "value": 2,
+        "fullMark": 100
+      },
+      {
+        "metric": "Best Throw",
+        "value": 2,
+        "fullMark": 100
+      },
+      {
+        "metric": "Consistency",
+        "value": 88,
+        "fullMark": 100
+      },
+      {
+        "metric": "Clutch",
+        "value": 85,
+        "fullMark": 100
+      },
+      {
+        "metric": "Growth",
+        "value": 7,
+        "fullMark": 100
+      }
+    ],
+    "heatmapData": [
+      {
+        "tournament": "Olympics",
+        "years": {}
+      },
+      {
+        "tournament": "World Champ",
+        "years": {}
+      },
+      {
+        "tournament": "National Champ",
+        "years": {}
+      }
+    ],
+    "image": "/Pooja-Singh-article.webp"
+  },
+  "priyanka-goswami": {
+    "name": "Priyanka Goswami",
+    "sport": "10000m",
+    "flag": "🇮🇳",
+    "age": 30,
+    "country": "India",
+    "achievementLabel": "CWG 2022 Silver – Race Walk",
+    "unit": "s",
+    "metricLabel": "Time",
+    "heroStat": "43:38.82 (10000m)",
+    "heroLabel": "Personal Best",
+    "beforeCoach": "1.29s",
+    "afterCoach": "2.57s",
+    "coachJoinYear": "2025",
+    "coachImprovement": "+1.28s (+99.2%)",
+    "peakZoneLabel": "47–49 min · 29% success rate",
+    "consistencyNote": "First Indian woman to win CWG race walk medal; two-time Olympian; national record holder",
+    "stats": {
+      "olympicGold": 2,
+      "personalBest": "43:38.82 (10000m)",
+      "worldRank": "Top 20 (Race Walk)",
+      "bestYear": "2022",
+      "totalGold": 4,
+      "totalSilver": 4,
+      "totalBronze": 2
+    },
+    "seasonalData": [
+      {
+        "year": "2021",
+        "value": 1.29,
+        "event": "National Race Walk C'ship 20km",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2022",
+        "value": 0.44,
+        "event": "Commonwealth Games 10000m",
+        "rank": 2,
+        "highlight": true,
+        "glow": true
+      },
+      {
+        "year": "2023",
+        "value": 1.34,
+        "event": "Asian Athletics C'ship 20km",
+        "rank": 2,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2024",
+        "value": 1.35,
+        "event": "Paris Olympics 20km",
+        "rank": 41,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2025",
+        "value": 2.57,
+        "event": "Dudinska 50 Slovakia 35km",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      }
+    ],
+    "coachImpactData": [
+      {
+        "year": 2021,
+        "value": 1.29,
+        "period": "before"
+      },
+      {
+        "year": 2022,
+        "value": 0.44,
+        "period": "before"
+      },
+      {
+        "year": 2023,
+        "value": 1.34,
+        "period": "before"
+      },
+      {
+        "year": 2024,
+        "value": 1.35,
+        "period": "before"
+      },
+      {
+        "year": 2025,
+        "value": 2.57,
+        "period": "after"
+      }
+    ],
+    "yAxisDomain": [
+      9.5,
+      11
+    ],
+    "tooltipValueSuffix": "s",
+    "medalData": [
+      {
+        "year": "2021",
+        "gold": 2,
+        "silver": 0,
+        "bronze": 0
+      },
+      {
+        "year": "2022",
+        "gold": 1,
+        "silver": 1,
+        "bronze": 0
+      },
+      {
+        "year": "2023",
+        "gold": 0,
+        "silver": 1,
+        "bronze": 1
+      },
+      {
+        "year": "2024",
+        "gold": 0,
+        "silver": 0,
+        "bronze": 1
+      }
+    ],
+    "consistencyData": [
+      {
+        "range": "43–44 min (10km)",
+        "count": 2,
+        "throws": 2,
+        "percentage": 8,
+        "peak": false
+      },
+      {
+        "range": "44–45 min",
+        "count": 3,
+        "throws": 3,
+        "percentage": 12,
+        "peak": false
+      },
+      {
+        "range": "45–47 min",
+        "count": 6,
+        "throws": 6,
+        "percentage": 25,
+        "peak": true
+      },
+      {
+        "range": "47–49 min",
+        "count": 7,
+        "throws": 7,
+        "percentage": 29,
+        "peak": true
+      },
+      {
+        "range": "49–51 min",
+        "count": 4,
+        "throws": 4,
+        "percentage": 17,
+        "peak": true
+      },
+      {
+        "range": "51 min+",
+        "count": 2,
+        "throws": 2,
+        "percentage": 9,
+        "peak": false
+      }
+    ],
+    "consistencyBarLabel": "attempts",
+    "postsContent": [
+      {
+        "text": "Training hard for Commonwealth Games 2026! 🏆",
+        "likes": "12.3K",
+        "comments": "234",
+        "time": "2d ago"
+      },
+      {
+        "text": "Every session counts 💪",
+        "likes": "8.5K",
+        "comments": "156",
+        "time": "1w ago"
+      },
+      {
+        "text": "Ready to represent India! 🇮🇳",
+        "likes": "15.2K",
+        "comments": "445",
+        "time": "3d ago"
+      }
+    ],
+    "videosContent": [
+      {
+        "title": "Priyanka Goswami - Training Highlights 2024",
+        "duration": "8:30",
+        "views": "1.2M",
+        "thumb": "/priyanka-goswami.png"
+      },
+      {
+        "title": "Priyanka Goswami - Competition Footage",
+        "duration": "5:15",
+        "views": "856K",
+        "thumb": "/priyanka-goswami.png"
+      },
+      {
+        "title": "Priyanka Goswami - Technique Breakdown",
+        "duration": "12:45",
+        "views": "543K",
+        "thumb": "/priyanka-goswami.png"
+      },
+      {
+        "title": "Priyanka Goswami - CWG 2026 Preparation",
+        "duration": "6:20",
+        "views": "2.1M",
+        "thumb": "/priyanka-goswami.png"
+      }
+    ],
+    "highlights": [
+      {
+        "icon": "trophy",
+        "color": "#c9115f",
+        "title": "CWG 2026 Squad",
+        "sub": "Selected for Glasgow"
+      },
+      {
+        "icon": "star",
+        "color": "#c9115f",
+        "title": "Career Best",
+        "sub": "43:38.82 (10000m)"
+      },
+      {
+        "icon": "medal",
+        "color": "#C0C0C0",
+        "title": "Gold Medals: 4",
+        "sub": "Career achievements"
+      },
+      {
+        "icon": "award",
+        "color": "#c9115f",
+        "title": "National Champion",
+        "sub": "Top performer"
+      }
+    ],
+    "radarData": [
+      {
+        "metric": "Avg Distance",
+        "value": 2,
+        "fullMark": 100
+      },
+      {
+        "metric": "Best Throw",
+        "value": 47,
+        "fullMark": 100
+      },
+      {
+        "metric": "Consistency",
+        "value": 88,
+        "fullMark": 100
+      },
+      {
+        "metric": "Clutch",
+        "value": 95,
+        "fullMark": 100
+      },
+      {
+        "metric": "Growth",
+        "value": 99,
+        "fullMark": 100
+      }
+    ],
+    "heatmapData": [
+      {
+        "tournament": "Olympics",
+        "years": {}
+      },
+      {
+        "tournament": "World Champ",
+        "years": {}
+      },
+      {
+        "tournament": "National Champ",
+        "years": {}
+      }
+    ],
+    "dropsContent": [
+      {
+        "views": "234K",
+        "color": "#ff5900",
+        "meta": "10 min",
+        "date": "3d ago",
+        "type": "Video",
+        "path": "/video/priyanka-goswami",
+        "title": "Priyanka Goswami Training Breakdown"
+      },
+      {
+        "meta": "15 min",
+        "views": "189K",
+        "color": "#c9115f",
+        "type": "Audio",
+        "date": "5d ago",
+        "path": "/audio/priyanka-goswami",
+        "title": "The Walk That Changed India 🎧"
+      },
+      {
+        "title": "Priyanka: India's Race Walk Pioneer",
+        "path": "/articles/priyanka-goswami-cwg-2022-race-walk-silver",
+        "date": "1w ago",
+        "type": "Article",
+        "color": "#4ade80",
+        "meta": "6 min read",
+        "views": "567K"
+      }
+    ],
+    "image": "/PriyankaGoswami-article.avif"
+  },
+  "sarvesh-kushare": {
+    "name": "Sarvesh Kushare",
+    "sport": "High Jump",
+    "flag": "🇮🇳",
+    "age": 30,
+    "country": "India",
+    "achievementLabel": "Asian Champs Silver – 2.26m",
+    "unit": "m",
+    "metricLabel": "Distance",
+    "heroStat": "2.28m",
+    "heroLabel": "Personal Best",
+    "beforeCoach": "2.26m",
+    "afterCoach": "2.28m",
+    "coachJoinYear": "2022",
+    "coachImprovement": "+0.02m (+0.9%)",
+    "peakZoneLabel": "2.24–2.26m · 36% success rate",
+    "consistencyNote": "First Indian high jumper to reach World Athletics Championships final (2025); five-time national champion",
+    "stats": {
+      "olympicGold": 2,
+      "personalBest": "2.28m",
+      "worldRank": "6th at World C'ship 2025 final (Top 10 globally)",
+      "bestYear": "2025",
+      "totalGold": 7,
+      "totalSilver": 4,
+      "totalBronze": 3
+    },
+    "seasonalData": [
+      {
+        "year": "2019",
+        "value": 2.26,
+        "event": "South Asian Games",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2021",
+        "value": 2.24,
+        "event": "Federation Cup",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2022",
+        "value": 2.27,
+        "event": "National Championship Gujarat",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2023",
+        "value": 2.26,
+        "event": "Asian Athletics Bangkok",
+        "rank": 2,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2024",
+        "value": 2.25,
+        "event": "National Inter-State",
+        "rank": 1,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2025",
+        "value": 2.28,
+        "event": "World Athletics C'ship Tokyo",
+        "rank": 6,
+        "highlight": true,
+        "glow": true
+      }
+    ],
+    "coachImpactData": [
+      {
+        "year": 2019,
+        "value": 2.26,
+        "period": "before"
+      },
+      {
+        "year": 2021,
+        "value": 2.24,
+        "period": "before"
+      },
+      {
+        "year": 2022,
+        "value": 2.27,
+        "period": "after"
+      },
+      {
+        "year": 2023,
+        "value": 2.26,
+        "period": "after"
+      },
+      {
+        "year": 2024,
+        "value": 2.25,
+        "period": "after"
+      },
+      {
+        "year": 2025,
+        "value": 2.28,
+        "period": "after"
+      }
+    ],
+    "yAxisDomain": [
+      1.8,
+      2.4
+    ],
+    "tooltipValueSuffix": "m",
+    "medalData": [
+      {
+        "year": "2022",
+        "gold": 3,
+        "silver": 1,
+        "bronze": 1
+      },
+      {
+        "year": "2023",
+        "gold": 2,
+        "silver": 2,
+        "bronze": 0
+      },
+      {
+        "year": "2024",
+        "gold": 2,
+        "silver": 1,
+        "bronze": 0
+      },
+      {
+        "year": "2025",
+        "gold": 1,
+        "silver": 1,
+        "bronze": 0
+      }
+    ],
+    "consistencyData": [
+      {
+        "range": "2.26–2.28m",
+        "count": 3,
+        "throws": 3,
+        "percentage": 14,
+        "peak": false
+      },
+      {
+        "range": "2.24–2.26m",
+        "count": 8,
+        "throws": 8,
+        "percentage": 36,
+        "peak": true
+      },
+      {
+        "range": "2.22–2.24m",
+        "count": 6,
+        "throws": 6,
+        "percentage": 27,
+        "peak": true
+      },
+      {
+        "range": "2.20–2.22m",
+        "count": 3,
+        "throws": 3,
+        "percentage": 14,
+        "peak": false
+      },
+      {
+        "range": "2.18–2.20m",
+        "count": 1,
+        "throws": 1,
+        "percentage": 5,
+        "peak": false
+      },
+      {
+        "range": "2.15–2.18m",
+        "count": 1,
+        "throws": 1,
+        "percentage": 4,
+        "peak": false
+      }
+    ],
+    "consistencyBarLabel": "attempts",
+    "postsContent": [
+      {
+        "text": "Training hard for Commonwealth Games 2026! 🏆",
+        "likes": "12.3K",
+        "comments": "234",
+        "time": "2d ago"
+      },
+      {
+        "text": "Every session counts 💪",
+        "likes": "8.5K",
+        "comments": "156",
+        "time": "1w ago"
+      },
+      {
+        "text": "Ready to represent India! 🇮🇳",
+        "likes": "15.2K",
+        "comments": "445",
+        "time": "3d ago"
+      }
+    ],
+    "videosContent": [
+      {
+        "title": "Sarvesh Kushare - Training Highlights 2024",
+        "duration": "8:30",
+        "views": "1.2M",
+        "thumb": "/sarvesh-kushare.png"
+      },
+      {
+        "title": "Sarvesh Kushare - Competition Footage",
+        "duration": "5:15",
+        "views": "856K",
+        "thumb": "/sarvesh-kushare.png"
+      },
+      {
+        "title": "Sarvesh Kushare - Technique Breakdown",
+        "duration": "12:45",
+        "views": "543K",
+        "thumb": "/sarvesh-kushare.png"
+      },
+      {
+        "title": "Sarvesh Kushare - CWG 2026 Preparation",
+        "duration": "6:20",
+        "views": "2.1M",
+        "thumb": "/sarvesh-kushare.png"
+      }
+    ],
+    "highlights": [
+      {
+        "icon": "trophy",
+        "color": "#c9115f",
+        "title": "CWG 2026 Squad",
+        "sub": "Selected for Glasgow"
+      },
+      {
+        "icon": "star",
+        "color": "#c9115f",
+        "title": "Career Best",
+        "sub": "2.28m"
+      },
+      {
+        "icon": "medal",
+        "color": "#C0C0C0",
+        "title": "Gold Medals: 7",
+        "sub": "Career achievements"
+      },
+      {
+        "icon": "award",
+        "color": "#c9115f",
+        "title": "National Champion",
+        "sub": "Top performer"
+      }
+    ],
+    "radarData": [
+      {
+        "metric": "Avg Distance",
+        "value": 2,
+        "fullMark": 100
+      },
+      {
+        "metric": "Best Throw",
+        "value": 2,
+        "fullMark": 100
+      },
+      {
+        "metric": "Consistency",
+        "value": 88,
+        "fullMark": 100
+      },
+      {
+        "metric": "Clutch",
+        "value": 95,
+        "fullMark": 100
+      },
+      {
+        "metric": "Growth",
+        "value": 0,
+        "fullMark": 100
+      }
+    ],
+    "heatmapData": [
+      {
+        "tournament": "Olympics",
+        "years": {}
+      },
+      {
+        "tournament": "World Champ",
+        "years": {}
+      },
+      {
+        "tournament": "National Champ",
+        "years": {}
+      }
+    ],
+    "dropsContent": [
+      {
+        "views": "234K",
+        "meta": "10 min",
+        "color": "#ff5900",
+        "date": "3d ago",
+        "type": "Video",
+        "path": "/video/sarvesh-kushare",
+        "title": "Sarvesh Kushare Training Breakdown"
+      },
+      {
+        "color": "#c9115f",
+        "meta": "15 min",
+        "views": "189K",
+        "path": "/audio/sarvesh-kushare",
+        "type": "Audio",
+        "date": "5d ago",
+        "title": "India's High Jump History Maker 🎧"
+      },
+      {
+        "path": "/articles/sarvesh-kushare-world-athletics-2025-high-jump",
+        "type": "Article",
+        "date": "1w ago",
+        "views": "567K",
+        "meta": "6 min read",
+        "color": "#4ade80",
+        "title": "Sarvesh Kushare: 6th at the World"
+      }
+    ],
+    "image": "/Sarvesh-Kushare-article.avif"
+  },
+  "tejaswin-shankar": {
+    "name": "Tejaswin Shankar",
+    "sport": "Decathlon",
+    "flag": "🇮🇳",
+    "age": 27,
+    "country": "India",
+    "achievementLabel": "Asian Games Silver – Decathlon",
+    "unit": "s",
+    "metricLabel": "Time",
+    "heroStat": "8057 pts (Decathlon)",
+    "heroLabel": "Personal Best",
+    "beforeCoach": "2.26s",
+    "afterCoach": "8057.00s",
+    "coachJoinYear": "2023",
+    "coachImprovement": "+8054.74s (+356404.4%)",
+    "peakZoneLabel": "7000–7200 pts · 24% success rate",
+    "consistencyNote": "India's best-ever decathlete; first to cross 8000 pts (2026); Asian Games silver and 2x Asian C'ship medalist",
+    "stats": {
+      "olympicGold": 0,
+      "personalBest": "8057 pts (Decathlon)",
+      "worldRank": "#36 (Decathlon)",
+      "bestYear": "2026",
+      "totalGold": 5,
+      "totalSilver": 4,
+      "totalBronze": 3
+    },
+    "seasonalData": [
+      {
+        "year": "2016",
+        "value": 2.26,
+        "event": "Junior Nationals HJ (NR U18)",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2018",
+        "value": 2.29,
+        "event": "Texas Tech Shootout HJ",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2022",
+        "value": 2.22,
+        "event": "Commonwealth Games HJ",
+        "rank": 3,
+        "highlight": false,
+        "glow": false
+      },
+      {
+        "year": "2023",
+        "value": 7666,
+        "event": "Asian Games Decathlon",
+        "rank": 2,
+        "highlight": true,
+        "glow": true
+      },
+      {
+        "year": "2025",
+        "value": 7826,
+        "event": "Decathlon Poland",
+        "rank": 1,
+        "highlight": true,
+        "glow": false
+      },
+      {
+        "year": "2026",
+        "value": 8057,
+        "event": "Federation Cup Ranchi Decathlon",
+        "rank": 1,
+        "highlight": true,
+        "glow": true
+      }
+    ],
+    "coachImpactData": [
+      {
+        "year": 2016,
+        "value": 2.26,
+        "period": "before"
+      },
+      {
+        "year": 2018,
+        "value": 2.29,
+        "period": "before"
+      },
+      {
+        "year": 2022,
+        "value": 2.22,
+        "period": "before"
+      },
+      {
+        "year": 2023,
+        "value": 7666,
+        "period": "after"
+      },
+      {
+        "year": 2025,
+        "value": 7826,
+        "period": "after"
+      },
+      {
+        "year": 2026,
+        "value": 8057,
+        "period": "after"
+      }
+    ],
+    "yAxisDomain": [
+      9,
+      30
+    ],
+    "tooltipValueSuffix": "s",
+    "medalData": [
+      {
+        "year": "2022",
+        "gold": 1,
+        "silver": 0,
+        "bronze": 1
+      },
+      {
+        "year": "2023",
+        "gold": 1,
+        "silver": 1,
+        "bronze": 1
+      },
+      {
+        "year": "2025",
+        "gold": 1,
+        "silver": 2,
+        "bronze": 0
+      },
+      {
+        "year": "2026",
+        "gold": 1,
+        "silver": 0,
+        "bronze": 0
+      }
+    ],
+    "consistencyData": [
+      {
+        "range": "7800–8057 pts",
+        "count": 2,
+        "throws": 2,
+        "percentage": 8,
+        "peak": false
+      },
+      {
+        "range": "7600–7800 pts",
+        "count": 3,
+        "throws": 3,
+        "percentage": 12,
+        "peak": false
+      },
+      {
+        "range": "7400–7600 pts",
+        "count": 4,
+        "throws": 4,
+        "percentage": 16,
+        "peak": true
+      },
+      {
+        "range": "7200–7400 pts",
+        "count": 4,
+        "throws": 4,
+        "percentage": 16,
+        "peak": true
+      },
+      {
+        "range": "7000–7200 pts",
+        "count": 6,
+        "throws": 6,
+        "percentage": 24,
+        "peak": true
+      },
+      {
+        "range": "6800–7000 pts",
+        "count": 6,
+        "throws": 6,
+        "percentage": 24,
+        "peak": true
+      }
+    ],
+    "consistencyBarLabel": "attempts",
+    "postsContent": [
+      {
+        "text": "Training hard for Commonwealth Games 2026! 🏆",
+        "likes": "12.3K",
+        "comments": "234",
+        "time": "2d ago"
+      },
+      {
+        "text": "Every session counts 💪",
+        "likes": "8.5K",
+        "comments": "156",
+        "time": "1w ago"
+      },
+      {
+        "text": "Ready to represent India! 🇮🇳",
+        "likes": "15.2K",
+        "comments": "445",
+        "time": "3d ago"
+      }
+    ],
+    "videosContent": [
+      {
+        "title": "Tejaswin Shankar - Training Highlights 2024",
+        "duration": "8:30",
+        "views": "1.2M",
+        "thumb": "/tejaswin-shankar.png"
+      },
+      {
+        "title": "Tejaswin Shankar - Competition Footage",
+        "duration": "5:15",
+        "views": "856K",
+        "thumb": "/tejaswin-shankar.png"
+      },
+      {
+        "title": "Tejaswin Shankar - Technique Breakdown",
+        "duration": "12:45",
+        "views": "543K",
+        "thumb": "/tejaswin-shankar.png"
+      },
+      {
+        "title": "Tejaswin Shankar - CWG 2026 Preparation",
+        "duration": "6:20",
+        "views": "2.1M",
+        "thumb": "/tejaswin-shankar.png"
+      }
+    ],
+    "highlights": [
+      {
+        "icon": "trophy",
+        "color": "#c9115f",
+        "title": "CWG 2026 Squad",
+        "sub": "Selected for Glasgow"
+      },
+      {
+        "icon": "star",
+        "color": "#c9115f",
+        "title": "Career Best",
+        "sub": "8057 pts (Decathlon)"
+      },
+      {
+        "icon": "medal",
+        "color": "#C0C0C0",
+        "title": "Gold Medals: 5",
+        "sub": "Career achievements"
+      },
+      {
+        "icon": "award",
+        "color": "#c9115f",
+        "title": "National Champion",
+        "sub": "Top performer"
+      }
+    ],
+    "radarData": [
+      {
+        "metric": "Avg Distance",
+        "value": 100,
+        "fullMark": 100
+      },
+      {
+        "metric": "Best Throw",
+        "value": 100,
+        "fullMark": 100
+      },
+      {
+        "metric": "Consistency",
+        "value": 88,
+        "fullMark": 100
+      },
+      {
+        "metric": "Clutch",
+        "value": 75,
+        "fullMark": 100
+      },
+      {
+        "metric": "Growth",
+        "value": 100,
+        "fullMark": 100
+      }
+    ],
+    "heatmapData": [
+      {
+        "tournament": "Olympics",
+        "years": {}
+      },
+      {
+        "tournament": "World Champ",
+        "years": {}
+      },
+      {
+        "tournament": "National Champ",
+        "years": {}
+      }
+    ],
+    "dropsContent": [
+      {
+        "title": "Tejaswin Shankar Training Breakdown",
+        "path": "/video/tejaswin-shankar",
+        "type": "Video",
+        "date": "3d ago",
+        "color": "#ff5900",
+        "views": "234K",
+        "meta": "10 min"
+      },
+      {
+        "color": "#c9115f",
+        "meta": "15 min",
+        "views": "189K",
+        "path": "/audio/tejaswin-shankar",
+        "type": "Audio",
+        "date": "5d ago",
+        "title": "Decathlon's Renaissance Man 🎧"
+      },
+      {
+        "title": "Tejaswin: First Indian Over 8000 Pts",
+        "color": "#4ade80",
+        "views": "567K",
+        "meta": "6 min read",
+        "date": "1w ago",
+        "type": "Article",
+        "path": "/articles/federation-cup-2026-gurindervir-tejaswin-national-records"
+      }
+    ],
+    "image": "/tejaswin-article.jpeg"
+  }
+}

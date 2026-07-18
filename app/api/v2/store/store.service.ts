@@ -22,20 +22,75 @@ export class StoreService {
     }
 
     const snapshot = await query.get();
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const now = new Date();
+    const batch = this.db.batch();
+    let hasUpdates = false;
+    const products: any[] = [];
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const lockExpiresAt = data.lockExpiresAt ? (data.lockExpiresAt.toDate ? data.lockExpiresAt.toDate() : new Date(data.lockExpiresAt)) : null;
+
+      if ((data.status === 'locked' || data.status === 'reserved') && lockExpiresAt && lockExpiresAt < now) {
+        batch.update(doc.ref, {
+          status: 'available',
+          lockedBy: null,
+          lockExpiresAt: null,
+        });
+        products.push({
+          id: doc.id,
+          ...data,
+          status: 'available',
+          lockedBy: null,
+          lockExpiresAt: null,
+        });
+        hasUpdates = true;
+      } else {
+        products.push({
+          id: doc.id,
+          ...data,
+        });
+      }
+    }
+
+    if (hasUpdates) {
+      await batch.commit();
+    }
+    return products;
   }
 
   async getProductById(id: string) {
-    const doc = await this.db.collection('storeProducts').doc(id).get();
+    const docRef = this.db.collection('storeProducts').doc(id);
+    const doc = await docRef.get();
     if (!doc.exists) {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
+    const data = doc.data();
+    if (!data) {
+      throw new NotFoundException(`Product data is empty`);
+    }
+
+    const now = new Date();
+    const lockExpiresAt = data.lockExpiresAt ? (data.lockExpiresAt.toDate ? data.lockExpiresAt.toDate() : new Date(data.lockExpiresAt)) : null;
+
+    if ((data.status === 'locked' || data.status === 'reserved') && lockExpiresAt && lockExpiresAt < now) {
+      await docRef.update({
+        status: 'available',
+        lockedBy: null,
+        lockExpiresAt: null,
+      });
+      return {
+        id: doc.id,
+        ...data,
+        status: 'available',
+        lockedBy: null,
+        lockExpiresAt: null,
+      };
+    }
+
     return {
       id: doc.id,
-      ...doc.data(),
+      ...data,
     };
   }
 
@@ -69,7 +124,7 @@ export class StoreService {
       const data = doc.data();
       const lockExpiresAt = data.lockExpiresAt ? (data.lockExpiresAt.toDate ? data.lockExpiresAt.toDate() : new Date(data.lockExpiresAt)) : null;
 
-      if (data.status === 'locked' && lockExpiresAt && lockExpiresAt < now) {
+      if ((data.status === 'locked' || data.status === 'reserved') && lockExpiresAt && lockExpiresAt < now) {
         const docRef = doc.ref;
         batch.update(docRef, {
           status: 'available',
@@ -117,11 +172,14 @@ export class StoreService {
         throw new BadRequestException('Slot data is empty');
       }
       const now = new Date();
+      const lockExpiresAtVal = slotData.lockExpiresAt
+        ? (slotData.lockExpiresAt.toDate ? slotData.lockExpiresAt.toDate() : new Date(slotData.lockExpiresAt))
+        : null;
 
       if (
-        slotData.status === 'locked' &&
-        slotData.lockExpiresAt &&
-        slotData.lockExpiresAt.toDate() > now &&
+        (slotData.status === 'locked' || slotData.status === 'reserved') &&
+        lockExpiresAtVal &&
+        lockExpiresAtVal > now &&
         slotData.lockedBy !== userId
       ) {
         throw new BadRequestException('Slot is already locked by another user');
@@ -135,14 +193,14 @@ export class StoreService {
       const lockExpiresAt = new Date(now.getTime() + lockDurationMs);
 
       transaction.update(slotRef, {
-        status: 'locked',
+        status: 'reserved',
         lockedBy: userId,
         lockExpiresAt: lockExpiresAt,
       });
 
       return {
         slotId,
-        status: 'locked',
+        status: 'reserved',
         lockExpiresAt,
       };
     });
@@ -164,7 +222,7 @@ export class StoreService {
       const slotData = slotDoc.data();
       if (!slotData) return { success: true };
 
-      if (slotData.status === 'locked' && slotData.lockedBy === userId) {
+      if ((slotData.status === 'locked' || slotData.status === 'reserved') && slotData.lockedBy === userId) {
         transaction.update(slotRef, {
           status: 'available',
           lockedBy: null,
@@ -382,7 +440,7 @@ export class StoreService {
           }
         }
         const now = new Date();
-        if (slot.status === 'locked' && slot.lockExpiresAt) {
+        if ((slot.status === 'locked' || slot.status === 'reserved') && slot.lockExpiresAt) {
           const expiresAt = slot.lockExpiresAt.toDate ? slot.lockExpiresAt.toDate() : new Date(slot.lockExpiresAt);
           if (expiresAt < now) {
             throw new BadRequestException('Slot lock has expired');
@@ -406,6 +464,14 @@ export class StoreService {
         }
         transaction.update(productRef, {
           seatsBooked: seatsBooked + 1,
+        });
+      }
+
+      if (product.category === 'memorabilia') {
+        transaction.update(productRef, {
+          status: 'sold',
+          lockedBy: null,
+          lockExpiresAt: null,
         });
       }
 

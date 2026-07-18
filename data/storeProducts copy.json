@@ -1,0 +1,1575 @@
+{
+  "athlete-1": {
+    "category": "athletes",
+    "name": "Neeraj Chopra",
+    "discipline": "Javelin Throw",
+    "bio": "Olympic gold medallist and World champion. World record progression guide, training philosophy insights, and signed memorabilia.",
+    "image": "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=300&fit=crop&auto=format",
+    "governance_state": "approved",
+    "listings": [
+      {
+        "id": 1,
+        "type": "Training Program",
+        "title": "Neeraj's 12-Week Javelin Power Block",
+        "price": "₹4,999",
+        "preview": true
+      },
+      {
+        "id": 2,
+        "type": "Video Review",
+        "title": "Technique Video Review (30 min)",
+        "price": "₹2,499",
+        "preview": false
+      },
+      {
+        "id": 3,
+        "type": "Private Call",
+        "title": "20-min Private Q&A Call",
+        "price": "₹6,999",
+        "preview": false
+      },
+      {
+        "id": 4,
+        "type": "Signed Item",
+        "title": "Signed Training Tee (Authenticated)",
+        "price": "₹8,500",
+        "preview": false
+      }
+    ],
+    "rewardCoins": 50
+  },
+  "athlete-2": {
+    "category": "athletes",
+    "name": "Avinash Sable",
+    "discipline": "3000m Steeplechase",
+    "bio": "Asian Games silver medallist and national record holder. Sharing steeplechase fundamentals, training breakdowns, and community events.",
+    "image": "https://images.unsplash.com/photo-1544899489-a083461b088c?w=400&h=300&fit=crop&auto=format",
+    "governance_state": "approved",
+    "listings": [
+      {
+        "id": 1,
+        "type": "Video Course",
+        "title": "Steeplechase Barrier Technique Series",
+        "price": "₹3,299",
+        "preview": true
+      },
+      {
+        "id": 2,
+        "type": "Training Program",
+        "title": "8-Week Aerobic Base Builder",
+        "price": "₹2,999",
+        "preview": true
+      },
+      {
+        "id": 3,
+        "type": "Digital Download",
+        "title": "National Record Training Week PDF",
+        "price": "₹499",
+        "preview": false
+      }
+    ],
+    "rewardCoins": 50
+  },
+  "athlete-3": {
+    "category": "athletes",
+    "name": "Tejaswin Shankar",
+    "discipline": "High Jump",
+    "bio": "Commonwealth Games medalist and NCAA high jump champion. Technical coaching programs and digital content for aspiring high jumpers.",
+    "image": "https://images.unsplash.com/photo-1552674605-db6ffd4facb5?w=400&h=300&fit=crop&auto=format",
+    "governance_state": "pending",
+    "listings": [
+      {
+        "id": 1,
+        "type": "Video Course",
+        "title": "Fosbury Flop Mechanics — Full Series",
+        "price": "₹3,999",
+        "preview": true
+      },
+      {
+        "id": 2,
+        "type": "Private Call",
+        "title": "30-min High Jump Consultation",
+        "price": "₹4,999",
+        "preview": false
+      }
+    ],
+    "rewardCoins": 50
+  },
+  "auction-1": {
+    "category": "auctions",
+    "title": "Neeraj Chopra Signed Olympic Bib",
+    "description": "The official race bib worn by Neeraj Chopra during his gold medal performance. Signed post-event. Comes with AFI authenticity certificate.",
+    "pricePaise": 4850000,
+    "reservePrice": 4000000,
+    "biddersCount": 14,
+    "endsInSeconds": 172800,
+    "endsAt": {
+      "_seconds": 1783755801,
+      "_nanoseconds": 816000000
+    },
+    "governance_state": "approved",
+    "image": "https://images.unsplash.com/photo-1571019613576-2b22c76fd955?w=400&h=300&fit=crop&auto=format",
+    "bidHistory": [
+      {
+        "user": "S****h",
+        "amount": "₹48,500",
+        "time": "5 min ago"
+      },
+      {
+        "user": "R****j",
+        "amount": "₹45,000",
+        "time": "18 min ago"
+      },
+      {
+        "user": "P****a",
+        "amount": "₹42,000",
+        "time": "1 hr ago"
+      }
+    ],
+    "rewardCoins": 2425
+  },
+  "auction-2": {
+    "category": "auctions",
+    "title": "Avinash Sable Race Jersey — NTAC 2024",
+    "description": "Signed race jersey from National Track & Athletics Championship 2024 where Sable set a new national steeplechase record.",
+    "pricePaise": 2200000,
+    "reservePrice": 1800000,
+    "biddersCount": 8,
+    "endsInSeconds": 86400,
+    "endsAt": {
+      "_seconds": 1783669401,
+      "_nanoseconds": 816000000
+    },
+    "governance_state": "approved",
+    "image": "https://images.unsplash.com/photo-1551698618-1dfe5d97d256?w=400&h=300&fit=crop&auto=format",
+    "bidHistory": [
+      {
+        "user": "K****r",
+        "amount": "₹22,000",
+        "time": "12 min ago"
+      },
+      {
+        "user": "M****s",
+        "amount": "₹20,000",
+        "time": "45 min ago"
+      },
+      {
+        "user": "A****i",
+        "amount": "₹18,500",
+        "time": "2 hrs ago"
+      }
+    ],
+    "rewardCoins": 1100
+  },
+  "auction-3": {
+    "category": "auctions",
+    "title": "CWG 2022 Team India Relay Baton",
+    "description": "The relay baton used by Team India in the 4×400m event at Commonwealth Games 2022. Signed by all 4 relay members.",
+    "pricePaise": 3100000,
+    "reservePrice": 2500000,
+    "biddersCount": 11,
+    "endsInSeconds": 259200,
+    "endsAt": {
+      "_seconds": 1783842201,
+      "_nanoseconds": 816000000
+    },
+    "governance_state": "pending",
+    "image": "https://images.unsplash.com/photo-1607962837359-5e7e89f86776?w=400&h=300&fit=crop&auto=format",
+    "bidHistory": [
+      {
+        "user": "V****n",
+        "amount": "₹31,000",
+        "time": "30 min ago"
+      },
+      {
+        "user": "D****k",
+        "amount": "₹28,000",
+        "time": "2 hrs ago"
+      }
+    ],
+    "rewardCoins": 1550
+  },
+  "brand-product-1": {
+    "category": "brands",
+    "brand": "Adidas India",
+    "title": "Adizero Distance Running Shoe",
+    "price": "₹8,999",
+    "pricePaise": 899900,
+    "originalPrice": "₹12,999",
+    "rating": 4.7,
+    "reviews": 342,
+    "sizes": [
+      "UK 7",
+      "UK 8",
+      "UK 9",
+      "UK 10",
+      "UK 11"
+    ],
+    "image": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=300&h=300&fit=crop&auto=format",
+    "tag": "Sale",
+    "tagColor": "#c9115f",
+    "governance_state": "approved",
+    "rewardCoins": 450
+  },
+  "brand-product-2": {
+    "category": "brands",
+    "brand": "ASICS Run",
+    "title": "Gel-Nimbus 25 Marathon Edition",
+    "price": "₹14,499",
+    "pricePaise": 1449900,
+    "originalPrice": "₹16,999",
+    "rating": 4.9,
+    "reviews": 218,
+    "sizes": [
+      "UK 7",
+      "UK 8",
+      "UK 9",
+      "UK 10"
+    ],
+    "image": "https://images.unsplash.com/photo-1606107557195-0e29a4b5b4aa?w=300&h=300&fit=crop&auto=format",
+    "tag": "Flash Sale",
+    "tagColor": "#cd620e",
+    "governance_state": "approved",
+    "rewardCoins": 725
+  },
+  "brand-product-3": {
+    "category": "brands",
+    "brand": "Decathlon",
+    "title": "Kalenji Run Support Compression Tights",
+    "price": "₹1,499",
+    "pricePaise": 149900,
+    "originalPrice": "₹2,199",
+    "rating": 4.4,
+    "reviews": 891,
+    "sizes": [
+      "S",
+      "M",
+      "L",
+      "XL"
+    ],
+    "image": "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?w=300&h=300&fit=crop&auto=format",
+    "tag": "Popular",
+    "tagColor": "#c9115f",
+    "governance_state": "approved",
+    "rewardCoins": 75
+  },
+  "brand-product-4": {
+    "category": "brands",
+    "brand": "Puma Sports",
+    "title": "EvoStrider Track & Field Spike",
+    "price": "₹6,299",
+    "pricePaise": 629900,
+    "originalPrice": "₹7,899",
+    "rating": 4.6,
+    "reviews": 156,
+    "sizes": [
+      "UK 7",
+      "UK 8",
+      "UK 9",
+      "UK 10",
+      "UK 11"
+    ],
+    "image": "https://images.unsplash.com/photo-1584735175097-9ba52c0fc3d7?w=300&h=300&fit=crop&auto=format",
+    "tag": "Student Deal",
+    "tagColor": "#00c864",
+    "governance_state": "approved",
+    "rewardCoins": 315
+  },
+  "brand-product-5": {
+    "category": "brands",
+    "brand": "NikeRun Club",
+    "title": "Vaporfly 3 — Competition Road Racing",
+    "price": "₹19,999",
+    "pricePaise": 1999900,
+    "originalPrice": "₹19,999",
+    "rating": 4.9,
+    "reviews": 512,
+    "sizes": [
+      "UK 7",
+      "UK 8",
+      "UK 8.5",
+      "UK 9",
+      "UK 10"
+    ],
+    "image": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=300&h=300&fit=crop&auto=format",
+    "tag": "New",
+    "tagColor": "#6b7280",
+    "governance_state": "approved",
+    "rewardCoins": 1000
+  },
+  "brand-product-6": {
+    "category": "brands",
+    "brand": "Decathlon",
+    "title": "Kiprun KS900 Long Distance Running Shoe",
+    "price": "₹4,999",
+    "pricePaise": 499900,
+    "originalPrice": "₹5,999",
+    "rating": 4.5,
+    "reviews": 1245,
+    "sizes": [
+      "UK 6",
+      "UK 7",
+      "UK 8",
+      "UK 9",
+      "UK 10",
+      "UK 11"
+    ],
+    "image": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=300&h=300&fit=crop&auto=format",
+    "tag": "₹500 off",
+    "tagColor": "#c9115f",
+    "governance_state": "approved",
+    "rewardCoins": 250
+  },
+  "coach-1": {
+    "category": "coaches",
+    "name": "Anubhav Karmakar",
+    "title": "Founder, Athloft Multisport",
+    "role": "Founder, Athloft Multisport",
+    "experience": "12 yrs exp",
+    "rating": 4.9,
+    "reviews": 218,
+    "pricePaise": 220000,
+    "nextSlot": "Today 5PM",
+    "specializations": [
+      "Marathon",
+      "IronMan",
+      "Triathlon",
+      "Global Majors"
+    ],
+    "image": "https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=800&h=900&fit=crop&auto=format&q=80",
+    "verified": true,
+    "sourcing_model": "independent",
+    "governance_state": "approved",
+    "coachId": "1",
+    "tagline": "USATF-certified · Marathons & IronMan specialist",
+    "about": "Founder of Athloft Multisport, Anubhav is a USATF-certified coach who has guided athletes across global major marathons including Boston, Berlin, and Tokyo, as well as IronMan events worldwide. His coaching blends biomechanical precision with event-specific periodisation.",
+    "achievements": [
+      "USATF Level 2 Certified Coach",
+      "Coached 40+ Boston Marathon finishers",
+      "IronMan 70.3 Age Group Coach of the Year 2023",
+      "12 athletes with sub-4hr marathon PBs under his plan"
+    ],
+    "certifications": [
+      "USATF Level 2 Track & Field",
+      "IRONMAN Certified Coach",
+      "Sports Science Diploma – ISSA",
+      "First Aid & CPR Certified"
+    ],
+    "services": [
+      {
+        "title": "Marathon Training Plan",
+        "duration": "16 weeks",
+        "pricePaise": 850000,
+        "desc": "Full periodised marathon plan with weekly check-ins and race strategy."
+      },
+      {
+        "title": "IronMan Prep Session",
+        "duration": "90 min",
+        "pricePaise": 320000,
+        "desc": "Multi-discipline pacing, nutrition strategy, and transition practice."
+      },
+      {
+        "title": "Monthly Online Coaching",
+        "duration": "4 sessions",
+        "pricePaise": 650000,
+        "desc": "Remote coaching with video analysis, structured training blocks and recovery tracking."
+      }
+    ],
+    "slots": [
+      {
+        "date": "Today",
+        "day": "Thu",
+        "num": 3,
+        "times": [
+          "5:00 PM",
+          "6:30 PM"
+        ]
+      },
+      {
+        "date": "Fri",
+        "day": "Fri",
+        "num": 4,
+        "times": [
+          "7:00 AM",
+          "5:00 PM",
+          "6:30 PM"
+        ]
+      },
+      {
+        "date": "Sat",
+        "day": "Sat",
+        "num": 5,
+        "times": [
+          "8:00 AM",
+          "10:00 AM",
+          "12:00 PM"
+        ]
+      },
+      {
+        "date": "Sun",
+        "day": "Sun",
+        "num": 6,
+        "times": [
+          "7:00 AM",
+          "9:00 AM"
+        ]
+      },
+      {
+        "date": "Mon",
+        "day": "Mon",
+        "num": 7,
+        "times": [
+          "6:00 AM",
+          "5:30 PM"
+        ]
+      }
+    ],
+    "reviewList": [
+      {
+        "user": "Rahul M.",
+        "rating": 5,
+        "comment": "Anubhav's marathon plan took me from 4:45 to 3:58. Incredibly structured and motivating.",
+        "date": "1 week ago"
+      },
+      {
+        "user": "Preethi S.",
+        "rating": 5,
+        "comment": "Best IronMan coach in Bengaluru. His multi-sport periodisation is elite-level.",
+        "date": "2 weeks ago"
+      },
+      {
+        "user": "Kartik V.",
+        "rating": 4,
+        "comment": "Very knowledgeable about global events. The Boston qualifier plan was spot on.",
+        "date": "1 month ago"
+      }
+    ],
+    "rewardCoins": 110
+  },
+  "coach-2": {
+    "category": "coaches",
+    "name": "Vikas Srinivasan",
+    "title": "Founder, Runpundit",
+    "role": "Founder, Runpundit",
+    "experience": "14 yrs exp",
+    "rating": 4.8,
+    "reviews": 342,
+    "pricePaise": 180000,
+    "nextSlot": "Tomorrow 9AM",
+    "specializations": [
+      "5K to Ultra",
+      "Marathon",
+      "Online Coaching"
+    ],
+    "image": "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=800&h=900&fit=crop&auto=format&q=80",
+    "verified": true,
+    "sourcing_model": "independent",
+    "governance_state": "approved",
+    "coachId": "2",
+    "tagline": "Coached 3,500+ runners · 5K to ultra-marathon",
+    "about": "Vikas Srinivasan is the founder of Runpundit, one of Bangalore's most trusted running coaching platforms. With 14 years of experience, he has personally coached over 3,500 runners across distances from 5K to full ultra-marathons, both in-person and online.",
+    "achievements": [
+      "3,500+ runners coached across all distances",
+      "Runpundit community of 8,000+ members",
+      "Featured in Runner's World India 2022 & 2023",
+      "18 athletes with first sub-3:30 marathons"
+    ],
+    "certifications": [
+      "Athletics Federation of India – Distance Coach",
+      "USATF Level 1 Certified",
+      "Sports Psychology Certificate – NIMHANS",
+      "Ultra Running Coach Certification"
+    ],
+    "services": [
+      {
+        "title": "5K Speed Programme",
+        "duration": "8 weeks",
+        "pricePaise": 420000,
+        "desc": "Speed-focused periodised block for 5K PB seekers with weekly intervals and test runs."
+      },
+      {
+        "title": "Marathon to Ultra Transition",
+        "duration": "12 weeks",
+        "pricePaise": 700000,
+        "desc": "Structured ultra-running introduction with trail running fundamentals and race strategy."
+      },
+      {
+        "title": "Video Running Analysis",
+        "duration": "60 min",
+        "pricePaise": 180000,
+        "desc": "Slow-motion gait analysis with corrective drills and footstrike recommendations."
+      }
+    ],
+    "slots": [
+      {
+        "date": "Fri",
+        "day": "Fri",
+        "num": 4,
+        "times": [
+          "9:00 AM",
+          "11:00 AM",
+          "3:00 PM"
+        ]
+      },
+      {
+        "date": "Sat",
+        "day": "Sat",
+        "num": 5,
+        "times": [
+          "6:30 AM",
+          "8:00 AM",
+          "10:00 AM"
+        ]
+      },
+      {
+        "date": "Sun",
+        "day": "Sun",
+        "num": 6,
+        "times": [
+          "7:00 AM",
+          "5:00 PM"
+        ]
+      },
+      {
+        "date": "Mon",
+        "day": "Mon",
+        "num": 7,
+        "times": [
+          "6:00 AM",
+          "7:30 AM",
+          "6:00 PM"
+        ]
+      }
+    ],
+    "reviewList": [
+      {
+        "user": "Anjali K.",
+        "rating": 5,
+        "comment": "Vikas transformed my running. Went from half-marathon to 50K with his program. Incredible!",
+        "date": "3 days ago"
+      },
+      {
+        "user": "Sathish P.",
+        "rating": 5,
+        "comment": "The video analysis alone was worth it. Fixed my heel-striking in 3 sessions.",
+        "date": "1 week ago"
+      },
+      {
+        "user": "Divya R.",
+        "rating": 4,
+        "comment": "Very accessible for online coaching. His feedback is always timely and detailed.",
+        "date": "3 weeks ago"
+      }
+    ],
+    "rewardCoins": 90
+  },
+  "coach-3": {
+    "category": "coaches",
+    "name": "Kiran Badiger",
+    "title": "Distance Running Coach",
+    "role": "Distance Running Coach",
+    "experience": "9 yrs exp",
+    "rating": 4.7,
+    "reviews": 156,
+    "pricePaise": 150000,
+    "nextSlot": "Today 7PM",
+    "specializations": [
+      "Distance Running",
+      "Marathon",
+      "Intl. Qualifiers"
+    ],
+    "image": "https://images.unsplash.com/photo-1463453091185-61582044d556?w=800&h=900&fit=crop&auto=format&q=80",
+    "verified": true,
+    "sourcing_model": "independent",
+    "governance_state": "approved",
+    "coachId": "3",
+    "tagline": "International marathon qualifier specialist",
+    "about": "Kiran Badiger is an independent distance running coach focused on guiding recreational and competitive runners toward international marathon qualifier standards. His methodical approach emphasises aerobic base building, threshold training, and race-day execution.",
+    "achievements": [
+      "9 athletes qualified for international marathon majors",
+      "Berlin Marathon qualifier specialist",
+      "Coached runners in Tokyo, Chicago, and London majors",
+      "Former Karnataka State Cross Country runner"
+    ],
+    "certifications": [
+      "AFI Club Coach Certificate",
+      "Distance Running Specialist – AIMS Certified",
+      "Sports Nutrition Fundamentals",
+      "Mental Performance Coaching Basics"
+    ],
+    "services": [
+      {
+        "title": "International Qualifier Plan",
+        "duration": "20 weeks",
+        "pricePaise": 980000,
+        "desc": "Target-specific plan to achieve BQ/Berlin/Tokyo qualifier standards with progressive long runs."
+      },
+      {
+        "title": "Aerobic Base Camp",
+        "duration": "8 weeks",
+        "pricePaise": 520000,
+        "desc": "Foundation block with Z2 runs, strides and mobility for injury-free base building."
+      },
+      {
+        "title": "Race Strategy Session",
+        "duration": "45 min",
+        "pricePaise": 150000,
+        "desc": "Pre-race briefing covering pacing, nutrition, weather adjustment, and mental tactics."
+      }
+    ],
+    "slots": [
+      {
+        "date": "Today",
+        "day": "Thu",
+        "num": 3,
+        "times": [
+          "7:00 PM",
+          "8:00 PM"
+        ]
+      },
+      {
+        "date": "Sat",
+        "day": "Sat",
+        "num": 5,
+        "times": [
+          "6:00 AM",
+          "7:30 AM",
+          "9:00 AM"
+        ]
+      },
+      {
+        "date": "Sun",
+        "day": "Sun",
+        "num": 6,
+        "times": [
+          "6:00 AM",
+          "8:00 AM"
+        ]
+      },
+      {
+        "date": "Tue",
+        "day": "Tue",
+        "num": 8,
+        "times": [
+          "7:00 PM",
+          "8:30 PM"
+        ]
+      }
+    ],
+    "reviewList": [
+      {
+        "user": "Mohan K.",
+        "rating": 5,
+        "comment": "Got my BQ with Kiran's plan. He understood exactly what time I was targeting.",
+        "date": "2 weeks ago"
+      },
+      {
+        "user": "Smitha L.",
+        "rating": 4,
+        "comment": "Great race strategy sessions. His Tokyo qualifier plan was very well structured.",
+        "date": "1 month ago"
+      },
+      {
+        "user": "Arjun N.",
+        "rating": 5,
+        "comment": "Finally achieved sub-3:30 after 2 years of trying. Kiran's method works.",
+        "date": "1 month ago"
+      }
+    ],
+    "rewardCoins": 75
+  },
+  "coach-4": {
+    "category": "coaches",
+    "name": "Pramod Deshpande",
+    "role": "Core Team, Jayanagar Jaguars",
+    "title": "Core Team, Jayanagar Jaguars",
+    "experience": "11 yrs exp",
+    "rating": 4.8,
+    "reviews": 289,
+    "pricePaise": 160000,
+    "nextSlot": "Wed 6AM",
+    "specializations": [
+      "Running Groups",
+      "Distance",
+      "Community Training"
+    ],
+    "image": "https://images.unsplash.com/photo-1552058544-f2b08422138a?w=800&h=900&fit=crop&auto=format&q=80",
+    "verified": true,
+    "sourcing_model": "independent",
+    "governance_state": "approved",
+    "coachId": "4",
+    "tagline": "Jayanagar Jaguars core coach · Group running specialist",
+    "about": "Pramod Deshpande is a core coaching member of Jayanagar Jaguars, one of Bangalore's best-known and most active running communities. With 11 years of experience in group coaching and community running, Pramod specialises in building consistent training habits and fostering a strong running culture.",
+    "achievements": [
+      "Core coach of Jayanagar Jaguars since 2015",
+      "Led 500+ group long runs across Bangalore",
+      "Developed marathon training plans for 200+ runners",
+      "3 runners from JJ placed in top 10 at TCS World 10K"
+    ],
+    "certifications": [
+      "AFI Club Coach Certified",
+      "Group Fitness Instructor – ACE",
+      "Running Biomechanics Workshop – Bangalore Athletics",
+      "Community Coach Recognition Award 2022"
+    ],
+    "services": [
+      {
+        "title": "Group Morning Run",
+        "duration": "90 min",
+        "pricePaise": 50000,
+        "desc": "Structured group long run with pacing guidance, hydration stops and form cues."
+      },
+      {
+        "title": "10K to Half-Marathon Block",
+        "duration": "10 weeks",
+        "pricePaise": 450000,
+        "desc": "Progressive block to bridge 10K runners into half-marathon readiness."
+      },
+      {
+        "title": "Personal Coaching Session",
+        "duration": "60 min",
+        "pricePaise": 160000,
+        "desc": "One-on-one analysis, goal setting, and next-step planning for your running journey."
+      }
+    ],
+    "slots": [
+      {
+        "date": "Wed",
+        "day": "Wed",
+        "num": 9,
+        "times": [
+          "6:00 AM",
+          "7:00 AM"
+        ]
+      },
+      {
+        "date": "Sat",
+        "day": "Sat",
+        "num": 5,
+        "times": [
+          "5:30 AM",
+          "6:30 AM",
+          "7:30 AM"
+        ]
+      },
+      {
+        "date": "Sun",
+        "day": "Sun",
+        "num": 6,
+        "times": [
+          "5:30 AM",
+          "6:30 AM"
+        ]
+      }
+    ],
+    "reviewList": [
+      {
+        "user": "Vikram A.",
+        "rating": 5,
+        "comment": "Pramod's group runs are the highlight of my week. Best running community in Bangalore.",
+        "date": "1 week ago"
+      },
+      {
+        "user": "Lakshmi S.",
+        "rating": 5,
+        "comment": "His 10K to half-marathon plan is solid. Completed my first half feeling strong!",
+        "date": "2 weeks ago"
+      },
+      {
+        "user": "Rohan T.",
+        "rating": 4,
+        "comment": "Very encouraging and experienced. The group dynamic really helps on tough days.",
+        "date": "1 month ago"
+      }
+    ],
+    "rewardCoins": 80
+  },
+  "coach-5": {
+    "category": "coaches",
+    "name": "Nakul Butta",
+    "role": "Founder, All In Running",
+    "title": "Founder, All In Running",
+    "experience": "10 yrs exp",
+    "rating": 4.9,
+    "reviews": 197,
+    "pricePaise": 200000,
+    "nextSlot": "Fri 7AM",
+    "specializations": [
+      "Distance Running",
+      "Strength Training",
+      "Yoga Integration"
+    ],
+    "image": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=800&h=900&fit=crop&auto=format&q=80",
+    "verified": true,
+    "sourcing_model": "independent",
+    "governance_state": "approved",
+    "coachId": "5",
+    "tagline": "All In Running · Strength + Yoga integrated coaching",
+    "about": "Nakul Butta founded All In Running on the belief that endurance performance can be unlocked by integrating strength training and yoga alongside traditional run coaching. His holistic approach reduces injury rates while building the power and flexibility needed for faster, more consistent running.",
+    "achievements": [
+      "Founder, All In Running platform",
+      "14 athletes with marathon PBs in 2024",
+      "Yoga for Runners specialist certification",
+      "Strength training integration pioneer in Bangalore running scene"
+    ],
+    "certifications": [
+      "USATF Level 1 Certified",
+      "Yoga Alliance RYT-200",
+      "NSCA Certified Strength & Conditioning Specialist",
+      "Sports Rehabilitation Basics – ISAK"
+    ],
+    "services": [
+      {
+        "title": "Integrated Run + Strength Block",
+        "duration": "12 weeks",
+        "pricePaise": 920000,
+        "desc": "Holistic programme combining 4 run sessions with 2 strength sessions per week, yoga cool-downs included."
+      },
+      {
+        "title": "Yoga for Runners Workshop",
+        "duration": "90 min",
+        "pricePaise": 120000,
+        "desc": "Targeted yoga session for hip flexors, hamstrings and glutes with runner-specific flows."
+      },
+      {
+        "title": "Strength Assessment",
+        "duration": "60 min",
+        "pricePaise": 200000,
+        "desc": "Identify muscular imbalances affecting your running economy with corrective exercise prescription."
+      }
+    ],
+    "slots": [
+      {
+        "date": "Fri",
+        "day": "Fri",
+        "num": 4,
+        "times": [
+          "7:00 AM",
+          "8:30 AM",
+          "6:00 PM"
+        ]
+      },
+      {
+        "date": "Sat",
+        "day": "Sat",
+        "num": 5,
+        "times": [
+          "7:00 AM",
+          "9:00 AM"
+        ]
+      },
+      {
+        "date": "Mon",
+        "day": "Mon",
+        "num": 7,
+        "times": [
+          "6:30 AM",
+          "5:30 PM",
+          "7:00 PM"
+        ]
+      },
+      {
+        "date": "Wed",
+        "day": "Wed",
+        "num": 9,
+        "times": [
+          "6:30 AM",
+          "7:30 AM"
+        ]
+      }
+    ],
+    "reviewList": [
+      {
+        "user": "Nidhi K.",
+        "rating": 5,
+        "comment": "The strength + run integration is a game changer. Zero injuries in 6 months of training.",
+        "date": "4 days ago"
+      },
+      {
+        "user": "Suresh M.",
+        "rating": 5,
+        "comment": "Nakul's yoga sessions are mandatory in my training now. Completely reduced my tightness.",
+        "date": "2 weeks ago"
+      },
+      {
+        "user": "Priya G.",
+        "rating": 4,
+        "comment": "Very balanced approach. It's not just about running more, it's about running smarter.",
+        "date": "1 month ago"
+      }
+    ],
+    "rewardCoins": 100
+  },
+  "coach-6": {
+    "category": "coaches",
+    "name": "Deepa Nair",
+    "role": "Endurance & Recovery Coach",
+    "title": "Endurance & Recovery Coach",
+    "experience": "7 yrs exp",
+    "rating": 4.6,
+    "reviews": 132,
+    "pricePaise": 120000,
+    "nextSlot": "Thu 8AM",
+    "specializations": [
+      "Recovery",
+      "Endurance",
+      "Injury Prevention"
+    ],
+    "image": "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=120&h=120&fit=crop&auto=format",
+    "verified": true,
+    "sourcing_model": "independent",
+    "governance_state": "approved",
+    "coachId": "6",
+    "tagline": "Endurance & Recovery Specialist · Injury prevention",
+    "about": "Deepa Nair is a certified endurance and recovery coach. With over 7 years of coaching experience, she focuses on injury prevention, mobility work, and athletic recovery protocols to help runners stay consistent and healthy.",
+    "achievements": [
+      "Helped 150+ runners resolve recurring injuries",
+      "Formulated recovery guidelines for local running clubs",
+      "Certified Yoga for Athletes instructor"
+    ],
+    "certifications": [
+      "AFI Sports Physiotherapy Certificate",
+      "CSCS - Recovery Specialist",
+      "First Aid & CPR Certified"
+    ],
+    "services": [
+      {
+        "title": "Recovery & Mobility Session",
+        "duration": "60 min",
+        "pricePaise": 120000,
+        "desc": "Guided recovery routine with mobility assessment, foam rolling, and stretching."
+      },
+      {
+        "title": "Gait & Injury Prevention Review",
+        "duration": "90 min",
+        "pricePaise": 250000,
+        "desc": "Detailed analysis of running form, muscle strength balance, and customized preventative exercises."
+      }
+    ],
+    "slots": [
+      {
+        "date": "Thu",
+        "day": "Thu",
+        "num": 10,
+        "times": [
+          "8:00 AM",
+          "10:00 AM"
+        ]
+      },
+      {
+        "date": "Sat",
+        "day": "Sat",
+        "num": 5,
+        "times": [
+          "9:00 AM",
+          "11:00 AM"
+        ]
+      }
+    ],
+    "reviewList": [
+      {
+        "user": "Amit K.",
+        "rating": 5,
+        "comment": "Deepa's recovery plan saved my marathon training. Highly recommend her mobility checks.",
+        "date": "2 weeks ago"
+      }
+    ],
+    "rewardCoins": 60
+  },
+  "digital-1": {
+    "category": "digital",
+    "type": "Video Course",
+    "title": "Javelin Throw Mastery — Full Biomechanics Series",
+    "creator": "AFI Performance Lab",
+    "price": "₹3,999",
+    "pricePaise": 399900,
+    "duration": "6 hrs 20 min",
+    "lessons": 22,
+    "hasPreview": true,
+    "description": "A comprehensive 22-lesson video series covering approach mechanics, release timing, flight phases, and landing. Shot at the AFI Performance Lab with elite coaching staff.",
+    "highlights": [
+      "Slow-motion biomechanical breakdown",
+      "22 structured lessons",
+      "Drills library with 40+ exercises",
+      "Certificate of completion"
+    ],
+    "image": "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=250&fit=crop&auto=format",
+    "progress": null,
+    "governance_state": "approved",
+    "rewardCoins": 200
+  },
+  "digital-2": {
+    "category": "digital",
+    "type": "Training Program",
+    "title": "Sub-3:30 Marathon Plan — 16 Weeks",
+    "creator": "Vikas Srinivasan",
+    "price": "₹2,499",
+    "pricePaise": 249900,
+    "duration": "16 weeks",
+    "lessons": 4,
+    "hasPreview": true,
+    "description": "A structured 16-week periodised plan designed to take runners from 3:45 to sub-3:30 finish time, built on proven principles by Runpundit coach Vikas Srinivasan.",
+    "highlights": [
+      "Week-by-week schedule (PDF)",
+      "GPS workout files (.gpx)",
+      "Strength routine supplements",
+      "Race-week and taper protocol"
+    ],
+    "image": "https://images.unsplash.com/photo-1552674605-db6ffd4facb5?w=400&h=250&fit=crop&auto=format",
+    "progress": null,
+    "governance_state": "approved",
+    "rewardCoins": 125
+  },
+  "digital-3": {
+    "category": "digital",
+    "type": "AI Report",
+    "title": "Dolly Sprint Mechanics Analysis",
+    "creator": "Dolly AI by SF360",
+    "price": "₹799",
+    "pricePaise": 79900,
+    "duration": "Instant",
+    "lessons": 1,
+    "hasPreview": false,
+    "description": "Upload your sprint video and receive a comprehensive AI-generated biomechanical report covering start mechanics, drive phase, top-speed and deceleration analysis with corrective drill recommendations.",
+    "highlights": [
+      "Instant report generation",
+      "Phase-by-phase breakdown",
+      "Personalised drill prescription",
+      "Share directly with your coach"
+    ],
+    "image": "https://images.unsplash.com/photo-1518770660439-4636190af475?w=400&h=250&fit=crop&auto=format",
+    "progress": null,
+    "governance_state": "approved",
+    "rewardCoins": 40
+  },
+  "digital-4": {
+    "category": "digital",
+    "type": "PDF Guide",
+    "title": "Race-Day Nutrition Playbook",
+    "creator": "AFI Sports Science Team",
+    "price": "₹499",
+    "pricePaise": 49900,
+    "duration": "48 pages",
+    "lessons": 1,
+    "hasPreview": true,
+    "description": "A complete pre-race, during-race, and recovery nutrition guide written by the AFI sports science team. Includes event-specific protocols for 5K, 10K, half-marathon, and full marathon.",
+    "highlights": [
+      "Event-specific protocols",
+      "Hydration tables",
+      "Supplement guidance",
+      "Sample race-day menus"
+    ],
+    "image": "https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=400&h=250&fit=crop&auto=format",
+    "progress": null,
+    "governance_state": "approved",
+    "rewardCoins": 25
+  },
+  "digital-5": {
+    "category": "digital",
+    "type": "Video Course",
+    "title": "Strength for Runners — 8-Week Foundation",
+    "creator": "Nakul Butta / All In Running",
+    "price": "₹2,999",
+    "pricePaise": 299900,
+    "duration": "4 hrs 15 min",
+    "lessons": 16,
+    "hasPreview": true,
+    "description": "An 8-week gym programme built specifically for runners. Covers glute activation, single-leg strength, hip mobility, and injury-prevention routines that complement your run training.",
+    "highlights": [
+      "16 video sessions",
+      "Progressive loading structure",
+      "Home & gym variants",
+      "Yoga cool-down flows"
+    ],
+    "image": "https://images.unsplash.com/photo-1581009137042-c552e485697a?w=400&h=250&fit=crop&auto=format",
+    "progress": null,
+    "governance_state": "approved",
+    "rewardCoins": 150
+  },
+  "event-1": {
+    "category": "events",
+    "title": "Virtual Breakfast",
+    "subtitle": "Parul Chaudhary & Avinash Sable",
+    "type": "virtual",
+    "dates": "Oct 6–12, 2025",
+    "price": 1599,
+    "pricePaise": 159900,
+    "seats": 60,
+    "seatsLeft": 28,
+    "badge": "SELLING FAST",
+    "badgeColor": "#ff4444",
+    "description": "Well-produced online video session. Athlete cooks actual morning meal on camera + runs 30–40 min + answers 20 fan questions.",
+    "perks": [
+      "Digital badge after event",
+      "₹499 credit OR 3 months subscription"
+    ],
+    "memento": {
+      "label": "Autographed training bib or jersey",
+      "price": 1999
+    },
+    "icon": "Video",
+    "color": "#0ea5e9",
+    "bg": "rgba(14,165,233,0.1)",
+    "image": "https://images.unsplash.com/photo-1552674605-db6ffd4facb5?w=400&h=240&fit=crop&auto=format",
+    "governance_state": "approved",
+    "rewardCoins": 80
+  },
+  "event-2": {
+    "category": "events",
+    "title": "Breakfast with Neeraj",
+    "subtitle": "Neeraj Chopra · Intimate 10-seat table",
+    "type": "in-person",
+    "dates": "Oct 15–20, 2025",
+    "price": 50000,
+    "pricePaise": 5000000,
+    "seats": 10,
+    "seatsLeft": 4,
+    "badge": "EXCLUSIVE",
+    "badgeColor": "#c9115f",
+    "description": "75-min intimate breakfast at a non-5-star venue, menu of Neeraj's choice. The intimacy no stadium seat can replicate.",
+    "perks": [
+      "₹499 credit OR 3 months subscription"
+    ],
+    "memento": {
+      "label": "Autographed training bib or jersey",
+      "price": 0
+    },
+    "icon": "Users",
+    "color": "#c9115f",
+    "bg": "rgba(201,17,95,0.1)",
+    "image": "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=240&fit=crop&auto=format",
+    "governance_state": "approved",
+    "rewardCoins": 2500
+  },
+  "event-3": {
+    "category": "events",
+    "title": "Virtual AMA — Medal Winners",
+    "subtitle": "3–4 athletes + coach per session",
+    "type": "virtual",
+    "dates": "Oct 1–15, 2025",
+    "price": 999,
+    "pricePaise": 99900,
+    "seats": 30,
+    "seatsLeft": 17,
+    "badge": "4 SESSIONS",
+    "badgeColor": "#00c864",
+    "description": "3–4 sessions, each with 3–4 medal-winning athletes and a coach. Direct Q&A with champions fresh from Nagoya.",
+    "perks": [
+      "Digital badge after event",
+      "₹199 credit OR 1 month subscription"
+    ],
+    "memento": null,
+    "icon": "Mic",
+    "color": "#00c864",
+    "bg": "rgba(0,200,100,0.1)",
+    "image": "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=400&h=240&fit=crop&auto=format",
+    "governance_state": "approved",
+    "rewardCoins": 50
+  },
+  "exp_ama_avinash_sable": {
+    "productType": "experience",
+    "category": "experiences",
+    "title": "AMA with Avinash Sable",
+    "description": "Live AMA with steeplechase national record holder Avinash Sable. Ask him anything — training regimen, nutrition, race strategy, upcoming competitions, and his journey from army to world stage.",
+    "duration": "90 minutes",
+    "priceInPaise": 59900,
+    "rewardCoins": 300,
+    "governanceState": "approved",
+    "totalSeats": 30,
+    "tag": "AMA Session",
+    "tagColor": "#00c864",
+    "image": "https://images.unsplash.com/photo-1544899489-a083461b088c?w=800&h=400&fit=crop&auto=format",
+    "inclusions": [
+      "Live AMA access",
+      "In-app question queue",
+      "48-hour session recording",
+      "Digital badge"
+    ],
+    "athlete": "Avinash Sable",
+    "athleteImg": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=120&h=120&fit=crop&auto=format",
+    "type": "online",
+    "onlineLink": "https://meet.sportsfan360.app/sable-ama",
+    "host": "Moderator: Rahul Mehta",
+    "hostRole": "SportsFan360 Host",
+    "eventStartsAt": "2026-07-07T19:00:00+05:30",
+    "agenda": [
+      {
+        "time": "7:00 PM",
+        "item": "Welcome & introductions"
+      },
+      {
+        "time": "7:10 PM",
+        "item": "Avinash opening remarks"
+      },
+      {
+        "time": "7:20 PM",
+        "item": "Moderated Q&A — Round 1"
+      },
+      {
+        "time": "7:50 PM",
+        "item": "Live poll: Fan choice topic"
+      },
+      {
+        "time": "8:00 PM",
+        "item": "Open floor Q&A"
+      }
+    ],
+    "rules": [
+      "Questions via the in-app question queue only",
+      "Respectful conduct required at all times",
+      "Recording strictly prohibited",
+      "Session will be available as a recording for 48 hours"
+    ],
+    "status": "active",
+    "seatsBooked": 26
+  },
+  "exp_breakfast_neeraj": {
+    "productType": "experience",
+    "category": "experiences",
+    "title": "Breakfast with Neeraj Chopra",
+    "description": "Start your morning with an intimate Q&A breakfast with Neeraj Chopra. Limited to 8 guests only...",
+    "duration": "2 hours",
+    "priceInPaise": 1250000,
+    "rewardCoins": 625,
+    "governanceState": "approved",
+    "totalSeats": 8,
+    "tag": "Exclusive",
+    "tagColor": "#c9115f",
+    "inclusions": [
+      "Curated breakfast for two",
+      "Signed memorabilia",
+      "Group photo session",
+      "Q&A with the athlete",
+      "Digital certificate of attendance"
+    ],
+    "athlete": "Neeraj Chopra",
+    "athleteImg": "https://images.unsplash.com/photo-1544367567...",
+    "type": "offline",
+    "venue": "ITC Maurya, New Delhi",
+    "venueAddress": "Sardar Patel Marg, Diplomatic Enclave, New Delhi – 110021",
+    "host": "SportsFan360 Events",
+    "hostRole": "Official Experience Host",
+    "arrivalTime": "7:45 AM",
+    "dressCode": "Smart casual — no sports jerseys",
+    "parking": "Complimentary valet at ITC Maurya lobby",
+    "eventStartsAt": "2026-07-18T08:00:00+05:30",
+    "agenda": [
+      {
+        "time": "8:00 AM",
+        "item": "Guest arrival & welcome drinks"
+      },
+      {
+        "time": "8:30 AM",
+        "item": "Neeraj joins — breakfast begins"
+      },
+      {
+        "time": "9:00 AM",
+        "item": "Open Q&A session"
+      }
+    ],
+    "rules": [
+      "Arrive 15 minutes before the start time",
+      "No personal recording equipment allowed",
+      "Two questions per guest during Q&A"
+    ],
+    "status": "active",
+    "image": "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=250&fit=crop&auto=format",
+    "seatsBooked": 6
+  },
+  "exp_track_masterclass_yarraji": {
+    "productType": "experience",
+    "category": "experiences",
+    "title": "Track Masterclass with Jyothi Yarraji",
+    "description": "Train on the same track as India's sprint queen Jyothi Yarraji. This early-morning masterclass covers acceleration mechanics, race starts, and mental toughness drills.",
+    "duration": "3 hours",
+    "priceInPaise": 899900,
+    "rewardCoins": 450,
+    "governanceState": "approved",
+    "totalSeats": 12,
+    "tag": "Training Session",
+    "tagColor": "#0ea5e9",
+    "image": "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?w=800&h=400&fit=crop&auto=format",
+    "inclusions": [
+      "Warm-up & dynamic stretching with Jyothi",
+      "Sprint start mechanics coaching",
+      "Video technique feedback session",
+      "Signed bib",
+      "Group photo"
+    ],
+    "athlete": "Jyothi Yarraji",
+    "athleteImg": "https://images.unsplash.com/photo-1525786904702-ba2c9fa92059?w=120&h=120&fit=crop&auto=format",
+    "type": "offline",
+    "venue": "Kanteerava Stadium, Bengaluru",
+    "venueAddress": "Kasturba Road, Bangalore – 560001",
+    "host": "SportsFan360 Events",
+    "hostRole": "Official Experience Host",
+    "arrivalTime": "6:10 AM",
+    "dressCode": "Athletic wear — no jeans or casual footwear",
+    "parking": "Available at Kanteerava Indoor Stadium parking lot",
+    "eventStartsAt": "2026-07-22T06:30:00+05:30",
+    "agenda": [
+      {
+        "time": "6:30 AM",
+        "item": "Warm-up & dynamic stretching with Jyothi"
+      },
+      {
+        "time": "7:00 AM",
+        "item": "Sprint start mechanics — block work"
+      },
+      {
+        "time": "7:30 AM",
+        "item": "Acceleration drills — 30m / 60m sprints"
+      },
+      {
+        "time": "8:00 AM",
+        "item": "Technique feedback session (video analysis)"
+      },
+      {
+        "time": "8:30 AM",
+        "item": "Group debrief & Q&A"
+      },
+      {
+        "time": "9:00 AM",
+        "item": "Signed bib handover & group photo"
+      }
+    ],
+    "rules": [
+      "Wear proper running spikes or track shoes",
+      "Arrive 20 minutes early for bib collection",
+      "Medical clearance required for participants under 16",
+      "No personal recording during drills — official videographer present"
+    ],
+    "status": "active",
+    "seatsBooked": 10
+  },
+  "exp_virtual_nutrition_qna_tejaswin": {
+    "productType": "experience",
+    "category": "experiences",
+    "title": "Virtual Nutrition Q&A with Tejaswin Shankar",
+    "description": "India's Commonwealth Games High Jump champion Tejaswin Shankar breaks down his nutrition strategy — from pre-competition loading to recovery meals.",
+    "duration": "60 minutes",
+    "priceInPaise": 49900,
+    "rewardCoins": 250,
+    "governanceState": "approved",
+    "totalSeats": 50,
+    "tag": "AMA Session",
+    "tagColor": "#00c864",
+    "image": "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800&h=400&fit=crop&auto=format",
+    "inclusions": [
+      "Live nutrition breakdown",
+      "Q&A access",
+      "72-hour session recording",
+      "Digital badge"
+    ],
+    "athlete": "Tejaswin Shankar",
+    "athleteImg": "https://images.unsplash.com/photo-1605296867304-46d5465a13f1?w=120&h=120&fit=crop&auto=format",
+    "type": "online",
+    "onlineLink": "https://meet.sportsfan360.app/shankar-nutrition",
+    "host": "Moderator: Priya Nair",
+    "hostRole": "SportsFan360 Sports Nutritionist",
+    "eventStartsAt": "2026-07-12T20:00:00+05:30",
+    "agenda": [
+      {
+        "time": "8:00 PM",
+        "item": "Welcome & session intro"
+      },
+      {
+        "time": "8:05 PM",
+        "item": "Tejaswin's daily nutrition philosophy"
+      },
+      {
+        "time": "8:20 PM",
+        "item": "Pre-competition carb loading breakdown"
+      },
+      {
+        "time": "8:35 PM",
+        "item": "Live Q&A — fan questions"
+      },
+      {
+        "time": "8:50 PM",
+        "item": "Rapid fire nutrition myths busted"
+      }
+    ],
+    "rules": [
+      "Questions via the in-app queue only",
+      "Session will be recorded and available for 72 hours",
+      "No promotional or sponsored questions accepted",
+      "Respectful conduct required"
+    ],
+    "status": "active",
+    "seatsBooked": 39
+  },
+  "membership-monthly": {
+    "category": "memberships",
+    "name": "Monthly",
+    "price": "₹499",
+    "pricePaise": 49900,
+    "period": "/month",
+    "popular": false,
+    "color": "#6b7280",
+    "gradientFrom": "rgba(107,114,128,0.15)",
+    "gradientTo": "rgba(107,114,128,0.05)",
+    "benefits": [
+      "Access to Dolly AI (5 analyses/month)",
+      "Fantasy & Fan Battle participation",
+      "Match Centre live stats",
+      "Basic Records Explorer",
+      "Fan Zone community access"
+    ],
+    "governance_state": "approved",
+    "rewardCoins": 25
+  },
+  "membership-quarterly": {
+    "category": "memberships",
+    "name": "Quarterly",
+    "price": "₹1,199",
+    "pricePaise": 119900,
+    "period": "/3 months",
+    "popular": true,
+    "color": "#c9115f",
+    "gradientFrom": "rgba(201,17,95,0.2)",
+    "gradientTo": "rgba(205,98,14,0.1)",
+    "benefits": [
+      "Everything in Monthly",
+      "Dolly AI (25 analyses/month)",
+      "Priority coach booking",
+      "Exclusive experience early access",
+      "Store discounts (10% off)",
+      "Advanced Records Explorer",
+      "Watch Along interactive features"
+    ],
+    "governance_state": "approved",
+    "rewardCoins": 60
+  },
+  "membership-yearly": {
+    "category": "memberships",
+    "name": "Elite",
+    "price": "₹3,999",
+    "pricePaise": 399900,
+    "period": "/year",
+    "popular": false,
+    "color": "#FFD700",
+    "gradientFrom": "rgba(255,215,0,0.12)",
+    "gradientTo": "rgba(205,98,14,0.08)",
+    "benefits": [
+      "Everything in Quarterly",
+      "Unlimited Dolly AI analyses",
+      "AFI athlete meet & greet eligibility",
+      "Signed memorabilia drops (2/year)",
+      "Free experience bookings (1/quarter)",
+      "Store discounts (20% off)",
+      "Personal coach matching service",
+      "Elite badge on profile"
+    ],
+    "governance_state": "approved",
+    "rewardCoins": 200
+  },
+  "merch-1": {
+    "category": "memorabilia",
+    "title": "Signed Javelin Training Jersey",
+    "athlete": "Neeraj Chopra",
+    "subCategory": "Signed Jerseys",
+    "price": "₹14,999",
+    "pricePaise": 1499900,
+    "certified": true,
+    "serialNo": "NC-2024-JT-001",
+    "ownerHistory": [
+      "National Athletics Museum",
+      "Private collector (2022)",
+      "Current listing"
+    ],
+    "image": "https://images.unsplash.com/photo-1551698618-1dfe5d97d256?w=400&h=400&fit=crop&auto=format",
+    "governance_state": "approved",
+    "rewardCoins": 750,
+    "status": "available"
+  },
+  "merch-2": {
+    "category": "memorabilia",
+    "title": "CWG 2022 Gold Medal Replica",
+    "athlete": "Neeraj Chopra",
+    "subCategory": "Medals",
+    "price": "₹8,999",
+    "pricePaise": 899900,
+    "certified": true,
+    "serialNo": "CWG22-MED-NJC",
+    "ownerHistory": [
+      "Commonwealth Games collection",
+      "AFI archive",
+      "Current listing"
+    ],
+    "image": "https://images.unsplash.com/photo-1607962837359-5e7e89f86776?w=400&h=400&fit=crop&auto=format",
+    "governance_state": "approved",
+    "rewardCoins": 450,
+    "status": "available"
+  },
+  "merch-3": {
+    "category": "memorabilia",
+    "title": "Signed Steeplechase Race Bib",
+    "athlete": "Avinash Sable",
+    "subCategory": "Bibs",
+    "price": "₹3,499",
+    "pricePaise": 349900,
+    "certified": true,
+    "serialNo": "AS-BIB-NTAC23",
+    "ownerHistory": [
+      "National Track & Field Championship 2023",
+      "Current listing"
+    ],
+    "image": "https://images.unsplash.com/photo-1571019613576-2b22c76fd955?w=400&h=400&fit=crop&auto=format",
+    "governance_state": "approved",
+    "rewardCoins": 175,
+    "status": "available"
+  },
+  "merch-4": {
+    "category": "memorabilia",
+    "title": "Athletics Training Spike Shoes",
+    "athlete": "Tejaswin Shankar",
+    "subCategory": "Boots",
+    "price": "₹6,299",
+    "pricePaise": 629900,
+    "certified": false,
+    "serialNo": "",
+    "ownerHistory": [],
+    "image": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&h=400&fit=crop&auto=format",
+    "governance_state": "pending",
+    "rewardCoins": 315,
+    "status": "available"
+  },
+  "merch-5": {
+    "category": "memorabilia",
+    "title": "World Athletics Championship Ball",
+    "athlete": "Indian Athletics Team",
+    "subCategory": "Match Balls",
+    "price": "₹11,500",
+    "pricePaise": 1150000,
+    "certified": true,
+    "serialNo": "WAC23-BALL-IND",
+    "ownerHistory": [
+      "World Athletics Championship Budapest 2023",
+      "AFI archive",
+      "Current listing"
+    ],
+    "image": "https://images.unsplash.com/photo-1526676037777-05a232554f77?w=400&h=400&fit=crop&auto=format",
+    "governance_state": "approved",
+    "rewardCoins": 575,
+    "status": "available"
+  },
+  "merch-6": {
+    "category": "memorabilia",
+    "title": "Signed Long Jump Pit Flag",
+    "athlete": "Murali Sreeshankar",
+    "subCategory": "Equipment",
+    "price": "₹4,999",
+    "pricePaise": 499900,
+    "certified": true,
+    "serialNo": "MS-FLAG-NTAC24",
+    "ownerHistory": [
+      "National Athletics Championship 2024",
+      "Current listing"
+    ],
+    "image": "https://images.unsplash.com/photo-1594737625785-a6cbdabd333c?w=400&h=400&fit=crop&auto=format",
+    "governance_state": "approved",
+    "rewardCoins": 250,
+    "status": "available"
+  }
+}

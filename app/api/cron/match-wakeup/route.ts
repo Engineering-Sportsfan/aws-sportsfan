@@ -31,8 +31,7 @@ export async function GET(req: NextRequest) {
         console.log(`🎯 Kickoff window reached for Match [${doc.id}]: ${match.team_a} vs ${match.team_b}. Waking up Dolly...`);
         
         try {
-          const sentimentUrl = process.env.NEXT_PUBLIC_SENTIMENT_URL || "https://sportsfan360-sentiment.onrender.com";
-          const res = await fetch(`${sentimentUrl}/run-dolly`, {
+          const res = await fetch("https://sportsfan360-sentiment.onrender.com/run-dolly", {
             method: "POST"
           });
           if (res.ok) {
