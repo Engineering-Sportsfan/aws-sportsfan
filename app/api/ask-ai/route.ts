@@ -7,21 +7,25 @@
 // const sessionCache = new Map<string, { data: Record<string, unknown>; timestamp: number }>();
 // const CACHE_DURATION = 5000;
 
-// // POST: Create new chat message
 // export async function POST(req: NextRequest) {
 //   try {
-//     const body = await req.json();
-//     const userId = body.userId;
+//     let body: Record<string, unknown>;
+//     try {
+//       body = await req.json();
+//     } catch {
+//       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+//     }
 
+//     const userId = body.userId as string | undefined;
 //     if (!userId) {
 //       return NextResponse.json({ error: 'Unauthorized - User ID missing' }, { status: 401 });
 //     }
 
-//     const query = body.query?.trim();
-//     const sessionId = body.sessionId || crypto.randomUUID();
+//     const query = (body.query as string | undefined)?.trim();
+//     const sessionId = (body.sessionId as string | undefined) || crypto.randomUUID();
 //     const history = Array.isArray(body.history) ? body.history : [];
-//     const userEmail = body.userEmail || '';
-//     const userName = body.userName || '';
+//     const userEmail = (body.userEmail as string) || '';
+//     const userName = (body.userName as string) || '';
 
 //     if (!query) {
 //       return NextResponse.json({ error: 'Empty query' }, { status: 400 });
@@ -33,6 +37,7 @@
 //       return NextResponse.json({ error: 'AI service not configured' }, { status: 500 });
 //     }
 
+//     // --- Call Python AI service ---
 //     let answer = '';
 //     let sources: string[] = [];
 //     let metadata: Record<string, unknown> = {};
@@ -40,7 +45,10 @@
 //     try {
 //       const aiRes = await fetch(`${PYTHON_AI_URL}/chat`, {
 //         method: 'POST',
-//         headers: { 'Content-Type': 'application/json' },
+//         headers: {
+//           'Content-Type': 'application/json',
+//           'x-api-key': process.env.PYTHON_AI_KEY ?? '',
+//         },
 //         body: JSON.stringify({
 //           query,
 //           conversation_history: history,
@@ -50,6 +58,8 @@
 //       });
 
 //       if (!aiRes.ok) {
+//         const errText = await aiRes.text().catch(() => '');
+//         console.error(`[ask-ai] Python service returned ${aiRes.status}: ${errText}`);
 //         throw new Error(`Python service returned ${aiRes.status}`);
 //       }
 
@@ -63,8 +73,10 @@
 //       return NextResponse.json({ error: 'AI service unavailable' }, { status: 502 });
 //     }
 
-//     // Save to Firestore
+//     // --- Save to Firestore (non-blocking on failure) ---
 //     try {
+//       if (!db) throw new Error('Firestore db is not initialized');
+
 //       const sessionRef = db
 //         .collection('askaiConversations')
 //         .doc(userId)
@@ -73,44 +85,49 @@
 
 //       const msgCol = sessionRef.collection('messages');
 
-// await sessionRef.set({
-//   updatedAt: FieldValue.serverTimestamp(),
-//   userId,
-//   userEmail,
-//   userName,
-// }, { merge: true });
+//       // Use a batch for atomicity and fewer round-trips
+//       const batch = db.batch();
 
-// const userMsgRef = msgCol.doc();
-// await userMsgRef.set({
-//   role: 'user',
-//   content: query,
-//   timestamp: FieldValue.serverTimestamp(),
-// });
+//       batch.set(sessionRef, {
+//         updatedAt: FieldValue.serverTimestamp(),
+//         userId,
+//         userEmail,
+//         userName,
+//       }, { merge: true });
 
-// const assistantMsgRef = msgCol.doc();
-// await assistantMsgRef.set({
-//   role: 'assistant',
-//   content: answer,
-//   sources,
-//   metadata,
-//   timestamp: FieldValue.serverTimestamp(),
-// });
+//       const userMsgRef = msgCol.doc();
+//       batch.set(userMsgRef, {
+//         role: 'user',
+//         content: query,
+//         timestamp: FieldValue.serverTimestamp(),
+//       });
 
-// sessionCache.delete(userId);
+//       const assistantMsgRef = msgCol.doc();
+//       batch.set(assistantMsgRef, {
+//         role: 'assistant',
+//         content: answer,
+//         sources,
+//         metadata,
+//         timestamp: FieldValue.serverTimestamp(),
+//       });
+
+//       await batch.commit();
+
+//       sessionCache.delete(userId);
 
 //     } catch (err) {
+//       // Log but don't fail the request — the AI answer is already ready
 //       console.error('[ask-ai] Firestore write failed:', err);
 //     }
 
 //     return NextResponse.json({ answer, sources, sessionId });
 
 //   } catch (error) {
-//     console.error('[ask-ai] Error:', error);
+//     console.error('[ask-ai] Unhandled error:', error);
 //     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
 //   }
 // }
 
-// // GET: Get the most recent session with messages
 // export async function GET(req: NextRequest) {
 //   try {
 //     const userId = req.headers.get('X-User-Id');
@@ -119,13 +136,15 @@
 //       return NextResponse.json({ error: 'Unauthorized - User ID missing' }, { status: 401 });
 //     }
 
-//     // Check cache first
 //     const cached = sessionCache.get(userId);
 //     if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
 //       return NextResponse.json(cached.data);
 //     }
 
-//     // Get the most recent session for this user
+//     if (!db) {
+//       return NextResponse.json({ error: 'Database not initialized' }, { status: 500 });
+//     }
+
 //     const sessionsSnap = await db
 //       .collection('askaiConversations')
 //       .doc(userId)
@@ -141,7 +160,6 @@
 //     const sessionDoc = sessionsSnap.docs[0];
 //     const sessionId = sessionDoc.id;
 
-//     // Fetch messages for this session
 //     const messagesSnap = await db
 //       .collection('askaiConversations')
 //       .doc(userId)
@@ -153,8 +171,8 @@
 //       .get();
 
 //     const messages = messagesSnap.docs.map(doc => ({
-//       id:      doc.id,
-//       role:    doc.data().role as 'user' | 'assistant',
+//       id: doc.id,
+//       role: doc.data().role as 'user' | 'assistant',
 //       content: doc.data().content as string,
 //     }));
 
@@ -162,13 +180,11 @@
 
 //     sessionCache.set(userId, { data: responseData, timestamp: Date.now() });
 
-//     // Clean old cache entries
+//     // Evict stale cache entries
 //     if (sessionCache.size > 100) {
 //       const now = Date.now();
 //       for (const [key, value] of sessionCache.entries()) {
-//         if (now - value.timestamp > 30000) {
-//           sessionCache.delete(key);
-//         }
+//         if (now - value.timestamp > 30000) sessionCache.delete(key);
 //       }
 //     }
 
@@ -180,7 +196,6 @@
 //   }
 // }
 
-// // DELETE: Delete all sessions for a user (or specific session if ID provided)
 // export async function DELETE(req: NextRequest) {
 //   try {
 //     const userId = req.headers.get('X-User-Id');
@@ -192,31 +207,55 @@
 //     }
 
 //     if (sessionId) {
-//       // Delete specific session (handled in [id]/route.ts)
-//       return NextResponse.json({ error: 'Use /api/ask-ai/{id} to delete a specific session' }, { status: 400 });
+//       return NextResponse.json(
+//         { error: 'Use /api/ask-ai/{id} to delete a specific session' },
+//         { status: 400 }
+//       );
 //     }
 
-//     // Delete ALL sessions for this user
+//     if (!db) {
+//       return NextResponse.json({ error: 'Database not initialized' }, { status: 500 });
+//     }
+
 //     const sessionsSnap = await db
 //       .collection('askaiConversations')
 //       .doc(userId)
 //       .collection('sessions')
 //       .get();
 
-//     const batch = db.batch();
+//     // Firestore batch max is 500 ops — chunk if needed
+//     const OPS_PER_BATCH = 400;
+//     let batch = db.batch();
+//     let opCount = 0;
+
 //     for (const sessionDoc of sessionsSnap.docs) {
-//       // Delete messages in each session
 //       const messagesSnap = await sessionDoc.ref.collection('messages').get();
-//       messagesSnap.docs.forEach(msgDoc => {
+
+//       for (const msgDoc of messagesSnap.docs) {
 //         batch.delete(msgDoc.ref);
-//       });
+//         opCount++;
+//         if (opCount >= OPS_PER_BATCH) {
+//           await batch.commit();
+//           batch = db.batch();
+//           opCount = 0;
+//         }
+//       }
+
 //       batch.delete(sessionDoc.ref);
+//       opCount++;
+//       if (opCount >= OPS_PER_BATCH) {
+//         await batch.commit();
+//         batch = db.batch();
+//         opCount = 0;
+//       }
 //     }
-//     await batch.commit();
+
+//     if (opCount > 0) await batch.commit();
 
 //     sessionCache.delete(userId);
 
 //     return NextResponse.json({ success: true, message: 'All sessions deleted' });
+
 //   } catch (error) {
 //     console.error('[ask-ai DELETE] Error:', error);
 //     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -231,12 +270,41 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from 'firebase-admin/firestore'
+import { getUser } from "@/lib/getUser";
+import { getUserInfo } from "@/lib/userPoints";
 
 const sessionCache = new Map<string, { data: Record<string, unknown>; timestamp: number }>();
 const CACHE_DURATION = 5000;
 
+// ── Same canonical resolution pattern used across ROAR (dolly, messages,
+// votes) — ensures Ask AI sessions are filed under the same
+// users/{actualUserId} as everything else, not a divergent/spoofable ID.
+async function resolveUser(
+  email: string,
+  userId: string
+): Promise<{ id: string; username: string } | null> {
+  const info = await getUserInfo(userId, undefined, email);
+  if (!info.exists) return null;
+
+  const snap = await db.collection("users").doc(info.actualUserId).get();
+  if (!snap.exists) return null;
+
+  const data = snap.data() as { username?: string };
+  return { id: info.actualUserId, username: data?.username ?? "Fan" };
+}
+
 export async function POST(req: NextRequest) {
   try {
+    const user = await getUser(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const resolved = await resolveUser(user.email, user.userId);
+    if (!resolved) {
+      return NextResponse.json({ error: 'User profile not found' }, { status: 404 });
+    }
+
     let body: Record<string, unknown>;
     try {
       body = await req.json();
@@ -244,16 +312,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
 
-    const userId = body.userId as string | undefined;
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized - User ID missing' }, { status: 401 });
-    }
-
     const query = (body.query as string | undefined)?.trim();
     const sessionId = (body.sessionId as string | undefined) || crypto.randomUUID();
     const history = Array.isArray(body.history) ? body.history : [];
-    const userEmail = (body.userEmail as string) || '';
-    const userName = (body.userName as string) || '';
 
     if (!query) {
       return NextResponse.json({ error: 'Empty query' }, { status: 400 });
@@ -280,7 +341,7 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           query,
           conversation_history: history,
-          user_id: userId,
+          user_id: resolved.id,
           session_id: sessionId,
         }),
       });
@@ -302,12 +363,14 @@ export async function POST(req: NextRequest) {
     }
 
     // --- Save to Firestore (non-blocking on failure) ---
+    let userMessageId: string | undefined;
+    let assistantMessageId: string | undefined;
     try {
       if (!db) throw new Error('Firestore db is not initialized');
 
       const sessionRef = db
         .collection('askaiConversations')
-        .doc(userId)
+        .doc(resolved.id)
         .collection('sessions')
         .doc(sessionId);
 
@@ -318,12 +381,13 @@ export async function POST(req: NextRequest) {
 
       batch.set(sessionRef, {
         updatedAt: FieldValue.serverTimestamp(),
-        userId,
-        userEmail,
-        userName,
+        userId: resolved.id,
+        userEmail: user.email,
+        userName: resolved.username,
       }, { merge: true });
 
       const userMsgRef = msgCol.doc();
+      userMessageId = userMsgRef.id;
       batch.set(userMsgRef, {
         role: 'user',
         content: query,
@@ -331,6 +395,7 @@ export async function POST(req: NextRequest) {
       });
 
       const assistantMsgRef = msgCol.doc();
+      assistantMessageId = assistantMsgRef.id;
       batch.set(assistantMsgRef, {
         role: 'assistant',
         content: answer,
@@ -341,14 +406,14 @@ export async function POST(req: NextRequest) {
 
       await batch.commit();
 
-      sessionCache.delete(userId);
+      sessionCache.delete(resolved.id);
 
     } catch (err) {
       // Log but don't fail the request — the AI answer is already ready
       console.error('[ask-ai] Firestore write failed:', err);
     }
 
-    return NextResponse.json({ answer, sources, sessionId });
+    return NextResponse.json({ answer, sources, sessionId, userMessageId, messageId: assistantMessageId });
 
   } catch (error) {
     console.error('[ask-ai] Unhandled error:', error);
@@ -358,13 +423,17 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const userId = req.headers.get('X-User-Id');
-
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized - User ID missing' }, { status: 401 });
+    const user = await getUser(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const cached = sessionCache.get(userId);
+    const resolved = await resolveUser(user.email, user.userId);
+    if (!resolved) {
+      return NextResponse.json({ error: 'User profile not found' }, { status: 404 });
+    }
+
+    const cached = sessionCache.get(resolved.id);
     if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
       return NextResponse.json(cached.data);
     }
@@ -375,7 +444,7 @@ export async function GET(req: NextRequest) {
 
     const sessionsSnap = await db
       .collection('askaiConversations')
-      .doc(userId)
+      .doc(resolved.id)
       .collection('sessions')
       .orderBy('updatedAt', 'desc')
       .limit(1)
@@ -390,7 +459,7 @@ export async function GET(req: NextRequest) {
 
     const messagesSnap = await db
       .collection('askaiConversations')
-      .doc(userId)
+      .doc(resolved.id)
       .collection('sessions')
       .doc(sessionId)
       .collection('messages')
@@ -406,7 +475,7 @@ export async function GET(req: NextRequest) {
 
     const responseData = { messages, sessionId };
 
-    sessionCache.set(userId, { data: responseData, timestamp: Date.now() });
+    sessionCache.set(resolved.id, { data: responseData, timestamp: Date.now() });
 
     // Evict stale cache entries
     if (sessionCache.size > 100) {
@@ -426,13 +495,18 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const userId = req.headers.get('X-User-Id');
-    const { searchParams } = new URL(req.url);
-    const sessionId = searchParams.get('sessionId');
-
-    if (!userId) {
+    const user = await getUser(req);
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const resolved = await resolveUser(user.email, user.userId);
+    if (!resolved) {
+      return NextResponse.json({ error: 'User profile not found' }, { status: 404 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const sessionId = searchParams.get('sessionId');
 
     if (sessionId) {
       return NextResponse.json(
@@ -447,7 +521,7 @@ export async function DELETE(req: NextRequest) {
 
     const sessionsSnap = await db
       .collection('askaiConversations')
-      .doc(userId)
+      .doc(resolved.id)
       .collection('sessions')
       .get();
 
@@ -480,7 +554,7 @@ export async function DELETE(req: NextRequest) {
 
     if (opCount > 0) await batch.commit();
 
-    sessionCache.delete(userId);
+    sessionCache.delete(resolved.id);
 
     return NextResponse.json({ success: true, message: 'All sessions deleted' });
 

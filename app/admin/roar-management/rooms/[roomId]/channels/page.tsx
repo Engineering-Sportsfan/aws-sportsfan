@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import axios from "axios";
-import { Plus, X, ArrowUp, ArrowDown, Edit2, Save } from "lucide-react";
+import { Plus, X, Trash2, ArrowUp, ArrowDown, Edit2, Save } from "lucide-react";
 
 interface Channel {
   channelId: string;
@@ -100,17 +100,33 @@ export default function ManageChannelsPage() {
     }
   };
 
-  const handleDeleteChannel = async (channelId: string) => {
-    if (channels.length <= 1) {
-      alert('Room must have at least one active channel');
-      return;
+  // Toggle active/inactive (soft) — used by the 🔴/🟢 button
+  const handleToggleActive = async (channel: Channel) => {
+    if (channel.isActive) {
+      const activeCount = channels.filter(c => c.isActive).length;
+      if (activeCount <= 1) {
+        alert('Room must have at least one active channel');
+        return;
+      }
     }
-    
-    if (!confirm('Delete this channel? This action cannot be undone.')) return;
-    
+    await handleUpdateChannel(channel.channelId, { isActive: !channel.isActive });
+  };
+
+  // Permanent delete — removes the Firestore doc entirely
+  const handleHardDeleteChannel = async (channel: Channel) => {
+    if (channel.isActive) {
+      const activeCount = channels.filter(c => c.isActive).length;
+      if (activeCount <= 1) {
+        alert('Room must have at least one active channel');
+        return;
+      }
+    }
+
+    if (!confirm('Permanently delete this channel? This cannot be undone, and old messages in this channel will lose their channel reference.')) return;
+
     setSaving(true);
     try {
-      await axios.delete(`/api/roar/rooms/${roomId}/channels/${channelId}`);
+      await axios.delete(`/api/roar/rooms/${roomId}/channels/${channel.channelId}?hard=true`);
       await fetchChannels();
     } catch (error: any) {
       console.error("Failed to delete channel", error);
@@ -402,10 +418,9 @@ export default function ManageChannelsPage() {
                                 <Edit2 size={14} />
                               </button>
                               <button
-                                onClick={() => handleUpdateChannel(channel.channelId, {
-                                  isActive: !channel.isActive,
-                                })}
-                                className={`p-1.5 rounded transition ${
+                                onClick={() => handleToggleActive(channel)}
+                                disabled={saving}
+                                className={`p-1.5 rounded transition disabled:opacity-50 ${
                                   channel.isActive
                                     ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
                                     : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
@@ -415,12 +430,12 @@ export default function ManageChannelsPage() {
                                 {channel.isActive ? '🔴' : '🟢'}
                               </button>
                               <button
-                                onClick={() => handleDeleteChannel(channel.channelId)}
-                                disabled={saving || channels.length <= 1}
+                                onClick={() => handleHardDeleteChannel(channel)}
+                                disabled={saving}
                                 className="p-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition disabled:opacity-50"
-                                title="Delete"
+                                title="Permanently delete"
                               >
-                                <X size={14} />
+                                <Trash2 size={14} />
                               </button>
                             </>
                           )}

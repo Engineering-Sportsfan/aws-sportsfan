@@ -7,4 +7,11 @@ export interface Channel {
     isActive: boolean;
     order: number;
     createdAt: number;
+     counts?: {
+        postCount?: number;
+        debateCount?: number;
+        predictionCount?: number;
+        triviaCount?: number;
+        battleCount?: number;
+    };
 }

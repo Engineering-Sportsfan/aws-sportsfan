@@ -95,6 +95,61 @@ const COUNT_FIELD_BY_TYPE: Partial<Record<string, "postCount" | "debateCount" | 
   battle: "battleCount",
 };
 
+// export async function DELETE(
+//   req: NextRequest,
+//   { params }: { params: Promise<{ roomId: string; msgId: string }> },
+// ) {
+//   try {
+//     const { roomId, msgId } = await params;
+//     const user = await getUser(req);
+//     if (!user) {
+//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+//     }
+
+//     const roomRef = db.collection("roarRooms").doc(roomId);
+//     const msgRef = roomRef.collection("messages").doc(msgId);
+
+//     const snap = await msgRef.get();
+//     if (!snap.exists) {
+//       return NextResponse.json({ error: "Message not found" }, { status: 404 });
+//     }
+
+//     const message = snap.data() as RoomMessage;
+//     if (message.authorUid !== user.userId && user.role !== "admin") {
+//       const RESTRICTED_USERS: string[] = [];
+//       const isAdmin = !RESTRICTED_USERS.includes(user.email.toLowerCase());
+//       if (!isAdmin) {
+//         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+//       }
+//     }
+
+//     const countField = COUNT_FIELD_BY_TYPE[message.type];
+
+//     const batch = db.batch();
+//     batch.delete(msgRef);
+//     batch.update(roomRef, {
+//       fanCount: FieldValue.increment(-1),
+//       ...(countField && { [countField]: FieldValue.increment(-1) }),
+//     });
+//     if (message.channelId && countField) {
+//     const channelRef = roomRef.collection("channels").doc(message.channelId);
+//     batch.update(channelRef, {
+//         [`counts.${countField}`]: FieldValue.increment(-1),
+//     });
+// }
+//     await batch.commit();
+
+//     return NextResponse.json({ success: true });
+//   } catch (error: unknown) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
+
+// api/roar/rooms/[roomId]/messages/[msgId]/route.ts
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ roomId: string; msgId: string }> },
@@ -102,9 +157,7 @@ export async function DELETE(
   try {
     const { roomId, msgId } = await params;
     const user = await getUser(req);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const roomRef = db.collection("roarRooms").doc(roomId);
     const msgRef = roomRef.collection("messages").doc(msgId);
@@ -118,20 +171,32 @@ export async function DELETE(
     if (message.authorUid !== user.userId && user.role !== "admin") {
       const RESTRICTED_USERS: string[] = [];
       const isAdmin = !RESTRICTED_USERS.includes(user.email.toLowerCase());
-      if (!isAdmin) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
+      if (!isAdmin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const countField = COUNT_FIELD_BY_TYPE[message.type];
+    const channelRef = message.channelId ? roomRef.collection("channels").doc(message.channelId) : null;
 
-    const batch = db.batch();
-    batch.delete(msgRef);
-    batch.update(roomRef, {
-      fanCount: FieldValue.increment(-1),
-      ...(countField && { [countField]: FieldValue.increment(-1) }),
+    await db.runTransaction(async (tx) => {
+      // Reads must happen before writes in a transaction
+      const roomSnapTx = await tx.get(roomRef);
+      const channelSnapTx = channelRef ? await tx.get(channelRef) : null;
+
+      tx.delete(msgRef);
+
+      const currentFanCount = (roomSnapTx.data() as any)?.fanCount ?? 0;
+      tx.update(roomRef, { fanCount: Math.max(0, currentFanCount - 1) });
+
+      if (countField) {
+        const currentRoomCount = (roomSnapTx.data() as any)?.[countField] ?? 0;
+        tx.update(roomRef, { [countField]: Math.max(0, currentRoomCount - 1) });
+      }
+
+      if (channelRef && channelSnapTx && countField) {
+        const currentChannelCount = (channelSnapTx.data() as any)?.counts?.[countField] ?? 0;
+        tx.update(channelRef, { [`counts.${countField}`]: Math.max(0, currentChannelCount - 1) });
+      }
     });
-    await batch.commit();
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
