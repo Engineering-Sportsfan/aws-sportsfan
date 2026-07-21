@@ -108,6 +108,7 @@ function generateConsistentUserId(email: string): string {
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  trustHost: true,
   providers: [
     GoogleProvider({
       clientId:     process.env.GOOGLE_CLIENT_ID!,
@@ -211,8 +212,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
 
   pages: {
-    signIn: "/auth",
-    error:  "/auth",
+    signIn: "/admin/login",
+    error:  "/admin/login",
   },
 
   session: { strategy: "jwt" },
