@@ -15,7 +15,11 @@ export class StoreService {
     let query: any = this.db.collection('storeProducts');
 
     if (category) {
-      query = query.where('category', '==', category);
+      const normalizedCategory = category.toLowerCase() === 'auctions' ? 'Auctions' : category;
+      query = query.where('category', '==', normalizedCategory);
+      if (normalizedCategory === 'Auctions') {
+        query = query.where('governance_state', '==', 'approved').where('status', '==', 'active');
+      }
     }
     if (sport) {
       query = query.where('sport', '==', sport);
@@ -28,7 +32,8 @@ export class StoreService {
     const products: any[] = [];
 
     for (const doc of snapshot.docs) {
-      const data = doc.data();
+      let data = doc.data();
+      data = await this.checkAndCloseAuctionInline(doc.id, data);
       const lockExpiresAt = data.lockExpiresAt ? (data.lockExpiresAt.toDate ? data.lockExpiresAt.toDate() : new Date(data.lockExpiresAt)) : null;
 
       if ((data.status === 'locked' || data.status === 'reserved') && lockExpiresAt && lockExpiresAt < now) {
@@ -59,13 +64,103 @@ export class StoreService {
     return products;
   }
 
+  private async checkAndCloseAuctionInline(productId: string, data: any): Promise<any> {
+    const endsAt = data.endsAt ? (data.endsAt.toDate ? data.endsAt.toDate() : new Date(data.endsAt)) : null;
+    const now = new Date();
+    if (
+      data.category === 'Auctions' &&
+      data.status === 'active' &&
+      endsAt &&
+      endsAt <= now
+    ) {
+      console.log(`[checkAndCloseAuctionInline] Closing expired auction ${productId} inline.`);
+      const productRef = this.db.collection('storeProducts').doc(productId);
+      try {
+        const result = await this.db.runTransaction(async (transaction) => {
+          const freshDoc = await transaction.get(productRef);
+          const product = freshDoc.data();
+          if (!product || product.status !== 'active') {
+            return product || data;
+          }
+
+          const currentBidPaise = product.currentBidPaise || product.pricePaise || 0;
+          const reservePrice = product.reservePrice || 0;
+          const highestBidderId = product.highestBidderId || null;
+
+          let finalStatus = 'reserve_not_met';
+          let winnerId = null;
+          let winnerPaymentStatus = null;
+          let paymentDeadline = null;
+
+          if (currentBidPaise >= reservePrice && highestBidderId) {
+            if (highestBidderId === 'legacy_unclaimed') {
+              finalStatus = 'unclaimed_reserve_met';
+              winnerId = null;
+            } else {
+              finalStatus = 'closed';
+              winnerId = highestBidderId;
+              winnerPaymentStatus = 'pending';
+              const deadlineHours = product.paymentDeadlineHours || 24;
+              paymentDeadline = new Date(Date.now() + deadlineHours * 60 * 60 * 1000);
+            }
+          }
+
+          const updateData: any = {
+            status: finalStatus,
+            winnerId: winnerId,
+          };
+          if (winnerPaymentStatus) {
+            updateData.winnerPaymentStatus = winnerPaymentStatus;
+          }
+          if (paymentDeadline) {
+            updateData.paymentDeadline = paymentDeadline;
+          }
+
+          transaction.update(productRef, updateData);
+
+          // If winner assigned, send notification
+          if (winnerId) {
+            const notificationId = randomUUID();
+            const notificationRef = this.db.collection('users')
+              .doc(winnerId)
+              .collection('notifications')
+              .doc(notificationId);
+
+            transaction.set(notificationRef, {
+              id: notificationId,
+              title: "You Won the Auction!",
+              message: `Congratulations! You are the winner of "${product.title || product.name}" at ₹${currentBidPaise / 100}. Please complete payment within 24 hours.`,
+              type: "auction_win",
+              read: false,
+              createdAt: FieldValue.serverTimestamp()
+            });
+          }
+
+          return {
+            ...product,
+            ...updateData,
+          };
+        });
+        return result;
+      } catch (err) {
+        console.error(`[checkAndCloseAuctionInline] Failed to close auction ${productId}:`, err);
+      }
+    }
+    return data;
+  }
+
   async getProductById(id: string) {
     const docRef = this.db.collection('storeProducts').doc(id);
     const doc = await docRef.get();
     if (!doc.exists) {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
-    const data = doc.data();
+    let data = doc.data();
+    if (!data) {
+      throw new NotFoundException(`Product data is empty`);
+    }
+
+    data = await this.checkAndCloseAuctionInline(id, data);
     if (!data) {
       throw new NotFoundException(`Product data is empty`);
     }
@@ -380,12 +475,13 @@ export class StoreService {
   async checkout(checkoutDto: {
     productId: string;
     slotId?: string;
+    variantId?: string;
     userId: string;
     paymentMethod: 'upi' | 'gpay' | 'phonepe' | 'paytm' | 'card' | 'wallet';
     pricePaise: number;
     idempotencyKey: string;
   }) {
-    const { productId, slotId, userId, paymentMethod, pricePaise, idempotencyKey } = checkoutDto;
+    const { productId, slotId, variantId, userId, paymentMethod, pricePaise, idempotencyKey } = checkoutDto;
 
     const idempotencyRef = this.db.collection('idempotencyKeys').doc(idempotencyKey);
 
@@ -475,6 +571,47 @@ export class StoreService {
         });
       }
 
+      if (product.category === 'brands') {
+        if (!variantId) {
+          throw new BadRequestException('Size selection is required');
+        }
+        const variants = product.variants || [];
+        const variantIndex = variants.findIndex((v: any) => v.id === variantId);
+        if (variantIndex === -1) {
+          throw new BadRequestException(`Selected variant "${variantId}" not found`);
+        }
+        const variant = variants[variantIndex];
+        if (variant.stock <= 0 || !variant.available) {
+          throw new BadRequestException(`Variant "${variant.size}" is out of stock`);
+        }
+
+        // Decrement stock inside variant and overall totalStock
+        variant.stock -= 1;
+        if (variant.stock === 0) {
+          variant.available = false;
+        }
+        
+        const newTotalStock = (product.totalStock || 0) - 1;
+        const isProductAvailable = newTotalStock > 0;
+
+        transaction.update(productRef, {
+          variants,
+          totalStock: newTotalStock,
+          isAvailable: isProductAvailable,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+
+      if (product.category === 'Auctions' || product.category === 'auctions') {
+        if (product.status !== 'closed' || product.winnerId !== userId || product.winnerPaymentStatus !== 'pending') {
+          throw new BadRequestException('Auction is not closed, you are not the winner, or payment has already been completed/expired.');
+        }
+        transaction.update(productRef, {
+          winnerPaymentStatus: 'paid',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+
       if (!eventDate && product.date) {
         eventDate = product.date;
       }
@@ -516,14 +653,31 @@ export class StoreService {
       const joinToken = isOnlineEvent ? randomUUID() : null;
 
       const orderRef = this.db.collection('storeOrders').doc(orderId);
-      const initialStatus = product.category === 'digital' ? 'completed' : 'upcoming';
+      const pCatLower = (product.category || '').toLowerCase();
+
+      // Resolve athlete listing if category == 'athletes'
+      let selectedListing: any = null;
+      if (pCatLower === 'athletes') {
+        const targetListingId = variantId || checkoutDto.slotId;
+        const listings = product.listings || [];
+        selectedListing = listings.find((item: any) => String(item.id) === String(targetListingId)) || listings[0] || null;
+      }
+
+      // Standardize status: 'completed' for digital/memberships/athletes library items, 'upcoming'/'completed' otherwise
+      let initialStatus = (pCatLower === 'digital' || pCatLower === 'memberships') ? 'completed' : 'upcoming';
+      if (pCatLower === 'athletes') {
+        const fType = selectedListing?.fulfillmentType || 'library';
+        initialStatus = (fType === 'library') ? 'completed' : 'upcoming';
+      }
+
       const orderData: any = {
         orderId,
         userId,
         productId,
         productType: product.category || 'general',
+        category: product.category || 'memberships',
         slotId: slotId || null,
-        title: product.title || product.name,
+        title: selectedListing ? selectedListing.title : (product.title || product.name),
         pricePaise,
         paymentMethod,
         status: initialStatus,
@@ -531,6 +685,18 @@ export class StoreService {
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       };
+
+      if (pCatLower === 'athletes' && selectedListing) {
+        orderData.athleteId = productId;
+        orderData.athleteName = product.name || product.title || '';
+        orderData.listingId = selectedListing.id;
+        orderData.listingTitle = selectedListing.title;
+        orderData.listingType = selectedListing.type || 'Athlete Listing';
+        orderData.fulfillmentType = selectedListing.fulfillmentType || 'library';
+        if (selectedListing.fulfillmentType === 'physical') {
+          orderData.deliveryStatus = 'processing';
+        }
+      }
 
       if (product.category === 'events') {
         orderData.qrToken = qrToken;
@@ -614,6 +780,91 @@ export class StoreService {
         });
       }
 
+      if (product.category === 'digital') {
+        const libraryRef = this.db
+          .collection('users')
+          .doc(userId)
+          .collection('library')
+          .doc(productId);
+        transaction.set(libraryRef, {
+          productId,
+          title: product.title || product.name,
+          image: product.image || '',
+          type: product.type || 'Training Program',
+          progress: 0,
+          purchasedAt: FieldValue.serverTimestamp(),
+        });
+      }
+
+      const prodCategory = (product.category || '').toLowerCase();
+      if (prodCategory === 'memberships') {
+        const now = new Date();
+        const durationDays = product.durationDays || 30;
+        const renewalDateObj = new Date(now.getTime() + durationDays * 86400 * 1000);
+        const userMembershipRef = this.db.collection('userMemberships').doc(userId);
+        
+        transaction.set(userMembershipRef, {
+          currentPlanId: productId,
+          currentPlanName: product.name || product.title || 'Membership Plan',
+          status: 'active',
+          startDate: now.toISOString(),
+          renewalDate: renewalDateObj.toISOString(),
+          pausedAt: null,
+          cancelledAt: null,
+          autoRenew: true,
+          lastOrderId: orderId,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      if (prodCategory === 'athletes') {
+        const fulfillmentType = orderData.fulfillmentType || 'library';
+        const listingId = orderData.listingId || productId;
+        const athleteId = productId;
+        const listingTitle = orderData.listingTitle || orderData.title;
+        const listingType = orderData.listingType || 'Athlete Purchase';
+        const athleteName = orderData.athleteName || product.name || '';
+
+        if (fulfillmentType === 'library') {
+          const libraryRef = this.db
+            .collection('users')
+            .doc(userId)
+            .collection('library')
+            .doc(`${athleteId}_${listingId}`);
+          transaction.set(libraryRef, {
+            productId: `${athleteId}_${listingId}`,
+            title: listingTitle,
+            image: product.image || '',
+            type: listingType,
+            athleteId,
+            listingId,
+            progress: 0,
+            purchasedAt: FieldValue.serverTimestamp(),
+          });
+        } else if (fulfillmentType === 'booking') {
+          const bookingId = randomUUID();
+          const bookingRef = this.db
+            .collection('athleteBookings')
+            .doc(userId)
+            .collection('items')
+            .doc(bookingId);
+          transaction.set(bookingRef, {
+            bookingId,
+            userId,
+            athleteId,
+            athleteName,
+            listingId,
+            listingTitle,
+            listingType,
+            orderId,
+            status: 'pending_scheduling',
+            requestedAt: FieldValue.serverTimestamp(),
+            scheduledAt: null,
+            meetingLink: null,
+          });
+        }
+      }
+
       const response = { orderId, success: true };
 
       // Save idempotency key response
@@ -636,7 +887,7 @@ export class StoreService {
     }
 
     const snapshot = await query.get();
-    return snapshot.docs.map((doc) => ({
+    return snapshot.docs.map((doc: any) => ({
       id: doc.id,
       ...doc.data(),
     }));
@@ -762,6 +1013,18 @@ export class StoreService {
     return { success: true };
   }
 
+  async getUserLibrary(userId: string) {
+    const snapshot = await this.db
+      .collection('users')
+      .doc(userId)
+      .collection('library')
+      .get();
+    return snapshot.docs.map((doc: any) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+  }
+
   async getRecentlyViewed(userId: string) {
     const snapshot = await this.db
       .collection('users')
@@ -798,45 +1061,57 @@ export class StoreService {
   }
 
   async getUserMembership(userId: string) {
-    const userDoc = await this.db.collection('users').doc(userId).get();
-    if (userDoc.exists) {
-      const data = userDoc.data();
-      if (data?.membership) {
-        return data.membership;
+    // Read from userMemberships collection (new model)
+    const membershipDoc = await this.db.collection('userMemberships').doc(userId).get();
+    if (!membershipDoc.exists) {
+      return { hasMembership: false, membership: null, plan: null };
+    }
+
+    const membershipData = membershipDoc.data();
+    let planData = null;
+
+    if (membershipData?.currentPlanId) {
+      const planDoc = await this.db.collection('storeProducts').doc(membershipData.currentPlanId).get();
+      if (planDoc.exists) {
+        planData = { id: planDoc.id, ...planDoc.data() };
       }
     }
+
     return {
-      tier: 'quarterly',
-      renewalDate: 'Oct 3, 2026',
-      pricePaise: 119900,
-      daysLeft: 92,
+      hasMembership: true,
+      membership: { id: userId, ...membershipData },
+      plan: planData,
     };
   }
 
-  async updateUserMembership(userId: string, tier: string) {
-    let pricePaise = 49900;
-    let daysLeft = 30;
-    let renewalDate = new Date(Date.now() + 30 * 86400 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-    if (tier === 'quarterly') {
-      pricePaise = 119900;
-      daysLeft = 92;
-      renewalDate = new Date(Date.now() + 92 * 86400 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    } else if (tier === 'elite') {
-      pricePaise = 399900;
-      daysLeft = 365;
-      renewalDate = new Date(Date.now() + 365 * 86400 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  async updateUserMembership(userId: string, planId: string) {
+    const planDoc = await this.db.collection('storeProducts').doc(planId).get();
+    if (!planDoc.exists) {
+      throw new Error('Plan not found');
     }
 
-    const membership = {
-      tier,
-      renewalDate,
-      pricePaise,
-      daysLeft,
+    const planData = planDoc.data();
+    const durationDays = planData?.durationDays || 30;
+    const now = new Date();
+    const renewalDate = new Date(now.getTime() + durationDays * 86400 * 1000);
+
+    const membershipData = {
+      currentPlanId: planId,
+      currentPlanName: planData?.name || planData?.title || 'Membership Plan',
+      status: 'active',
+      startDate: now.toISOString(),
+      renewalDate: renewalDate.toISOString(),
+      autoRenew: true,
+      updatedAt: now,
     };
 
-    await this.db.collection('users').doc(userId).set({ membership }, { merge: true });
-    return membership;
+    await this.db.collection('userMemberships').doc(userId).set(membershipData, { merge: true });
+
+    return {
+      hasMembership: true,
+      membership: { id: userId, ...membershipData },
+      plan: { id: planDoc.id, ...planData },
+    };
   }
 
   async findOrderByQrToken(qrToken: string) {
@@ -894,5 +1169,48 @@ export class StoreService {
     const doc = await this.db.collection('users').doc(userId).get();
     if (!doc.exists) return null;
     return doc.data();
+  }
+
+  async getUserAuctions(userId: string, type: 'current' | 'previous' | 'won') {
+    if (type === 'won') {
+      const snapshot = await this.db.collection('storeProducts')
+        .where('category', 'in', ['Auctions', 'auctions'])
+        .where('winnerId', '==', userId)
+        .where('status', '==', 'closed')
+        .get();
+      return snapshot.docs.map((doc: any) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    }
+
+    const isWinning = type === 'current';
+    const activitySnapshot = await this.db.collection('userBidActivity')
+      .doc(userId)
+      .collection('items')
+      .where('isCurrentlyWinning', '==', isWinning)
+      .get();
+
+    const productIds = activitySnapshot.docs.map(doc => doc.id);
+    if (productIds.length === 0) return [];
+
+    const refs = productIds.map(id => this.db.collection('storeProducts').doc(id));
+    const productDocs = await this.db.getAll(...refs);
+
+    const activeAuctions: any[] = [];
+    for (const doc of productDocs) {
+      if (doc.exists) {
+        let prod = { id: doc.id, ...doc.data() } as any;
+        prod = await this.checkAndCloseAuctionInline(doc.id, prod);
+        if (
+          (prod.category === 'Auctions' || prod.category === 'auctions') &&
+          prod.status === 'active'
+        ) {
+          activeAuctions.push(prod);
+        }
+      }
+    }
+
+    return activeAuctions;
   }
 }

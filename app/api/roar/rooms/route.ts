@@ -109,6 +109,111 @@ export async function GET(req: NextRequest) {
 //  - Input sanitisation consolidated
 //  - `isActive` defaults to true explicitly (unchanged behaviour, cleaner)
 //
+
+
+// export async function POST(req: NextRequest) {
+//   try {
+//     const user = await getUser(req);
+//     if (!user) {
+//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+//     }
+
+//     const body = await req.json();
+//     const {
+//       name,
+//       icon,
+//       sport,
+//       description,
+//       isActive,
+//       scheduledStartTime,
+//       score,
+//       scoreSubtitle,
+//       createWatchAlong,
+//       matchId,
+//     } = body;
+
+//     if (!name?.trim()) {
+//       return NextResponse.json(
+//         { error: "Room name is required" },
+//         { status: 400 }
+//       );
+//     }
+
+    // if (createWatchAlong === true) {
+    //   try {
+    //     // 1. Create a matching Match record
+    //     const matchRef = await db.collection("watchAlongMatches").add({
+    //       title: name.trim(),
+    //       createdAt: Date.now(),
+    //       updatedAt: Date.now(),
+    //     });
+
+    //     // 2. Derive initials
+    //     const initials = name.trim()
+    //       .split(" ")
+    //       .map((w) => w[0])
+    //       .join("")
+    //       .toUpperCase()
+    //       .slice(0, 2);
+
+    //     // 3. Create the watchAlongRoom document ONLY
+    //     const watchAlongRoomData = {
+    //       name: name.trim(),
+    //       role: "Host",
+    //       badge: "Live",
+    //       badgeColor: "bg-pink-600",
+    //       borderColor: "border-pink-500",
+    //       initials,
+    //       displayPicture: "",
+    //       isLive: true,
+    //       watching: "0",
+    //       engagement: "0%",
+    //       active: "0",
+    //       liveMatchId: matchRef.id,
+    //       hostUserId: user.email || user.userId || null,
+    //       coHostUserId: null,
+    //       createdAt: Date.now(),
+    //       updatedAt: Date.now(),
+    //     };
+
+    //     const watchAlongRef = await db.collection("watchAlongRooms").add(watchAlongRoomData);
+    //     return NextResponse.json({ success: true, watchAlongRoomId: watchAlongRef.id });
+    //   } catch (err) {
+    //     console.error("Failed to create Watchalong Room:", err);
+    //     return NextResponse.json({ error: "Failed to create Watchalong Room" }, { status: 500 });
+    //   }
+//     } else {
+//       // Create ONLY ROAR room
+//       const roomRef = db.collection("roarRooms").doc();
+//       const newRoom: ChatRoom & { matchId?: string } = {
+//         roomId: roomRef.id,
+//         name: name.trim(),
+//         sport: sport || "general",
+//         createdAt: Date.now(),
+//         isActive: isActive !== undefined ? Boolean(isActive) : true,
+//         fanCount: 0,
+//         ...(icon && { icon }),
+//         ...(description && { description: description.trim() }),
+//         ...(scheduledStartTime && {
+//           scheduledStartTime: Number(scheduledStartTime),
+//         }),
+//         ...(score && { score }),
+//         ...(scoreSubtitle && { scoreSubtitle }),
+//         ...(matchId && { matchId }),
+//       };
+
+//       await roomRef.set(newRoom);
+//       return NextResponse.json({ success: true, room: newRoom });
+//     }
+//   } catch (error: unknown) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     console.error("POST /api/roar/rooms error:", error);
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
+
 export async function POST(req: NextRequest) {
   try {
     const user = await getUser(req);
@@ -128,6 +233,7 @@ export async function POST(req: NextRequest) {
       scoreSubtitle,
       createWatchAlong,
       matchId,
+      privacy, // "public" | "private" | "premium"
     } = body;
 
     if (!name?.trim()) {
@@ -137,7 +243,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (createWatchAlong === true) {
+    const VALID_PRIVACY = ["public", "private", "premium"];
+    const normalizedPrivacy = VALID_PRIVACY.includes(privacy) ? privacy : "public";
+    // Private/premium rooms get flagged for manual review before going live,
+    // matching the "reviewed within 24 hours" copy in the confirm step.
+    const needsReview = normalizedPrivacy !== "public";
+
+        if (createWatchAlong === true) {
       try {
         // 1. Create a matching Match record
         const matchRef = await db.collection("watchAlongMatches").add({
@@ -180,29 +292,34 @@ export async function POST(req: NextRequest) {
         console.error("Failed to create Watchalong Room:", err);
         return NextResponse.json({ error: "Failed to create Watchalong Room" }, { status: 500 });
       }
-    } else {
-      // Create ONLY ROAR room
-      const roomRef = db.collection("roarRooms").doc();
-      const newRoom: ChatRoom & { matchId?: string } = {
-        roomId: roomRef.id,
-        name: name.trim(),
-        sport: sport || "general",
-        createdAt: Date.now(),
-        isActive: isActive !== undefined ? Boolean(isActive) : true,
-        fanCount: 0,
-        ...(icon && { icon }),
-        ...(description && { description: description.trim() }),
-        ...(scheduledStartTime && {
-          scheduledStartTime: Number(scheduledStartTime),
-        }),
-        ...(score && { score }),
-        ...(scoreSubtitle && { scoreSubtitle }),
-        ...(matchId && { matchId }),
-      };
+   } else {
+  // Create ONLY ROAR room
+  const roomRef = db.collection("roarRooms").doc();
+  const VALID_PRIVACY = ["public", "private", "premium"];
+  const normalizedPrivacy = VALID_PRIVACY.includes(privacy) ? privacy : "public";
 
-      await roomRef.set(newRoom);
-      return NextResponse.json({ success: true, room: newRoom });
-    }
+  const newRoom: ChatRoom & { matchId?: string; privacy?: string } = {
+    roomId: roomRef.id,
+    name: name.trim(),
+    sport: sport || "general",
+    createdAt: Date.now(),
+    isActive: isActive !== undefined ? Boolean(isActive) : true,
+    privacy: normalizedPrivacy, // stored, but doesn't affect visibility/isActive yet
+    fanCount: 0,
+    createdByUid: user.userId,
+    ...(icon && { icon }),
+    ...(description && { description: description.trim() }),
+    ...(scheduledStartTime && {
+      scheduledStartTime: Number(scheduledStartTime),
+    }),
+    ...(score && { score }),
+    ...(scoreSubtitle && { scoreSubtitle }),
+    ...(matchId && { matchId }),
+  };
+
+  await roomRef.set(newRoom);
+  return NextResponse.json({ success: true, room: newRoom });
+}
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("POST /api/roar/rooms error:", error);

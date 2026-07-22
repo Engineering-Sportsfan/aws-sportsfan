@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/firebaseAdmin';
 import { StoreService } from '@/app/api/v2/store/store.service';
+import { fetchUserMembership } from '@/app/api/v2/store/membership.helper';
 
 const storeService = new StoreService(db);
 
@@ -79,10 +80,25 @@ export async function GET(
           const recently = await storeService.getRecentlyViewed(userId);
           return NextResponse.json(recently);
         }
+        if (subpath === 'library') {
+          // GET /api/v2/store/users/:userId/library
+          const library = await storeService.getUserLibrary(userId);
+          return NextResponse.json(library);
+        }
+        if (subpath === 'athlete-bookings') {
+          // GET /api/v2/store/users/:userId/athlete-bookings
+          const bookingsSnap = await db
+            .collection('athleteBookings')
+            .doc(userId)
+            .collection('items')
+            .get();
+          const bookings = bookingsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          return NextResponse.json(bookings);
+        }
         if (subpath === 'membership') {
           // GET /api/v2/store/users/:userId/membership
-          const membership = await storeService.getUserMembership(userId);
-          return NextResponse.json(membership);
+          const result = await fetchUserMembership(db, userId);
+          return NextResponse.json(result);
         }
       }
 
@@ -199,6 +215,33 @@ export async function GET(
       }
     }
 
+    if (firstSegment === 'brand-deals') {
+      const deals = [
+        { id: 'b1', name: 'ASICS', logo: '👟', offer: 'Flat 15% Off' },
+        { id: 'b2', name: 'Adidas', logo: '🏃', offer: 'Claim Free Socks' },
+        { id: 'b3', name: 'Puma', logo: '🐆', offer: 'Student Code' },
+        { id: 'b4', name: 'Nike', logo: '✔️', offer: 'Get 10% Cashback' },
+        { id: 'b5', name: 'Decathlon', logo: '🚴', offer: '₹500 Gift Voucher' }
+      ];
+      return NextResponse.json(deals);
+    }
+
+    if (firstSegment === 'membership-plans') {
+      const snapshot = await db
+        .collection('storeProducts')
+        .where('category', 'in', ['Memberships', 'memberships'])
+        .get();
+
+      const plans = snapshot.docs
+        .map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        .filter((plan: any) => !plan.governance_state || plan.governance_state === 'approved');
+
+      return NextResponse.json(plans);
+    }
+
     return NextResponse.json({ error: 'Not Found' }, { status: 404 });
   } catch (error: any) {
     return NextResponse.json(
@@ -299,9 +342,69 @@ export async function POST(
 
       if (subpath === 'membership') {
         // POST /api/v2/store/users/:userId/membership
-        const tier = body.tier;
-        const result = await storeService.updateUserMembership(userId, tier);
-        return NextResponse.json(result);
+        const planId = body.planId || body.tier;
+        if (!planId) {
+          return NextResponse.json({ error: 'planId is required' }, { status: 400 });
+        }
+        const planDoc = await db.collection('storeProducts').doc(planId).get();
+        if (!planDoc.exists) {
+          return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
+        }
+        const planInfo = planDoc.data();
+        const durationDays = planInfo?.durationDays || 30;
+        const now = new Date();
+        const renewalDate = new Date(now.getTime() + durationDays * 86400 * 1000);
+        const membershipUpdate = {
+          currentPlanId: planId,
+          currentPlanName: planInfo?.name || planInfo?.title || 'Membership Plan',
+          status: 'active',
+          startDate: now.toISOString(),
+          renewalDate: renewalDate.toISOString(),
+          autoRenew: true,
+          updatedAt: now,
+        };
+        await db.collection('userMemberships').doc(userId).set(membershipUpdate, { merge: true });
+        return NextResponse.json({
+          hasMembership: true,
+          membership: { id: userId, ...membershipUpdate },
+          plan: { id: planDoc.id, ...planInfo },
+        });
+      }
+    }
+
+    // 5. ATHLETES PURCHASE ROUTE
+    if (firstSegment === 'athletes' && (pathParams.length === 4 || pathParams.length === 5)) {
+      // POST /api/v2/store/athletes/:athleteId/listings/:listingId/purchase
+      const athleteId = pathParams[1];
+      const listingId = pathParams[3];
+
+      if (pathParams[2] === 'listings') {
+        const athleteDoc = await db.collection('storeProducts').doc(athleteId).get();
+        if (!athleteDoc.exists) {
+          return NextResponse.json({ error: 'Athlete not found' }, { status: 404 });
+        }
+        const athleteData = athleteDoc.data();
+        if (athleteData?.governance_state !== 'approved') {
+          return NextResponse.json({ error: 'Athlete profile is not approved for purchases' }, { status: 403 });
+        }
+
+        const listings = athleteData?.listings || [];
+        const listing = listings.find((item: any) => String(item.id) === String(listingId));
+        if (!listing) {
+          return NextResponse.json({ error: 'Listing not found for this athlete' }, { status: 404 });
+        }
+
+        // Return listing purchase details for checkout routing
+        return NextResponse.json({
+          success: true,
+          athleteId,
+          athleteName: athleteData.name,
+          listingId: listing.id,
+          title: listing.title,
+          type: listing.type,
+          fulfillmentType: listing.fulfillmentType || 'library',
+          pricePaise: listing.pricePaise || 499900,
+        });
       }
     }
 
