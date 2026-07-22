@@ -1,4 +1,4 @@
-import { db } from '../../../lib/firebaseAdmin';
+import { db } from '../../lib/firebaseAdmin';
 
 export async function seedInitialAthletes() {
   const athletesData = [
