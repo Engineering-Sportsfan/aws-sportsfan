@@ -8,9 +8,9 @@ export async function GET(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const bots = [
-      { id: "dolly-dolphin-bot", name: "Dolly", role: "Neutral Analyst", active: true },
-      { id: "krishna-india-bot", name: "Krishna", role: "Partisan India Fan", active: true },
-      { id: "radha-england-bot", name: "Radha", role: "Partisan England Fan", active: true }
+      { id: "dolly-dolphin-bot", name: "Dolly", role: "neutral", active: true },
+      { id: "krishna-india-bot", name: "Krishna", role: "partisan", active: true },
+      { id: "radha-england-bot", name: "Radha", role: "partisan", active: true }
     ];
 
     return NextResponse.json({ success: true, bots });
