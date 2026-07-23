@@ -234,6 +234,7 @@ export async function POST(req: NextRequest) {
       createWatchAlong,
       matchId,
       privacy, // "public" | "private" | "premium"
+      botConfig,
     } = body;
 
     if (!name?.trim()) {
@@ -284,6 +285,7 @@ export async function POST(req: NextRequest) {
           coHostUserId: null,
           createdAt: Date.now(),
           updatedAt: Date.now(),
+          ...(botConfig && { botConfig }),
         };
 
         const watchAlongRef = await db.collection("watchAlongRooms").add(watchAlongRoomData);
@@ -298,7 +300,7 @@ export async function POST(req: NextRequest) {
   const VALID_PRIVACY = ["public", "private", "premium"];
   const normalizedPrivacy = VALID_PRIVACY.includes(privacy) ? privacy : "public";
 
-  const newRoom: ChatRoom & { matchId?: string; privacy?: string } = {
+  const newRoom: ChatRoom & { matchId?: string; privacy?: string; botConfig?: any } = {
     roomId: roomRef.id,
     name: name.trim(),
     sport: sport || "general",
@@ -315,6 +317,7 @@ export async function POST(req: NextRequest) {
     ...(score && { score }),
     ...(scoreSubtitle && { scoreSubtitle }),
     ...(matchId && { matchId }),
+    ...(botConfig && { botConfig }),
   };
 
   await roomRef.set(newRoom);

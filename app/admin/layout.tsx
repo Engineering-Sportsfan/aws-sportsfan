@@ -594,6 +594,12 @@ const FULL_NAV: NavGroup[] = [
           { href: "/admin/points-management", label: "Points & Rules Config" },
         ],
       },
+      {
+        label: "AI Bot Management", icon: "🤖",
+        children: [
+          { href: "/admin/bot-management", label: "Bot Dashboard & Kill Switches" },
+        ],
+      },
     ],
   },
   {

@@ -11,4 +11,6 @@ export interface ChatRoom {
   score?: string;
   scoreSubtitle?: string;
   watchAlongRoomId?: string;
+  activeBots?: string[];
+  botConfig?: Record<string, { team: string | null; role: string }>;
 }

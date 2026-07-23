@@ -39,6 +39,14 @@ export interface RoomMessage {
   battleQuestions?: BattleQuestion[];
   triviaParticipants?: Record<number, number>; // questionIndex -> count
   battleVoteCounts?: Record<number, { playerA: number; playerB: number }>;
+  isBot?: boolean;
+  botRole?: string;
+  botTeam?: string | null;
+  messageSubtype?: string;
+  cardType?: "story" | "analysis";
+  title?: string;
+  bulletPoints?: string[];
+  sliderData?: { lbl1: string; lbl2: string; pct: number };
 
 }
 

@@ -313,6 +313,11 @@ export default function AddRoarForm() {
   const [createWatchAlong, setCreateWatchAlong] = useState(true);
   const [saving, setSaving] = useState(false);
   
+  // AI Bots State
+  const [availableBots, setAvailableBots] = useState<{ id: string, name: string, role: string, active: boolean }[]>([]);
+  const [selectedBots, setSelectedBots] = useState<Record<string, { team: string | null; role: string } | false>>({});
+  const [loadingBots, setLoadingBots] = useState(true);
+
   // Channel management state - OPTIONAL
   const [enableChannels, setEnableChannels] = useState(false);
   const [channelsExpanded, setChannelsExpanded] = useState(false);
@@ -343,6 +348,22 @@ export default function AddRoarForm() {
       }
     }
     loadMatches();
+
+    async function loadBots() {
+      try {
+        const response = await fetch('/api/roar/bots');
+        const resData = await response.json();
+        if (response.ok && resData.success) {
+          // Only show bots that are globally active
+          setAvailableBots(resData.bots.filter((b: any) => b.active));
+        }
+      } catch (err) {
+        console.error("Failed to load bots", err);
+      } finally {
+        setLoadingBots(false);
+      }
+    }
+    loadBots();
   }, []);
 
   const handleAddChannel = () => {
@@ -400,6 +421,7 @@ export default function AddRoarForm() {
         scoreSubtitle: scoreSubtitle.trim(),
         createWatchAlong,
         matchId: selectedMatchId || undefined,
+        botConfig: selectedBots,
       });
 
       const roomId = roomResponse.data.roomId;
@@ -666,6 +688,61 @@ export default function AddRoarForm() {
           <label htmlFor="createWatchAlong" className="text-sm font-semibold text-gray-300 cursor-pointer select-none">
             Create as Watchalong Room (Audio/Video Support)
           </label>
+        </div>
+
+        {/* Assign AI Bots */}
+        <div className="border-t border-[#21262d] pt-4">
+          <label className="block text-sm font-semibold text-gray-300 mb-2">
+            Assign AI Bots to Room (Optional)
+          </label>
+          {loadingBots ? (
+            <div className="text-sm text-gray-500">Loading available bots...</div>
+          ) : availableBots.length === 0 ? (
+            <div className="text-sm text-gray-500">No active AI bots available globally.</div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {availableBots.map((bot) => (
+                <div key={bot.id} className="flex items-center gap-3 bg-[#0d1117] border border-[#30363d] rounded-lg p-3">
+                  <input
+                    type="checkbox"
+                    id={`bot-${bot.id}`}
+                    checked={!!selectedBots[bot.id]}
+                    onChange={(e) => setSelectedBots({ 
+                      ...selectedBots, 
+                      [bot.id]: e.target.checked ? { team: null, role: bot.role } : false 
+                    })}
+                    className="w-4 h-4 rounded text-blue-600 border-[#30363d] focus:ring-blue-500 bg-[#161b22] cursor-pointer"
+                  />
+                  <label htmlFor={`bot-${bot.id}`} className="text-sm font-semibold text-gray-300 cursor-pointer select-none flex-1">
+                    {bot.name} <span className="text-gray-500 text-xs ml-2 font-normal">({bot.role})</span>
+                  </label>
+                  {/* Team Dropdown for Partisan Bots */}
+                  {bot.role === "partisan" && selectedBots[bot.id] && (
+                    <select
+                      value={(selectedBots[bot.id] as { team: string | null; role: string }).team || ""}
+                      onChange={(e) => setSelectedBots({
+                        ...selectedBots,
+                        [bot.id]: { team: e.target.value, role: bot.role }
+                      })}
+                      className="bg-[#161b22] border border-[#30363d] rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="">-- Select Team --</option>
+                      {matches.find(m => m.id === selectedMatchId)?.team_a && (
+                        <option value={matches.find(m => m.id === selectedMatchId)!.team_a}>
+                          {matches.find(m => m.id === selectedMatchId)!.team_a}
+                        </option>
+                      )}
+                      {matches.find(m => m.id === selectedMatchId)?.team_b && (
+                        <option value={matches.find(m => m.id === selectedMatchId)!.team_b}>
+                          {matches.find(m => m.id === selectedMatchId)!.team_b}
+                        </option>
+                      )}
+                    </select>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Room Status Toggle */}
