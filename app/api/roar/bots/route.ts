@@ -7,13 +7,11 @@ export async function GET(req: NextRequest) {
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const snapshot = await db.collection("users").where("isBot", "==", true).get();
-    const bots = snapshot.docs.map(doc => ({
-      id: doc.id,
-      name: doc.data().username || doc.data().name || "Unknown Bot",
-      role: doc.data().botRole || "AI Agent",
-      active: doc.data().isBotActive !== false // Defaults to true unless explicitly disabled
-    }));
+    const bots = [
+      { id: "dolly-dolphin-bot", name: "Dolly", role: "Neutral Analyst", active: true },
+      { id: "krishna-india-bot", name: "Krishna", role: "Partisan India Fan", active: true },
+      { id: "radha-england-bot", name: "Radha", role: "Partisan England Fan", active: true }
+    ];
 
     return NextResponse.json({ success: true, bots });
   } catch (error: unknown) {
@@ -30,10 +28,10 @@ export async function PUT(req: NextRequest) {
     const { botId, active } = await req.json();
     if (!botId) return NextResponse.json({ error: "Missing botId" }, { status: 400 });
 
-    // Update the bot's global kill switch status in the database
-    await db.collection("users").doc(botId).update({
-      isBotActive: active
-    });
+    await db.collection("users").doc(botId).set({
+      isBotActive: active,
+      isBot: true
+    }, { merge: true });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
