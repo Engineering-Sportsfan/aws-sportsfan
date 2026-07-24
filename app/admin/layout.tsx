@@ -553,7 +553,11 @@ import { useSession } from "next-auth/react";
 const plexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["300", "400", "500", "600"] });
 const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"] });
 
-interface NavChildItem { href: string; label: string; }
+interface NavChildItem {
+  href?: string;
+  label: string;
+  children?: NavChildItem[];
+}
 interface NavItem {
   href?: string; icon?: string; label: string;
   badge?: string; children?: NavChildItem[];
@@ -606,16 +610,76 @@ const FULL_NAV: NavGroup[] = [
       {
         label: "Store Management", icon: "◉",
         children: [
-          { href: "/admin/store-management/addCategory", label: "Add Category" },
-          { href: "/admin/store-management/addCoach", label: "Add Coach" },
-          { href: "/admin/store-management/addExperience", label: "Add Experience" },
-          { href: "/admin/store-management/addEvent", label: "Add Event" },
-          { href: "/admin/store-management/addAuction", label: "Add Auction" },
-          { href: "/admin/store-management/addAthlete", label: "Add Athlete" },
-          { href: "/admin/store-management/addMerchandise", label: "Add Merchandise" },
-          { href: "/admin/store-management/addBrand", label: "Add Brand" },
-          { href: "/admin/store-management/addDigitalProduct", label: "Add Digital Product" },
-          { href: "/admin/store-management/addMembership", label: "Add Membership" },
+          {
+            label: "Categories",
+            children: [
+              { href: "/admin/store-management/category/add", label: "Add Category" },
+              { href: "/admin/store-management/category/list", label: "Category List" },
+            ],
+          },
+          {
+            label: "Coaches",
+            children: [
+              { href: "/admin/store-management/coach/add", label: "Add Coach" },
+              { href: "/admin/store-management/coach/list", label: "Coach List" },
+            ],
+          },
+          {
+            label: "Events",
+            children: [
+              { href: "/admin/store-management/event/add", label: "Add Event" },
+              { href: "/admin/store-management/event/list", label: "Event List" },
+            ],
+          },
+          {
+            label: "Experiences",
+            children: [
+              { href: "/admin/store-management/experience/add", label: "Add Experience" },
+              { href: "/admin/store-management/experience/list", label: "Experience List" },
+            ],
+          },
+          {
+            label: "Auctions",
+            children: [
+              { href: "/admin/store-management/auction/add", label: "Add Auction" },
+              { href: "/admin/store-management/auction/list", label: "Auction List" },
+            ],
+          },
+          {
+            label: "Athletes",
+            children: [
+              { href: "/admin/store-management/athlete/add", label: "Add Athlete" },
+              { href: "/admin/store-management/athlete/list", label: "Athlete List" },
+            ],
+          },
+          {
+            label: "Merchandise",
+            children: [
+              { href: "/admin/store-management/merchandise/add", label: "Add Merchandise" },
+              { href: "/admin/store-management/merchandise/list", label: "Merchandise List" },
+            ],
+          },
+          {
+            label: "Brands",
+            children: [
+              { href: "/admin/store-management/brand/add", label: "Add Brand" },
+              { href: "/admin/store-management/brand/list", label: "Brand List" },
+            ],
+          },
+          {
+            label: "Digital Products",
+            children: [
+              { href: "/admin/store-management/digital/add", label: "Add Digital Product" },
+              { href: "/admin/store-management/digital/list", label: "Digital Products List" },
+            ],
+          },
+          {
+            label: "Memberships",
+            children: [
+              { href: "/admin/store-management/membership/add", label: "Add Membership" },
+              { href: "/admin/store-management/membership/list", label: "Membership List" },
+            ],
+          },
         ],
       },
       {
@@ -707,7 +771,15 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Polls & Quizes", icon: "◉",
+        label: "AI Bot Management",
+        icon: "🤖",
+        children: [
+          { href: "/admin/bot-management", label: "Bot Dashboard & Kill Switches" },
+        ],
+      },
+      {
+        label: "Polls & Quizes",
+        icon: "◉",
         children: [
           { href: "/admin/polls-management/add-polls", label: "Add Poll" },
           { href: "/admin/polls-management/polls-list", label: "Polls List" },
@@ -998,20 +1070,87 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         {isOpen ? "▼" : "▶"}
                       </span>
                     </div>
-                    {isOpen && item.children?.map((sub) => {
-                      const active = pathname === sub.href || pathname.startsWith(sub.href + "/");
-                      return (
-                        <Link key={sub.href} href={sub.href} style={{ textDecoration: "none" }}
-                          onClick={() => setSidebarOpen(false)}>
-                          <div style={{
-                            padding: "6px 16px 6px 36px", fontSize: 12, cursor: "pointer",
-                            color: active ? "#e6edf3" : "#7d8590",
-                            background: active ? "rgba(31,111,235,.1)" : "transparent",
-                            borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
-                          }}>• {sub.label}</div>
-                        </Link>
-                      );
-                    })}
+                    {isOpen &&
+                      item.children?.map((sub: any) => {
+                        if (sub.children) {
+                          const isSubOpen = openMenus[sub.label] ?? false;
+                          return (
+                            <div key={sub.label}>
+                              <div
+                                onClick={() => toggleMenu(sub.label)}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  padding: "6px 16px 6px 36px",
+                                  cursor: "pointer",
+                                  color: "#7d8590",
+                                  fontSize: 12,
+                                }}
+                              >
+                                <span style={{ fontSize: 9 }}>{isSubOpen ? "▼" : "▶"}</span>
+                                {sub.label}
+                              </div>
+                              {isSubOpen &&
+                                sub.children.map((child: any) => {
+                                  const active =
+                                    pathname === child.href ||
+                                    pathname.startsWith(child.href + "/");
+                                  return (
+                                    <Link
+                                      key={child.href}
+                                      href={child.href}
+                                      style={{ textDecoration: "none" }}
+                                      onClick={() => setSidebarOpen(false)}
+                                    >
+                                      <div
+                                        style={{
+                                          padding: "5px 16px 5px 54px",
+                                          fontSize: 11,
+                                          cursor: "pointer",
+                                          color: active ? "#e6edf3" : "#7d8590",
+                                          background: active
+                                            ? "rgba(31,111,235,.1)"
+                                            : "transparent",
+                                          borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
+                                        }}
+                                      >
+                                        • {child.label}
+                                      </div>
+                                    </Link>
+                                  );
+                                })}
+                            </div>
+                          );
+                        }
+
+                        const active =
+                          pathname === sub.href ||
+                          (sub.href && pathname.startsWith(sub.href + "/"));
+                        return (
+                          <Link
+                            key={sub.href}
+                            href={sub.href || "#"}
+                            style={{ textDecoration: "none" }}
+                            onClick={() => setSidebarOpen(false)}
+                          >
+                            <div
+                              style={{
+                                padding: "6px 16px 6px 36px",
+                                fontSize: 12,
+                                cursor: "pointer",
+                                color: active ? "#e6edf3" : "#7d8590",
+                                background: active
+                                  ? "rgba(31,111,235,.1)"
+                                  : "transparent",
+                                borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
+                              }}
+                            >
+                              • {sub.label}
+                            </div>
+                          </Link>
+                        );
+                      })}
                   </div>
                 );
               }

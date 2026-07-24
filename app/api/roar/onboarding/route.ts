@@ -260,41 +260,37 @@
 
 
 
-
-
 // app/api/roar/onboarding/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
-import { getUserInfo } from "@/lib/userPoints";
 
-// This route handles a signed-in user's OWN onboarding/preferences data —
-// distinct from api/roar/onboarding-config/route.ts, which manages the
-// admin-defined option lists (sports/followEntities/engagement) shown on
-// the onboarding and preferences screens. This one requires auth; the
-// config route deliberately does not.
-
-// getUser() returns { userId, email, ... } — not a Firestore uid directly.
-// Same as api/roar/rooms/[roomId]/messages/route.ts, we resolve the actual
-// users/{id} doc via getUserInfo before reading/writing.
-async function resolveUserId(email: string, userId: string): Promise<string | null> {
-  const info = await getUserInfo(userId, undefined, email);
-  return info.exists ? info.actualUserId : null;
+// Same canonical resolution as /api/roar/profile/route.ts — tries
+// users/{userId} first, falls back to users/{email}. Using the same
+// resolver here (instead of getUserInfo, which resolves differently)
+// prevents this route from reading/writing a different doc than the
+// one /api/roar/profile reads, which was causing onboardingCompleted
+// to appear false even when the real doc had it set to true.
+async function resolveUserDoc(userId: string, email: string) {
+  let docRef = db.collection("users").doc(userId);
+  let snap = await docRef.get();
+  if (!snap.exists) {
+    docRef = db.collection("users").doc(email);
+    snap = await docRef.get();
+    if (!snap.exists) return null;
+  }
+  return { docRef, snap };
 }
 
-// GET — used by the Preferences screen (and onboarding gate) to load the
-// user's current selections + completion state.
 export async function GET(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const resolvedUserId = await resolveUserId(user.email, user.userId);
-  if (!resolvedUserId) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+  const resolved = await resolveUserDoc(user.userId, user.email);
+  if (!resolved) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
-  const ref = db.collection("users").doc(resolvedUserId);
-  const doc = await ref.get();
-  const data = doc.exists ? doc.data() : {};
+  const data = resolved.snap.data();
 
   return NextResponse.json({
     success: true,
@@ -305,14 +301,12 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST — final step of onboarding. Writes the user's selections and marks
-// onboarding as completed.
 export async function POST(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const resolvedUserId = await resolveUserId(user.email, user.userId);
-  if (!resolvedUserId) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+  const resolved = await resolveUserDoc(user.userId, user.email);
+  if (!resolved) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
   const body = await req.json();
   const { sports, followEntities, engagementPrefs } = body as {
@@ -321,8 +315,7 @@ export async function POST(req: NextRequest) {
     engagementPrefs?: string[];
   };
 
-  const ref = db.collection("users").doc(resolvedUserId);
-  await ref.set(
+  await resolved.docRef.set(
     {
       sports: sports ?? [],
       followEntities: followEntities ?? [],
@@ -336,14 +329,12 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ success: true, onboardingCompleted: true });
 }
 
-// PATCH — used by the Preferences screen to update any subset of the
-// user's selections after onboarding is already complete.
 export async function PATCH(req: NextRequest) {
   const user = await getUser(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const resolvedUserId = await resolveUserId(user.email, user.userId);
-  if (!resolvedUserId) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+  const resolved = await resolveUserDoc(user.userId, user.email);
+  if (!resolved) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
   const body = await req.json();
   const { sports, followEntities, engagementPrefs } = body as {
@@ -357,10 +348,8 @@ export async function PATCH(req: NextRequest) {
   if (followEntities !== undefined) updates.followEntities = followEntities;
   if (engagementPrefs !== undefined) updates.engagementPrefs = engagementPrefs;
 
-  const ref = db.collection("users").doc(resolvedUserId);
-  await ref.set(updates, { merge: true });
-
-  const updated = await ref.get();
+  await resolved.docRef.set(updates, { merge: true });
+  const updated = await resolved.docRef.get();
   const data = updated.data();
 
   return NextResponse.json({

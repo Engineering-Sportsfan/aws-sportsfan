@@ -314,8 +314,9 @@ export default function AddRoarForm() {
   const [saving, setSaving] = useState(false);
   
   // AI Bots State
-  const [availableBots, setAvailableBots] = useState<{ id: string, name: string, role: string, active: boolean }[]>([]);
+  const [availableBots, setAvailableBots] = useState<{ id: string, name: string, role: string, active: boolean, affiliations?: Record<string, string> }[]>([]);
   const [selectedBots, setSelectedBots] = useState<Record<string, { team: string | null; role: string } | false>>({});
+  const [rememberBots, setRememberBots] = useState<Record<string, boolean>>({});
   const [loadingBots, setLoadingBots] = useState(true);
 
   // Channel management state - OPTIONAL
@@ -439,6 +440,19 @@ export default function AddRoarForm() {
             })
           )
         );
+      }
+
+      // Save bot affiliations in background
+      for (const botId of Object.keys(rememberBots)) {
+        if (rememberBots[botId] && selectedBots[botId]) {
+          const team = (selectedBots[botId] as any).team;
+          if (team) {
+            axios.post('/api/roar/bots', {
+              botId,
+              affiliations: { [sport]: team }
+            }).catch(err => console.error("Failed to save bot affiliation", err));
+          }
+        }
       }
 
       if (createWatchAlong) {
@@ -707,37 +721,71 @@ export default function AddRoarForm() {
                     type="checkbox"
                     id={`bot-${bot.id}`}
                     checked={!!selectedBots[bot.id]}
-                    onChange={(e) => setSelectedBots({ 
-                      ...selectedBots, 
-                      [bot.id]: e.target.checked ? { team: null, role: bot.role } : false 
-                    })}
+                    onChange={(e) => {
+                      const isChecked = e.target.checked;
+                      let defaultTeam = null;
+                      if (isChecked && bot.role === 'partisan' && bot.affiliations && bot.affiliations[sport]) {
+                         defaultTeam = bot.affiliations[sport];
+                      }
+                      setSelectedBots({ 
+                        ...selectedBots, 
+                        [bot.id]: isChecked ? { team: defaultTeam, role: bot.role } : false 
+                      });
+                    }}
                     className="w-4 h-4 rounded text-blue-600 border-[#30363d] focus:ring-blue-500 bg-[#161b22] cursor-pointer"
                   />
                   <label htmlFor={`bot-${bot.id}`} className="text-sm font-semibold text-gray-300 cursor-pointer select-none flex-1">
                     {bot.name} <span className="text-gray-500 text-xs ml-2 font-normal">({bot.role})</span>
                   </label>
-                  {/* Team Dropdown for Partisan Bots */}
+                  {/* Team Input for Partisan Bots */}
                   {bot.role === "partisan" && selectedBots[bot.id] && (
-                    <select
-                      value={(selectedBots[bot.id] as { team: string | null; role: string }).team || ""}
-                      onChange={(e) => setSelectedBots({
-                        ...selectedBots,
-                        [bot.id]: { team: e.target.value, role: bot.role }
-                      })}
-                      className="bg-[#161b22] border border-[#30363d] rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="">-- Select Team --</option>
-                      {matches.find(m => m.id === selectedMatchId)?.team_a && (
-                        <option value={matches.find(m => m.id === selectedMatchId)!.team_a}>
-                          {matches.find(m => m.id === selectedMatchId)!.team_a}
-                        </option>
+                    <>
+                      {selectedMatchId ? (
+                        <select
+                          value={(selectedBots[bot.id] as { team: string | null; role: string }).team || ""}
+                          onChange={(e) => setSelectedBots({
+                            ...selectedBots,
+                            [bot.id]: { team: e.target.value, role: bot.role }
+                          })}
+                          className="bg-[#161b22] border border-[#30363d] rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">-- Select Team --</option>
+                          {matches.find(m => m.id === selectedMatchId)?.team_a && (
+                            <option value={matches.find(m => m.id === selectedMatchId)!.team_a}>
+                              {matches.find(m => m.id === selectedMatchId)!.team_a}
+                            </option>
+                          )}
+                          {matches.find(m => m.id === selectedMatchId)?.team_b && (
+                            <option value={matches.find(m => m.id === selectedMatchId)!.team_b}>
+                              {matches.find(m => m.id === selectedMatchId)!.team_b}
+                            </option>
+                          )}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          placeholder="Type team name..."
+                          value={(selectedBots[bot.id] as { team: string | null; role: string }).team || ""}
+                          onChange={(e) => setSelectedBots({
+                            ...selectedBots,
+                            [bot.id]: { team: e.target.value, role: bot.role }
+                          })}
+                          className="w-32 bg-[#161b22] border border-[#30363d] rounded px-2 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500"
+                        />
                       )}
-                      {matches.find(m => m.id === selectedMatchId)?.team_b && (
-                        <option value={matches.find(m => m.id === selectedMatchId)!.team_b}>
-                          {matches.find(m => m.id === selectedMatchId)!.team_b}
-                        </option>
-                      )}
-                    </select>
+                      <div className="ml-2 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id={`remember-${bot.id}`}
+                          checked={!!rememberBots[bot.id]}
+                          onChange={(e) => setRememberBots({ ...rememberBots, [bot.id]: e.target.checked })}
+                          className="w-3 h-3 rounded text-blue-600 bg-[#161b22] border-[#30363d]"
+                        />
+                        <label htmlFor={`remember-${bot.id}`} className="text-xs text-gray-500 cursor-pointer">
+                          Remember association for {sport}
+                        </label>
+                      </div>
+                    </>
                   )}
                 </div>
               ))}
