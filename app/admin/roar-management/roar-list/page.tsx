@@ -173,24 +173,7 @@ export default function RoarListPage() {
                         >
                           <MessageSquare size={16} />
                         </button>
-                        {/* Unlink Match (Stop Dolly) button */}
-                        <button
-                          onClick={async () => {
-                            if (!confirm(`Stop Dolly posting in '${room.name}'? (This unlinks the focus match without deleting anything)`)) return;
-                            try {
-                              await axios.patch(`/api/roar/rooms/${room.roomId}`, { matchId: null });
-                              setRooms(prev => prev.map(r => r.roomId === room.roomId ? { ...r, matchId: null } : r));
-                              alert("Dolly has been stopped for this room!");
-                            } catch (err) {
-                              console.error("Unlink failed", err);
-                              alert("Failed to stop Dolly.");
-                            }
-                          }}
-                          className="px-2 py-1 rounded bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 transition text-xs font-semibold"
-                          title="Stop Dolly in this room"
-                        >
-                          Stop Dolly 🐬
-                        </button>
+
 
                         {/* ⭐ ADD THE MANAGE CHANNELS BUTTON HERE ⭐ */}
                         <Link href={`/admin/roar-management/rooms/${room.roomId}/channels`}>

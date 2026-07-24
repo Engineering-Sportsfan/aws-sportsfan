@@ -17,6 +17,8 @@ interface Bot {
 export default function BotManagementDashboard() {
   const [bots, setBots] = useState<Bot[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeRooms, setActiveRooms] = useState<any[]>([]);
+  const [loadingRooms, setLoadingRooms] = useState(true);
 
   // Modal State
   const [editingBot, setEditingBot] = useState<Bot | null>(null);
@@ -39,9 +41,50 @@ export default function BotManagementDashboard() {
     }
   };
 
+  const fetchRooms = async () => {
+    try {
+      const res = await fetch("/api/roar/rooms");
+      const data = await res.json();
+      if (data.success || data.rooms) {
+        setActiveRooms(data.rooms || []);
+      }
+    } catch (error) {
+      console.error("Failed to load active rooms:", error);
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
   useEffect(() => {
     fetchBots();
+    fetchRooms();
   }, []);
+
+  const handleStopRoomBot = async (roomId: string, botId: string) => {
+    if (!confirm(`Stop ${botId} in this specific room?`)) return;
+    try {
+      const res = await fetch(`/api/roar/rooms/${roomId}/bots/${botId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        // Optimistically update the UI
+        setActiveRooms(prev => prev.map(room => {
+          if (room.roomId === roomId && room.botConfig) {
+            const newConfig = { ...room.botConfig };
+            delete newConfig[botId];
+            return { ...room, botConfig: newConfig };
+          }
+          return room;
+        }));
+        alert(`${botId} stopped successfully in this room.`);
+      } else {
+        alert("Failed to stop bot in room.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error stopping bot.");
+    }
+  };
 
   const toggleBot = async (id: string, currentActive: boolean) => {
     const newActiveState = !currentActive;
@@ -250,6 +293,93 @@ export default function BotManagementDashboard() {
                 </td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 40, marginBottom: 24 }}>
+        <h2 style={{ margin: "0 0 8px 0", fontSize: 20, fontWeight: 600 }}>Room-Wise Active Bots</h2>
+        <p style={{ margin: 0, color: "#7d8590", fontSize: 14 }}>
+          See which bots are currently active in specific live RoAR rooms and control them individually.
+        </p>
+      </div>
+
+      <div style={{
+        background: "#161b22", border: "1px solid #30363d", borderRadius: 6,
+        overflow: "hidden"
+      }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 14 }}>
+          <thead>
+            <tr style={{ background: "#21262d", borderBottom: "1px solid #30363d", color: "#8b949e" }}>
+              <th style={{ padding: "12px 16px", fontWeight: 600 }}>Show Room</th>
+              <th style={{ padding: "12px 16px", fontWeight: 600 }}>Match Status</th>
+              <th style={{ padding: "12px 16px", fontWeight: 600 }}>Active Bots in Room</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loadingRooms ? (
+              <tr>
+                <td colSpan={3} style={{ padding: "32px", textAlign: "center", color: "#7d8590" }}>
+                  Loading active rooms...
+                </td>
+              </tr>
+            ) : activeRooms.length === 0 ? (
+              <tr>
+                <td colSpan={3} style={{ padding: "32px", textAlign: "center", color: "#7d8590" }}>
+                  No active RoAR rooms right now.
+                </td>
+              </tr>
+            ) : activeRooms.map((room) => {
+              const botsInRoom = room.botConfig ? Object.entries(room.botConfig) : [];
+              return (
+                <tr key={room.roomId} style={{ borderBottom: "1px solid #30363d" }}>
+                  <td style={{ padding: "16px" }}>
+                    <div style={{ fontWeight: 600, color: "#e6edf3" }}>{room.name || "Unnamed Room"}</div>
+                    <div style={{ fontSize: 12, color: "#7d8590" }}>ID: {room.roomId}</div>
+                  </td>
+                  <td style={{ padding: "16px", color: "#c9d1d9" }}>
+                    {room.matchId ? (
+                      <span style={{ color: "#2ea043", fontSize: 12, border: "1px solid #2ea043", padding: "2px 6px", borderRadius: 4 }}>Linked</span>
+                    ) : (
+                      <span style={{ color: "#8b949e", fontSize: 12 }}>No match</span>
+                    )}
+                  </td>
+                  <td style={{ padding: "16px" }}>
+                    {botsInRoom.length === 0 ? (
+                      <span style={{ color: "#7d8590", fontSize: 13 }}>No bots assigned</span>
+                    ) : (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                        {botsInRoom.map(([botId, config]: [string, any]) => (
+                          <div key={botId} style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            background: "#0d1117", border: "1px solid #30363d",
+                            padding: "4px 8px", borderRadius: 6
+                          }}>
+                            <div>
+                              <span style={{ fontWeight: 600, color: "#e6edf3", fontSize: 13 }}>{botId}</span>
+                              <span style={{ color: "#8b949e", fontSize: 11, marginLeft: 6 }}>
+                                ({config.role || "neutral"}{config.team ? ` - ${config.team}` : ""})
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => handleStopRoomBot(room.roomId, botId)}
+                              style={{
+                                background: "rgba(248, 81, 73, 0.1)", border: "1px solid rgba(248, 81, 73, 0.4)",
+                                color: "#f85149", padding: "2px 6px", borderRadius: 4,
+                                cursor: "pointer", fontSize: 11, fontWeight: 600
+                              }}
+                              title={`Stop ${botId} in this room`}
+                            >
+                              Stop
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
