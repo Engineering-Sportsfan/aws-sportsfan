@@ -121,7 +121,7 @@
 
 
 
-
+//api/auth/send-otp/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
