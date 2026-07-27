@@ -1,8 +1,8 @@
 "use client";
 
 import axios from "axios";
-import { useRouter } from "next/navigation";
-import { useState, ChangeEvent, InputHTMLAttributes } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, ChangeEvent, InputHTMLAttributes, useEffect } from "react";
 
 type FormState = {
     bgOpacity: string;
@@ -16,6 +16,11 @@ type FormState = {
 };
 
 export default function AddCategoryForm() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const editId = searchParams.get("id");
+    const isEditMode = !!editId;
+
     const [form, setForm] = useState<FormState>({
         bgOpacity: "0.12",
         color: "#0ea5e9",
@@ -29,7 +34,36 @@ export default function AddCategoryForm() {
 
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(false);
-    const router = useRouter();
+    const [fetching, setFetching] = useState(false);
+
+    useEffect(() => {
+        if (editId) {
+            setFetching(true);
+            axios.get(`/api/admin/store/addCategory?id=${editId}`)
+                .then(res => {
+                    if (res.data.success && res.data.data) {
+                        const data = res.data.data;
+                        setForm({
+                            bgOpacity: data.bgOpacity !== undefined ? String(data.bgOpacity) : "0.12",
+                            color: data.color || "",
+                            icon: data.icon || "",
+                            key: data.key || "",
+                            label: data.label || "",
+                            route: data.route || "",
+                            sport: data.sport || "athlete",
+                            status: data.status || "active",
+                        });
+                    }
+                })
+                .catch(err => {
+                    console.error("Failed to fetch category data:", err);
+                    alert("Failed to load category data for editing.");
+                })
+                .finally(() => {
+                    setFetching(false);
+                });
+        }
+    }, [editId]);
 
     const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -47,17 +81,21 @@ export default function AddCategoryForm() {
     };
 
     const handleCancel = () => {
-        setForm({
-            bgOpacity: "0.12",
-            color: "#0ea5e9",
-            icon: "Zap",
-            key: "athletes",
-            label: "Athletes",
-            route: "/MainModules/AtheleteStore/StoreAthelete",
-            sport: "athlete",
-            status: "active",
-        });
-        setErrors({});
+        if (isEditMode) {
+            router.push("/admin/store-management/category/list");
+        } else {
+            setForm({
+                bgOpacity: "0.12",
+                color: "#0ea5e9",
+                icon: "Zap",
+                key: "athletes",
+                label: "Athletes",
+                route: "/MainModules/AtheleteStore/StoreAthelete",
+                sport: "athlete",
+                status: "active",
+            });
+            setErrors({});
+        }
     };
 
     const handleSubmit = async () => {
@@ -80,11 +118,20 @@ export default function AddCategoryForm() {
                 bgOpacity: Number(form.bgOpacity),
             };
 
-            const res = await axios.post("/api/admin/store/addCategory", payload);
+            if (isEditMode) {
+                const res = await axios.put(`/api/admin/store/addCategory?id=${editId}`, payload);
+                if (res.data.success) {
+                    alert("Category updated successfully");
+                    router.push("/admin/store-management/category/list");
+                }
+            } else {
+                const res = await axios.post("/api/admin/store/addCategory", payload);
+                if (res.data.success) {
+                    alert("Category created successfully");
+                    router.push("/admin/store-management/category/list");
 
-            if (res.data.success) {
-                alert("Category created successfully");
-                handleCancel();
+                    handleCancel();
+                }
             }
         } catch (error: unknown) {
             console.error("Error:", error);
@@ -99,11 +146,15 @@ export default function AddCategoryForm() {
         }
     };
 
+    if (fetching) {
+        return <div className="p-6 text-white">Loading category data...</div>;
+    }
+
     return (
         <div className="max-w-[1440px] mx-auto p-6">
             <div className="mb-6">
                 <h1 className="text-lg font-semibold text-white">
-                    Add Store Category
+                    {isEditMode ? "Edit Store Category" : "Add Store Category"}
                 </h1>
             </div>
 
@@ -150,14 +201,14 @@ export default function AddCategoryForm() {
                     <button
                         onClick={handleSubmit}
                         disabled={loading}
-                        className="flex-1 bg-blue-600 py-3 rounded font-semibold text-white"
+                        className="flex-1 bg-blue-600 py-3 rounded font-semibold text-white transition-colors"
                     >
-                        {loading ? "Creating..." : "Create Category"}
+                        {loading ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Category" : "Create Category")}
                     </button>
 
                     <button
                         onClick={handleCancel}
-                        className="flex-1 bg-gray-700 py-3 rounded font-semibold text-white"
+                        className="flex-1 bg-gray-700 py-3 rounded font-semibold text-white transition-colors"
                     >
                         Cancel
                     </button>

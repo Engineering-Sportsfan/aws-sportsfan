@@ -1,8 +1,8 @@
 "use client";
 
 import axios from "axios";
-import { useRouter } from "next/navigation";
-import { useState, ChangeEvent, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, ChangeEvent, InputHTMLAttributes, TextareaHTMLAttributes, useEffect } from "react";
 
 /*  TYPES  */
 
@@ -15,7 +15,7 @@ interface FormState {
   brand: string;
   title: string;
   description: string;
-  governance_state: "approved" | "pending review" | "rejected";
+  governance_state: "approved" | "pending review" | "rejected" | "";
   rating: string;
   reviews: string;
   rewardCoins: string;
@@ -26,6 +26,11 @@ interface FormState {
 /*  COMPONENT  */
 
 export default function CreateBrandProduct() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("id");
+  const isEditMode = !!editId;
+
   const [form, setForm] = useState<FormState>({
     brand: "",
     title: "",
@@ -38,7 +43,7 @@ export default function CreateBrandProduct() {
     priceRupees: "",
   });
 
-  const [image, setImage] = useState<File | null>(null);
+  const [image, setImage] = useState<File | string | null>(null);
   const [isFeatured, setIsFeatured] = useState<boolean>(false);
   const [addTag, setAddTag] = useState<boolean>(false);
   const [tagLabel, setTagLabel] = useState<string>("");
@@ -47,11 +52,55 @@ export default function CreateBrandProduct() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [variantErrors, setVariantErrors] = useState<Record<number, Record<string, string>>>({});
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const [fetching, setFetching] = useState(false);
 
-  const getPreview = (file: File | null) => {
-    if (file) return URL.createObjectURL(file);
-    return "";
+  useEffect(() => {
+    if (editId) {
+      setFetching(true);
+      axios.get(`/api/admin/store/addBrand?id=${editId}`)
+        .then(res => {
+          if (res.data.success && res.data.data) {
+            const data = res.data.data;
+            setForm({
+              brand: data.brand || "",
+              title: data.title || "",
+              description: data.description || "",
+              governance_state: data.governance_state || "pending review",
+              rating: String(data.rating ?? "0"),
+              reviews: String(data.reviews ?? "0"),
+              rewardCoins: String(data.rewardCoins ?? "0"),
+              originalPriceRupees: data.originalPriceVal ? String(data.originalPriceVal / 100) : "",
+              priceRupees: data.pricePaise ? String(data.pricePaise / 100) : "",
+            });
+            setImage(data.image || null);
+            setIsFeatured(Boolean(data.isFeatured));
+            if (data.tag) {
+              setAddTag(true);
+              setTagLabel(data.tag.label || "");
+              setTagColor(data.tag.color || "#CD620E");
+            }
+            if (data.variants && Array.isArray(data.variants)) {
+              setVariants(data.variants.map((v: any) => ({
+                size: v.size || "",
+                stock: String(v.stock ?? "0")
+              })));
+            }
+          }
+        })
+        .catch(err => {
+          console.error("Failed to fetch brand product:", err);
+          alert("Failed to load brand product data for editing.");
+        })
+        .finally(() => {
+          setFetching(false);
+        });
+    }
+  }, [editId]);
+
+  const getPreview = (file: File | string | null) => {
+    if (!file) return "";
+    if (typeof file === "string") return file;
+    return URL.createObjectURL(file);
   };
 
   /* ---------------- INPUT ---------------- */
@@ -115,25 +164,29 @@ export default function CreateBrandProduct() {
 
   /* RESET */
   const handleCancel = () => {
-    setForm({
-      brand: "",
-      title: "",
-      description: "",
-      governance_state: "pending review",
-      rating: "0",
-      reviews: "0",
-      rewardCoins: "0",
-      originalPriceRupees: "",
-      priceRupees: "",
-    });
-    setImage(null);
-    setIsFeatured(false);
-    setAddTag(false);
-    setTagLabel("");
-    setTagColor("#CD620E");
-    setVariants([]);
-    setErrors({});
-    setVariantErrors({});
+    if (isEditMode) {
+      router.push("/admin/store-management/brand/list");
+    } else {
+      setForm({
+        brand: "",
+        title: "",
+        description: "",
+        governance_state: "pending review",
+        rating: "0",
+        reviews: "0",
+        rewardCoins: "0",
+        originalPriceRupees: "",
+        priceRupees: "",
+      });
+      setImage(null);
+      setIsFeatured(false);
+      setAddTag(false);
+      setTagLabel("");
+      setTagColor("#CD620E");
+      setVariants([]);
+      setErrors({});
+      setVariantErrors({});
+    }
   };
 
   const uploadFile = async (file: File, folder: string): Promise<string> => {
@@ -193,7 +246,10 @@ export default function CreateBrandProduct() {
     setLoading(true);
 
     try {
-      const imageUrl = await uploadFile(image, "Images");
+      let imageUrl = image;
+      if (image instanceof File) {
+        imageUrl = await uploadFile(image, "Images");
+      }
 
       const payload = {
         brand: form.brand,
@@ -218,11 +274,20 @@ export default function CreateBrandProduct() {
         })),
       };
 
-      const res = await axios.post("/api/admin/store/addBrand", payload);
+      if (isEditMode) {
+        const res = await axios.put(`/api/admin/store/addBrand?id=${editId}`, payload);
+        if (res.data.success) {
+          alert("Brand product updated successfully");
+          router.push("/admin/store-management/brand/list");
+        }
+      } else {
+        const res = await axios.post("/api/admin/store/addBrand", payload);
+        if (res.data.success) {
+          alert("Brand product created successfully");
+          router.push("/admin/store-management/athlete/list");
 
-      if (res.data.success) {
-        alert("Brand product created successfully");
-        handleCancel();
+          handleCancel();
+        }
       }
     } catch (error: unknown) {
       console.error("Error:", error);
@@ -240,11 +305,15 @@ export default function CreateBrandProduct() {
   const liveTotalStock = variants.reduce((sum, item) => sum + (parseInt(item.stock, 10) || 0), 0);
   const showPriceWarning = (Number(form.priceRupees) || 0) > (Number(form.originalPriceRupees) || 0);
 
+  if (fetching) {
+    return <div className="p-6 text-white">Loading brand product data...</div>;
+  }
+
   return (
     <div className="max-w-[1440px] mx-auto p-6">
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-white">
-          Create Brand Product
+          {isEditMode ? "Edit Brand Product" : "Create Brand Product"}
         </h1>
       </div>
 
@@ -482,7 +551,7 @@ export default function CreateBrandProduct() {
             disabled={loading}
             className="flex-1 bg-blue-600 hover:bg-blue-700 py-3 rounded font-semibold text-white disabled:opacity-50 transition-colors"
           >
-            {loading ? "Creating..." : "Create Brand Product"}
+            {loading ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Brand Product" : "Create Brand Product")}
           </button>
 
           <button
