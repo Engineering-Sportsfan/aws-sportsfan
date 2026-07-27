@@ -70,7 +70,9 @@ export async function GET(req: NextRequest) {
         "scheduledStartTime",
         "score",
         "scoreSubtitle",
-        "watchAlongRoomId"
+        "watchAlongRoomId",
+        "matchId",
+        "botConfig"
       )
       .get();
 
