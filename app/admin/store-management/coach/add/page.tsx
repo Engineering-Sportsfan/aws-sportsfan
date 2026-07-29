@@ -1,8 +1,8 @@
 "use client";
 
 import axios from "axios";
-import { useRouter } from "next/navigation";
-import { useState, ChangeEvent, InputHTMLAttributes } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, ChangeEvent, InputHTMLAttributes, useEffect } from "react";
 
 /* TYPES */
 type FormState = {
@@ -48,7 +48,12 @@ type Slot = {
 /* COMPONENT */
 export default function AddCoachForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("id");
+  const isEditMode = !!editId;
+
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(false);
 
   const [form, setForm] = useState<FormState>({
     coachId: "",
@@ -68,7 +73,7 @@ export default function AddCoachForm() {
     sourcing_model: "independent",
   });
 
-  const [image, setImage] = useState<File | null>(null);
+  const [image, setImage] = useState<File | string | null>(null);
   
   const [achievements, setAchievements] = useState<string[]>([]);
   const [certifications, setCertifications] = useState<string[]>([]);
@@ -82,6 +87,49 @@ export default function AddCoachForm() {
   const [serviceErrors, setServiceErrors] = useState<Record<number, Record<string, string>>>({});
   const [reviewErrors, setReviewErrors] = useState<Record<number, Record<string, string>>>({});
   const [slotErrors, setSlotErrors] = useState<Record<number, Record<string, string>>>({});
+
+  useEffect(() => {
+    if (editId) {
+      setFetching(true);
+      axios.get(`/api/admin/store/addCoach?id=${editId}`)
+        .then(res => {
+          if (res.data.success && res.data.data) {
+            const data = res.data.data;
+            setForm({
+              coachId: data.coachId || "",
+              name: data.name || "",
+              title: data.title || "",
+              role: data.role || "",
+              tagline: data.tagline || "",
+              about: data.about || "",
+              category: data.category || "coaches",
+              experience: data.experience || "",
+              pricePaise: data.pricePaise ?? "",
+              rating: data.rating ?? "",
+              reviews: data.reviews ?? "",
+              rewardCoins: data.rewardCoins ?? "",
+              verified: Boolean(data.verified),
+              governance_state: data.governance_state || "approved",
+              sourcing_model: data.sourcing_model || "independent",
+            });
+            setImage(data.image || null);
+            setAchievements(data.achievements || []);
+            setCertifications(data.certifications || []);
+            setSpecializations(data.specializations || []);
+            setServices(data.services || []);
+            setReviewList(data.reviewList || []);
+            setSlots(data.slots || []);
+          }
+        })
+        .catch(err => {
+          console.error("Failed to fetch coach:", err);
+          alert("Failed to load coach data for editing.");
+        })
+        .finally(() => {
+          setFetching(false);
+        });
+    }
+  }, [editId]);
 
   /* ---------------- INPUT ---------------- */
   const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -262,34 +310,38 @@ export default function AddCoachForm() {
 
   /* RESET */
   const handleCancel = () => {
-    setForm({
-      coachId: "",
-      name: "",
-      title: "",
-      role: "",
-      tagline: "",
-      about: "",
-      category: "coaches",
-      experience: "",
-      pricePaise: "",
-      rating: "",
-      reviews: "",
-      rewardCoins: "",
-      verified: false,
-      governance_state: "approved",
-      sourcing_model: "independent",
-    });
-    setImage(null);
-    setAchievements([]);
-    setCertifications([]);
-    setSpecializations([]);
-    setServices([]);
-    setReviewList([]);
-    setSlots([]);
-    setErrors({});
-    setServiceErrors({});
-    setReviewErrors({});
-    setSlotErrors({});
+    if (isEditMode) {
+      router.push("/admin/store-management/coach/list");
+    } else {
+      setForm({
+        coachId: "",
+        name: "",
+        title: "",
+        role: "",
+        tagline: "",
+        about: "",
+        category: "coaches",
+        experience: "",
+        pricePaise: "",
+        rating: "",
+        reviews: "",
+        rewardCoins: "",
+        verified: false,
+        governance_state: "approved",
+        sourcing_model: "independent",
+      });
+      setImage(null);
+      setAchievements([]);
+      setCertifications([]);
+      setSpecializations([]);
+      setServices([]);
+      setReviewList([]);
+      setSlots([]);
+      setErrors({});
+      setServiceErrors({});
+      setReviewErrors({});
+      setSlotErrors({});
+    }
   };
 
   const uploadFile = async (file: File, folder: string): Promise<string> => {
@@ -370,8 +422,8 @@ export default function AddCoachForm() {
     setLoading(true);
 
     try {
-      let imageUrl = "";
-      if (image) {
+      let imageUrl = image;
+      if (image instanceof File) {
         imageUrl = await uploadFile(image, "Images");
       }
 
@@ -390,11 +442,20 @@ export default function AddCoachForm() {
         slots: slots.map(s => ({ ...s, num: Number(s.num) })),
       };
 
-      const res = await axios.post("/api/admin/store/addCoach", payload);
+      if (isEditMode) {
+        const res = await axios.put(`/api/admin/store/addCoach?id=${editId}`, payload);
+        if (res.data.success) {
+          alert("Coach updated successfully");
+          router.push("/admin/store-management/coach/list");
+        }
+      } else {
+        const res = await axios.post("/api/admin/store/addCoach", payload);
+        if (res.data.success) {
+          alert("Coach created successfully");
+          router.push("/admin/store-management/coach/list");
 
-      if (res.data.success) {
-        alert("Coach created successfully");
-        handleCancel();
+          handleCancel();
+        }
       }
     } catch (error: unknown) {
       console.error("Error:", error);
@@ -409,11 +470,21 @@ export default function AddCoachForm() {
     }
   };
 
+  if (fetching) {
+    return <div className="p-6 text-white">Loading coach data...</div>;
+  }
+
+  const getPreview = (file: File | string | null) => {
+    if (!file) return "";
+    if (typeof file === "string") return file;
+    return URL.createObjectURL(file);
+  };
+
   return (
     <div className="max-w-[1440px] mx-auto p-6">
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-white">
-          Add Coach Profile
+          {isEditMode ? "Edit Coach Profile" : "Add Coach Profile"}
         </h1>
       </div>
 
@@ -464,7 +535,7 @@ export default function AddCoachForm() {
               />
             </div>
 
-            <Input label="Coach ID (slug, e.g. nikhat-zareen) *" name="coachId" value={form.coachId} onChange={handleChange} placeholder="nikhat-zareen" error={errors.coachId} />
+            <Input label="Coach ID (slug, e.g. nikhat-zareen) *" name="coachId" value={form.coachId} onChange={handleChange} placeholder="nikhat-zareen" error={errors.coachId} readOnly={isEditMode} />
             <Input label="Name *" name="name" value={form.name} onChange={handleChange} placeholder="Nikhat Zareen" error={errors.name} />
             <Input label="Title (e.g. World Boxing Champion) *" name="title" value={form.title} onChange={handleChange} placeholder="World Boxing Champion" error={errors.title} />
             
@@ -521,6 +592,13 @@ export default function AddCoachForm() {
 
             <div className="col-span-1 md:col-span-2">
               <FileInput label="Coach Profile Image *" onChange={setImage} error={errors.image} />
+              {image && (
+                <img
+                  src={getPreview(image)}
+                  alt="preview"
+                  className="w-24 h-24 object-cover mt-2 rounded border border-gray-700"
+                />
+              )}
             </div>
 
           </div>
@@ -609,7 +687,7 @@ export default function AddCoachForm() {
         {/* ACTIONS */}
         <div className="flex gap-3 pt-4 border-t border-[#21262d]">
           <button onClick={handleSubmit} disabled={loading} className="flex-1 bg-blue-600 hover:bg-blue-700 py-3 rounded font-semibold text-white disabled:opacity-50">
-            {loading ? "Creating..." : "Create Coach"}
+            {loading ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Coach" : "Create Coach")}
           </button>
           <button onClick={handleCancel} className="flex-1 bg-gray-700 hover:bg-gray-600 py-3 rounded font-semibold text-white">
             Cancel

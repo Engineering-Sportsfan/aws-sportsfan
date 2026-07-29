@@ -1,7 +1,7 @@
 "use client";
 
 import axios from "axios";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState, ChangeEvent, InputHTMLAttributes, useEffect } from "react";
 
 /* TYPES */
@@ -33,6 +33,14 @@ interface EventProduct {
 
 /* COMPONENT */
 export default function AddEventForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("id");
+  const isEditMode = !!editId;
+
+  const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(false);
+
   const [form, setForm] = useState<EventProduct>({
     governance_state: "approved",
     title: "",
@@ -54,12 +62,49 @@ export default function AddEventForm() {
     memento: { label: "", price: 0 },
   });
 
-  const [image, setImage] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [image, setImage] = useState<File | string | null>(null);
   const [bgOverride, setBgOverride] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  
-  const router = useRouter();
+
+  useEffect(() => {
+    if (editId) {
+      setFetching(true);
+      axios.get(`/api/admin/store/addEvent?id=${editId}`)
+        .then(res => {
+          if (res.data.success && res.data.data) {
+            const data = res.data.data;
+            setForm({
+              governance_state: data.governance_state || "approved",
+              title: data.title || "",
+              subtitle: data.subtitle || "",
+              description: data.description || "",
+              type: data.type || "virtual",
+              dates: data.dates || "",
+              icon: data.icon || "Video",
+              color: data.color || "#0ea5e9",
+              bg: data.bg || "rgba(14, 165, 233, 0.1)",
+              badge: data.badge || "",
+              badgeColor: data.badgeColor || "#ff0000",
+              price: data.price ?? "",
+              pricePaise: data.pricePaise ?? "",
+              rewardCoins: data.rewardCoins ?? "",
+              seats: data.seats ?? "",
+              seatsLeft: data.seatsLeft ?? "",
+              perks: data.perks || [],
+              memento: data.memento || { label: "", price: 0 },
+            });
+            setImage(data.image || null);
+          }
+        })
+        .catch(err => {
+          console.error("Failed to fetch event:", err);
+          alert("Failed to load event data for editing.");
+        })
+        .finally(() => {
+          setFetching(false);
+        });
+    }
+  }, [editId]);
 
   // Color to rgba helper
   const hexToRgba = (hex: string, alpha: number) => {
@@ -117,29 +162,33 @@ export default function AddEventForm() {
 
   /*  RESET  */
   const handleCancel = () => {
-    setForm({
-      governance_state: "approved",
-      title: "",
-      subtitle: "",
-      description: "",
-      type: "virtual",
-      dates: "",
-      icon: "Video",
-      color: "#0ea5e9",
-      bg: "rgba(14, 165, 233, 0.1)",
-      badge: "",
-      badgeColor: "#ff0000",
-      price: "",
-      pricePaise: "",
-      rewardCoins: "",
-      seats: "",
-      seatsLeft: "",
-      perks: [],
-      memento: { label: "", price: 0 },
-    });
-    setImage(null);
-    setBgOverride(false);
-    setErrors({});
+    if (isEditMode) {
+      router.push("/admin/store-management/event/list");
+    } else {
+      setForm({
+        governance_state: "approved",
+        title: "",
+        subtitle: "",
+        description: "",
+        type: "virtual",
+        dates: "",
+        icon: "Video",
+        color: "#0ea5e9",
+        bg: "rgba(14, 165, 233, 0.1)",
+        badge: "",
+        badgeColor: "#ff0000",
+        price: "",
+        pricePaise: "",
+        rewardCoins: "",
+        seats: "",
+        seatsLeft: "",
+        perks: [],
+        memento: { label: "", price: 0 },
+      });
+      setImage(null);
+      setBgOverride(false);
+      setErrors({});
+    }
   };
 
   const uploadFile = async (file: File, folder: string): Promise<string> => {
@@ -184,7 +233,10 @@ export default function AddEventForm() {
     setLoading(true);
 
     try {
-      const imageUrl = await uploadFile(image, "Images");
+      let imageUrl = image;
+      if (image instanceof File) {
+        imageUrl = await uploadFile(image, "Images");
+      }
 
       const payload = {
         ...form,
@@ -195,11 +247,20 @@ export default function AddEventForm() {
         seatsLeft: Number(form.seatsLeft),
       };
 
-      const res = await axios.post("/api/admin/store/addEvent", payload);
+      if (isEditMode) {
+        const res = await axios.put(`/api/admin/store/addEvent?id=${editId}`, payload);
+        if (res.data.success) {
+          alert("Event updated successfully");
+          router.push("/admin/store-management/event/list");
+        }
+      } else {
+        const res = await axios.post("/api/admin/store/addEvent", payload);
+        if (res.data.success) {
+          alert("Event created successfully");
+          router.push("/admin/store-management/event/list");
 
-      if (res.data.success) {
-        alert("Event created successfully");
-        handleCancel();
+          handleCancel();
+        }
       }
     } catch (error: unknown) {
       console.error("Error:", error);
@@ -214,11 +275,21 @@ export default function AddEventForm() {
     }
   };
 
+  if (fetching) {
+    return <div className="p-6 text-white">Loading event data...</div>;
+  }
+
+  const getPreview = (file: File | string | null) => {
+    if (!file) return "";
+    if (typeof file === "string") return file;
+    return URL.createObjectURL(file);
+  };
+
   return (
     <div className="max-w-[1440px] mx-auto p-6">
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-white">
-          Create Event Product
+          {isEditMode ? "Edit Event Product" : "Create Event Product"}
         </h1>
       </div>
 
@@ -326,6 +397,13 @@ export default function AddEventForm() {
 
           <div className="col-span-1 md:col-span-2">
             <FileInput label="Event Thumbnail Image *" onChange={setImage} error={errors.image} />
+            {image && (
+              <img
+                src={getPreview(image)}
+                alt="preview"
+                className="w-24 h-24 object-cover mt-2 rounded border border-gray-700"
+              />
+            )}
           </div>
 
           <div className="col-span-1 md:col-span-2">
@@ -397,7 +475,7 @@ export default function AddEventForm() {
             disabled={loading}
             className="flex-1 bg-blue-600 py-3 rounded font-semibold text-white disabled:opacity-50"
           >
-            {loading ? "Creating..." : "Create Event"}
+            {loading ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Event" : "Create Event")}
           </button>
           <button
             onClick={handleCancel}

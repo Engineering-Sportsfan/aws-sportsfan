@@ -610,76 +610,16 @@ const FULL_NAV: NavGroup[] = [
       {
         label: "Store Management", icon: "◉",
         children: [
-          {
-            label: "Categories",
-            children: [
-              { href: "/admin/store-management/category/add", label: "Add Category" },
-              { href: "/admin/store-management/category/list", label: "Category List" },
-            ],
-          },
-          {
-            label: "Coaches",
-            children: [
-              { href: "/admin/store-management/coach/add", label: "Add Coach" },
-              { href: "/admin/store-management/coach/list", label: "Coach List" },
-            ],
-          },
-          {
-            label: "Events",
-            children: [
-              { href: "/admin/store-management/event/add", label: "Add Event" },
-              { href: "/admin/store-management/event/list", label: "Event List" },
-            ],
-          },
-          {
-            label: "Experiences",
-            children: [
-              { href: "/admin/store-management/experience/add", label: "Add Experience" },
-              { href: "/admin/store-management/experience/list", label: "Experience List" },
-            ],
-          },
-          {
-            label: "Auctions",
-            children: [
-              { href: "/admin/store-management/auction/add", label: "Add Auction" },
-              { href: "/admin/store-management/auction/list", label: "Auction List" },
-            ],
-          },
-          {
-            label: "Athletes",
-            children: [
-              { href: "/admin/store-management/athlete/add", label: "Add Athlete" },
-              { href: "/admin/store-management/athlete/list", label: "Athlete List" },
-            ],
-          },
-          {
-            label: "Merchandise",
-            children: [
-              { href: "/admin/store-management/merchandise/add", label: "Add Merchandise" },
-              { href: "/admin/store-management/merchandise/list", label: "Merchandise List" },
-            ],
-          },
-          {
-            label: "Brands",
-            children: [
-              { href: "/admin/store-management/brand/add", label: "Add Brand" },
-              { href: "/admin/store-management/brand/list", label: "Brand List" },
-            ],
-          },
-          {
-            label: "Digital Products",
-            children: [
-              { href: "/admin/store-management/digital/add", label: "Add Digital Product" },
-              { href: "/admin/store-management/digital/list", label: "Digital Products List" },
-            ],
-          },
-          {
-            label: "Memberships",
-            children: [
-              { href: "/admin/store-management/membership/add", label: "Add Membership" },
-              { href: "/admin/store-management/membership/list", label: "Membership List" },
-            ],
-          },
+          { href: "/admin/store-management/category/list", label: "Categories" },
+          { href: "/admin/store-management/coach/list", label: "Coaches" },
+          { href: "/admin/store-management/event/list", label: "Events" },
+          { href: "/admin/store-management/experience/list", label: "Experiences" },
+          { href: "/admin/store-management/auction/list", label: "Auctions" },
+          { href: "/admin/store-management/athlete/list", label: "Athletes" },
+          { href: "/admin/store-management/merchandise/list", label: "Merchandise" },
+          { href: "/admin/store-management/brand/list", label: "Brands" },
+          { href: "/admin/store-management/digital/list", label: "Digital Products" },
+          { href: "/admin/store-management/membership/list", label: "Memberships" },
         ],
       },
       {

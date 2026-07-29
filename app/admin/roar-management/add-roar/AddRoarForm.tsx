@@ -312,6 +312,7 @@ export default function AddRoarForm() {
   const [scoreSubtitle, setScoreSubtitle] = useState('');
   const [createWatchAlong, setCreateWatchAlong] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isTestingRoom, setIsTestingRoom] = useState(false);
   
   // AI Bots State
   const [availableBots, setAvailableBots] = useState<{ id: string, name: string, role: string, active: boolean, affiliations?: Record<string, string> }[]>([]);
@@ -423,6 +424,7 @@ export default function AddRoarForm() {
         createWatchAlong,
         matchId: selectedMatchId || undefined,
         botConfig: selectedBots,
+        isTestingRoom,
       });
 
       const roomId = roomResponse.data.roomId;
@@ -526,6 +528,20 @@ export default function AddRoarForm() {
               </option>
             ))}
           </select>
+        </div>
+
+        {/* Create as Testing Room Checkbox */}
+        <div className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            id="isTestingRoom"
+            checked={isTestingRoom}
+            onChange={(e) => setIsTestingRoom(e.target.checked)}
+            className="w-4 h-4 rounded text-blue-600 border-[#30363d] focus:ring-blue-500 bg-[#161b22] cursor-pointer"
+          />
+          <label htmlFor="isTestingRoom" className="text-sm font-semibold text-gray-300 cursor-pointer select-none">
+            Create as Testing Room (Runs bots for 1 hour)
+          </label>
         </div>
 
         {/* Channel Management Section - OPTIONAL */}

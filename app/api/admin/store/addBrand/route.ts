@@ -7,6 +7,28 @@ interface VariantInput {
   stock: string | number;
 }
 
+export async function GET(req: NextRequest) {
+  try {
+    const id = req.nextUrl.searchParams.get("id");
+    
+    if (id) {
+      const doc = await db.collection("storeProducts").doc(id).get();
+      if (!doc.exists) {
+        return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+      }
+      return NextResponse.json({ success: true, data: { id: doc.id, ...doc.data() } });
+    }
+
+    const snapshot = await db.collection("storeProducts").where("category", "==", "brands").get();
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return NextResponse.json({ success: true, data });
+  } catch (error: unknown) {
+    console.error("Error fetching brand product(s):", error);
+    const msg = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -119,6 +141,153 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, id: docId }, { status: 201 });
   } catch (error: unknown) {
     console.error("Error adding brand product:", error);
+    const msg = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  try {
+    const id = req.nextUrl.searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Missing id parameter" }, { status: 400 });
+    }
+
+    const body = await req.json();
+
+    const {
+      brand,
+      title,
+      description,
+      image,
+      governance_state = "pending review",
+      isFeatured = false,
+      rating = 0,
+      reviews = 0,
+      rewardCoins = 0,
+      originalPriceRupees,
+      priceRupees,
+      addTag = false,
+      tag,
+      variants = [],
+    } = body;
+
+    if (!brand || !title || !description || !image || originalPriceRupees === undefined || priceRupees === undefined) {
+      return NextResponse.json(
+        { success: false, error: "Missing required fields" },
+        { status: 400 }
+      );
+    }
+
+    const originalPriceVal = Number(originalPriceRupees) * 100;
+    const pricePaise = Number(priceRupees) * 100;
+
+    if (pricePaise > originalPriceVal) {
+      return NextResponse.json(
+        { success: false, error: "Sale price cannot be higher than original price" },
+        { status: 400 }
+      );
+    }
+
+    let totalStock = 0;
+    const formattedVariants = [];
+    if (Array.isArray(variants)) {
+      for (let i = 0; i < variants.length; i++) {
+        const item: VariantInput = variants[i];
+        if (!item.size || item.stock === undefined || item.stock === "") {
+          return NextResponse.json(
+            { success: false, error: `Variant row ${i + 1} has missing fields (size or stock)` },
+            { status: 400 }
+          );
+        }
+        
+        const stockNum = parseInt(String(item.stock), 10);
+        if (isNaN(stockNum) || stockNum < 0) {
+          return NextResponse.json(
+            { success: false, error: `Variant row ${i + 1} stock must be a non-negative integer` },
+            { status: 400 }
+          );
+        }
+
+        const sizeId = item.size.toLowerCase().replace(/\s+/g, "");
+
+        formattedVariants.push({
+          id: sizeId,
+          size: item.size,
+          stock: stockNum,
+          available: stockNum > 0,
+        });
+
+        totalStock += stockNum;
+      }
+    }
+
+    let promoTag = null;
+    if (addTag && tag && tag.label) {
+      promoTag = {
+        label: tag.label,
+        color: tag.color || "#CD620E",
+      };
+    }
+
+    const docRef = db.collection("storeProducts").doc(id);
+    const docSnap = await docRef.get();
+    if (!docSnap.exists) {
+      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    }
+
+    const updatedBrandProduct: any = {
+      brand,
+      title,
+      description,
+      image,
+      governance_state: governance_state || "pending review",
+      isFeatured: Boolean(isFeatured),
+      rating: Number(rating) || 0,
+      reviews: Number(reviews) || 0,
+      rewardCoins: Number(rewardCoins) || 0,
+      originalPriceVal,
+      pricePaise,
+      variants: formattedVariants,
+      totalStock,
+      isAvailable: totalStock > 0,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    if (promoTag) {
+      updatedBrandProduct.tag = promoTag;
+    } else {
+      updatedBrandProduct.tag = FieldValue.delete();
+    }
+
+    await docRef.update(updatedBrandProduct);
+
+    return NextResponse.json({ success: true, id }, { status: 200 });
+  } catch (error: unknown) {
+    console.error("Error updating brand product:", error);
+    const msg = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const id = req.nextUrl.searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Missing id parameter" }, { status: 400 });
+    }
+
+    const docRef = db.collection("storeProducts").doc(id);
+    const docSnap = await docRef.get();
+    if (!docSnap.exists) {
+      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    }
+
+    await docRef.delete();
+    
+    return NextResponse.json({ success: true }, { status: 200 });
+  } catch (error: unknown) {
+    console.error("Error deleting brand product:", error);
     const msg = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }

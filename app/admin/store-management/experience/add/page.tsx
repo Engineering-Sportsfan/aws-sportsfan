@@ -1,8 +1,8 @@
 "use client";
 
 import axios from "axios";
-import { useRouter } from "next/navigation";
-import { useState, ChangeEvent, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, ChangeEvent, InputHTMLAttributes, TextareaHTMLAttributes, useEffect } from "react";
 
 /*  TYPES  */
 
@@ -34,6 +34,11 @@ type FormState = {
 /*  COMPONENT  */
 
 export default function CreateExperience() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const editId = searchParams.get("id");
+    const isEditMode = !!editId;
+
     const [form, setForm] = useState<FormState>({
         title: "",
         description: "",
@@ -54,8 +59,8 @@ export default function CreateExperience() {
         seatsBooked: "0",
     });
 
-    const [image, setImage] = useState<File | null>(null);
-    const [athleteImg, setAthleteImg] = useState<File | null>(null);
+    const [image, setImage] = useState<File | string | null>(null);
+    const [athleteImg, setAthleteImg] = useState<File | string | null>(null);
 
     const [agenda, setAgenda] = useState<AgendaItem[]>([]);
     const [inclusions, setInclusions] = useState<string[]>([]);
@@ -63,11 +68,61 @@ export default function CreateExperience() {
 
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(false);
-    const router = useRouter();
+    const [fetching, setFetching] = useState(false);
 
-    const getPreview = (file: File | null) => {
-        if (file) return URL.createObjectURL(file);
-        return "";
+    useEffect(() => {
+        if (editId) {
+            setFetching(true);
+            axios.get(`/api/admin/store/addExperience?id=${editId}`)
+                .then(res => {
+                    if (res.data.success && res.data.data) {
+                        const data = res.data.data;
+
+                        let formattedDate = data.eventStartsAt || "";
+                        if (formattedDate && formattedDate.includes("+05:30")) {
+                            formattedDate = formattedDate.replace(":00+05:30", "");
+                        }
+
+                        setForm({
+                            title: data.title || "",
+                            description: data.description || "",
+                            type: data.type || "",
+                            tag: data.tag || "",
+                            tagColor: data.tagColor || "#00c864",
+                            governanceState: data.governanceState || "pending review",
+                            status: data.status || "draft",
+                            athlete: data.athlete || "",
+                            host: data.host || "",
+                            hostRole: data.hostRole || "",
+                            eventStartsAt: formattedDate,
+                            duration: data.duration || "",
+                            onlineLink: data.onlineLink || "",
+                            price: data.price ?? "",
+                            rewardCoins: data.rewardCoins ?? "0",
+                            totalSeats: data.totalSeats ?? "",
+                            seatsBooked: data.seatsBooked ?? "0",
+                        });
+                        setImage(data.image || null);
+                        setAthleteImg(data.athleteImg || null);
+                        setAgenda(data.agenda || []);
+                        setInclusions(data.inclusions || []);
+                        setRules(data.rules || []);
+                    }
+                })
+                .catch(err => {
+                    console.error("Failed to fetch experience:", err);
+                    alert("Failed to load experience data for editing.");
+                })
+                .finally(() => {
+                    setFetching(false);
+                });
+        }
+    }, [editId]);
+
+    const getPreview = (file: File | string | null) => {
+        if (!file) return "";
+        if (typeof file === "string") return file;
+        return URL.createObjectURL(file);
     };
 
     /* ---------------- INPUT ---------------- */
@@ -88,11 +143,8 @@ export default function CreateExperience() {
 
     const handleDatetimeChange = (e: ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
-        if (val) {
-            setForm((prev) => ({ ...prev, eventStartsAt: `${val}:00+05:30` }));
-        } else {
-            setForm((prev) => ({ ...prev, eventStartsAt: "" }));
-        }
+        setForm((prev) => ({ ...prev, eventStartsAt: val }));
+
         if (errors.eventStartsAt) {
             setErrors(prev => {
                 const next = { ...prev };
@@ -129,31 +181,35 @@ export default function CreateExperience() {
 
     /*  RESET  */
     const handleCancel = () => {
-        setForm({
-            title: "",
-            description: "",
-            type: "",
-            tag: "",
-            tagColor: "#00c864",
-            governanceState: "pending review",
-            status: "draft",
-            athlete: "",
-            host: "",
-            hostRole: "",
-            eventStartsAt: "",
-            duration: "",
-            onlineLink: "",
-            price: "",
-            rewardCoins: "0",
-            totalSeats: "",
-            seatsBooked: "0",
-        });
-        setImage(null);
-        setAthleteImg(null);
-        setAgenda([]);
-        setInclusions([]);
-        setRules([]);
-        setErrors({});
+        if (isEditMode) {
+            router.push("/admin/store-management/experience/list");
+        } else {
+            setForm({
+                title: "",
+                description: "",
+                type: "",
+                tag: "",
+                tagColor: "#00c864",
+                governanceState: "pending review",
+                status: "draft",
+                athlete: "",
+                host: "",
+                hostRole: "",
+                eventStartsAt: "",
+                duration: "",
+                onlineLink: "",
+                price: "",
+                rewardCoins: "0",
+                totalSeats: "",
+                seatsBooked: "0",
+            });
+            setImage(null);
+            setAthleteImg(null);
+            setAgenda([]);
+            setInclusions([]);
+            setRules([]);
+            setErrors({});
+        }
     };
 
     const uploadFile = async (file: File, folder: string): Promise<string> => {
@@ -182,8 +238,8 @@ export default function CreateExperience() {
         if (!form.host) newErrors.host = "Host is required";
         if (!form.eventStartsAt) newErrors.eventStartsAt = "Event Start Date & Time is required";
         if (!form.duration) newErrors.duration = "Duration is required";
-        if (!form.price) newErrors.price = "Price is required";
-        if (!form.totalSeats) newErrors.totalSeats = "Total Seats is required";
+        if (form.price === "") newErrors.price = "Price is required";
+        if (form.totalSeats === "") newErrors.totalSeats = "Total Seats is required";
 
         if ((form.type === "online" || form.type === "hybrid") && !form.onlineLink) {
             newErrors.onlineLink = "Online link is required for online/hybrid experiences";
@@ -203,14 +259,20 @@ export default function CreateExperience() {
         setLoading(true);
 
         try {
-            let imageUrl = "";
-            let athleteImgUrl = "";
+            let imageUrl = image;
+            let athleteImgUrl = athleteImg;
 
-            if (image) imageUrl = await uploadFile(image, "Images");
-            if (athleteImg) athleteImgUrl = await uploadFile(athleteImg, "Images");
+            if (image instanceof File) imageUrl = await uploadFile(image, "Images");
+            if (athleteImg instanceof File) athleteImgUrl = await uploadFile(athleteImg, "Images");
+
+            let finalEventStartsAt = form.eventStartsAt;
+            if (finalEventStartsAt && !finalEventStartsAt.includes("+05:30")) {
+                finalEventStartsAt = `${finalEventStartsAt}:00+05:30`;
+            }
 
             const payload = {
                 ...form,
+                eventStartsAt: finalEventStartsAt,
                 image: imageUrl,
                 athleteImg: athleteImgUrl,
                 agenda,
@@ -218,11 +280,20 @@ export default function CreateExperience() {
                 rules,
             };
 
-            const res = await axios.post("/api/admin/store/addExperience", payload);
+            if (isEditMode) {
+                const res = await axios.put(`/api/admin/store/addExperience?id=${editId}`, payload);
+                if (res.data.success) {
+                    alert("Experience updated successfully");
+                    router.push("/admin/store-management/experience/list");
+                }
+            } else {
+                const res = await axios.post("/api/admin/store/addExperience", payload);
+                if (res.data.success) {
+                    alert("Experience created successfully");
+                    router.push("/admin/store-management/experience/list");
 
-            if (res.data.success) {
-                alert("Experience created successfully");
-                handleCancel();
+                    handleCancel();
+                }
             }
         } catch (error: unknown) {
             console.error("Error:", error);
@@ -237,11 +308,15 @@ export default function CreateExperience() {
         }
     };
 
+    if (fetching) {
+        return <div className="p-6 text-white">Loading experience data...</div>;
+    }
+
     return (
         <div className="max-w-[1440px] mx-auto p-6">
             <div className="mb-6">
                 <h1 className="text-lg font-semibold text-white">
-                    Create Experience Product
+                    {isEditMode ? "Edit Experience Product" : "Create Experience Product"}
                 </h1>
             </div>
 
@@ -279,6 +354,7 @@ export default function CreateExperience() {
                         <label className="text-xs text-gray-400">Event Start Date & Time (IST) *</label>
                         <input
                             type="datetime-local"
+                            value={form.eventStartsAt}
                             onChange={handleDatetimeChange}
                             className={`w-full bg-[#0d1117] border px-3 py-2 rounded text-sm text-white focus:outline-none mt-1 ${
                                 errors.eventStartsAt ? "border-red-500" : "border-gray-700 focus:border-blue-500"
@@ -320,10 +396,16 @@ export default function CreateExperience() {
 
                     <div className="col-span-1 md:col-span-2">
                         <FileInput label="Main Experience Banner Image" onChange={setImage} />
+                        {image && (
+                            <img src={getPreview(image)} alt="preview" className="w-24 h-24 object-cover mt-2 rounded border border-gray-700" />
+                        )}
                     </div>
 
                     <div className="col-span-1 md:col-span-2">
                         <FileInput label="Athlete/Host Profile Image" onChange={setAthleteImg} />
+                        {athleteImg && (
+                            <img src={getPreview(athleteImg)} alt="preview" className="w-24 h-24 object-cover mt-2 rounded border border-gray-700" />
+                        )}
                     </div>
 
                     <div className="col-span-1 md:col-span-2">
@@ -395,7 +477,7 @@ export default function CreateExperience() {
                         disabled={loading}
                         className="flex-1 bg-blue-600 py-3 rounded font-semibold text-white disabled:opacity-50"
                     >
-                        {loading ? "Creating..." : "Create Experience"}
+                        {loading ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Experience" : "Create Experience")}
                     </button>
                     <button
                         onClick={handleCancel}

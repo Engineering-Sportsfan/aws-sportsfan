@@ -1,18 +1,18 @@
 "use client";
 
 import axios from "axios";
-import { useRouter } from "next/navigation";
-import { useState, ChangeEvent, InputHTMLAttributes } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, ChangeEvent, InputHTMLAttributes, useEffect } from "react";
 
 /*  TYPES  */
 
 interface FormState {
   title: string;
   athlete: string;
-  subCategory: "Signed Jerseys" | "Medals" | "Bibs" | "Boots" | "Match Balls" | "Equipment" | "";
+  subCategory: "Signed Jerseys" | "Equipment" | "Match-worn Gear" | "Trophies & Medals" | "Other" | "";
   serialNo: string;
   rewardCoins: string;
-  governance_state: "pending review" | "approved" | "rejected";
+  governance_state: "pending review" | "approved" | "rejected" | "";
 }
 
 /*  HELPERS  */
@@ -27,6 +27,11 @@ function formatPriceString(priceVal: string | number): string {
 /*  COMPONENT  */
 
 export default function CreateMemorabilia() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("id");
+  const isEditMode = !!editId;
+
   const [form, setForm] = useState<FormState>({
     title: "",
     athlete: "",
@@ -38,15 +43,47 @@ export default function CreateMemorabilia() {
 
   const [price, setPrice] = useState<string>("");
   const [certified, setCertified] = useState<boolean>(false);
-  const [image, setImage] = useState<File | null>(null);
+  const [image, setImage] = useState<File | string | null>(null);
   const [ownerHistory, setOwnerHistory] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const [fetching, setFetching] = useState(false);
 
-  const getPreview = (file: File | null) => {
-    if (file) return URL.createObjectURL(file);
-    return "";
+  useEffect(() => {
+    if (editId) {
+      setFetching(true);
+      axios.get(`/api/admin/store/addMerchandise?id=${editId}`)
+        .then(res => {
+          if (res.data.success && res.data.data) {
+            const data = res.data.data;
+            setForm({
+              title: data.title || "",
+              athlete: data.athlete || "",
+              subCategory: data.subCategory || "",
+              serialNo: data.serialNo || "",
+              rewardCoins: data.rewardCoins ?? "0",
+              governance_state: data.governance_state || "pending review",
+            });
+            setPrice(data.pricePaise ? String(data.pricePaise / 100) : "");
+            setCertified(Boolean(data.certified));
+            setImage(data.image || null);
+            setOwnerHistory(data.ownerHistory || []);
+          }
+        })
+        .catch(err => {
+          console.error("Failed to fetch merchandise:", err);
+          alert("Failed to load merchandise data for editing.");
+        })
+        .finally(() => {
+          setFetching(false);
+        });
+    }
+  }, [editId]);
+
+  const getPreview = (file: File | string | null) => {
+    if (!file) return "";
+    if (typeof file === "string") return file;
+    return URL.createObjectURL(file);
   };
 
   /* ---------------- INPUT ---------------- */
@@ -82,19 +119,23 @@ export default function CreateMemorabilia() {
 
   /* RESET */
   const handleCancel = () => {
-    setForm({
-      title: "",
-      athlete: "",
-      subCategory: "",
-      serialNo: "",
-      rewardCoins: "0",
-      governance_state: "pending review",
-    });
-    setPrice("");
-    setCertified(false);
-    setImage(null);
-    setOwnerHistory([]);
-    setErrors({});
+    if (isEditMode) {
+      router.push("/admin/store-management/merchandise/list");
+    } else {
+      setForm({
+        title: "",
+        athlete: "",
+        subCategory: "",
+        serialNo: "",
+        rewardCoins: "0",
+        governance_state: "pending review",
+      });
+      setPrice("");
+      setCertified(false);
+      setImage(null);
+      setOwnerHistory([]);
+      setErrors({});
+    }
   };
 
   const uploadFile = async (file: File, folder: string): Promise<string> => {
@@ -132,7 +173,10 @@ export default function CreateMemorabilia() {
     setLoading(true);
 
     try {
-      const imageUrl = await uploadFile(image, "Images");
+      let imageUrl = image;
+      if (image instanceof File) {
+        imageUrl = await uploadFile(image, "Images");
+      }
 
       const payload = {
         title: form.title,
@@ -147,11 +191,20 @@ export default function CreateMemorabilia() {
         ownerHistory: ownerHistory.filter(x => x && x.trim() !== ""),
       };
 
-      const res = await axios.post("/api/admin/store/merchandise/add", payload);
+      if (isEditMode) {
+        const res = await axios.put(`/api/admin/store/addMerchandise?id=${editId}`, payload);
+        if (res.data.success) {
+          alert("Merchandise / Memorabilia updated successfully");
+          router.push("/admin/store-management/merchandise/list");
+        }
+      } else {
+        const res = await axios.post("/api/admin/store/addMerchandise", payload);
+        if (res.data.success) {
+          alert("Merchandise / Memorabilia created successfully");
+          router.push("/admin/store-management/merchandise/list");
 
-      if (res.data.success) {
-        alert("Merchandise / Memorabilia created successfully");
-        handleCancel();
+          handleCancel();
+        }
       }
     } catch (error: unknown) {
       console.error("Error:", error);
@@ -166,11 +219,15 @@ export default function CreateMemorabilia() {
     }
   };
 
+  if (fetching) {
+    return <div className="p-6 text-white">Loading merchandise data...</div>;
+  }
+
   return (
     <div className="max-w-[1440px] mx-auto p-6">
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-white">
-          Create Merchandise / Memorabilia
+          {isEditMode ? "Edit Merchandise / Memorabilia" : "Create Merchandise / Memorabilia"}
         </h1>
       </div>
 
@@ -322,7 +379,7 @@ export default function CreateMemorabilia() {
             disabled={loading}
             className="flex-1 bg-blue-600 hover:bg-blue-700 py-3 rounded font-semibold text-white disabled:opacity-50 transition-colors"
           >
-            {loading ? "Creating..." : "Create Merchandise"}
+            {loading ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Merchandise" : "Create Merchandise")}
           </button>
 
           <button
