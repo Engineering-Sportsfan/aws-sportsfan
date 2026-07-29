@@ -1,8 +1,8 @@
 "use client";
 
 import axios from "axios";
-import { useRouter } from "next/navigation";
-import { useState, ChangeEvent, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, ChangeEvent, InputHTMLAttributes, TextareaHTMLAttributes, useEffect } from "react";
 
 /*  TYPES  */
 
@@ -41,16 +41,57 @@ export default function CreateAthlete() {
     rewardCoins: "0",
   });
 
-  const [image, setImage] = useState<File | null>(null);
+  const [image, setImage] = useState<File | string | null>(null);
   const [listings, setListings] = useState<Listing[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [listingErrors, setListingErrors] = useState<Record<number, Record<string, string>>>({});
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const [fetching, setFetching] = useState(false);
 
-  const getPreview = (file: File | null) => {
-    if (file) return URL.createObjectURL(file);
-    return "";
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("id");
+  const isEditMode = !!editId;
+
+  useEffect(() => {
+    if (editId) {
+      setFetching(true);
+      axios.get(`/api/admin/store/addAthlete?id=${editId}`)
+        .then(res => {
+          if (res.data.success && res.data.data) {
+            const data = res.data.data;
+            setForm({
+              name: data.name || "",
+              discipline: data.discipline || "",
+              bio: data.bio || "",
+              governance_state: data.governance_state || "pending review",
+              rewardCoins: String(data.rewardCoins || "0"),
+            });
+            setImage(data.image || null);
+            if (data.listings && Array.isArray(data.listings)) {
+              setListings(data.listings.map((l: any) => ({
+                title: l.title || "",
+                type: l.type || "Video Course",
+                price: String(l.price || "").replace(/[^0-9]/g, ""),
+                preview: Boolean(l.preview),
+              })));
+            }
+          }
+        })
+        .catch(err => {
+          console.error("Failed to fetch athlete:", err);
+          alert("Failed to load athlete data for editing.");
+        })
+        .finally(() => {
+          setFetching(false);
+        });
+    }
+  }, [editId]);
+
+  const getPreview = (file: File | string | null) => {
+    if (!file) return "";
+    if (typeof file === "string") return file;
+    return URL.createObjectURL(file);
   };
 
   /* ---------------- INPUT ---------------- */
@@ -115,17 +156,21 @@ export default function CreateAthlete() {
 
   /* RESET */
   const handleCancel = () => {
-    setForm({
-      name: "",
-      discipline: "",
-      bio: "",
-      governance_state: "pending review",
-      rewardCoins: "0",
-    });
-    setImage(null);
-    setListings([]);
-    setErrors({});
-    setListingErrors({});
+    if (isEditMode) {
+      router.push("/admin/store-management/athlete/list");
+    } else {
+      setForm({
+        name: "",
+        discipline: "",
+        bio: "",
+        governance_state: "pending review",
+        rewardCoins: "0",
+      });
+      setImage(null);
+      setListings([]);
+      setErrors({});
+      setListingErrors({});
+    }
   };
 
   const uploadFile = async (file: File, folder: string): Promise<string> => {
@@ -176,7 +221,10 @@ export default function CreateAthlete() {
     setLoading(true);
 
     try {
-      const imageUrl = await uploadFile(image, "Images");
+      let imageUrl = image;
+      if (image instanceof File) {
+        imageUrl = await uploadFile(image, "Images");
+      }
 
       const payload = {
         name: form.name,
@@ -188,16 +236,25 @@ export default function CreateAthlete() {
         listings: listings.map((item) => ({
           title: item.title,
           type: item.type,
-          price: item.price.replace(/[^0-9]/g, ""), // send raw number, server formats it
+          price: item.price.replace(/[^0-9]/g, ""),
           preview: item.preview,
         })),
       };
 
-      const res = await axios.post("/api/admin/store/addAthlete", payload);
+      if (isEditMode) {
+        const res = await axios.put(`/api/admin/store/addAthlete?id=${editId}`, payload);
+        if (res.data.success) {
+          alert("Athlete updated successfully");
+          router.push("/admin/store-management/athlete/list");
+        }
+      } else {
+        const res = await axios.post("/api/admin/store/addAthlete", payload);
+        if (res.data.success) {
+          alert("Athlete created successfully");
+          router.push("/admin/store-management/athlete/list");
 
-      if (res.data.success) {
-        alert("Athlete created successfully");
-        handleCancel();
+          handleCancel();
+        }
       }
     } catch (error: unknown) {
       console.error("Error:", error);
@@ -212,11 +269,15 @@ export default function CreateAthlete() {
     }
   };
 
+  if (fetching) {
+    return <div className="p-6 text-white">Loading athlete data...</div>;
+  }
+
   return (
     <div className="max-w-[1440px] mx-auto p-6">
-      <div className="mb-6">
+      <div className="mb-6 flex items-center gap-4">
         <h1 className="text-lg font-semibold text-white">
-          Create Athlete Profile
+          {isEditMode ? "Edit Athlete Profile" : "Create Athlete Profile"}
         </h1>
       </div>
 
@@ -371,7 +432,7 @@ export default function CreateAthlete() {
             disabled={loading}
             className="flex-1 bg-blue-600 hover:bg-blue-700 py-3 rounded font-semibold text-white disabled:opacity-50 transition-colors"
           >
-            {loading ? "Creating..." : "Create Athlete Profile"}
+            {loading ? (isEditMode ? "Updating..." : "Creating...") : (isEditMode ? "Update Athlete Profile" : "Create Athlete Profile")}
           </button>
 
           <button
