@@ -19,8 +19,8 @@ export interface RoomMessage {
   replyCount: number;
   createdAt: number;
   mediaUrls?: string[];
-  heartCount?: number;   // ← add
-  sideA?: string;        // ← add
+  heartCount?: number;   
+  sideA?: string;        
   sideB?: string;
   questions?: { question: string; options: { label: string; emoji: string }[] }[];
   matchTitle?: string;
