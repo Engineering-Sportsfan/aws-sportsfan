@@ -897,6 +897,13 @@ const FULL_NAV: NavGroup[] = [
           { href: "/admin/sentiment-management", label: "Sentiment Dashboard" },
         ],
       },
+       {
+        label: "Athlete AI Pipeline", icon: "◉",
+        children: [
+          { href: "/admin/athlete-review-management/add-athlete", label: "Add / Re-check Athlete" },
+          { href: "/admin/athlete-review-management", label: "Review Queue" },
+        ],
+      },
       { href: "/admin/content", icon: "◧", label: "Content / Posts" },
       { href: "/admin/orders", icon: "◫", label: "Orders & Payments", badge: "8" },
     ],
