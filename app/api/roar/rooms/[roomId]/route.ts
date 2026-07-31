@@ -131,6 +131,33 @@ export async function DELETE(
   }
 }
 
+// export async function PATCH(
+//   req: NextRequest,
+//   { params }: { params: Promise<{ roomId: string }> },
+// ) {
+//   try {
+//     const { roomId } = await params;
+//     const user = await getUser(req);
+//     if (!user) {
+//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+//     }
+
+//     const body = await req.json();
+//     const updateData: Record<string, any> = {};
+
+//     if (body.matchId !== undefined) {
+//       updateData.matchId = body.matchId;
+//     }
+
+//     await db.collection("roarRooms").doc(roomId).update(updateData);
+//     return NextResponse.json({ success: true });
+//   } catch (error: unknown) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ roomId: string }> },
@@ -148,9 +175,16 @@ export async function PATCH(
     if (body.matchId !== undefined) {
       updateData.matchId = body.matchId;
     }
+    if (body.isActive !== undefined) {
+      updateData.isActive = Boolean(body.isActive);
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
+    }
 
     await db.collection("roarRooms").doc(roomId).update(updateData);
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, ...updateData });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     return NextResponse.json({ error: msg }, { status: 500 });
