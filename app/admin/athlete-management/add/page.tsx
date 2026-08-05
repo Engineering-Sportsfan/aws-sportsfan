@@ -10,7 +10,7 @@ function AddAthleteProfileForm() {
   const idToEdit = searchParams.get("id");
 
   // State for Group A
-  const [form, setForm] = useState<any>({
+  const [form, setForm] = useState<Record<string, any>>({
     name: "",
     country: "",
     flag: "",
@@ -32,15 +32,15 @@ function AddAthleteProfileForm() {
     unit: "m",
   });
 
-  const [welcomeVideo, setWelcomeVideo] = useState({
+  const [welcomeVideo, setWelcomeVideo] = useState<Record<string, string>>({
     title: "", caption: "", thumbnailUrl: "", videoUrl: "", likeCount: "", commentCount: "", shareCount: ""
   });
 
-  const [hubCounts, setHubCounts] = useState({
+  const [hubCounts, setHubCounts] = useState<Record<string, string>>({
     vodInterviews: "0", amsSessions: "0", bookings: "0", store: "0", auctions: "0"
   });
 
-  const [currentSeason, setCurrentSeason] = useState({
+  const [currentSeason, setCurrentSeason] = useState<Record<string, string>>({
     events: "0", gold: "0", silver: "0", bronze: "0", seasonBest: "", averageThrow: "", currentStreak: ""
   });
 
@@ -48,7 +48,7 @@ function AddAthleteProfileForm() {
   const [medalCabinet, setMedalCabinet] = useState<any[]>([]);
 
   // State for Group B (raw JSON strings)
-  const [groupB, setGroupB] = useState<any>({
+  const [groupB, setGroupB] = useState<Record<string, string>>({
     highlights: "", dropsContent: "", postsContent: "", cornerPosts: "", seasonalData: "",
     medalData: "", stats: "", radarData: "", coachImpactData: "", consistencyData: "", heatmapData: "", videosContent: ""
   });
@@ -58,7 +58,7 @@ function AddAthleteProfileForm() {
   const [welcomeThumbnailFile, setWelcomeThumbnailFile] = useState<File | null>(null);
   const [welcomeVideoFile, setWelcomeVideoFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
-  const [jsonErrors, setJsonErrors] = useState<any>({});
+  const [jsonErrors, setJsonErrors] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!idToEdit) return;
@@ -452,8 +452,12 @@ export default function Page() {
   );
 }
 
+interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+  label: string;
+}
+
 // Reusable Input
-function Input({ label, ...props }: any) {
+function Input({ label, ...props }: InputProps) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs text-gray-400">{label}</label>

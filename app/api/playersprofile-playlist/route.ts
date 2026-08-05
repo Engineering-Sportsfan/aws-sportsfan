@@ -1,16 +1,19 @@
+// app/api/playersprofile-playlist/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     
-    // Extract fields from FormData
     const playerProfilesId = formData.get("playerProfilesId") as string;
-    // const playerName = formData.get("playerName") as string;
     
-    // Handle multiple audio files
     const audioFiles = formData.getAll("audioFiles") as File[];
     const audioTitles = formData.getAll("audioTitles") as string[];
     const audioDescriptions = formData.getAll("audioDescriptions") as string[];
@@ -18,7 +21,6 @@ export async function POST(req: NextRequest) {
     const audioSignals = formData.getAll("audioSignals") as string[];
     const audioEngagement = formData.getAll("audioEngagement") as string[];
     
-    // Handle multiple video files
     const videoFiles = formData.getAll("videoFiles") as File[];
     const videoTitles = formData.getAll("videoTitles") as string[];
     const videoDescriptions = formData.getAll("videoDescriptions") as string[];
@@ -26,7 +28,6 @@ export async function POST(req: NextRequest) {
     const videoSignals = formData.getAll("videoSignals") as string[];
     const videoEngagement = formData.getAll("videoEngagement") as string[];
     
-    // Thumbnails for each item (optional)
     const audioThumbnails = formData.getAll("audioThumbnails") as File[];
     const videoThumbnails = formData.getAll("videoThumbnails") as File[];
 
@@ -40,7 +41,17 @@ export async function POST(req: NextRequest) {
     const audioDrops = [];
     const videoDrops = [];
 
-    // Process audio files
+    const formatDuration = (seconds: number): string => {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      
+      if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      }
+      return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    };
+
     for (let i = 0; i < audioFiles.length; i++) {
       const file = audioFiles[i];
       const title = audioTitles[i] || `Audio ${i + 1}`;
@@ -49,20 +60,24 @@ export async function POST(req: NextRequest) {
       const signals = Number(audioSignals[i]) || 0;
       const engagement = Number(audioEngagement[i]) || 0;
       
-      // Upload audio to Cloudinary
-      const bytes = await file.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-      const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
+      let uploadUrl = "";
+      let duration = 0;
+      if (file && file.size > 0) {
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
+        
+        const uploadRes = await cloudinary.uploader.upload(base64, {
+          folder: `playersprofile/playlists/${playerProfilesId}/audio`,
+          resource_type: 'video',
+          public_id: `${Date.now()}-${file.name.replace(/\s/g, "_")}`,
+        });
+        uploadUrl = uploadRes.secure_url;
+        duration = uploadRes.duration || 0;
+      }
       
-      const uploadRes = await cloudinary.uploader.upload(base64, {
-        folder: `playersprofile/playlists/${playerProfilesId}/audio`,
-        resource_type: 'video', // Cloudinary uses 'video' for audio too
-        public_id: `${Date.now()}-${file.name.replace(/\s/g, "_")}`,
-      });
-      
-      // Upload thumbnail if provided
       let thumbnailUrl = "";
-      if (audioThumbnails[i]) {
+      if (audioThumbnails[i] && audioThumbnails[i].size > 0) {
         const thumbBytes = await audioThumbnails[i].arrayBuffer();
         const thumbBuffer = Buffer.from(thumbBytes);
         const thumbBase64 = `data:${audioThumbnails[i].type};base64,${thumbBuffer.toString("base64")}`;
@@ -74,32 +89,18 @@ export async function POST(req: NextRequest) {
         thumbnailUrl = thumbUpload.secure_url;
       }
       
-      // Format duration
-      const duration = uploadRes.duration || 0;
-      const formatDuration = (seconds: number): string => {
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        const secs = Math.floor(seconds % 60);
-        
-        if (hours > 0) {
-          return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-        }
-        return `${minutes}:${secs.toString().padStart(2, '0')}`;
-      };
-      
       audioDrops.push({
         title,
         duration: formatDuration(duration),
         description,
-        mediaUrl: uploadRes.secure_url,
+        mediaUrl: uploadUrl,
         thumbnail: thumbnailUrl,
         listens,
         signals,
         engagement,
       });
     }
-    
-    // Process video files
+
     for (let i = 0; i < videoFiles.length; i++) {
       const file = videoFiles[i];
       const title = videoTitles[i] || `Video ${i + 1}`;
@@ -108,20 +109,24 @@ export async function POST(req: NextRequest) {
       const signals = Number(videoSignals[i]) || 0;
       const engagement = Number(videoEngagement[i]) || 0;
       
-      // Upload video to Cloudinary
-      const bytes = await file.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-      const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
+      let uploadUrl = "";
+      let duration = 0;
+      if (file && file.size > 0) {
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
+        
+        const uploadRes = await cloudinary.uploader.upload(base64, {
+          folder: `playersprofile/playlists/${playerProfilesId}/video`,
+          resource_type: 'video',
+          public_id: `${Date.now()}-${file.name.replace(/\s/g, "_")}`,
+        });
+        uploadUrl = uploadRes.secure_url;
+        duration = uploadRes.duration || 0;
+      }
       
-      const uploadRes = await cloudinary.uploader.upload(base64, {
-        folder: `playerProfiles/playlists/${playerProfilesId}/video`,
-        resource_type: 'video',
-        public_id: `${Date.now()}-${file.name.replace(/\s/g, "_")}`,
-      });
-      
-      // Upload thumbnail if provided
       let thumbnailUrl = "";
-      if (videoThumbnails[i]) {
+      if (videoThumbnails[i] && videoThumbnails[i].size > 0) {
         const thumbBytes = await videoThumbnails[i].arrayBuffer();
         const thumbBuffer = Buffer.from(thumbBytes);
         const thumbBase64 = `data:${videoThumbnails[i].type};base64,${thumbBuffer.toString("base64")}`;
@@ -133,52 +138,48 @@ export async function POST(req: NextRequest) {
         thumbnailUrl = thumbUpload.secure_url;
       }
       
-      // Format duration
-      const duration = uploadRes.duration || 0;
-      const formatDuration = (seconds: number): string => {
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        const secs = Math.floor(seconds % 60);
-        
-        if (hours > 0) {
-          return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-        }
-        return `${minutes}:${secs.toString().padStart(2, '0')}`;
-      };
-      
       videoDrops.push({
         title,
         duration: formatDuration(duration),
         description,
-        mediaUrl: uploadRes.secure_url,
+        mediaUrl: uploadUrl,
         thumbnail: thumbnailUrl,
         listens,
         signals,
         engagement,
       });
     }
-    
-    // Create the playlist document
+
+    const now = Date.now();
+    const id = `pplaylist_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
     const playlistData = {
+      id,
       playerProfilesId,
-      // playerName,
       audioDrops,
       videoDrops,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
-    
-    const docRef = await db.collection("playerProfilePlaylists").add(playlistData);
-    
-    return NextResponse.json({
-      success: true,
-      playlist: {
-        id: docRef.id,
+
+    // Dual-write
+    await dualWrite({
+      tableName: "SocialAndContent",
+      dynamoItem: {
+        contentId: `PLAYER_PLAYLIST#${id}`,
+        sk: "PLAYLIST#META",
         ...playlistData,
       },
+      firestoreRef: db.collection("playerProfilePlaylists").doc(id),
+      firestoreData: playlistData,
+    });
+
+    return NextResponse.json({
+      success: true,
+      playlist: playlistData,
     });
   } catch (error) {
-    console.error("Upload error:", error);
+    console.error("Create playlist error:", error);
     return NextResponse.json(
       { success: false, message: "Create failed: " + (error as Error).message },
       { status: 500 }
@@ -186,65 +187,70 @@ export async function POST(req: NextRequest) {
   }
 }
 
-
-
-
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const playerProfilesId = searchParams.get("playerProfilesId");
-    const limit = parseInt(searchParams.get("limit") || "50");
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
+    const limit = parseInt(searchParams.get("limit") || "20");
 
-    // Start with collection reference
-    const collectionRef = db.collection("playerProfilePlaylists");
-    let query: FirebaseFirestore.Query = collectionRef;
+    let playlists: any[] = [];
 
-    // Apply filter if team360PostId is provided
-    if (playerProfilesId) {
-      query = query.where("playerProfilesId", "==", playerProfilesId);
-    }
+    // 1. Try DynamoDB
+    try {
+      let filterExpr = "begins_with(contentId, :pPrefix)";
+      const exprVals: Record<string, any> = {
+        ":pPrefix": "PLAYER_PLAYLIST#",
+      };
 
-    query = query.orderBy("createdAt", "desc").limit(limit);
-
-    // Use cursor-based pagination instead of offset
-    if (lastDocId && lastDocCreatedAt) {
-      const lastDocRef = db.collection("playerProfilePlaylists").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
+      if (playerProfilesId) {
+        filterExpr += " AND playerProfilesId = :ppId";
+        exprVals[":ppId"] = playerProfilesId;
       }
+
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "SocialAndContent",
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprVals,
+          Limit: 50,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        playlists = scanRes.Items.map((item) => ({
+          id: item.id || (item.contentId as string).replace(/^PLAYER_PLAYLIST#/, ""),
+          ...item,
+        }));
+      }
+    } catch (e) {
+      console.warn("[playersprofile-playlist GET] DynamoDB notice:", e);
     }
 
-    const snapshot = await query.get();
+    // 2. Fallback to Firestore
+    if (playlists.length === 0 && db) {
+      let query: FirebaseFirestore.Query = db.collection("playerProfilePlaylists");
+      if (playerProfilesId) {
+        query = query.where("playerProfilesId", "==", playerProfilesId);
+      }
+      query = query.orderBy("createdAt", "desc").limit(limit);
+      const snapshot = await query.get();
 
-    const playlists = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+      playlists = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    }
 
-    // Get last document for next page cursor
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    playlists.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const paged = playlists.slice(0, limit);
 
     return NextResponse.json({
       success: true,
-      playlists,
-      pagination: {
-        limit,
-        hasMore: playlists.length === limit,
-        nextCursor: playlists.length === limit
-          ? {
-              lastDocId: lastDoc?.id,
-              lastDocCreatedAt: lastDoc?.data()?.createdAt,
-            }
-          : null,
-      },
+      playlists: paged,
     });
   } catch (error) {
-    console.error("Error fetching playlists:", error);
     return NextResponse.json(
-      { success: false, message: "Failed to fetch playlists" },
+      { success: false, message: "Fetch failed: " + (error as Error).message },
       { status: 500 }
     );
   }

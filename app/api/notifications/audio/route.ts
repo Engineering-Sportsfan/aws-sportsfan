@@ -1,7 +1,12 @@
-// app/api/notifications/audio/route.ts
+// app/api/notifications/audio/route.ts — Migrated to AWS DynamoDB (IdentityAndAccess Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
 import cloudinary from "@/lib/cloudinary";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 interface CloudinaryResource {
   public_id: string;
@@ -28,24 +33,13 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/**
- * POST /api/notifications/audio
- *
- * Called by a cron job (or Cloudinary webhook) whenever new audio is uploaded.
- * It checks which audio files were uploaded in the last N minutes and, for each
- * new file, fans out a notification to every registered user.
- *
- * Body (optional):
- *   { sinceMinutes?: number }   — defaults to 60; how far back to look
- *   { publicId?: string }       — target a single file by its Cloudinary public_id
- */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const sinceMinutes: number = body.sinceMinutes ?? 60;
     const targetPublicId: string | undefined = body.publicId;
 
-    // ── 1. Fetch recent audio files from Cloudinary ───────────────────────────
+    // 1. Fetch recent audio files from Cloudinary
     const params: CloudinaryApiParams = {
       resource_type: "video",
       type: "upload",
@@ -68,18 +62,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, created: 0, message: "No new audio found" });
     }
 
-    // ── 2. Fetch all registered users to fan out ──────────────────────────────
-    const usersSnap = await db.collection("users").get();
-    if (usersSnap.empty) {
+    // 2. Fetch users
+    let users: Array<{ email: string; uid: string }> = [];
+    if (db) {
+      const usersSnap = await db.collection("users").get();
+      users = usersSnap.docs
+        .map((d) => ({
+          email: d.data().email as string,
+          uid: d.id,
+        }))
+        .filter((u) => !!u.email);
+    }
+
+    if (users.length === 0) {
       return NextResponse.json({ success: true, created: 0, message: "No users found" });
     }
 
-    const users = usersSnap.docs.map((d) => ({
-      email: d.data().email as string,
-      uid: d.id,
-    })).filter((u) => !!u.email);
-
-    // ── 3. De-duplicate: skip notifications already created for these files ───
+    // 3. De-duplicate & fan out
     let totalCreated = 0;
 
     for (const audio of newAudio) {
@@ -87,45 +86,62 @@ export async function POST(req: NextRequest) {
         audio.display_name || audio.public_id.split("/").pop() || audio.public_id;
       const title = fileName.replace(/_/g, " ");
 
-      // Check if we already notified about this file (use public_id as a stable key)
-      const existing = await db
-        .collection("notifications")
-        .where("type", "==", "NEW_AUDIO")
-        .where("audioPublicId", "==", audio.public_id)
-        .limit(1)
-        .get();
+      if (db) {
+        const existing = await db
+          .collection("notifications")
+          .where("type", "==", "NEW_AUDIO")
+          .where("audioPublicId", "==", audio.public_id)
+          .limit(1)
+          .get();
 
-      if (!existing.empty) continue; // already sent, skip
+        if (!existing.empty) continue;
+      }
 
-      // Fan out to all users in batches of 500 (Firestore batch limit)
       const BATCH_SIZE = 500;
       for (let i = 0; i < users.length; i += BATCH_SIZE) {
         const chunk = users.slice(i, i + BATCH_SIZE);
-        const batch = db.batch();
+        const batch = db ? db.batch() : null;
 
         for (const user of chunk) {
-          const docRef = db.collection("notifications").doc();
-          batch.set(docRef, {
+          const notifId = `notif_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+          const notifData = {
+            id: notifId,
             type: "NEW_AUDIO",
             recipientEmail: user.email,
             recipientUid: user.uid,
-            // Audio metadata
             audioPublicId: audio.public_id,
             audioTitle: title,
             audioUrl: audio.secure_url,
             audioDuration: formatDuration(audio.duration),
             audioDurationSeconds: audio.duration || 0,
             audioFormat: audio.format,
-            // Display fields
             message: `New audio clip available: "${title}"`,
             isRead: false,
             createdAt: Date.now(),
             audioUploadedAt: new Date(audio.created_at).getTime(),
-          });
+          };
+
+          if (batch && db) {
+            const docRef = db.collection("notifications").doc(notifId);
+            batch.set(docRef, notifData);
+          }
+
+          const dynamoItem = {
+            entityId: `NOTIFICATION#${notifId}`,
+            sk: `USER#${user.uid}#NEW_AUDIO`,
+            ...notifData,
+          };
+
+          dualWrite("notifications", notifId, "IdentityAndAccess", dynamoItem).catch((e) =>
+            console.warn("[notifications/audio] DynamoDB dualWrite notice:", e)
+          );
+
           totalCreated++;
         }
 
-        await batch.commit();
+        if (batch) {
+          await batch.commit();
+        }
       }
     }
 
@@ -142,15 +158,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/**
- * GET /api/notifications/audio
- *
- * Returns a count of unread NEW_AUDIO notifications for a given user.
- * Used by the Header badge to avoid a full notification list fetch.
- *
- * Query params:
- *   email — the user's email
- */
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -160,14 +167,44 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "email is required" }, { status: 400 });
     }
 
-    const snapshot = await db
-      .collection("notifications")
-      .where("recipientEmail", "==", email)
-      .where("type", "==", "NEW_AUDIO")
-      .where("isRead", "==", false)
-      .get();
+    // 1. Try DynamoDB
+    try {
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "IdentityAndAccess",
+          FilterExpression: "begins_with(entityId, :prefix) AND recipientEmail = :email AND #tp = :type AND isRead = :isRead",
+          ExpressionAttributeNames: {
+            "#tp": "type",
+          },
+          ExpressionAttributeValues: {
+            ":prefix": "NOTIFICATION#",
+            ":email": email,
+            ":type": "NEW_AUDIO",
+            ":isRead": false,
+          },
+          Select: "COUNT",
+        })
+      );
+      if (scanRes.Count !== undefined && scanRes.Count > 0) {
+        return NextResponse.json({ success: true, unreadCount: scanRes.Count });
+      }
+    } catch (e) {
+      console.warn("[notifications/audio GET] DynamoDB notice:", e);
+    }
 
-    return NextResponse.json({ success: true, unreadCount: snapshot.size });
+    // 2. Fallback to Firestore
+    if (db) {
+      const snapshot = await db
+        .collection("notifications")
+        .where("recipientEmail", "==", email)
+        .where("type", "==", "NEW_AUDIO")
+        .where("isRead", "==", false)
+        .get();
+
+      return NextResponse.json({ success: true, unreadCount: snapshot.size });
+    }
+
+    return NextResponse.json({ success: true, unreadCount: 0 });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("GET /api/notifications/audio error:", error);

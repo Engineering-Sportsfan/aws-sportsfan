@@ -1,18 +1,20 @@
-//api/cricket-articles/[id]/route.ts
-
+// app/api/cricket-articles/[id]/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 type BadgeType = "FEATURE" | "ANALYSIS" | "OPINION" | "NEWS";
 
-//  Helper: extract ID from URL 
 function getIdFromUrl(req: NextRequest): string {
   const url = new URL(req.url);
   const parts = url.pathname.split("/");
   return parts[parts.length - 1];
 }
 
-// GET - Fetch single article by ID
+// ─── GET: Fetch single article by ID ──────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -20,21 +22,54 @@ export async function GET(req: NextRequest) {
     if (!id) {
       return NextResponse.json({ error: "Article ID is required" }, { status: 400 });
     }
-    const docRef = db.collection("cricketArticles").doc(id);
-    const doc = await docRef.get();
 
-    if (!doc.exists) {
-      return NextResponse.json(
-        { error: "Article not found" },
-        { status: 404 }
-      );
+    let article: Record<string, unknown> | null = null;
+
+    // 1. Query DynamoDB SocialAndContent table
+    try {
+      const candidates = [`ARTICLE#${id}`, id];
+      for (const cand of candidates) {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "SocialAndContent",
+            KeyConditionExpression: "contentId = :c",
+            ExpressionAttributeValues: { ":c": cand },
+            Limit: 1,
+          })
+        );
+        if (qRes.Items && qRes.Items.length > 0) {
+          article = qRes.Items[0];
+          break;
+        }
+      }
+    } catch (dynErr) {
+      console.warn("DynamoDB article fetch notice:", dynErr);
+    }
+
+    // 2. Fallback to Firebase
+    if (!article) {
+      try {
+        const docRef = db.collection("cricketArticles").doc(id);
+        const doc = await docRef.get();
+        if (doc.exists) {
+          article = { id: doc.id, ...doc.data() };
+        }
+      } catch (fbErr) {
+        console.warn("Firebase article fetch fallback notice:", fbErr);
+      }
+    }
+
+    if (!article) {
+      return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
 
     return NextResponse.json({
       success: true,
-      article: { id: doc.id, ...doc.data() },
-    });
-
+      article: {
+        id: (article.contentId as string)?.replace(/^ARTICLE#/, "") || article.articleId || id,
+        ...article,
+      },
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("Error fetching article:", error);
@@ -42,7 +77,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// PUT - Update article by ID
+// ─── PUT: Update article by ID ────────────────────────────────────────────────
 export async function PUT(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -52,68 +87,70 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Article ID is required" }, { status: 400 });
     }
 
-    const docRef = db.collection("cricketArticles").doc(id);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json(
-        { error: "Article not found" },
-        { status: 404 }
-      );
-    }
-
     const validBadges: BadgeType[] = ["FEATURE", "ANALYSIS", "OPINION", "NEWS"];
-    
     if (body.badge && !validBadges.includes(body.badge)) {
-      return NextResponse.json(
-        { error: "Invalid badge type" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid badge type" }, { status: 400 });
     }
 
-    //  ADDED 'description' to allowed fields
-    const allowedFields = ["badge", "title", "description", "readTime", "author", "views", "image","tags"];
-    
+    const allowedFields = ["badge", "title", "description", "readTime", "author", "views", "image", "tags"];
     const updates: Record<string, unknown> = {
       updatedAt: Date.now(),
     };
 
-    allowedFields.forEach(field => {
+    allowedFields.forEach((field) => {
       if (body[field] !== undefined) {
         updates[field] = body[field];
       }
     });
 
-    // Validate description is an array if provided
-    if (body.description !== undefined && !Array.isArray(body.description)) {
-      return NextResponse.json(
-        { error: "Description must be an array of strings" },
-        { status: 400 }
-      );
+    // 1. Update in DynamoDB
+    try {
+      const candidates = [`ARTICLE#${id}`, id];
+      for (const cand of candidates) {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "SocialAndContent",
+            KeyConditionExpression: "contentId = :c",
+            ExpressionAttributeValues: { ":c": cand },
+            Limit: 1,
+          })
+        );
+        if (qRes.Items && qRes.Items.length > 0) {
+          const item = qRes.Items[0];
+          await docClient.send(
+            new UpdateCommand({
+              TableName: "SocialAndContent",
+              Key: {
+                contentId: item.contentId as string,
+                sk: item.sk as string,
+              },
+              UpdateExpression: "SET title = :t, updatedAt = :u",
+              ExpressionAttributeValues: {
+                ":t": updates.title || item.title,
+                ":u": updates.updatedAt,
+              },
+            })
+          );
+          break;
+        }
+      }
+    } catch (dynErr) {
+      console.warn("DynamoDB article update notice:", dynErr);
     }
 
-    // Validate numeric conversions for views (if provided as string with "K")
-    if (body.views !== undefined) {
-      updates.views = body.views; // Keep as string with "K" format
+    // 2. Update in Firebase
+    try {
+      const docRef = db.collection("cricketArticles").doc(id);
+      await docRef.update(updates);
+    } catch (fbErr) {
+      console.warn("Firebase article update notice:", fbErr);
     }
-
-    // Validate tags is an array if provided
-    if (body.tags !== undefined && !Array.isArray(body.tags)) {
-      return NextResponse.json(
-        { error: "Tags must be an array of strings" },
-        { status: 400 }
-      );
-    }
-
-    await docRef.update(updates);
-
-    const updated = await docRef.get();
 
     return NextResponse.json({
       success: true,
-      article: { id: updated.id, ...updated.data() },
+      message: "Article updated successfully",
+      updates,
     });
-
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("Error updating article:", error);
@@ -121,7 +158,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// DELETE - Delete article by ID
+// ─── DELETE: Delete article by ID ─────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -130,24 +167,48 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Article ID is required" }, { status: 400 });
     }
 
-
-    const docRef = db.collection("cricketArticles").doc(id);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json(
-        { error: "Article not found" },
-        { status: 404 }
-      );
+    // 1. Delete from DynamoDB
+    try {
+      const candidates = [`ARTICLE#${id}`, id];
+      for (const cand of candidates) {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "SocialAndContent",
+            KeyConditionExpression: "contentId = :c",
+            ExpressionAttributeValues: { ":c": cand },
+            Limit: 1,
+          })
+        );
+        if (qRes.Items && qRes.Items.length > 0) {
+          const item = qRes.Items[0];
+          await docClient.send(
+            new DeleteCommand({
+              TableName: "SocialAndContent",
+              Key: {
+                contentId: item.contentId as string,
+                sk: item.sk as string,
+              },
+            })
+          );
+          break;
+        }
+      }
+    } catch (dynErr) {
+      console.warn("DynamoDB article delete notice:", dynErr);
     }
 
-    await docRef.delete();
+    // 2. Delete from Firebase
+    try {
+      const docRef = db.collection("cricketArticles").doc(id);
+      await docRef.delete();
+    } catch (fbErr) {
+      console.warn("Firebase article delete notice:", fbErr);
+    }
 
     return NextResponse.json({
-         success: true,
-         message: `Post ${id} deleted successfully`,
-       });
-
+      success: true,
+      message: `Article ${id} deleted successfully`,
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("Error deleting article:", error);

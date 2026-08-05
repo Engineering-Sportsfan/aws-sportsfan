@@ -1,6 +1,11 @@
+// api/admin/store/addBrand/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
-import { FieldValue } from "firebase-admin/firestore";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, PutCommand, DeleteCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 interface VariantInput {
   size: string;
@@ -12,16 +17,73 @@ export async function GET(req: NextRequest) {
     const id = req.nextUrl.searchParams.get("id");
     
     if (id) {
-      const doc = await db.collection("storeProducts").doc(id).get();
-      if (!doc.exists) {
+      let brandData: any = null;
+      let fetchedFromDynamo = false;
+
+      // 1. Try DynamoDB first
+      try {
+        const getRes = await docClient.send(new GetCommand({
+          TableName: "StoreAndCommerce",
+          Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` }
+        }));
+        if (getRes.Item) {
+          brandData = { id, ...getRes.Item };
+          fetchedFromDynamo = true;
+        }
+      } catch (dynErr) {
+        console.warn("[AddBrand GET] DynamoDB get failed, trying Firestore:", dynErr);
+      }
+
+      // 2. Fallback to Firestore
+      if (!fetchedFromDynamo) {
+        try {
+          const doc = await db.collection("storeProducts").doc(id).get();
+          if (doc.exists) {
+            brandData = { id: doc.id, ...doc.data() };
+          }
+        } catch (fsErr) {
+          console.error("[AddBrand GET] Firestore fallback failed:", fsErr);
+        }
+      }
+
+      if (!brandData) {
         return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
       }
-      return NextResponse.json({ success: true, data: { id: doc.id, ...doc.data() } });
+      return NextResponse.json({ success: true, data: brandData });
     }
 
-    const snapshot = await db.collection("storeProducts").where("category", "==", "brands").get();
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return NextResponse.json({ success: true, data });
+    let list: any[] = [];
+    let fetchedFromDynamo = false;
+
+    // 1. Try DynamoDB Scan
+    try {
+      const scanRes = await docClient.send(new ScanCommand({
+        TableName: "StoreAndCommerce",
+        FilterExpression: "begins_with(entityId, :p) AND category = :cat",
+        ExpressionAttributeValues: { ":p": "PRODUCT#", ":cat": "brands" }
+      }));
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        list = scanRes.Items.map(item => ({
+          id: (item.entityId as string).replace(/^PRODUCT#/, ""),
+          ...item
+        }));
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[AddBrand GET list] DynamoDB scan failed:", dynErr);
+    }
+
+    // 2. Fallback to Firestore
+    if (!fetchedFromDynamo || list.length === 0) {
+      try {
+        const snapshot = await db.collection("storeProducts").where("category", "==", "brands").get();
+        list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (fsErr) {
+        console.error("[AddBrand GET list] Firestore fallback failed:", fsErr);
+      }
+    }
+
+    return NextResponse.json({ success: true, data: list });
   } catch (error: unknown) {
     console.error("Error fetching brand product(s):", error);
     const msg = error instanceof Error ? error.message : "Internal Server Error";
@@ -109,9 +171,8 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // Generate brand-product- ID
     const docId = `brand-product-${Date.now()}`;
-    const docRef = db.collection("storeProducts").doc(docId);
+    const now = Date.now();
 
     const newBrandProduct = {
       id: docId,
@@ -132,11 +193,30 @@ export async function POST(req: NextRequest) {
       variants: formattedVariants,
       totalStock,
       isAvailable: totalStock > 0,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    await docRef.set(newBrandProduct);
+    // 1. Put in DynamoDB first
+    try {
+      await docClient.send(new PutCommand({
+        TableName: "StoreAndCommerce",
+        Item: {
+          entityId: `PRODUCT#${docId}`,
+          sk: `PRODUCT#${docId}`,
+          ...newBrandProduct
+        }
+      }));
+    } catch (dynErr) {
+      console.warn("[AddBrand POST] DynamoDB write failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      await db.collection("storeProducts").doc(docId).set(newBrandProduct);
+    } catch (fsErr) {
+      console.warn("[AddBrand POST] Firestore sync failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, id: docId }, { status: 201 });
   } catch (error: unknown) {
@@ -230,12 +310,7 @@ export async function PUT(req: NextRequest) {
       };
     }
 
-    const docRef = db.collection("storeProducts").doc(id);
-    const docSnap = await docRef.get();
-    if (!docSnap.exists) {
-      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
-    }
-
+    const now = Date.now();
     const updatedBrandProduct: any = {
       brand,
       title,
@@ -251,16 +326,52 @@ export async function PUT(req: NextRequest) {
       variants: formattedVariants,
       totalStock,
       isAvailable: totalStock > 0,
-      updatedAt: FieldValue.serverTimestamp(),
+      updatedAt: now,
     };
 
     if (promoTag) {
       updatedBrandProduct.tag = promoTag;
     } else {
-      updatedBrandProduct.tag = FieldValue.delete();
+      updatedBrandProduct.tag = null;
     }
 
-    await docRef.update(updatedBrandProduct);
+    // 1. Update in DynamoDB first
+    try {
+      const getRes = await docClient.send(new GetCommand({
+        TableName: "StoreAndCommerce",
+        Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` }
+      }));
+      const existingItem = getRes.Item;
+      const finalItem = {
+        ...existingItem,
+        ...updatedBrandProduct,
+        entityId: `PRODUCT#${id}`,
+        sk: `PRODUCT#${id}`
+      };
+      if (!promoTag) {
+        delete finalItem.tag;
+      }
+      await docClient.send(new PutCommand({
+        TableName: "StoreAndCommerce",
+        Item: finalItem
+      }));
+    } catch (dynErr) {
+      console.warn("[AddBrand PUT] DynamoDB update failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      const docRef = db.collection("storeProducts").doc(id);
+      if (!promoTag) {
+        // use set with merge, but delete tag manually
+        await docRef.set(updatedBrandProduct, { merge: true });
+        await docRef.update({ tag: null });
+      } else {
+        await docRef.set(updatedBrandProduct, { merge: true });
+      }
+    } catch (fsErr) {
+      console.warn("[AddBrand PUT] Firestore fallback failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, id }, { status: 200 });
   } catch (error: unknown) {
@@ -277,13 +388,23 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Missing id parameter" }, { status: 400 });
     }
 
-    const docRef = db.collection("storeProducts").doc(id);
-    const docSnap = await docRef.get();
-    if (!docSnap.exists) {
-      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    // 1. Delete from DynamoDB first
+    try {
+      await docClient.send(new DeleteCommand({
+        TableName: "StoreAndCommerce",
+        Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` }
+      }));
+    } catch (dynErr) {
+      console.warn("[AddBrand DELETE] DynamoDB delete failed:", dynErr);
     }
 
-    await docRef.delete();
+    // 2. Sync to Firestore
+    try {
+      const docRef = db.collection("storeProducts").doc(id);
+      await docRef.delete();
+    } catch (fsErr) {
+      console.warn("[AddBrand DELETE] Firestore fallback delete failed:", fsErr);
+    }
     
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error: unknown) {

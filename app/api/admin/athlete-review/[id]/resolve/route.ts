@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/getUser";
 import { getAthletePipelineConfig } from "@/lib/athletePipelineAuth";
 
+export const dynamic = "force-dynamic";
+
+
 // POST /api/admin/athlete-review/:id/resolve
 // body: { action: "approve" | "edit" | "reject", fields?: {...edited values...}, reason?: string }
 // This is the only path that publishes AI-drafted athlete data to the live profile —

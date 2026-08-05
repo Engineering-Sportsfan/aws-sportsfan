@@ -149,7 +149,7 @@ async function main() {
       slotsList.forEach(dateItem => {
         const calc = calculateDateString(dateItem.date);
         if (Array.isArray(dateItem.times)) {
-          dateItem.times.forEach(timeStr => {
+          dateItem.times.forEach((timeStr: string) => {
             const slotDocId = `slot_${String(slotIndex++).padStart(3, '0')}`;
             const slotDocRef = slotsColRef.doc(slotDocId);
             slotsBatch.set(slotDocRef, {

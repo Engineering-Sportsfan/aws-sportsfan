@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
-// In-memory cache to save Firestore document reads on repeat visits
+export const dynamic = "force-dynamic";
+
+// In-memory cache to save database reads on repeat visits
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 const cache: {
@@ -40,41 +44,108 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Select fields to load from the globalLeaderboard collection
-    const fields = showBreakdown
-      ? ["userId", "userName", "userEmail", "totalPoints", "breakdown", "lastUpdated"]
-      : ["userId", "userName", "userEmail", "totalPoints", "lastUpdated"];
+    let leaderboard: any[] = [];
+    let fetchedFromDynamo = false;
+    let hasMore = false;
+    let nextCursorId: string | null = null;
 
-    // Query from the single consolidated globalLeaderboard collection (blueprint compliant)
-    let query = db
-      .collection("globalLeaderboard")
-      .orderBy("totalPoints", "desc")
-      .select(...fields)
-      .limit(limit);
+    // 1. Try querying DynamoDB first using leaderboardType-points-index
+    try {
+      const queryParams: any = {
+        TableName: "GamificationAndWallet",
+        IndexName: "leaderboardType-points-index",
+        KeyConditionExpression: "leaderboardType = :t",
+        ExpressionAttributeValues: {
+          ":t": "GLOBAL"
+        },
+        ScanIndexForward: false, // highest points first
+        Limit: limit
+      };
 
-    // Cursor pagination (using startAfter instead of offsets)
-    if (cursorId) {
-      const cursorDoc = await db.collection("globalLeaderboard").doc(cursorId).get();
-      if (cursorDoc.exists) {
-        query = query.startAfter(cursorDoc);
+      if (cursorId) {
+        // Resolve cursor record points to structure ExclusiveStartKey
+        const getRes = await docClient.send(new GetCommand({
+          TableName: "GamificationAndWallet",
+          Key: { userId: `USER#${cursorId}`, sk: "LEADERBOARD#GLOBAL" }
+        }));
+        if (getRes.Item) {
+          queryParams.ExclusiveStartKey = {
+            userId: `USER#${cursorId}`,
+            sk: "LEADERBOARD#GLOBAL",
+            leaderboardType: "GLOBAL",
+            points: getRes.Item.points ?? getRes.Item.totalPoints ?? 0
+          };
+        }
       }
+
+      const res = await docClient.send(new QueryCommand(queryParams));
+
+      if (res.Items) {
+        leaderboard = res.Items.map((item, index) => ({
+          rank: cursorId ? "?" : index + 1,
+          userId: item.userId.replace(/^USER#/, ""),
+          userName: item.userName || "User",
+          userEmail: item.userEmail || "",
+          totalPoints: item.points ?? item.totalPoints ?? 0,
+          lastUpdated: item.lastUpdated ?? now,
+          ...(showBreakdown && { breakdown: item.breakdown ?? {} }),
+          _docId: item.userId.replace(/^USER#/, "")
+        }));
+
+        hasMore = res.LastEvaluatedKey !== undefined;
+        if (res.LastEvaluatedKey && res.LastEvaluatedKey.userId) {
+          nextCursorId = (res.LastEvaluatedKey.userId as string).replace(/^USER#/, "");
+        }
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[Leaderboard GET] DynamoDB GSI lookup failed:", dynErr);
     }
 
-    const snapshot = await query.get();
+    // 2. Fallback to Firestore
+    if (!fetchedFromDynamo) {
+      try {
+        const fields = showBreakdown
+          ? ["userId", "userName", "userEmail", "totalPoints", "breakdown", "lastUpdated"]
+          : ["userId", "userName", "userEmail", "totalPoints", "lastUpdated"];
 
-    const leaderboard = snapshot.docs.map((doc, index) => {
-      const d = doc.data();
-      return {
-        rank: cursorId ? "?" : index + 1,
-        userId: d.userId || doc.id,
-        userName: d.userName || "User",
-        userEmail: d.userEmail || "",
-        totalPoints: d.totalPoints ?? 0,
-        lastUpdated: d.lastUpdated ?? now,
-        ...(showBreakdown && { breakdown: d.breakdown ?? {} }),
-        _docId: doc.id,
-      };
-    });
+        let query = db
+          .collection("globalLeaderboard")
+          .orderBy("totalPoints", "desc")
+          .select(...fields)
+          .limit(limit);
+
+        if (cursorId) {
+          const cursorDoc = await db.collection("globalLeaderboard").doc(cursorId).get();
+          if (cursorDoc.exists) {
+            query = query.startAfter(cursorDoc);
+          }
+        }
+
+        const snapshot = await query.get();
+
+        leaderboard = snapshot.docs.map((doc, index) => {
+          const d = doc.data();
+          return {
+            rank: cursorId ? "?" : index + 1,
+            userId: d.userId || doc.id,
+            userName: d.userName || "User",
+            userEmail: d.userEmail || "",
+            totalPoints: d.totalPoints ?? 0,
+            lastUpdated: d.lastUpdated ?? now,
+            ...(showBreakdown && { breakdown: d.breakdown ?? {} }),
+            _docId: doc.id,
+          };
+        });
+
+        const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        hasMore = snapshot.docs.length === limit;
+        nextCursorId = hasMore ? lastDoc?.id : null;
+      } catch (fsErr) {
+        console.error("[Leaderboard GET] Firestore fallback failed:", fsErr);
+        return NextResponse.json({ success: false, error: "Failed to fetch leaderboard" }, { status: 500 });
+      }
+    }
 
     // Re-index ranks correctly on the first page load
     if (!cursorId) {
@@ -83,9 +154,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-    const hasMore = snapshot.docs.length === limit;
-
     const payload = {
       success: true,
       leaderboard,
@@ -93,7 +161,7 @@ export async function GET(req: NextRequest) {
       pagination: {
         limit,
         hasMore,
-        nextCursor: hasMore ? lastDoc?.id : null,
+        nextCursor: nextCursorId,
       },
     };
 

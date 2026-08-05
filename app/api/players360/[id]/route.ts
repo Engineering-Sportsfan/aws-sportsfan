@@ -1,15 +1,19 @@
-
+// app/api/players360/[id]/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
-//  Helper: extract ID from URL 
+export const dynamic = "force-dynamic";
+
 function getIdFromUrl(req: NextRequest): string {
   const url = new URL(req.url);
   const parts = url.pathname.split("/");
   return parts[parts.length - 1];
 }
 
-//  GET single post 
+// GET single post
 export async function GET(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -18,13 +22,40 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const doc = await db.collection("players360Posts").doc(id).get();
+    let post: any = null;
 
-    if (!doc.exists) {
+    // 1. Try DynamoDB
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :cid",
+          ExpressionAttributeValues: {
+            ":cid": `PLAYER_POST#${id}`,
+          },
+          Limit: 1,
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) {
+        post = { id, ...qRes.Items[0] };
+      }
+    } catch (e) {
+      console.warn("[players360 [id] GET] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
+    if (!post && db) {
+      const doc = await db.collection("players360Posts").doc(id).get();
+      if (doc.exists) {
+        post = { id: doc.id, ...doc.data() };
+      }
+    }
+
+    if (!post) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ post: { id: doc.id, ...doc.data() } });
+    return NextResponse.json({ post });
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
@@ -32,20 +63,43 @@ export async function GET(req: NextRequest) {
   }
 }
 
-//  PUT update post 
+// PUT update post
 export async function PUT(req: NextRequest) {
   try {
-    const id   = getIdFromUrl(req);
+    const id = getIdFromUrl(req);
     const body = await req.json();
 
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const docRef = db.collection("players360Posts").doc(id);
-    const doc    = await docRef.get();
+    let existing: any = null;
+    let existingSk = `POST#${Date.now()}`;
 
-    if (!doc.exists) {
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :cid",
+          ExpressionAttributeValues: {
+            ":cid": `PLAYER_POST#${id}`,
+          },
+          Limit: 1,
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) {
+        existing = qRes.Items[0];
+        existingSk = existing.sk || existingSk;
+      }
+    } catch {}
+
+    if (!existing && db) {
+      const docRef = db.collection("players360Posts").doc(id);
+      const doc = await docRef.get();
+      if (doc.exists) existing = doc.data();
+    }
+
+    if (!existing) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
@@ -66,15 +120,29 @@ export async function PUT(req: NextRequest) {
     });
 
     if (body.category !== undefined) updates.category = body.category ?? [];
-    if (body.catlogo  !== undefined) updates.catlogo  = body.catlogo  ?? [];
+    if (body.catlogo !== undefined) updates.catlogo = body.catlogo ?? [];
 
-    await docRef.update(updates);
+    const updatedItem = {
+      ...existing,
+      ...updates,
+      id,
+    };
 
-    const updated = await docRef.get();
+    // Dual-write
+    await dualWrite({
+      tableName: "SocialAndContent",
+      dynamoItem: {
+        contentId: `PLAYER_POST#${id}`,
+        sk: existingSk,
+        ...updatedItem,
+      },
+      firestoreRef: db.collection("players360Posts").doc(id),
+      firestoreData: updates,
+    });
 
     return NextResponse.json({
       success: true,
-      post: { id: updated.id, ...updated.data() },
+      post: updatedItem,
     });
 
   } catch (error: unknown) {
@@ -83,7 +151,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-//  DELETE post 
+// DELETE post
 export async function DELETE(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -92,19 +160,42 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const docRef = db.collection("players360Posts").doc(id);
-    const doc    = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json({ error: "Post not found" }, { status: 404 });
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :cid",
+          ExpressionAttributeValues: {
+            ":cid": `PLAYER_POST#${id}`,
+          },
+        })
+      );
+      if (qRes.Items) {
+        for (const item of qRes.Items) {
+          await docClient.send(
+            new DeleteCommand({
+              TableName: "SocialAndContent",
+              Key: {
+                contentId: item.contentId,
+                sk: item.sk,
+              },
+            })
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("[players360 [id] DELETE] DynamoDB notice:", e);
     }
 
-    await docRef.delete();
+    if (db) {
+      const docRef = db.collection("players360Posts").doc(id);
+      const doc = await docRef.get();
+      if (doc.exists) {
+        await docRef.delete();
+      }
+    }
 
-    return NextResponse.json({
-      success: true,
-      message: `Post ${id} deleted successfully`,
-    });
+    return NextResponse.json({ success: true, message: "Deleted" });
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";

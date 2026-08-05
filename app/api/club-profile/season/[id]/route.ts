@@ -1,7 +1,12 @@
+// app/api/club-profile/season/[id]/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite, dualDelete } from "@/lib/dualWrite";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
-// Helper function to extract ID from URL
+export const dynamic = "force-dynamic";
+
 function getIdFromUrl(req: NextRequest): string | null {
   const url = new URL(req.url);
   const pathParts = url.pathname.split('/');
@@ -11,19 +16,52 @@ function getIdFromUrl(req: NextRequest): string | null {
 // ─── GET: Single Season 
 export async function GET(req: NextRequest) {
   try {
-    const id   = getIdFromUrl(req);
+    const id = getIdFromUrl(req);
 
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
-    const doc = await db.collection("clubSeasons").doc(id).get();
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, message: "Season not found" },
-        { status: 404 }
+
+    // 1. Try DynamoDB
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: {
+            entityId: `CLUB_SEASON#${id}`,
+            sk: "SEASON#META",
+          },
+        })
       );
+      if (getRes.Item) {
+        const item = getRes.Item;
+        return NextResponse.json({
+          success: true,
+          season: {
+            id: item.id || id,
+            ...item,
+          },
+        });
+      }
+    } catch (e) {
+      console.warn("[club-profile season [id] GET] DynamoDB notice:", e);
     }
-    return NextResponse.json({ success: true, season: { id: doc.id, ...doc.data() } });
+
+    // 2. Fallback to Firestore
+    if (db) {
+      const doc = await db.collection("clubSeasons").doc(id).get();
+      if (doc.exists) {
+        return NextResponse.json({
+          success: true,
+          season: { id: doc.id, ...doc.data() },
+        });
+      }
+    }
+
+    return NextResponse.json(
+      { success: false, message: "Season not found" },
+      { status: 404 }
+    );
   } catch (error) {
     return NextResponse.json(
       { success: false, message: "Fetch failed: " + (error as Error).message },
@@ -35,7 +73,7 @@ export async function GET(req: NextRequest) {
 // ─── PUT: Update Season 
 export async function PUT(req: NextRequest) {
   try {
-    const id   = getIdFromUrl(req);
+    const id = getIdFromUrl(req);
 
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
@@ -43,47 +81,75 @@ export async function PUT(req: NextRequest) {
     const body = await req.json();
     const { season } = body;
 
-    const existing = await db.collection("clubSeasons").doc(id).get();
-    if (!existing.exists) {
-      return NextResponse.json(
-        { success: false, message: "Season not found" },
-        { status: 404 }
+    let existingData: Record<string, unknown> = {};
+
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: {
+            entityId: `CLUB_SEASON#${id}`,
+            sk: "SEASON#META",
+          },
+        })
       );
+      if (getRes.Item) {
+        existingData = getRes.Item as Record<string, unknown>;
+      }
+    } catch (e) {
+      console.warn("[club-profile season [id] PUT] DynamoDB check:", e);
     }
 
-    const existingData = existing.data() as Record<string, unknown>;
-    const existingSeason = existingData.season as Record<string, unknown>;
+    if (Object.keys(existingData).length === 0 && db) {
+      const existing = await db.collection("clubSeasons").doc(id).get();
+      if (existing.exists) {
+        existingData = existing.data() as Record<string, unknown>;
+      }
+    }
+
+    const existingSeason = (existingData.season as Record<string, unknown>) || {};
+
+    const updatedSeasonObj = {
+      year: season?.year ?? existingSeason.year ?? "",
+      wins: season?.wins ?? existingSeason.wins ?? "0",
+      losses: season?.losses ?? existingSeason.losses ?? "0",
+      points: season?.points ?? existingSeason.points ?? "0",
+      position: season?.position ?? existingSeason.position ?? "",
+      matchesPlayed: season?.matchesPlayed ?? existingSeason.matchesPlayed ?? "0",
+      netRunRate: season?.netRunRate ?? existingSeason.netRunRate ?? "0",
+      highestTotal: season?.highestTotal ?? existingSeason.highestTotal ?? "",
+      lowestTotal: season?.lowestTotal ?? existingSeason.lowestTotal ?? "",
+      runs: season?.runs ?? existingSeason.runs ?? "0",
+      strikeRate: season?.strikeRate ?? existingSeason.strikeRate ?? "0",
+      average: season?.average ?? existingSeason.average ?? "0",
+      fifties: season?.fifties !== undefined ? Number(season.fifties) : Number(existingSeason.fifties || 0),
+      hundreds: season?.hundreds !== undefined ? Number(season.hundreds) : Number(existingSeason.hundreds || 0),
+      highestScore: season?.highestScore ?? existingSeason.highestScore ?? "",
+      fours: season?.fours !== undefined ? Number(season.fours) : Number(existingSeason.fours || 0),
+      sixes: season?.sixes !== undefined ? Number(season.sixes) : Number(existingSeason.sixes || 0),
+      award: season?.award ?? existingSeason.award ?? "",
+      awardSub: season?.awardSub ?? existingSeason.awardSub ?? "",
+    };
 
     const updateData = {
-      season: {
-        year: season?.year ?? existingSeason.year,
-        wins: season?.wins ?? existingSeason.wins,
-        losses: season?.losses ?? existingSeason.losses,
-        points: season?.points ?? existingSeason.points,
-        position: season?.position ?? existingSeason.position,
-        matchesPlayed: season?.matchesPlayed ?? existingSeason.matchesPlayed,
-        netRunRate: season?.netRunRate ?? existingSeason.netRunRate,
-        highestTotal: season?.highestTotal ?? existingSeason.highestTotal,
-        lowestTotal: season?.lowestTotal ?? existingSeason.lowestTotal,
-        runs: season?.runs ?? existingSeason.runs,
-        strikeRate: season?.strikeRate ?? existingSeason.strikeRate,
-        average: season?.average ?? existingSeason.average,
-        fifties: season?.fifties !== undefined ? Number(season.fifties) : existingSeason.fifties,
-        hundreds: season?.hundreds !== undefined ? Number(season.hundreds) : existingSeason.hundreds,
-        highestScore: season?.highestScore ?? existingSeason.highestScore,
-        fours: season?.fours !== undefined ? Number(season.fours) : existingSeason.fours,
-        sixes: season?.sixes !== undefined ? Number(season.sixes) : existingSeason.sixes,
-        award: season?.award ?? existingSeason.award,
-        awardSub: season?.awardSub ?? existingSeason.awardSub,
-      },
+      ...existingData,
+      id,
+      season: updatedSeasonObj,
       updatedAt: Date.now(),
     };
 
-    await db.collection("clubSeasons").doc(id).update(updateData);
+    const yr = updatedSeasonObj.year || "META";
+    const dynamoItem = {
+      entityId: `CLUB_SEASON#${id}`,
+      sk: `SEASON#${yr}`,
+      ...updateData,
+    };
+
+    await dualWrite("clubSeasons", id, "SportsData", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      season: { id: id, ...existingData, ...updateData },
+      season: { ...updateData, id },
     });
   } catch (error) {
     console.error("Update season error:", error);
@@ -97,19 +163,17 @@ export async function PUT(req: NextRequest) {
 // ─── DELETE: Remove Season 
 export async function DELETE(req: NextRequest) {
   try {
-    const id   = getIdFromUrl(req);
+    const id = getIdFromUrl(req);
 
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
-    const doc = await db.collection("clubSeasons").doc(id).get();
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, message: "Season not found" },
-        { status: 404 }
-      );
-    }
-    await db.collection("clubSeasons").doc(id).delete();
+
+    await dualDelete("clubSeasons", id, "SportsData", {
+      entityId: `CLUB_SEASON#${id}`,
+      sk: "SEASON#META",
+    });
+
     return NextResponse.json({ success: true, message: "Season deleted" });
   } catch (error) {
     return NextResponse.json(

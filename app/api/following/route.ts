@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import {
+  GetCommand,
+  PutCommand,
+  DeleteCommand,
+  QueryCommand,
+  ScanCommand,
+} from "@aws-sdk/lib-dynamodb";
 
 interface FollowingRecord {
   userId: string;
@@ -13,7 +21,7 @@ const COLLECTION = "following";
 
 function buildFollowDocId(userId: string, followingPlayerName: string) {
   return `${encodeURIComponent(userId)}_${encodeURIComponent(
-    followingPlayerName.toLowerCase()
+    followingPlayerName.toLowerCase(),
   )}`;
 }
 
@@ -27,27 +35,86 @@ export async function GET(req: NextRequest) {
     const userId = searchParams.get("userId");
     const userEmail = searchParams.get("userEmail");
 
-    if (!userId && !userEmail) {
-      const snapshot = await db.collection(COLLECTION).orderBy("createdAt", "desc").get();
-      const following = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    let following: any[] = [];
+    let fetchedFromDynamo = false;
 
-      return NextResponse.json({ success: true, following, total: following.length });
+    // 1. Try DynamoDB
+    try {
+      if (userId) {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "IdentityAndAccess",
+            KeyConditionExpression:
+              "entityId = :uid AND begins_with(sk, :fol)",
+            ExpressionAttributeValues: {
+              ":uid": `USER#${userId}`,
+              ":fol": "FOLLOWING#",
+            },
+          }),
+        );
+        if (qRes.Items && qRes.Items.length > 0) {
+          following = qRes.Items.map((item) => ({
+            id: buildFollowDocId(item.userId, item.followingplayername),
+            ...item,
+          }));
+          fetchedFromDynamo = true;
+        }
+      } else {
+        const sRes = await docClient.send(
+          new ScanCommand({
+            TableName: "IdentityAndAccess",
+            FilterExpression: "begins_with(sk, :fol)",
+            ExpressionAttributeValues: {
+              ":fol": "FOLLOWING#",
+            },
+          }),
+        );
+        if (sRes.Items && sRes.Items.length > 0) {
+          let items: any[] = sRes.Items.map((item: any) => ({
+            id: buildFollowDocId(item.userId, item.followingplayername),
+            ...item,
+          }));
+          if (userEmail) {
+            items = items.filter((i: any) => i.userEmail === userEmail);
+          }
+          items.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+          following = items;
+          fetchedFromDynamo = true;
+        }
+      }
+    } catch (dynErr) {
+      console.warn("[following GET] DynamoDB notice:", dynErr);
     }
 
-    let query: FirebaseFirestore.Query = db.collection(COLLECTION);
+    // 2. Fallback to Firestore
+    if (!fetchedFromDynamo) {
+      if (!userId && !userEmail) {
+        const snapshot = await db
+          .collection(COLLECTION)
+          .orderBy("createdAt", "desc")
+          .get();
+        following = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+      } else {
+        let query: FirebaseFirestore.Query = db.collection(COLLECTION);
+        if (userId) query = query.where("userId", "==", userId);
+        if (userEmail) query = query.where("userEmail", "==", userEmail);
 
-    if (userId) {
-      query = query.where("userId", "==", userId);
+        const snapshot = await query.get();
+        following = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+      }
     }
 
-    if (userEmail) {
-      query = query.where("userEmail", "==", userEmail);
-    }
-
-    const snapshot = await query.get();
-    const following = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-
-    return NextResponse.json({ success: true, following, total: following.length });
+    return NextResponse.json({
+      success: true,
+      following,
+      total: following.length,
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("Error fetching following records:", error);
@@ -64,50 +131,95 @@ export async function POST(req: NextRequest) {
     const followingplayername = normalizeText(body.followingplayername);
 
     if (!userId) {
-      return NextResponse.json({ error: "userId is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "userId is required" },
+        { status: 400 },
+      );
     }
 
     if (!userEmail) {
-      return NextResponse.json({ error: "userEmail is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "userEmail is required" },
+        { status: 400 },
+      );
     }
 
     if (!followingplayername) {
       return NextResponse.json(
         { error: "followingplayername is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const docId = buildFollowDocId(userId, followingplayername);
-    const docRef = db.collection(COLLECTION).doc(docId);
-    const existingDoc = await docRef.get();
+    const playerKey = followingplayername.toLowerCase();
 
-    if (existingDoc.exists) {
+    // Check if existing in DynamoDB
+    let existingItem: any = null;
+    try {
+      const gRes = await docClient.send(
+        new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `USER#${userId}`, sk: `FOLLOWING#${playerKey}` },
+        }),
+      );
+      if (gRes.Item) existingItem = gRes.Item;
+    } catch {}
+
+    if (!existingItem) {
+      const docRef = db.collection(COLLECTION).doc(docId);
+      const existingDoc = await docRef.get();
+      if (existingDoc.exists) existingItem = existingDoc.data();
+    }
+
+    if (existingItem) {
       return NextResponse.json(
         {
           error: "This player is already being followed by this user.",
-          following: { id: existingDoc.id, ...existingDoc.data() },
+          following: { id: docId, ...existingItem },
         },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
+    const now = Date.now();
     const newFollowing: FollowingRecord = {
       userId,
       userEmail,
       followingplayername,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    await docRef.set(newFollowing);
+    // 1. Write to DynamoDB (Primary)
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: "IdentityAndAccess",
+          Item: {
+            entityId: `USER#${userId}`,
+            sk: `FOLLOWING#${playerKey}`,
+            ...newFollowing,
+          },
+        }),
+      );
+    } catch (dynErr) {
+      console.error("[following POST] DynamoDB error:", dynErr);
+    }
+
+    // 2. Write to Firestore (Dual-Write)
+    try {
+      await db.collection(COLLECTION).doc(docId).set(newFollowing);
+    } catch (fsErr) {
+      console.error("[following POST] Firestore error:", fsErr);
+    }
 
     return NextResponse.json(
       {
         success: true,
         following: { id: docId, ...newFollowing },
       },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
@@ -115,36 +227,49 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }
-//done
+
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     let userId = searchParams.get("userId") || undefined;
-    let followingplayername = searchParams.get("followingplayername") || undefined;
+    let followingplayername =
+      searchParams.get("followingplayername") || undefined;
 
     if (!userId || !followingplayername) {
-      // Try JSON body as fallback
       const body = await req.json().catch(() => ({}));
       userId = userId || normalizeText(body.userId);
-      followingplayername = followingplayername || normalizeText(body.followingplayername);
+      followingplayername =
+        followingplayername || normalizeText(body.followingplayername);
     }
 
     if (!userId || !followingplayername) {
       return NextResponse.json(
         { error: "userId and followingplayername are required to unfollow" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const docId = buildFollowDocId(userId, followingplayername);
-    const docRef = db.collection(COLLECTION).doc(docId);
-    const existing = await docRef.get();
+    const playerKey = followingplayername.toLowerCase();
 
-    if (!existing.exists) {
-      return NextResponse.json({ error: "Follow record not found" }, { status: 404 });
+    // 1. Delete from DynamoDB
+    try {
+      await docClient.send(
+        new DeleteCommand({
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `USER#${userId}`, sk: `FOLLOWING#${playerKey}` },
+        }),
+      );
+    } catch (dynErr) {
+      console.error("[following DELETE] DynamoDB error:", dynErr);
     }
 
-    await docRef.delete();
+    // 2. Delete from Firestore
+    try {
+      await db.collection(COLLECTION).doc(docId).delete();
+    } catch (fsErr) {
+      console.error("[following DELETE] Firestore error:", fsErr);
+    }
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {

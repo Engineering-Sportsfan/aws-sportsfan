@@ -1,24 +1,14 @@
+// app/api/watch-along/matches/[id]/emoji-storm/route.ts — Migrated to AWS DynamoDB (RealTimeChat)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUserSessionAndRole, isAuthorizedForMatch } from "@/lib/auth";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
-
-/* ─────────────────────────────────────────────
-   Firestore structure:
-   watchAlongMatches/{id}/emojiReactions/counts
-   {
-     "🔥": 8421,
-     "💪": 6234,
-     ...
-     updatedAt: number
-   }
-
-   Single document with one field per emoji —
-   FieldValue.increment keeps concurrent taps safe
-   without needing transactions.
-   ───────────────────────────────────────────── */
 
 const ALLOWED_EMOJIS = new Set([
   "🔥","💪","😱","🏏","👏","🎉","❤️","🚀","😮","🤩",
@@ -27,23 +17,50 @@ const ALLOWED_EMOJIS = new Set([
 /* ─────────────────────────────────────────────
    GET  /api/watch-along/matches/[id]/emoji-storm
    Returns aggregated emoji reaction counts
-   ───────────────────────────────────────────── */
+───────────────────────────────────────────── */
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params;
 
-    // Read counts doc directly — skip parent match check
+    let reactions: Record<string, number> = {};
+
+    // 1. Read from DynamoDB RealTimeChat
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: {
+            roomId: `ROOM#watchalong_${id}`,
+            sk: "EMOJI_STORM#COUNTS",
+          },
+        })
+      );
+
+      if (getRes.Item) {
+        ALLOWED_EMOJIS.forEach((e) => {
+          reactions[e] = Number(getRes.Item?.[e] || 0);
+        });
+        return NextResponse.json({ success: true, reactions });
+      }
+    } catch (e) {
+      console.warn("[emoji-storm GET] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
     const countsDoc = await db.collection("watchAlongMatches").doc(id)
       .collection("emojiReactions").doc("counts").get();
 
     if (!countsDoc.exists) {
-      const empty: Record<string, number> = {};
-      ALLOWED_EMOJIS.forEach((e) => { empty[e] = 0; });
-      return NextResponse.json({ success: true, reactions: empty });
+      ALLOWED_EMOJIS.forEach((e) => { reactions[e] = 0; });
+      return NextResponse.json({ success: true, reactions });
     }
 
-    const { updatedAt, ...reactions } = countsDoc.data() as Record<string, unknown>;
+    const { updatedAt, ...fsReactions } = countsDoc.data() as Record<string, unknown>;
     void updatedAt;
+
+    ALLOWED_EMOJIS.forEach((e) => {
+      reactions[e] = Number(fsReactions[e] || 0);
+    });
 
     return NextResponse.json({ success: true, reactions });
   } catch (error) {
@@ -54,10 +71,8 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 
 /* ─────────────────────────────────────────────
    POST  /api/watch-along/matches/[id]/emoji-storm
-   Send one or more emoji reactions (max 10 per request)
-   Body: { emoji: string }
-     or  { emojis: string[] }
-   ───────────────────────────────────────────── */
+   Send one or more emoji reactions
+───────────────────────────────────────────── */
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params;
@@ -90,21 +105,57 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       );
     }
 
-    // Tally duplicates locally → one Firestore write
     const tally: Record<string, number> = {};
     for (const e of raw) tally[e] = (tally[e] || 0) + 1;
 
-    const updates: Record<string, unknown> = { updatedAt: Date.now() };
-    for (const [emoji, count] of Object.entries(tally)) {
-      updates[emoji] = FieldValue.increment(count);
+    const now = Date.now();
+
+    // 1. Primary write to DynamoDB RealTimeChat
+    try {
+      const updateExprParts: string[] = [];
+      const exprAttrNames: Record<string, string> = {};
+      const exprAttrValues: Record<string, any> = { ":now": now };
+
+      let idx = 0;
+      for (const [emoji, count] of Object.entries(tally)) {
+        const nameKey = `#e${idx}`;
+        const valKey = `:v${idx}`;
+        exprAttrNames[nameKey] = emoji;
+        exprAttrValues[valKey] = count;
+        updateExprParts.push(`${nameKey} ${valKey}`);
+        idx++;
+      }
+
+      await docClient.send(
+        new UpdateCommand({
+          TableName: "RealTimeChat",
+          Key: {
+            roomId: `ROOM#watchalong_${id}`,
+            sk: "EMOJI_STORM#COUNTS",
+          },
+          UpdateExpression: `ADD ${updateExprParts.join(", ")} SET updatedAt = :now`,
+          ExpressionAttributeNames: exprAttrNames,
+          ExpressionAttributeValues: exprAttrValues,
+        })
+      );
+    } catch (dynErr) {
+      console.warn("[emoji-storm POST] DynamoDB update notice:", dynErr);
     }
 
-    // Write directly — skip match check AND skip re-read after write
-    const countsRef = db.collection("watchAlongMatches").doc(id)
-      .collection("emojiReactions").doc("counts");
-    await countsRef.set(updates, { merge: true });
+    // 2. Dual-write to Firestore
+    try {
+      const fsUpdates: Record<string, unknown> = { updatedAt: now };
+      for (const [emoji, count] of Object.entries(tally)) {
+        fsUpdates[emoji] = FieldValue.increment(count);
+      }
 
-    // Return the sent tally instead of re-reading (saves 1 read)
+      const countsRef = db.collection("watchAlongMatches").doc(id)
+        .collection("emojiReactions").doc("counts");
+      await countsRef.set(fsUpdates, { merge: true });
+    } catch (fsErr) {
+      console.warn("[emoji-storm POST] Firestore mirror notice:", fsErr);
+    }
+
     return NextResponse.json({ success: true, reactions: tally });
   } catch (error) {
     console.error("[emoji-storm POST]", error);
@@ -115,7 +166,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 /* ─────────────────────────────────────────────
    DELETE  /api/watch-along/matches/[id]/emoji-storm
    Admin: reset all emoji counts for the match
-   ───────────────────────────────────────────── */
+───────────────────────────────────────────── */
 export async function DELETE(req: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params;
@@ -136,12 +187,33 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
       );
     }
 
-    // Reset directly — skip match check
-    const reset: Record<string, unknown> = { updatedAt: Date.now() };
+    const now = Date.now();
+    const reset: Record<string, unknown> = { updatedAt: now };
     ALLOWED_EMOJIS.forEach((e) => { reset[e] = 0; });
 
-    await db.collection("watchAlongMatches").doc(id)
-      .collection("emojiReactions").doc("counts").set(reset);
+    // 1. Reset in DynamoDB
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: "RealTimeChat",
+          Item: {
+            roomId: `ROOM#watchalong_${id}`,
+            sk: "EMOJI_STORM#COUNTS",
+            ...reset,
+          },
+        })
+      );
+    } catch (dynErr) {
+      console.warn("[emoji-storm DELETE] DynamoDB reset notice:", dynErr);
+    }
+
+    // 2. Reset in Firestore
+    try {
+      await db.collection("watchAlongMatches").doc(id)
+        .collection("emojiReactions").doc("counts").set(reset);
+    } catch (fsErr) {
+      console.warn("[emoji-storm DELETE] Firestore reset notice:", fsErr);
+    }
 
     return NextResponse.json({ success: true, message: "Emoji counts reset" });
   } catch (error) {

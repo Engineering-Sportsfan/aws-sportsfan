@@ -2,6 +2,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 type ConfigType = "sports" | "engagement" | "followEntities";
 const VALID_TYPES: ConfigType[] = ["sports", "engagement", "followEntities"];
@@ -9,12 +13,6 @@ const VALID_TYPES: ConfigType[] = ["sports", "engagement", "followEntities"];
 function collectionFor(type: ConfigType) {
   return db.collection("roarOnboardingConfig").doc(type).collection("items");
 }
-
-// This route only manages the option lists (sports, follow-entity sections,
-// engagement options) used to populate onboarding/preferences fields. It is
-// not tied to any individual user, so it deliberately has no auth checks —
-// unlike api/roar/onboarding/route.ts, which handles a signed-in user's own
-// selections and does require auth.
 
 // ?type=sports|engagement|followEntities (required)
 // ?all=true — admin form passes this to also see inactive items
@@ -27,12 +25,47 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "type must be one of sports|engagement|followEntities" }, { status: 400 });
     }
 
-    let query: FirebaseFirestore.Query = collectionFor(type);
-    if (!includeInactive) query = query.where("active", "==", true);
-    query = query.orderBy("order", "asc");
+    let items: any[] = [];
+    let fetchedFromDynamo = false;
 
-    const snap = await query.get();
-    const items = snap.docs.map((d) => d.data());
+    // 1. Try fetching from DynamoDB first
+    try {
+      const res = await docClient.send(new QueryCommand({
+        TableName: "IdentityAndAccess",
+        KeyConditionExpression: "entityId = :e AND begins_with(sk, :p)",
+        ExpressionAttributeValues: {
+          ":e": "roarOnboardingConfig",
+          ":p": `ONBOARDING_CONFIG#${type}#`
+        }
+      }));
+
+      if (res.Items) {
+        let filtered = res.Items;
+        if (!includeInactive) {
+          filtered = res.Items.filter(item => item.active === true);
+        }
+        // Sort in memory by order asc
+        filtered.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        items = filtered;
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[OnboardingConfig GET] DynamoDB fetch failed:", dynErr);
+    }
+
+    // 2. Fallback to Firestore
+    if (!fetchedFromDynamo) {
+      try {
+        let query: FirebaseFirestore.Query = collectionFor(type);
+        if (!includeInactive) query = query.where("active", "==", true);
+        query = query.orderBy("order", "asc");
+
+        const snap = await query.get();
+        items = snap.docs.map((d) => d.data());
+      } catch (fsErr) {
+        console.error("[OnboardingConfig GET] Firestore fallback failed:", fsErr);
+      }
+    }
 
     return NextResponse.json({ success: true, type, items });
   } catch (error: unknown) {
@@ -57,17 +90,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "followEntities requires sportId and category" }, { status: 400 });
     }
 
-    const ref = collectionFor(type).doc();
+    const itemId = `item_${Math.random().toString(36).substring(2, 15)}`;
     const now = Date.now();
     const data = {
       ...item,
-      id: ref.id,
+      id: itemId,
       order: typeof item.order === "number" ? item.order : now,
       active: item.active ?? true,
       createdAt: now,
       updatedAt: now,
     };
-    await ref.set(data);
+
+    // 1. Put in DynamoDB
+    try {
+      await docClient.send(new PutCommand({
+        TableName: "IdentityAndAccess",
+        Item: {
+          entityId: "roarOnboardingConfig",
+          sk: `ONBOARDING_CONFIG#${type}#${itemId}`,
+          ...data
+        }
+      }));
+    } catch (dynErr) {
+      console.warn("[OnboardingConfig POST] DynamoDB write failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      await collectionFor(type).doc(itemId).set(data);
+    } catch (fsErr) {
+      console.warn("[OnboardingConfig POST] Firestore fallback sync failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, item: data });
   } catch (error: unknown) {
@@ -87,14 +140,68 @@ export async function PATCH(req: NextRequest) {
     }
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
-    const ref = collectionFor(type).doc(id);
-    const doc = await ref.get();
-    if (!doc.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    let existingData: any = null;
+    let fetchedFromDynamo = false;
 
-    await ref.update({ ...updates, updatedAt: Date.now() });
-    const updated = await ref.get();
+    // 1. Get from DynamoDB first
+    try {
+      const getRes = await docClient.send(new GetCommand({
+        TableName: "IdentityAndAccess",
+        Key: { entityId: "roarOnboardingConfig", sk: `ONBOARDING_CONFIG#${type}#${id}` }
+      }));
+      if (getRes.Item) {
+        existingData = getRes.Item;
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[OnboardingConfig PATCH] DynamoDB fetch failed:", dynErr);
+    }
 
-    return NextResponse.json({ success: true, item: updated.data() });
+    if (!fetchedFromDynamo) {
+      try {
+        const ref = collectionFor(type).doc(id);
+        const doc = await ref.get();
+        if (doc.exists) {
+          existingData = doc.data();
+        }
+      } catch (fsErr) {
+        console.warn("[OnboardingConfig PATCH] Firestore fetch failed:", fsErr);
+      }
+    }
+
+    if (!existingData) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    const merged = {
+      ...existingData,
+      ...updates,
+      updatedAt: Date.now()
+    };
+
+    // Remove partition/sort key names if they got duplicated/merged inside item fields
+    const { entityId: _, sk: __, ...cleanMerged } = merged;
+
+    // Write back updated to DynamoDB
+    try {
+      await docClient.send(new PutCommand({
+        TableName: "IdentityAndAccess",
+        Item: {
+          entityId: "roarOnboardingConfig",
+          sk: `ONBOARDING_CONFIG#${type}#${id}`,
+          ...cleanMerged
+        }
+      }));
+    } catch (dynErr) {
+      console.warn("[OnboardingConfig PATCH] DynamoDB update failed:", dynErr);
+    }
+
+    // Sync to Firestore
+    try {
+      await collectionFor(type).doc(id).update({ ...updates, updatedAt: Date.now() });
+    } catch (fsErr) {
+      console.warn("[OnboardingConfig PATCH] Firestore fallback update failed:", fsErr);
+    }
+
+    return NextResponse.json({ success: true, item: cleanMerged });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("PATCH /api/roar/onboarding-config error:", error);
@@ -112,7 +219,23 @@ export async function DELETE(req: NextRequest) {
     }
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
-    await collectionFor(type).doc(id).delete();
+    // 1. Delete from DynamoDB
+    try {
+      await docClient.send(new DeleteCommand({
+        TableName: "IdentityAndAccess",
+        Key: { entityId: "roarOnboardingConfig", sk: `ONBOARDING_CONFIG#${type}#${id}` }
+      }));
+    } catch (dynErr) {
+      console.warn("[OnboardingConfig DELETE] DynamoDB delete failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      await collectionFor(type).doc(id).delete();
+    } catch (fsErr) {
+      console.warn("[OnboardingConfig DELETE] Firestore fallback delete failed:", fsErr);
+    }
+
     return NextResponse.json({ success: true, id });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";

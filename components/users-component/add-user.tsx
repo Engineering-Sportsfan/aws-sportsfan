@@ -9,6 +9,7 @@ export default function AddUserForm() {
 
   // Fake states for UI toggles
   const [roles, setRoles] = useState({
+    superAdmin: false,
     admin: false,
     contentCreator: false,
     author: false,

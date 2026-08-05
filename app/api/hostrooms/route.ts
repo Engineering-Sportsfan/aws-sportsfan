@@ -1,9 +1,14 @@
+// app/api/hostrooms/route.ts — Migrated to AWS DynamoDB (RealTimeChat Table)
 import { NextRequest, NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
-// import { getAuth } from "firebase-admin/auth";
 import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { v4 as uuidv4 } from "uuid";
 
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,34 +25,81 @@ export async function GET(req: NextRequest) {
 
     // Fetch single room by ID
     if (roomId) {
-      const docRef = db.collection("rooms").doc(roomId);
-      const doc = await docRef.get();
-
-      if (!doc.exists) {
-        return NextResponse.json(
-          { success: false, error: "Room not found" },
-          { status: 404 }
+      let room: any = null;
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: "RealTimeChat",
+            Key: {
+              roomId: `ROOM#${roomId}`,
+              sk: "ROOM#META",
+            },
+          })
         );
+        if (getRes.Item) {
+          room = { id: roomId, ...getRes.Item };
+        }
+      } catch (e) {
+        console.warn("[hostrooms GET] DynamoDB notice:", e);
+      }
+
+      if (!room) {
+        const docRef = db.collection("rooms").doc(roomId);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+          return NextResponse.json(
+            { success: false, error: "Room not found" },
+            { status: 404 }
+          );
+        }
+        room = { id: doc.id, ...doc.data() };
       }
 
       return NextResponse.json({
         success: true,
-        room: { id: doc.id, ...doc.data() },
+        room,
       });
     }
 
     // Fetch all rooms for a user
     if (userId) {
-      const snapshot = await db
-        .collection("rooms")
-        .where("userId", "==", userId)
-        .orderBy("updatedAt", "desc")
-        .get();
+      let rooms: any[] = [];
+      try {
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: "RealTimeChat",
+            FilterExpression: "sk = :skMeta AND (userId = :uId OR hostUserId = :uId)",
+            ExpressionAttributeValues: {
+              ":skMeta": "ROOM#META",
+              ":uId": userId,
+            },
+          })
+        );
+        if (scanRes.Items && scanRes.Items.length > 0) {
+          rooms = (scanRes.Items as any[]).map((item) => ({
+            id: (item.roomId as string)?.replace(/^ROOM#/, "") || item.id,
+            ...item,
+          }));
+        }
+      } catch (e) {
+        console.warn("[hostrooms user GET] DynamoDB notice:", e);
+      }
 
-      const rooms = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      if (rooms.length === 0) {
+        const snapshot = await db
+          .collection("rooms")
+          .where("userId", "==", userId)
+          .orderBy("updatedAt", "desc")
+          .get();
+
+        rooms = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+      }
+
+      rooms.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
 
       return NextResponse.json({
         success: true,
@@ -61,148 +113,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// // ─── POST: Create new room (draft) 
-// export async function POST(req: NextRequest) {
-//   try {
-//     const formData = await req.formData();
-
-//     // Auth
-//     const authHeader = req.headers.get("authorization");
-//     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-//       return NextResponse.json(
-//         { success: false, error: "Unauthorized" },
-//         { status: 401 }
-//       );
-//     }
-
-//     const token = authHeader.split("Bearer ")[1];
-//     const decodedToken = await getAuth().verifyIdToken(token);
-//     const userId = decodedToken.uid;
-
-//     // Step 1: Event & Room Type
-//     const eventId = formData.get("eventId") as string;
-//     const eventName = formData.get("eventName") as string;
-//     const roomType = formData.get("roomType") as string;
-
-//     // Step 2: Details
-//     const title = formData.get("title") as string;
-//     const description = formData.get("description") as string;
-//     const capacity = parseInt(formData.get("capacity") as string);
-//     const primaryLanguage = formData.get("primaryLanguage") as string;
-//     const tags = JSON.parse(formData.get("tags") as string || "[]");
-//     const moderators = JSON.parse(formData.get("moderators") as string || "[]");
-//     const schedule = formData.get("schedule") as string;
-    
-//     // Step 2: Thumbnail
-//     const thumbnailFile = formData.get("thumbnail") as File | null;
-
-//     // Step 3: Content Assets (multiple files)
-//     const assetFiles = formData.getAll("assets") as File[];
-
-//     // Step 4: Pricing
-//     const pricePerFan = parseInt(formData.get("pricePerFan") as string);
-//     const currency = formData.get("currency") as string || "INR";
-
-//     // Validation
-//     if (!eventId || !eventName || !roomType || !title) {
-//       return NextResponse.json(
-//         { success: false, error: "Missing required fields" },
-//         { status: 400 }
-//       );
-//     }
-
-//     // Upload thumbnail to Cloudinary
-//     let thumbnailUrl = "";
-//     if (thumbnailFile) {
-//       const bytes = await thumbnailFile.arrayBuffer();
-//       const buffer = Buffer.from(bytes);
-//       const base64 = `data:${thumbnailFile.type};base64,${buffer.toString("base64")}`;
-//       const uploadRes = await cloudinary.uploader.upload(base64, {
-//         folder: "hostrooms/thumbnails",
-//         public_id: `${Date.now()}-${thumbnailFile.name.replace(/\s/g, "_")}`,
-//       });
-//       thumbnailUrl = uploadRes.secure_url;
-//     }
-
-//     // Upload content assets to Cloudinary
-//     const assets = [];
-//     for (const assetFile of assetFiles) {
-//       const bytes = await assetFile.arrayBuffer();
-//       const buffer = Buffer.from(bytes);
-//       const base64 = `data:${assetFile.type};base64,${buffer.toString("base64")}`;
-      
-//       const uploadRes = await cloudinary.uploader.upload(base64, {
-//         folder: "rooms/assets",
-//         resource_type: "auto", // Automatically detect video/image
-//         public_id: `${Date.now()}-${assetFile.name.replace(/\s/g, "_")}`,
-//       });
-      
-//       assets.push({
-//         type: assetFile.type.startsWith("video/") ? "video" : "image",
-//         url: uploadRes.secure_url,
-//         name: assetFile.name,
-//         size: assetFile.size,
-//       });
-//     }
-
-//     const now = Date.now();
-//     const newRoom = {
-//       userId,
-//       status: "published", // or "draft" if you want to save as draft
-//       currentStep: 4,
-//       event: {
-//         selectedEvent: { id: eventId, name: eventName },
-//         roomType: roomType,
-//       },
-//       details: {
-//         title,
-//         description: description || "",
-//         thumbnail: thumbnailUrl,
-//         capacity: capacity || 0,
-//         primaryLanguage: primaryLanguage || "",
-//         tags,
-//         moderators,
-//         schedule: schedule || "",
-//       },
-//       content: {
-//         assets,
-//       },
-//       pricing: {
-//         pricePerFan: pricePerFan || 0,
-//         currency,
-//       },
-//       createdAt: now,
-//       updatedAt: now,
-//       publishedAt: now,
-//     };
-
-//     const docRef = await db.collection("rooms").add(newRoom);
-
-//     return NextResponse.json({
-//       success: true,
-//       roomId: docRef.id,
-//       room: { id: docRef.id, ...newRoom },
-//     }, { status: 201 });
-
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     console.error("[rooms POST]", error);
-//     return NextResponse.json({ success: false, error: msg }, { status: 500 });
-//   }
-// }
-
-
-
-
+// ─── POST: Create new host room ───
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
 
-    // Option 1: Get token from Authorization header (if sent)
     const authHeader = req.headers.get("authorization");
     let token: string | null = null;
     
-    // Option 2: Get token from cookie (fallback)
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       const cookieToken = req.cookies.get("token")?.value;
       if (cookieToken) {
@@ -232,12 +150,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Invalid or expired token" }, { status: 401 });
     }
 
-    // Step 1: Event & Room Type
     const eventId = formData.get("eventId") as string;
     const eventName = formData.get("eventName") as string;
     const roomType = formData.get("roomType") as string;
 
-    // Step 2: Details
     const title = formData.get("title") as string;
     const description = formData.get("description") as string;
     const capacity = parseInt(formData.get("capacity") as string);
@@ -258,7 +174,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Upload thumbnail to Cloudinary
     let thumbnailUrl = "";
     if (thumbnailFile) {
       const bytes = await thumbnailFile.arrayBuffer();
@@ -271,7 +186,6 @@ export async function POST(req: NextRequest) {
       thumbnailUrl = uploadRes.secure_url;
     }
 
-    // Upload content assets to Cloudinary
     const assets = [];
     for (const assetFile of assetFiles) {
       const bytes = await assetFile.arrayBuffer();
@@ -292,12 +206,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const roomId = uuidv4();
     const now = Date.now();
     const newRoom = {
-      userId: userEmail, // ✅ Use email as userId (matches your users collection)
-      firebaseUid: firebaseUid, // Store Firebase UID for reference
+      id: roomId,
+      userId: userEmail,
+      firebaseUid: firebaseUid,
       status: "published",
       currentStep: 4,
+      isHostRoom: true,
       event: {
         selectedEvent: { id: eventId, name: eventName },
         roomType: roomType,
@@ -324,18 +241,27 @@ export async function POST(req: NextRequest) {
       publishedAt: now,
     };
 
-    const docRef = await db.collection("rooms").add(newRoom);
+    // Primary DynamoDB write + Firestore dual-write
+    await dualWrite({
+      tableName: "RealTimeChat",
+      dynamoItem: {
+        roomId: `ROOM#${roomId}`,
+        sk: "ROOM#META",
+        ...newRoom,
+      },
+      firestoreRef: db.collection("rooms").doc(roomId),
+      firestoreData: newRoom,
+    });
 
     return NextResponse.json({
       success: true,
-      roomId: docRef.id,
-      room: { id: docRef.id, ...newRoom },
+      roomId,
+      room: newRoom,
     }, { status: 201 });
 
   } catch (error: unknown) {
-  const msg = error instanceof Error ? error.message : "Unexpected error";
-  console.error("[rooms POST] Full error:", error); // ← already there
-  console.error("[rooms POST] Message:", msg);       // see exact message
-  return NextResponse.json({ success: false, error: msg }, { status: 500 });
-}
+    const msg = error instanceof Error ? error.message : "Unexpected error";
+    console.error("[rooms POST] Full error:", error);
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
 }

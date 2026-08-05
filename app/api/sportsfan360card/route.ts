@@ -1,8 +1,13 @@
+// app/api/sportsfan360card/route.ts — Migrated to AWS DynamoDB (IdentityAndAccess Table)
 import { NextRequest, NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
-// Define the Drop type
+export const dynamic = "force-dynamic";
+
 interface Drop {
   id: string;
   title: string;
@@ -13,12 +18,11 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
 
-    const name = formData.get("name") as string; 
+    const name = formData.get("name") as string;
     const about = formData.get("about") as string;
     const dropsJson = formData.get("drops") as string;
     const existingAvatar = formData.get("existingAvatar") as string;
 
-    // Parse drops from JSON string
     let drops: Drop[] = [];
     if (dropsJson) {
       try {
@@ -28,7 +32,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Files
     const avatarFile = formData.get("avatar") as File | null;
 
     if (!name) {
@@ -38,7 +41,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Upload avatar or use existing
     let avatarUrl = existingAvatar || "";
     if (avatarFile) {
       const bytes = await avatarFile.arrayBuffer();
@@ -51,102 +53,119 @@ export async function POST(req: NextRequest) {
       avatarUrl = uploadRes.secure_url;
     }
 
+    const now = Date.now();
+    const id = `sf360_card_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
     const profileData = {
+      id,
       name,
+      nameLower: name.toLowerCase(),
       about: about || "",
       avatar: avatarUrl,
       drops: drops || [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const docRef = db.collection("Sportsfan360Profile").doc();
-    await docRef.set(profileData);
+    const dynamoItem = {
+      entityId: `PROFILE_SF360#${id}`,
+      sk: "PROFILE#META",
+      ...profileData,
+    };
+
+    await dualWrite("Sportsfan360Profile", id, "IdentityAndAccess", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      profile: { id: docRef.id, ...profileData },
+      profile: profileData,
     });
   } catch (error) {
     console.error("Create Sportsfan360 profile error:", error);
-    
-    let errorMessage = "Create failed";
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    }
-    
     return NextResponse.json(
-      { success: false, message: `Create failed: ${errorMessage}` },
+      { success: false, message: `Create failed: ${(error as Error).message}` },
       { status: 500 }
     );
   }
 }
 
-
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50); // Cap at 50
+    const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
     const search = searchParams.get("search")?.trim().toLowerCase() || "";
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocValue = searchParams.get("lastDocValue"); // For name or createdAt
 
-    const collectionRef = db.collection("Sportsfan360Profile");
-    let query: FirebaseFirestore.Query = collectionRef;
+    let profiles: any[] = [];
 
-    // Build query based on search or normal list
-    if (search) {
-      query = query
-        .orderBy("nameLower")
-        .startAt(search)
-        .endAt(search + "\uf8ff");
-      
-      // Apply cursor for search results
-      if (lastDocId && lastDocValue) {
-        const lastDocRef = collectionRef.doc(lastDocId);
-        const lastDoc = await lastDocRef.get();
-        if (lastDoc.exists) {
-          query = query.startAfter(lastDoc);
-        }
+    // 1. Scan DynamoDB
+    try {
+      let filterExpr = "begins_with(entityId, :prefix)";
+      const exprVals: Record<string, any> = {
+        ":prefix": "PROFILE_SF360#",
+      };
+
+      if (search) {
+        filterExpr += " AND contains(nameLower, :search)";
+        exprVals[":search"] = search;
       }
-    } else {
-      query = query.orderBy("createdAt", "desc");
-      
-      // Apply cursor for normal list
-      if (lastDocId && lastDocValue) {
-        const lastDocRef = collectionRef.doc(lastDocId);
-        const lastDoc = await lastDocRef.get();
-        if (lastDoc.exists) {
-          query = query.startAfter(lastDoc);
-        }
+
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "IdentityAndAccess",
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprVals,
+          Limit: 100,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        profiles = scanRes.Items.map((item) => ({
+          id: item.id || (item.entityId as string).replace(/^PROFILE_SF360#/, ""),
+          ...item,
+        }));
       }
+    } catch (e) {
+      console.warn("[sportsfan360card GET] DynamoDB notice:", e);
     }
 
-    // Fetch one extra doc to know if there's more
-    const snapshot = await query.limit(limit + 1).get();
+    // 2. Fallback to Firestore
+    if (profiles.length === 0 && db) {
+      const collectionRef = db.collection("Sportsfan360Profile");
+      let query: FirebaseFirestore.Query = collectionRef;
 
-    const hasMore = snapshot.docs.length > limit;
-    const docs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+      if (search) {
+        query = query
+          .orderBy("nameLower")
+          .startAt(search)
+          .endAt(search + "\uf8ff");
+      } else {
+        query = query.orderBy("createdAt", "desc");
+      }
 
-    const profiles = docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+      const snapshot = await query.limit(limit + 1).get();
+      const docs = snapshot.docs.slice(0, limit);
 
-    // Get last document for next cursor
-    const lastDoc = docs[docs.length - 1];
-    const nextCursor = hasMore ? {
-      lastDocId: lastDoc?.id,
-      lastDocValue: search ? lastDoc?.data()?.nameLower : lastDoc?.data()?.createdAt
-    } : null;
+      profiles = docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    }
+
+    profiles.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const paged = profiles.slice(0, limit);
+    const lastDoc = paged[paged.length - 1];
 
     return NextResponse.json({
       success: true,
-      profiles,
+      profiles: paged,
       pagination: {
         limit,
-        hasMore,
-        nextCursor, // Use this for next page
+        hasMore: profiles.length > limit,
+        nextCursor: profiles.length > limit
+          ? {
+              lastDocId: lastDoc?.id,
+              lastDocValue: search ? lastDoc?.nameLower : lastDoc?.createdAt,
+            }
+          : null,
       },
     });
   } catch (error) {

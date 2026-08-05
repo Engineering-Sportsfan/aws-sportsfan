@@ -1,0 +1,2 @@
+employeeId,password,roles,departmentId,updatedAt,lastName,status,createdAt,email,phone,isFirstLogin,firstName
+,$2b$12$mEMfUnyDaxZ7I7jWCkY1w.1oF3C4UQRAPKfr5Jb31HjNKZRbyEf8i,admin,,1778840726711,Admin,active,1778840726711,testadmin@sf360.com,,true,Test

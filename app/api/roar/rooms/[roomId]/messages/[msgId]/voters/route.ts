@@ -7,6 +7,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 interface VoterEntry {
   uid: string;
@@ -16,33 +20,69 @@ interface VoterEntry {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ roomId: string; msgId: string }> },
+  { params }: { params: Promise<{ roomId: string; msgId: string }> | { roomId: string; msgId: string } }
 ) {
   try {
-    const { roomId, msgId } = await params;
+    const resolvedParams = await params;
+    const { roomId, msgId } = resolvedParams;
 
     const user = await getUser(req);
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const msgRef = db
-      .collection("roarRooms")
-      .doc(roomId)
-      .collection("messages")
-      .doc(msgId);
+    // 1. Fetch parent message from DynamoDB first
+    let msgItem: any = null;
+    let fetchedMsgFromDynamo = false;
+    try {
+      const qRes = await docClient.send(new QueryCommand({
+        TableName: "RealTimeChat",
+        KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+        FilterExpression: "chatId = :m",
+        ExpressionAttributeValues: {
+          ":r": `ROOM#${roomId}`,
+          ":p": `MSG#${roomId}#`,
+          ":m": msgId
+        },
+        Limit: 1
+      }));
+      if (qRes.Items && qRes.Items.length > 0) {
+        msgItem = qRes.Items[0];
+        fetchedMsgFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[RoomVoters GET] DynamoDB message fetch failed:", dynErr);
+    }
 
-    const msgSnap = await msgRef.get();
-    if (!msgSnap.exists) {
+    let roomRef = db.collection("roarRooms").doc(roomId);
+    let msgExists = fetchedMsgFromDynamo;
+    let fallbackMsgData: any = null;
+
+    if (!msgExists) {
+      try {
+        let msgSnap = await roomRef.collection("messages").doc(msgId).get();
+        if (!msgSnap.exists) {
+          const fallbackRef = db.collection("watchAlongRooms").doc(roomId);
+          const fallbackSnap = await fallbackRef.collection("messages").doc(msgId).get();
+          if (fallbackSnap.exists) {
+            roomRef = fallbackRef;
+            msgSnap = fallbackSnap;
+          }
+        }
+        if (msgSnap.exists) {
+          msgExists = true;
+          fallbackMsgData = msgSnap.data();
+        }
+      } catch (fsErr) {
+        console.warn("[RoomVoters GET] Firestore message fetch failed:", fsErr);
+      }
+    }
+
+    if (!msgExists) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
 
-    const msgData = msgSnap.data() as {
-      type?: string;
-      sideA?: string;
-      sideB?: string;
-      predictionOptions?: string[];
-    };
+    const msgData = msgItem || fallbackMsgData || {};
     const msgType = msgData.type ?? "";
 
     if (msgType !== "debate" && msgType !== "prediction" && msgType !== "hottake" && msgType !== "hot_take") {
@@ -52,54 +92,111 @@ export async function GET(
       );
     }
 
-    // ── Resolve the option labels in vote-value order ──────────────────────
-    // vote values are always "agree" | "disagree" | "option_N" (N >= 2).
-    // predictionOptions[0]/[1] map to agree/disagree; sideA/sideB do the
-    // same for debates. Fall back to generic labels if neither is present.
     const optionLabels: Record<string, string> = {
       agree: msgData.predictionOptions?.[0] ?? msgData.sideA ?? "Option A",
       disagree: msgData.predictionOptions?.[1] ?? msgData.sideB ?? "Option B",
     };
     if (Array.isArray(msgData.predictionOptions)) {
-      msgData.predictionOptions.forEach((label, idx) => {
+      msgData.predictionOptions.forEach((label: string, idx: number) => {
         if (idx >= 2) optionLabels[`option_${idx}`] = label;
       });
     }
 
-    // ── Fetch all votes for this message ────────────────────────────────────
-    const votesSnap = await msgRef.collection("votes").get();
+    // 2. Fetch all votes from DynamoDB first
+    let votesData: any[] = [];
+    let fetchedVotesFromDynamo = false;
+    try {
+      const res = await docClient.send(new QueryCommand({
+        TableName: "RealTimeChat",
+        KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": `VOTE#${msgId}#` }
+      }));
+      if (res.Items) {
+        votesData = res.Items;
+        fetchedVotesFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[RoomVoters GET] DynamoDB votes fetch failed:", dynErr);
+    }
+
+    // Fallback: Check Firestore
+    if (!fetchedVotesFromDynamo) {
+      try {
+        const msgRef = roomRef.collection("messages").doc(msgId);
+        const votesSnap = await msgRef.collection("votes").get();
+        votesData = votesSnap.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+      } catch (fsErr) {
+        console.error("[RoomVoters GET] Firestore votes fetch failed:", fsErr);
+      }
+    }
 
     const votersByOption: Record<string, VoterEntry[]> = {};
-    const voterUids = votesSnap.docs
-      .map((d) => (d.data() as { userId?: string }).userId ?? d.id);
-
-    const userRefs = voterUids.map((uid) => db.collection("users").doc(uid));
-    const userSnaps = userRefs.length > 0 ? await db.getAll(...userRefs) : [];
-
+    const voterUids = votesData.map((d) => d.userId || d.id);
     const userInfoByUid = new Map<string, { username: string; avatarUrl?: string }>();
-    userSnaps.forEach((snap) => {
-      if (snap.exists) {
-        const d = snap.data() as { username?: string; avatarUrl?: string; avatar?: string };
-        userInfoByUid.set(snap.id, {
-          username: d.username ?? snap.id,
-          avatarUrl: d.avatarUrl ?? d.avatar,
-        });
-      }
-    });
 
-    votesSnap.docs.forEach((doc) => {
-      const data = doc.data() as { vote?: string; userId?: string };
-      const vote = data.vote;
+    if (voterUids.length > 0) {
+      let fetchedProfiles = false;
+      try {
+        const keys = voterUids.map(uid => ({
+          entityId: `USER#${uid}`,
+          sk: "USER#META"
+        }));
+
+        const batchResults = await docClient.send(new BatchGetCommand({
+          RequestItems: {
+            "IdentityAndAccess": {
+              Keys: keys
+            }
+          }
+        }));
+
+        const items = batchResults.Responses?.["IdentityAndAccess"] || [];
+        items.forEach(item => {
+          const uid = (item.entityId as string).replace(/^USER#/, "");
+          userInfoByUid.set(uid, {
+            username: item.username || item.userName || uid,
+            avatarUrl: item.avatarUrl,
+          });
+        });
+        fetchedProfiles = true;
+      } catch (dynErr) {
+        console.warn("[RoomVoters GET] DynamoDB batch profile lookup failed:", dynErr);
+      }
+
+      // Fallback: Check Firestore
+      if (!fetchedProfiles || userInfoByUid.size < voterUids.length) {
+        try {
+          const missingUserIds = voterUids.filter(uid => !userInfoByUid.has(uid));
+          const userRefs = missingUserIds.map((uid) => db.collection("users").doc(uid));
+          const userSnaps = userRefs.length > 0 ? await db.getAll(...userRefs) : [];
+          userSnaps.forEach((snap) => {
+            if (snap.exists) {
+              const d = snap.data() as { username?: string; avatarUrl?: string; avatar?: string };
+              userInfoByUid.set(snap.id, {
+                username: d.username ?? snap.id,
+                avatarUrl: d.avatarUrl ?? d.avatar,
+              });
+            }
+          });
+        } catch (fsErr) {
+          console.error("[RoomVoters GET] Firestore profiles fallback failed:", fsErr);
+        }
+      }
+    }
+
+    votesData.forEach((voteItem) => {
+      const vote = voteItem.vote;
       if (!vote) return;
-      const uid = data.userId ?? doc.id;
-      const info = userInfoByUid.get(uid) ?? { username: uid };
+      const uid = voteItem.userId || voteItem.id;
+      const info = userInfoByUid.get(uid) ?? { username: uid, avatarUrl: undefined };
       const entry: VoterEntry = { uid, username: info.username, avatarUrl: info.avatarUrl };
       if (!votersByOption[vote]) votersByOption[vote] = [];
       votersByOption[vote].push(entry);
     });
 
-    // ── Build ordered options array (works for 2-option debates and
-    // N-option predictions alike) ───────────────────────────────────────────
     const optionKeys = Object.keys(optionLabels).sort((a, b) => {
       const order = (k: string) => (k === "agree" ? 0 : k === "disagree" ? 1 : Number(k.replace("option_", "")));
       return order(a) - order(b);
@@ -115,14 +212,12 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-      // Back-compat shape for the existing debate-only VotersDialog UI
       sideA: optionLabels.agree,
       sideB: optionLabels.disagree,
       voters: {
         agree: votersByOption.agree ?? [],
         disagree: votersByOption.disagree ?? [],
       },
-      // Generic shape so predictions with >2 options can render fully
       options,
       totalVotes,
     });

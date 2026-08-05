@@ -1,7 +1,10 @@
-// api/fanbattle/session/route.ts
-
+// app/api/fanbattle/session/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 interface FanBattleResponse {
   id: string;
@@ -22,7 +25,6 @@ interface FanBattleResponse {
 // Query params:
 //   quizId + userId → returns session for that user/quiz combo
 //   sessionId       → returns single session by ID
-
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -32,9 +34,35 @@ export async function GET(req: NextRequest) {
 
     // ── Single session lookup by ID ──────────────────────────────────────────
     if (sessionId) {
-      const doc = await db.collection("fanBattleSessions").doc(sessionId).get();
+      let sessionData: any = null;
 
-      if (!doc.exists) {
+      // 1. Try DynamoDB
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: "SportsData",
+            Key: {
+              entityId: `QUIZ_SESSION#${sessionId}`,
+              sk: "SESSION#META",
+            },
+          })
+        );
+        if (getRes.Item) {
+          sessionData = { id: sessionId, ...getRes.Item };
+        }
+      } catch (e) {
+        console.warn("[fanbattle session GET] DynamoDB notice:", e);
+      }
+
+      // 2. Fallback to Firestore
+      if (!sessionData && db) {
+        const doc = await db.collection("fanBattleSessions").doc(sessionId).get();
+        if (doc.exists) {
+          sessionData = { id: doc.id, ...doc.data() };
+        }
+      }
+
+      if (!sessionData) {
         return NextResponse.json(
           { error: `Session "${sessionId}" not found` },
           { status: 404 }
@@ -42,7 +70,7 @@ export async function GET(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { success: true, data: { id: doc.id, ...doc.data() } },
+        { success: true, data: sessionData },
         { status: 200 }
       );
     }
@@ -55,124 +83,107 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const sessionsRef = db.collection("fanBattleSessions");
-    const query = sessionsRef
-      .where("quizId", "==", quizId)
-      .where("userId", "==", userId)
-      .limit(1);
+    let foundSession: any = null;
 
-    const snapshot = await query.get();
+    // 1. Try DynamoDB Scan or Key
+    try {
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: "begins_with(entityId, :sPrefix) AND sk = :metaSk AND quizId = :qId AND userId = :uId",
+          ExpressionAttributeValues: {
+            ":sPrefix": "QUIZ_SESSION#",
+            ":metaSk": "SESSION#META",
+            ":qId": quizId,
+            ":uId": userId,
+          },
+          Limit: 1,
+        })
+      );
 
-    if (snapshot.empty) {
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        const item = scanRes.Items[0];
+        const sId = item.id || (item.entityId as string).replace(/^QUIZ_SESSION#/, "");
+
+        // Fetch detailed responses
+        const responseIds = (item.responseIds as string[]) || [];
+        const responses: FanBattleResponse[] = [];
+
+        for (const respId of responseIds) {
+          try {
+            const rGet = await docClient.send(
+              new GetCommand({
+                TableName: "SportsData",
+                Key: { entityId: `QUIZ_RESPONSE#${respId}`, sk: "RESPONSE#META" },
+              })
+            );
+            if (rGet.Item) {
+              responses.push({ id: respId, ...rGet.Item } as FanBattleResponse);
+            }
+          } catch {
+            // fallback per item
+          }
+        }
+
+        foundSession = {
+          id: sId,
+          ...item,
+          responses,
+        };
+      }
+    } catch (e) {
+      console.warn("[fanbattle session query] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
+    if (!foundSession && db) {
+      const sessionsRef = db.collection("fanBattleSessions");
+      const query = sessionsRef
+        .where("quizId", "==", quizId)
+        .where("userId", "==", userId)
+        .limit(1);
+
+      const snapshot = await query.get();
+
+      if (!snapshot.empty) {
+        const sessionDoc = snapshot.docs[0];
+        const sessionData = sessionDoc.data();
+
+        const responseIds = (sessionData.responseIds as string[]) || [];
+        const responses: FanBattleResponse[] = [];
+
+        for (const responseId of responseIds) {
+          const responseDoc = await db.collection("fanBattleResponses").doc(responseId).get();
+          if (responseDoc.exists) {
+            responses.push({ id: responseDoc.id, ...responseDoc.data() } as FanBattleResponse);
+          }
+        }
+
+        foundSession = {
+          id: sessionDoc.id,
+          ...sessionData,
+          responses,
+        };
+      }
+    }
+
+    if (!foundSession) {
       return NextResponse.json(
         { success: true, data: null, message: "No session found" },
         { status: 200 }
       );
     }
 
-    const sessionDoc = snapshot.docs[0];
-    const sessionData = sessionDoc.data();
-
-    // Fetch all responses for this session to get detailed answer info
-    const responseIds = (sessionData.responseIds as string[]) || [];
-    const responses: FanBattleResponse[] = [];
-
-    for (const responseId of responseIds) {
-      const responseDoc = await db.collection("fanBattleResponses").doc(responseId).get();
-      if (responseDoc.exists) {
-        responses.push({ id: responseDoc.id, ...responseDoc.data() } as FanBattleResponse);
-      }
-    }
-
     return NextResponse.json(
       {
         success: true,
-        data: {
-          id: sessionDoc.id,
-          ...sessionData,
-          responses, // Include detailed responses
-        },
+        data: foundSession,
       },
       { status: 200 }
     );
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("Error fetching session:", error);
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
-}
-
-// ─── POST /api/fanbattle/session ──────────────────────────────────────────────
-// Create a new session (if needed)
-
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { quizId, userId, userName, userEmail, userAvatar } = body;
-
-    if (!quizId || !userId) {
-      return NextResponse.json(
-        { error: "quizId and userId are required" },
-        { status: 400 }
-      );
-    }
-
-    // Check if session already exists
-    const existingQuery = await db
-      .collection("fanBattleSessions")
-      .where("quizId", "==", quizId)
-      .where("userId", "==", userId)
-      .limit(1)
-      .get();
-
-    if (!existingQuery.empty) {
-      const existingSession = existingQuery.docs[0];
-      return NextResponse.json(
-        {
-          success: true,
-          data: { id: existingSession.id, ...existingSession.data() },
-          message: "Existing session found",
-        },
-        { status: 200 }
-      );
-    }
-
-    // Fetch quiz to get total questions
-    const quizDoc = await db.collection("fanBattleQuizzes").doc(quizId).get();
-    const quizData = quizDoc.data();
-    const totalQuestions = quizData?.totalQuestions || 0;
-
-    // Create new session
-    const newSession = {
-      quizId,
-      userId,
-      userName: userName || "",
-      userEmail: userEmail || "",
-      userAvatar: userAvatar || "",
-      totalPointsEarned: 0,
-      correctCount: 0,
-      incorrectCount: 0,
-      answeredCount: 0,
-      totalQuestions,
-      responseIds: [],
-      status: "in_progress",
-      startedAt: Date.now(),
-      updatedAt: Date.now(),
-      completedAt: null,
-    };
-
-    const sessionRef = await db.collection("fanBattleSessions").add(newSession);
-
-    return NextResponse.json(
-      {
-        success: true,
-        data: { id: sessionRef.id, ...newSession },
-      },
-      { status: 201 }
-    );
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("Error creating session:", error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

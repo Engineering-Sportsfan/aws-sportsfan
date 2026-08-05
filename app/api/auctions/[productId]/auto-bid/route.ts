@@ -1,6 +1,12 @@
+// app/api/auctions/[productId]/auto-bid/route.ts — Migrated to AWS DynamoDB (EcommerceAndOrders Table)
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { docClient } from '@/lib/dynamodb';
+import { dualWrite } from '@/lib/dualWrite';
+import { GetCommand } from '@aws-sdk/lib-dynamodb';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(
   request: NextRequest,
@@ -18,31 +24,73 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid max ceiling amount' }, { status: 400 });
     }
 
-    const productRef = db.collection('storeProducts').doc(productId);
+    let productData: any = null;
 
-    // Verify product exists and category is correct
-    const productDoc = await productRef.get();
-    if (!productDoc.exists) {
+    // 1. Check DynamoDB EcommerceAndOrders
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: 'EcommerceAndOrders',
+          Key: {
+            orderOrItemId: `PRODUCT#${productId}`,
+            sk: 'PRODUCT#META',
+          },
+        })
+      );
+      if (getRes.Item) productData = getRes.Item;
+    } catch (e) {
+      console.warn('[auto-bid POST] DynamoDB notice:', e);
+    }
+
+    // 2. Fallback to Firestore
+    const productRef = db ? db.collection('storeProducts').doc(productId) : null;
+    if (!productData && productRef) {
+      const productDoc = await productRef.get();
+      if (productDoc.exists) {
+        productData = productDoc.data();
+      }
+    }
+
+    if (!productData) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
-    const productData = productDoc.data();
-    if (!productData || productData.category?.toLowerCase() !== 'auctions') {
+
+    if (productData.category?.toLowerCase() !== 'auctions') {
       return NextResponse.json({ error: 'INVALID_CATEGORY' }, { status: 400 });
     }
 
-    const autoBidRef = productRef.collection('autoBids').doc(userId);
-    await autoBidRef.set({
+    const now = Date.now();
+    const autoBidData = {
+      productId,
+      userId,
       maxCeilingPaise,
       isActive,
-      createdAt: FieldValue.serverTimestamp(),
-    }, { merge: true });
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // Dual-write
+    await dualWrite({
+      tableName: 'EcommerceAndOrders',
+      dynamoItem: {
+        orderOrItemId: `PRODUCT#${productId}#AUTOBID#${userId}`,
+        sk: 'AUTOBID#META',
+        ...autoBidData,
+      },
+      firestoreRef: productRef ? productRef.collection('autoBids').doc(userId) : undefined,
+      firestoreData: {
+        maxCeilingPaise,
+        isActive,
+        createdAt: FieldValue.serverTimestamp(),
+      },
+    });
 
     return NextResponse.json({
       success: true,
       productId,
       userId,
       maxCeilingPaise,
-      isActive
+      isActive,
     });
   } catch (error: any) {
     console.error('Auto-Bid API Error:', error);

@@ -1,227 +1,3 @@
-
-
-// // api/roar/posts/[postId]/vote/route.ts
-// //
-// // Handles agree / disagree votes on ROAR posts.
-// // After recording the vote it upserts a single grouped "like" notification
-// // document per post so the author sees "X and N others liked your post"
-// // instead of one document per voter.
-
-// import { NextRequest, NextResponse } from "next/server";
-// import { db } from "@/lib/firebaseAdmin";
-// import { getUser } from "@/lib/getUser";
-// import { getUserInfo } from "@/lib/userPoints";
-// import { FieldValue } from "firebase-admin/firestore";
-
-// // ─── Helper: build the grouped like message ──────────────────────────────────
-
-// function buildLikeMessage(likerNames: string[], likerCount: number): string {
-//   if (likerCount === 1) {
-//     return `${likerNames[0]} liked your ROAR post`;
-//   }
-//   const othersCount = likerCount - 1;
-//   return `${likerNames[0]} and ${othersCount} other${othersCount > 1 ? "s" : ""} liked your ROAR post`;
-// }
-
-// // ─── Helper: upsert the grouped notification ─────────────────────────────────
-// // Uses a stable doc ID derived from the postId so all likes on the same post
-// // accumulate in one document rather than creating a new document per vote.
-
-// async function upsertLikeNotification({
-//   postId,
-//   postAuthorUid,
-//   postAuthorEmail,
-//   postPreview,
-//   likerUsername,
-//   likerUid,
-// }: {
-//   postId: string;
-//   postAuthorUid: string;
-//   postAuthorEmail: string;
-//   postPreview: string;
-//   likerUsername: string;
-//   likerUid: string;
-// }) {
-//   // Don't notify if the author is voting on their own post
-//   if (likerUid === postAuthorUid) return;
-
-//   // One stable document per post — all likes merge here
-//   const notifId = `roar_like_${postId}`;
-//   const notifRef = db.collection("notifications").doc(notifId);
-
-//   await db.runTransaction(async (tx) => {
-//     const snap = await tx.get(notifRef);
-
-//     if (!snap.exists) {
-//       // ── First like on this post ──────────────────────────────────────────
-//       tx.set(notifRef, {
-//         recipientEmail: postAuthorEmail,
-//         recipientUid: postAuthorUid,
-//         type: "roar_post_like",
-//         postId,
-//         postPreview,
-//         likerNames: [likerUsername],   // latest liker first
-//         likerCount: 1,
-//         message: buildLikeMessage([likerUsername], 1),
-//         isRead: false,
-//         createdAt: Date.now(),
-//         updatedAt: Date.now(),
-//       });
-//     } else {
-//       // ── Subsequent like ──────────────────────────────────────────────────
-//       const data = snap.data()!;
-//       const existing: string[] = data.likerNames ?? [];
-
-//       // Skip if this user already appears (e.g. they un-voted then re-voted)
-//       if (existing.includes(likerUsername)) return;
-
-//       // Keep at most 3 names for the display; always show the newest first
-//       const updatedNames = [likerUsername, ...existing].slice(0, 3);
-//       const newCount = (data.likerCount ?? 1) + 1;
-
-//       tx.update(notifRef, {
-//         likerNames: updatedNames,
-//         likerCount: newCount,
-//         message: buildLikeMessage(updatedNames, newCount),
-//         isRead: false,        // re-surface as unread on every new like
-//         updatedAt: Date.now(),
-//       });
-//     }
-//   });
-// }
-
-// // ─── POST /api/roar/posts/[postId]/vote ──────────────────────────────────────
-
-// export async function POST(
-//   req: NextRequest,
-//   { params }: { params: Promise<{ postId: string }> },
-// ) {
-//   try {
-//     const { postId } = await params;
-//     const user = await getUser(req);
-//     if (!user) {
-//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-//     }
-
-//     const body = await req.json();
-//     // vote: "agree" | "disagree" | null  (null = remove vote)
-//     const { vote }: { vote: "agree" | "disagree" | null } = body;
-
-//     if (vote !== "agree" && vote !== "disagree" && vote !== null) {
-//       return NextResponse.json(
-//         { error: "vote must be 'agree', 'disagree', or null" },
-//         { status: 400 },
-//       );
-//     }
-
-//     // ── Resolve the voter ─────────────────────────────────────────────────────
-//     const { actualUserId, userName: resolvedName } = await getUserInfo(
-//       user.userId,
-//       user.name,
-//       user.email,
-//     );
-
-//     const postRef = db.collection("roarPosts").doc(postId);
-//     const voteRef = postRef.collection("roarVotes").doc(actualUserId);
-
-//     // ── Read current state ────────────────────────────────────────────────────
-//     const [postSnap, voteSnap] = await Promise.all([
-//       postRef.get(),
-//       voteRef.get(),
-//     ]);
-
-//     if (!postSnap.exists) {
-//       return NextResponse.json({ error: "Post not found" }, { status: 404 });
-//     }
-
-//     const postData = postSnap.data() as {
-//       authorUid: string;
-//       agreeCount: number;
-//       disagreeCount: number;
-//       text?: string;
-//     };
-
-//     const previousVote = voteSnap.exists
-//       ? (voteSnap.data() as { vote: string }).vote
-//       : null;
-
-//     const postType = (postData as any).type;
-//     if (postType === "debate" && previousVote !== null && vote !== null) {
-//       return NextResponse.json(
-//         { success: false, error: "Already voted on this debate", userVote: previousVote },
-//         { status: 409 },
-//       );
-//     }
-
-//     // ── Build Firestore counter deltas ────────────────────────────────────────
-//     const agreeData =
-//       (vote === "agree" ? 1 : 0) - (previousVote === "agree" ? 1 : 0);
-//     const disagreeData =
-//       (vote === "disagree" ? 1 : 0) - (previousVote === "disagree" ? 1 : 0);
-
-//     // ── Persist vote + post counters atomically ───────────────────────────────
-//     const batch = db.batch();
-
-//     if (vote === null) {
-//       batch.delete(voteRef);
-//     } else {
-//       batch.set(voteRef, { vote, votedAt: now }, { merge: true });
-//     }
-
-//     batch.update(postRef, {
-//       agreeCount: FieldValue.increment(agreeData),
-//       disagreeCount: FieldValue.increment(disagreeData),
-//       updatedAt: Date.now(),
-//     });
-
-//     await batch.commit();
-
-//     // ── Grouped like notification (fire-and-forget, only on "agree") ──────────
-//     if (vote === "agree" && previousVote !== "agree") {
-//       (async () => {
-//         try {
-//           // Fetch author email for the notification query key
-//           const authorSnap = await db
-//             .collection("users")
-//             .doc(postData.authorUid)
-//             .get();
-//           const authorEmail = (
-//             authorSnap.data() as { email?: string } | undefined
-//           )?.email;
-
-//           if (authorEmail) {
-//             await upsertLikeNotification({
-//               postId,
-//               postAuthorUid: postData.authorUid,
-//               postAuthorEmail: authorEmail,
-//               postPreview: (postData.text ?? "").slice(0, 80),
-//               likerUsername: resolvedName,
-//               likerUid: actualUserId,
-//             });
-//           }
-//         } catch (notifErr) {
-//           console.error("[roar/vote] Failed to upsert like notification:", notifErr);
-//         }
-//       })();
-//     }
-
-//     return NextResponse.json({
-//       success: true,
-//       vote,
-//       agreeCount: (postData.agreeCount ?? 0) + agreeData,
-//       disagreeCount: (postData.disagreeCount ?? 0) + disagreeData,
-//     });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     console.error("POST /api/roar/posts/[postId]/vote error:", error);
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-
-
-
-
 // api/roar/posts/[postId]/vote/route.ts
 //
 // Handles agree / disagree votes on ROAR posts.
@@ -240,9 +16,12 @@ import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { awardRoarPointsByReason, ROAR_EVENT_POINTS } from "@/lib/roarPoints";
 import { FieldValue } from "firebase-admin/firestore";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 // ─── Helper: build the grouped like message ──────────────────────────────────
-
 function buildLikeMessage(likerNames: string[], likerCount: number): string {
   if (likerCount === 1) {
     return `${likerNames[0]} liked your ROAR post`;
@@ -252,9 +31,6 @@ function buildLikeMessage(likerNames: string[], likerCount: number): string {
 }
 
 // ─── Helper: upsert the grouped notification ─────────────────────────────────
-// Uses a stable doc ID derived from the postId so all likes on the same post
-// accumulate in one document rather than creating a new document per vote.
-
 async function upsertLikeNotification({
   postId,
   postAuthorUid,
@@ -270,10 +46,8 @@ async function upsertLikeNotification({
   likerUsername: string;
   likerUid: string;
 }) {
-  // Don't notify if the author is voting on their own post
   if (likerUid === postAuthorUid) return;
 
-  // One stable document per post — all likes merge here
   const notifId = `roar_like_${postId}`;
   const notifRef = db.collection("notifications").doc(notifId);
 
@@ -281,14 +55,13 @@ async function upsertLikeNotification({
     const snap = await tx.get(notifRef);
 
     if (!snap.exists) {
-      // ── First like on this post ──────────────────────────────────────────
       tx.set(notifRef, {
         recipientEmail: postAuthorEmail,
         recipientUid: postAuthorUid,
         type: "roar_post_like",
         postId,
         postPreview,
-        likerNames: [likerUsername],   // latest liker first
+        likerNames: [likerUsername],
         likerCount: 1,
         message: buildLikeMessage([likerUsername], 1),
         isRead: false,
@@ -296,14 +69,11 @@ async function upsertLikeNotification({
         updatedAt: Date.now(),
       });
     } else {
-      // ── Subsequent like ──────────────────────────────────────────────────
       const data = snap.data()!;
       const existing: string[] = data.likerNames ?? [];
 
-      // Skip if this user already appears (e.g. they un-voted then re-voted)
       if (existing.includes(likerUsername)) return;
 
-      // Keep at most 3 names for the display; always show the newest first
       const updatedNames = [likerUsername, ...existing].slice(0, 3);
       const newCount = (data.likerCount ?? 1) + 1;
 
@@ -311,7 +81,7 @@ async function upsertLikeNotification({
         likerNames: updatedNames,
         likerCount: newCount,
         message: buildLikeMessage(updatedNames, newCount),
-        isRead: false,        // re-surface as unread on every new like
+        isRead: false,
         updatedAt: Date.now(),
       });
     }
@@ -319,58 +89,68 @@ async function upsertLikeNotification({
 }
 
 // ─── POST /api/roar/posts/[postId]/vote ──────────────────────────────────────
-
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ postId: string }> },
+  { params }: { params: Promise<{ postId: string }> }
 ) {
   try {
-    const { postId } = await params;
+    const resolvedParams = await params;
+    const { postId } = resolvedParams;
     const user = await getUser(req);
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await req.json();
-    // vote: "agree" | "disagree" | "option_N" | null  (null = remove vote)
     const { vote }: { vote: string | null } = body;
 
     if (vote !== null && typeof vote !== "string") {
       return NextResponse.json({ error: "Invalid vote value" }, { status: 400 });
     }
 
-    // ── Resolve the voter ─────────────────────────────────────────────────────
+    // Resolve the voter
     const { actualUserId, authUserId, userName: resolvedName, userEmail, exists: userExists } =
       await getUserInfo(user.userId, user.name, user.email);
 
+    // 1. Fetch parent post from DynamoDB first
+    let postItem: any = null;
+    let fetchedPostFromDynamo = false;
+    try {
+      const qRes = await docClient.send(new QueryCommand({
+        TableName: "SocialAndContent",
+        KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
+        Limit: 1
+      }));
+      if (qRes.Items && qRes.Items.length > 0) {
+        postItem = qRes.Items[0];
+        fetchedPostFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[Vote POST] DynamoDB post fetch failed:", dynErr);
+    }
+
     const postRef = db.collection("roarPosts").doc(postId);
-    const voteRef = postRef.collection("roarVotes").doc(actualUserId);
+    let postExists = fetchedPostFromDynamo;
+    let fallbackPostData: any = null;
 
-    // ── Read current state ────────────────────────────────────────────────────
-    const [postSnap, voteSnap] = await Promise.all([
-      postRef.get(),
-      voteRef.get(),
-    ]);
+    if (!postExists) {
+      try {
+        const snap = await postRef.get();
+        if (snap.exists) {
+          postExists = true;
+          fallbackPostData = snap.data();
+        }
+      } catch (fsErr) {
+        console.warn("[Vote POST] Firestore post fetch failed:", fsErr);
+      }
+    }
 
-    if (!postSnap.exists) {
+    if (!postExists) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
-    const postData = postSnap.data() as {
-      authorUid: string;
-      agreeCount: number;
-      disagreeCount: number;
-      text?: string;
-      type?: string;
-      closesAt?: number;
-      closedAt?: number;
-      resolvedAt?: number;
-      predictionOptions?: string[];
-    };
-
-    const previousVote = voteSnap.exists
-      ? (voteSnap.data() as { vote: string }).vote
-      : null;
+    const postData = postItem || fallbackPostData || {};
     const postType = postData.type;
     const optionVoteMatch = typeof vote === "string" ? /^option_(\d+)$/.exec(vote) : null;
     if (vote !== null && vote !== "agree" && vote !== "disagree" && !optionVoteMatch) {
@@ -385,9 +165,39 @@ export async function POST(
     const now = Date.now();
     if (postType === "prediction" && (postData.resolvedAt || postData.closedAt || (postData.closesAt && postData.closesAt <= now)) && vote !== null) {
       if (!postData.closedAt && postData.closesAt && postData.closesAt <= now) {
-        await postRef.update({ closedAt: now, updatedAt: now });
+        postRef.update({ closedAt: now, updatedAt: now }).catch(() => {});
       }
       return NextResponse.json({ success: false, error: "Prediction poll is closed" }, { status: 409 });
+    }
+
+    // 2. Fetch voter's previous vote from DynamoDB first
+    let previousVote: string | null = null;
+    let fetchedVoteFromDynamo = false;
+    try {
+      const getRes = await docClient.send(new GetCommand({
+        TableName: "SocialAndContent",
+        Key: { contentId: `POST#${postId}`, sk: `VOTE#${actualUserId}` }
+      }));
+      if (getRes.Item) {
+        previousVote = getRes.Item.vote;
+        fetchedVoteFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[Vote POST] DynamoDB vote fetch failed:", dynErr);
+    }
+
+    const voteRef = postRef.collection("roarVotes").doc(actualUserId);
+
+    // Fallback: Check Firestore for previous vote
+    if (!fetchedVoteFromDynamo) {
+      try {
+        const snap = await voteRef.get();
+        if (snap.exists) {
+          previousVote = (snap.data() as { vote: string }).vote;
+        }
+      } catch (fsErr) {
+        console.warn("[Vote POST] Firestore vote fetch failed:", fsErr);
+      }
     }
 
     if (postType === "debate" && previousVote !== null && vote !== null) {
@@ -397,105 +207,121 @@ export async function POST(
       );
     }
 
-    // ── Build Firestore counter deltas ────────────────────────────────────────
-    const agreeData =
-      (vote === "agree" ? 1 : 0) - (previousVote === "agree" ? 1 : 0);
-    const disagreeData =
-      (vote === "disagree" ? 1 : 0) - (previousVote === "disagree" ? 1 : 0);
-    const predictionOptionCountUpdates: Record<string, unknown> = {};
+    const agreeData = (vote === "agree" ? 1 : 0) - (previousVote === "agree" ? 1 : 0);
+    const disagreeData = (vote === "disagree" ? 1 : 0) - (previousVote === "disagree" ? 1 : 0);
+
+    const newAgreeCount = Math.max(0, (postData.agreeCount ?? 0) + agreeData);
+    const newDisagreeCount = Math.max(0, (postData.disagreeCount ?? 0) + disagreeData);
+
+    const updatedPoc = { ...(postData.predictionOptionCounts ?? {}) };
     if (typeof previousVote === "string" && previousVote.startsWith("option_")) {
-      predictionOptionCountUpdates[`predictionOptionCounts.${previousVote}`] = FieldValue.increment(-1);
+      updatedPoc[previousVote] = Math.max(0, (updatedPoc[previousVote] ?? 1) - 1);
     }
     if (typeof vote === "string" && vote.startsWith("option_")) {
-      predictionOptionCountUpdates[`predictionOptionCounts.${vote}`] = FieldValue.increment(1);
+      updatedPoc[vote] = (updatedPoc[vote] ?? 0) + 1;
     }
 
-    // ── Persist vote + post counters atomically ───────────────────────────────
-    const batch = db.batch();
+    // 3. Write to DynamoDB
+    try {
+      if (vote === null) {
+        await docClient.send(new DeleteCommand({
+          TableName: "SocialAndContent",
+          Key: { contentId: `POST#${postId}`, sk: `VOTE#${actualUserId}` }
+        }));
+      } else {
+        await docClient.send(new PutCommand({
+          TableName: "SocialAndContent",
+          Item: {
+            contentId: `POST#${postId}`,
+            sk: `VOTE#${actualUserId}`,
+            vote,
+            votedAt: now
+          }
+        }));
+      }
 
-    if (vote === null) {
-      batch.delete(voteRef);
-    } else {
-      batch.set(voteRef, { vote, votedAt: now }, { merge: true });
+      if (postItem) {
+        await docClient.send(new UpdateCommand({
+          TableName: "SocialAndContent",
+          Key: { contentId: `POST#${postId}`, sk: postItem.sk },
+          UpdateExpression: "SET agreeCount = :ac, disagreeCount = :dc, predictionOptionCounts = :poc, updatedAt = :u",
+          ExpressionAttributeValues: {
+            ":ac": newAgreeCount,
+            ":dc": newDisagreeCount,
+            ":poc": updatedPoc,
+            ":u": now
+          }
+        }));
+      }
+    } catch (dynErr) {
+      console.warn("[Vote POST] DynamoDB write failed:", dynErr);
     }
 
-    batch.update(postRef, {
-      agreeCount: FieldValue.increment(agreeData),
-      disagreeCount: FieldValue.increment(disagreeData),
-      ...predictionOptionCountUpdates,
-      updatedAt: Date.now(),
-    });
+    // 4. Sync/Fallback to Firestore
+    try {
+      const batch = db.batch();
+      if (vote === null) {
+        batch.delete(voteRef);
+      } else {
+        batch.set(voteRef, { vote, votedAt: now }, { merge: true });
+      }
 
-    await batch.commit();
+      const predictionOptionCountUpdates: Record<string, unknown> = {};
+      if (typeof previousVote === "string" && previousVote.startsWith("option_")) {
+        predictionOptionCountUpdates[`predictionOptionCounts.${previousVote}`] = FieldValue.increment(-1);
+      }
+      if (typeof vote === "string" && vote.startsWith("option_")) {
+        predictionOptionCountUpdates[`predictionOptionCounts.${vote}`] = FieldValue.increment(1);
+      }
 
-    // ── Award debate-participation points (fire-and-forget) ───────────────────
-    // ROAR_DEBATE_PARTICIPATE is a SEPARATE counter from ROAR_DEBATE (the
-    // points/count a user gets for CREATING a debate, awarded elsewhere at
-    // post-creation time via awardRoarPoints). Both feed into the same
-    // "Debates" total on the Profile screen, but are tracked independently
-    // in activityCounts so create vs. participate can still be told apart
-    // if ever needed.
-    //
-    // Fires only on the transition into a user's first (and, per the 409
-    // guard above, only) vote on a given debate post. transactionId is
-    // stable per (user, post), so even if this block somehow ran twice for
-    // the same vote, awardUserPoints' idempotency guard (checks for an
-    // existing userPointTransactions/{transactionId} doc) would make the
-    // second call a no-op — un-voting never reaches this branch at all.
+      batch.update(postRef, {
+        agreeCount: FieldValue.increment(agreeData),
+        disagreeCount: FieldValue.increment(disagreeData),
+        ...predictionOptionCountUpdates,
+        updatedAt: now,
+      });
+
+      await batch.commit();
+    } catch (fsErr) {
+      console.warn("[Vote POST] Firestore sync failed:", fsErr);
+    }
+
+    // Award debate points
     if (postType === "debate" && previousVote === null && vote !== null) {
-      (async () => {
-        try {
-          await awardRoarPointsByReason({
-            actualUserId,
-            authUserId,
-            userName: resolvedName,
-            userEmail,
-            userExists,
-            reason: "ROAR_DEBATE_PARTICIPATE",
-            points: ROAR_EVENT_POINTS.ROAR_DEBATE_PARTICIPATE,
-            transactionId: `roar_debate_vote_${postId}_${actualUserId}`,
-            metadata: { postId, vote },
-          });
-        } catch (pointsErr) {
-          console.error("[roar/vote] Failed to award debate participation points:", pointsErr);
-        }
-      })();
+      awardRoarPointsByReason({
+        actualUserId,
+        authUserId,
+        userName: resolvedName,
+        userEmail,
+        userExists,
+        reason: "ROAR_DEBATE_PARTICIPATE",
+        points: ROAR_EVENT_POINTS.ROAR_DEBATE_PARTICIPATE,
+        transactionId: `roar_debate_vote_${postId}_${actualUserId}`,
+        metadata: { postId, vote },
+      }).catch((pointsErr) => console.error("[roar/vote] Failed to award debate participation points:", pointsErr));
     }
 
-    // ── Award prediction-participation points (fire-and-forget) ──────────────────
+    // Award prediction points
     if (postType === "prediction" && previousVote === null && vote !== null) {
-      (async () => {
-        try {
-          await awardRoarPointsByReason({
-            actualUserId,
-            authUserId,
-            userName: resolvedName,
-            userEmail,
-            userExists,
-            reason: "ROAR_PREDICTION_PARTICIPATE",
-            points: ROAR_EVENT_POINTS.ROAR_PREDICTION_PARTICIPATE,
-            transactionId: `roar_prediction_vote_${postId}_${actualUserId}`,
-            metadata: { postId, vote },
-          });
-        } catch (pointsErr) {
-          console.error("[roar/vote] Failed to award prediction participation points:", pointsErr);
-        }
-      })();
+      awardRoarPointsByReason({
+        actualUserId,
+        authUserId,
+        userName: resolvedName,
+        userEmail,
+        userExists,
+        reason: "ROAR_PREDICTION_PARTICIPATE",
+        points: ROAR_EVENT_POINTS.ROAR_PREDICTION_PARTICIPATE,
+        transactionId: `roar_prediction_vote_${postId}_${actualUserId}`,
+        metadata: { postId, vote },
+      }).catch((pointsErr) => console.error("[roar/vote] Failed to award prediction participation points:", pointsErr));
     }
 
-    // ── Grouped like notification (fire-and-forget, only on "agree") ──────────
+    // Send notification
     if (vote === "agree" && previousVote !== "agree") {
       (async () => {
         try {
-          // Fetch author email for the notification query key
-          const authorSnap = await db
-            .collection("users")
-            .doc(postData.authorUid)
-            .get();
-          const authorEmail = (
-            authorSnap.data() as { email?: string } | undefined
-          )?.email;
-
+          const authorSnap = await db.collection("users").doc(postData.authorUid).get();
+          const authorEmail = (authorSnap.data() as { email?: string } | undefined)?.email;
           if (authorEmail) {
             await upsertLikeNotification({
               postId,
@@ -515,8 +341,8 @@ export async function POST(
     return NextResponse.json({
       success: true,
       vote,
-      agreeCount: (postData.agreeCount ?? 0) + agreeData,
-      disagreeCount: (postData.disagreeCount ?? 0) + disagreeData,
+      agreeCount: newAgreeCount,
+      disagreeCount: newDisagreeCount,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";

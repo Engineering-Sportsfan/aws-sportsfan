@@ -1,23 +1,42 @@
-// app/api/communities/route.ts
-// Powers the "Communities" tab
+// app/api/communities/route.ts — BACKEND
+// Powers the "Communities" tab (DynamoDB-First + Firestore Fallback)
 
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
-// import { FieldValue } from 'firebase-admin/firestore';
+import { docClient } from "@/lib/dynamodb";
+import {
+  PutCommand,
+  GetCommand,
+  ScanCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { randomUUID } from "crypto";
 
-// ─── Auth helper (same pattern as chats & groups) ────────────────────────────
+const normalizeId = (id: string) =>
+  id.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
+
 async function getUser(req: NextRequest) {
   const cookieToken = req.cookies.get("token")?.value;
   if (cookieToken) {
     try {
       const payload = jwt.verify(cookieToken, process.env.JWT_SECRET!) as {
-        email?: string; userId?: string; uid?: string; id?: string;
-        name?: string; role?: string;
+        email?: string;
+        userId?: string;
+        uid?: string;
+        id?: string;
+        name?: string;
+        role?: string;
       };
-      const userId = payload.userId ?? payload.uid ?? payload.id ?? payload.email;
+      const userId =
+        payload.userId ?? payload.uid ?? payload.id ?? payload.email;
       if (userId && payload.email) {
-        return { userId, email: payload.email, name: payload.name ?? "", role: payload.role ?? "user" };
+        return {
+          userId: normalizeId(userId),
+          email: payload.email,
+          name: payload.name ?? "",
+          role: payload.role ?? "user",
+        };
       }
     } catch {}
   }
@@ -27,12 +46,22 @@ async function getUser(req: NextRequest) {
     const bearerToken = authHeader.slice(7).trim();
     try {
       const payload = jwt.verify(bearerToken, process.env.JWT_SECRET!) as {
-        email?: string; userId?: string; uid?: string; id?: string;
-        name?: string; role?: string;
+        email?: string;
+        userId?: string;
+        uid?: string;
+        id?: string;
+        name?: string;
+        role?: string;
       };
-      const userId = payload.userId ?? payload.uid ?? payload.id ?? payload.email;
+      const userId =
+        payload.userId ?? payload.uid ?? payload.id ?? payload.email;
       if (userId && payload.email) {
-        return { userId, email: payload.email, name: payload.name ?? "", role: payload.role ?? "user" };
+        return {
+          userId: normalizeId(userId),
+          email: payload.email,
+          name: payload.name ?? "",
+          role: payload.role ?? "user",
+        };
       }
     } catch {}
   }
@@ -42,10 +71,6 @@ async function getUser(req: NextRequest) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/communities
-//   ?limit=20
-//   ?lastDocId=<id>
-//   ?lastDocMemberCount=<n>
-//   ?joined=true  ← only communities the user has joined
 // ─────────────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
@@ -60,34 +85,84 @@ export async function GET(req: NextRequest) {
     const lastDocMemberCount = searchParams.get("lastDocMemberCount");
     const joined = searchParams.get("joined") === "true";
 
-    // If filtering by joined communities
+    // ── Filter by joined communities ──────────────────────────────────────────
     if (joined) {
-      const memberSnap = await db
-        .collectionGroup("communityMembers")
-        .where("userId", "==", user.userId)
-        .get();
+      let communities: any[] = [];
+      let fetchedFromDynamo = false;
 
-      const communityIds = memberSnap.docs.map(d => d.ref.parent.parent!.id);
-      if (communityIds.length === 0) {
-        return NextResponse.json({
-          success: true,
-          communities: [],
-          pagination: { limit, hasMore: false, nextCursor: null },
-        });
+      // 1. Try DynamoDB
+      try {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "IdentityAndAccess",
+            KeyConditionExpression:
+              "entityId = :uid AND begins_with(sk, :comm)",
+            ExpressionAttributeValues: {
+              ":uid": `USER#${user.userId}`,
+              ":comm": "COMMUNITY#",
+            },
+          }),
+        );
+        if (qRes.Items && qRes.Items.length > 0) {
+          const commIds = qRes.Items.map(
+            (i) => i.communityId || (i.sk as string).replace(/^COMMUNITY#/, ""),
+          );
+          for (const cId of commIds) {
+            const cRes = await docClient.send(
+              new GetCommand({
+                TableName: "IdentityAndAccess",
+                Key: { entityId: `COMMUNITY#${cId}`, sk: "COMMUNITY#META" },
+              }),
+            );
+            if (cRes.Item) {
+              communities.push({ id: cId, ...cRes.Item });
+            }
+          }
+          if (communities.length > 0) {
+            fetchedFromDynamo = true;
+          }
+        }
+      } catch (dynErr) {
+        console.warn("[communities GET joined] DynamoDB notice:", dynErr);
       }
 
-      // Firestore "in" supports max 30 — chunk if needed
-      const chunks: string[][] = [];
-      for (let i = 0; i < communityIds.length; i += 30) chunks.push(communityIds.slice(i, i + 30));
+      // 2. Fallback to Firestore
+      if (!fetchedFromDynamo) {
+        const memberSnap = await db
+          .collectionGroup("communityMembers")
+          .where("userId", "==", user.userId)
+          .get();
 
-      const communities: FirebaseFirestore.DocumentData[] = [];
-      for (const chunk of chunks) {
-        const snap = await db.collection("communities").where("__name__", "in", chunk).get();
-        snap.docs.forEach(d => communities.push({ id: d.id, ...d.data() }));
+        const communityIds = memberSnap.docs.map(
+          (d) => d.ref.parent.parent!.id,
+        );
+        if (communityIds.length === 0) {
+          return NextResponse.json({
+            success: true,
+            communities: [],
+            pagination: { limit, hasMore: false, nextCursor: null },
+          });
+        }
+
+        const chunks: string[][] = [];
+        for (let i = 0; i < communityIds.length; i += 30) {
+          chunks.push(communityIds.slice(i, i + 30));
+        }
+
+        for (const chunk of chunks) {
+          const snap = await db
+            .collection("communities")
+            .where("__name__", "in", chunk)
+            .get();
+          snap.docs.forEach((d) =>
+            communities.push({ id: d.id, ...d.data() }),
+          );
+        }
       }
 
-      // Sort by memberCount desc
-      communities.sort((a, b) => (b.memberCount || 0) - (a.memberCount || 0));
+      communities.sort(
+        (a, b) => (b.memberCount || 0) - (a.memberCount || 0),
+      );
 
       return NextResponse.json({
         success: true,
@@ -96,21 +171,78 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Normal listing - all communities
-    let query = db
-      .collection("communities")
-      .orderBy("memberCount", "desc")
-      .limit(limit);
+    // ── All communities ──────────────────────────────────────────────────────
+    let communities: any[] = [];
+    let fetchedFromDynamo = false;
+    let lastDoc: any = null;
 
-    if (lastDocId && lastDocMemberCount) {
-      const lastRef = db.collection("communities").doc(lastDocId);
-      const lastDoc = await lastRef.get();
-      if (lastDoc.exists) query = query.startAfter(lastDoc);
+    // 1. Try DynamoDB
+    try {
+      const sRes = await docClient.send(
+        new ScanCommand({
+          TableName: "IdentityAndAccess",
+          FilterExpression:
+            "begins_with(entityId, :comm) AND #sk = :sk",
+          ExpressionAttributeNames: {
+            "#sk": "sk",
+          },
+          ExpressionAttributeValues: {
+            ":comm": "COMMUNITY#",
+            ":sk": "COMMUNITY#META",
+          },
+        }),
+      );
+      if (sRes.Items && sRes.Items.length > 0) {
+        let allItems: any[] = sRes.Items.map((item: any) => ({
+          id:
+            item.id ||
+            (item.entityId as string)?.replace(/^COMMUNITY#/, "") ||
+            "",
+          ...item,
+        }));
+
+        allItems.sort(
+          (a: any, b: any) => (b.memberCount || 0) - (a.memberCount || 0),
+        );
+
+        if (lastDocMemberCount) {
+          const lastCount = parseInt(lastDocMemberCount);
+          if (!isNaN(lastCount)) {
+            allItems = allItems.filter((c: any) => (c.memberCount || 0) <= lastCount);
+          }
+        }
+
+        communities = allItems.slice(0, limit);
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[communities GET] DynamoDB notice:", dynErr);
     }
 
-    const snapshot = await query.get();
-    const communities = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    // 2. Fallback to Firestore
+    if (!fetchedFromDynamo) {
+      let query = db
+        .collection("communities")
+        .orderBy("memberCount", "desc")
+        .limit(limit);
+
+      if (lastDocId && lastDocMemberCount) {
+        const lastRef = db.collection("communities").doc(lastDocId);
+        const lastDocSnap = await lastRef.get();
+        if (lastDocSnap.exists) query = query.startAfter(lastDocSnap);
+      }
+
+      const snapshot = await query.get();
+      communities = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    }
+
+    const nextLastDoc =
+      lastDoc ??
+      (communities.length > 0 ? communities[communities.length - 1] : null);
 
     return NextResponse.json({
       success: true,
@@ -118,12 +250,15 @@ export async function GET(req: NextRequest) {
       pagination: {
         limit,
         hasMore: communities.length === limit,
-        nextCursor: communities.length === limit
-          ? {
-              lastDocId: lastDoc?.id,
-              lastDocMemberCount: lastDoc?.data()?.memberCount,
-            }
-          : null,
+        nextCursor:
+          communities.length === limit
+            ? {
+                lastDocId: nextLastDoc?.id,
+                lastDocMemberCount:
+                  nextLastDoc?.memberCount ??
+                  nextLastDoc?.data?.()?.memberCount,
+              }
+            : null,
       },
     });
   } catch (error: unknown) {
@@ -133,8 +268,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
-
-// app/api/communities/route.ts - UPDATE the POST handler
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/communities
+// ─────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const user = await getUser(req);
@@ -150,9 +286,11 @@ export async function POST(req: NextRequest) {
     }
 
     const now = Date.now();
-    
-    // 1. Create the community document
+    const communityId = randomUUID();
+    const chatId = randomUUID();
+
     const newCommunity = {
+      id: communityId,
       name: name.trim(),
       description: description?.trim() ?? "",
       avatarUrl: avatarUrl ?? "",
@@ -160,51 +298,112 @@ export async function POST(req: NextRequest) {
       groupCount: 0,
       isVerified: false,
       createdBy: user.userId,
+      chatId,
       createdAt: now,
       updatedAt: now,
     };
 
-    const communityRef = await db.collection("communities").add(newCommunity);
-
-    // 2. Create a linked chat for the community (for messaging)
     const chatDoc = {
-      type: "group",  // Communities use group chat type
+      id: chatId,
+      type: "group",
       name: name.trim(),
       participantIds: [user.userId],
       lastMessageContent: "",
       lastMessageAt: now,
-      unreadCount: 0,
+      unreadCount: { [user.userId]: 0 },
       isOnline: false,
       isVerified: false,
       isPinned: false,
       isMuted: false,
-      communityId: communityRef.id,  // Link back to community
+      communityId,
       createdBy: user.userId,
       createdAt: now,
       updatedAt: now,
     };
 
-    const chatRef = await db.collection("chats").add(chatDoc);
-
-    // 3. Link the chat back to the community
-    await communityRef.update({ chatId: chatRef.id });
-
-    // 4. Add creator as a member
-    await communityRef.collection("communityMembers").doc(user.userId).set({
+    const memberDoc = {
+      communityId,
       userId: user.userId,
       email: user.email,
       name: user.name,
       role: "owner",
       joinedAt: now,
-    });
+    };
+
+    // 1. Write to DynamoDB (Primary)
+    try {
+      // Community meta
+      await docClient.send(
+        new PutCommand({
+          TableName: "IdentityAndAccess",
+          Item: {
+            entityId: `COMMUNITY#${communityId}`,
+            sk: "COMMUNITY#META",
+            ...newCommunity,
+          },
+        }),
+      );
+
+      // Community member
+      await docClient.send(
+        new PutCommand({
+          TableName: "IdentityAndAccess",
+          Item: {
+            entityId: `COMMUNITY#${communityId}`,
+            sk: `MEMBER#${user.userId}`,
+            ...memberDoc,
+          },
+        }),
+      );
+
+      // User joined community
+      await docClient.send(
+        new PutCommand({
+          TableName: "IdentityAndAccess",
+          Item: {
+            entityId: `USER#${user.userId}`,
+            sk: `COMMUNITY#${communityId}`,
+            ...memberDoc,
+          },
+        }),
+      );
+
+      // Linked chat
+      await docClient.send(
+        new PutCommand({
+          TableName: "RealTimeChat",
+          Item: {
+            roomId: `ROOM#${chatId}`,
+            sk: "ROOM#META",
+            ...chatDoc,
+          },
+        }),
+      );
+    } catch (dynErr) {
+      console.error("[communities POST] DynamoDB error:", dynErr);
+    }
+
+    // 2. Write to Firestore (Dual-Write)
+    try {
+      await db.collection("communities").doc(communityId).set(newCommunity);
+      await db.collection("chats").doc(chatId).set(chatDoc);
+      await db
+        .collection("communities")
+        .doc(communityId)
+        .collection("communityMembers")
+        .doc(user.userId)
+        .set(memberDoc);
+    } catch (fsErr) {
+      console.error("[communities POST] Firestore error:", fsErr);
+    }
 
     return NextResponse.json(
       {
         success: true,
-        id: communityRef.id,
-        community: { id: communityRef.id, ...newCommunity, chatId: chatRef.id },
+        id: communityId,
+        community: newCommunity,
       },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";

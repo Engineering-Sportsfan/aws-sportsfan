@@ -289,6 +289,10 @@
 // Remove the [DEBUG] logs once the issue is found.
 
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { v4 as uuidv4 } from "uuid";
 
 const TAG = "[roarNotify]";
 
@@ -300,12 +304,38 @@ async function getPostMeta(postId: string): Promise<{
   text: string;
 } | null> {
   try {
-    const snap = await db.collection("roarPosts").doc(postId).get();
-    if (!snap.exists) {
+    let data: any = null;
+    let found = false;
+
+    // 1. Try DynamoDB
+    try {
+      const res = await docClient.send(new QueryCommand({
+        TableName: "SocialAndContent",
+        KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" }
+      }));
+      if (res.Items && res.Items.length > 0) {
+        data = res.Items[0];
+        found = true;
+      }
+    } catch (err) {
+      console.warn(`${TAG} getPostMeta DynamoDB lookup notice:`, err);
+    }
+
+    // 2. Fallback to Firestore
+    if (!found) {
+      const snap = await db.collection("roarPosts").doc(postId).get();
+      if (snap.exists) {
+        data = snap.data()!;
+        found = true;
+      }
+    }
+
+    if (!found || !data) {
       console.warn(`${TAG} getPostMeta: doc roarPosts/${postId} does NOT exist`);
       return null;
     }
-    const data = snap.data()!;
+
     const result = {
       authorUserId: data.authorUid ?? data.userId ?? data.authorUserId ?? "",
       authorEmail: data.authorEmail ?? data.email ?? null,
@@ -325,15 +355,47 @@ async function getRoomMessageMeta(roomId: string, msgId: string): Promise<{
   text: string;
 } | null> {
   try {
-    const snap = await db
-      .collection("roarRooms").doc(roomId)
-      .collection("messages").doc(msgId)
-      .get();
-    if (!snap.exists) {
+    let data: any = null;
+    let found = false;
+
+    // 1. Try DynamoDB
+    try {
+      const res = await docClient.send(new QueryCommand({
+        TableName: "RealTimeChat",
+        KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+        ExpressionAttributeValues: {
+          ":r": `ROOM#${roomId}`,
+          ":p": `MSG#${roomId}#`
+        }
+      }));
+      if (res.Items && res.Items.length > 0) {
+        const match = res.Items.find(item => item.chatId === msgId || item.id === msgId || (item.sk as string).endsWith(msgId));
+        if (match) {
+          data = match;
+          found = true;
+        }
+      }
+    } catch (err) {
+      console.warn(`${TAG} getRoomMessageMeta DynamoDB lookup notice:`, err);
+    }
+
+    // 2. Fallback to Firestore
+    if (!found) {
+      const snap = await db
+        .collection("roarRooms").doc(roomId)
+        .collection("messages").doc(msgId)
+        .get();
+      if (snap.exists) {
+        data = snap.data()!;
+        found = true;
+      }
+    }
+
+    if (!found || !data) {
       console.warn(`${TAG} getRoomMessageMeta: doc roarRooms/${roomId}/messages/${msgId} does NOT exist`);
       return null;
     }
-    const data = snap.data()!;
+
     const result = {
       authorUid: data.authorUid ?? "",
       authorEmail: data.authorEmail ?? null,
@@ -357,33 +419,41 @@ async function resolveEmailForUid(uid: string): Promise<string | null> {
     return null;
   }
 
-  // 1. users collection (canonical — same as resolveUser in route handlers)
+  // 1. Try DynamoDB first
+  try {
+    const res = await docClient.send(new GetCommand({
+      TableName: "IdentityAndAccess",
+      Key: { entityId: `USER#${uid}`, sk: "USER#META" }
+    }));
+    if (res.Item) {
+      const email = res.Item.email ?? res.Item.authorEmail ?? null;
+      if (email) return email;
+    }
+  } catch (err) {
+    console.warn(`${TAG} resolveEmailForUid DynamoDB check user notice:`, err);
+  }
+
+  // 2. users collection (canonical — same as resolveUser in route handlers)
   try {
     const snap = await db.collection("users").doc(uid).get();
     if (snap.exists) {
       const d = snap.data()!;
       const email = d.email ?? d.authorEmail ?? null;
-      console.log(`${TAG} resolveEmailForUid(${uid}) via users/: email=${email}, keys=[${Object.keys(d).join(",")}]`);
+      console.log(`${TAG} resolveEmailForUid(${uid}) via users/: email=${email}`);
       if (email) return email;
-      console.warn(`${TAG} resolveEmailForUid: users/${uid} exists but has no email field`);
-    } else {
-      console.warn(`${TAG} resolveEmailForUid: users/${uid} does NOT exist`);
     }
   } catch (err) {
     console.error(`${TAG} resolveEmailForUid users/ ERROR:`, err);
   }
 
-  // 2. roarProfiles fallback
+  // 3. roarProfiles fallback
   try {
     const snap = await db.collection("roarProfiles").doc(uid).get();
     if (snap.exists) {
       const d = snap.data()!;
       const email = d.email ?? d.authorEmail ?? null;
-      console.log(`${TAG} resolveEmailForUid(${uid}) via roarProfiles/: email=${email}, keys=[${Object.keys(d).join(",")}]`);
+      console.log(`${TAG} resolveEmailForUid(${uid}) via roarProfiles/: email=${email}`);
       if (email) return email;
-      console.warn(`${TAG} resolveEmailForUid: roarProfiles/${uid} exists but has no email field`);
-    } else {
-      console.warn(`${TAG} resolveEmailForUid: roarProfiles/${uid} does NOT exist`);
     }
   } catch (err) {
     console.error(`${TAG} resolveEmailForUid roarProfiles/ ERROR:`, err);
@@ -396,6 +466,21 @@ async function resolveEmailForUid(uid: string): Promise<string | null> {
 async function resolveActorName(userId: string): Promise<string> {
   if (!userId) return "A fan";
 
+  // 1. Try DynamoDB first
+  try {
+    const res = await docClient.send(new GetCommand({
+      TableName: "IdentityAndAccess",
+      Key: { entityId: `USER#${userId}`, sk: "USER#META" }
+    }));
+    if (res.Item) {
+      const name = res.Item.username ?? res.Item.name ?? null;
+      if (name) return name;
+    }
+  } catch (err) {
+    console.warn(`${TAG} resolveActorName DynamoDB check notice:`, err);
+  }
+
+  // 2. users collection fallback
   try {
     const snap = await db.collection("users").doc(userId).get();
     if (snap.exists) {
@@ -403,13 +488,12 @@ async function resolveActorName(userId: string): Promise<string> {
       const name = d.username ?? d.name ?? null;
       console.log(`${TAG} resolveActorName(${userId}) via users/: name=${name}`);
       if (name) return name;
-    } else {
-      console.warn(`${TAG} resolveActorName: users/${userId} does NOT exist`);
     }
   } catch (err) {
     console.error(`${TAG} resolveActorName users/ ERROR:`, err);
   }
 
+  // 3. roarProfiles fallback
   try {
     const snap = await db.collection("roarProfiles").doc(userId).get();
     if (snap.exists) {
@@ -453,32 +537,78 @@ export async function notifyPostReaction(
     }
 
     const actorName = await resolveActorName(actorUserId);
-    const notifCollection = db.collection("notifications");
     const now = Date.now();
 
-    const existing = await notifCollection
-      .where("type", "==", "roar_post_like")
-      .where("postId", "==", postId)
-      .where("recipientEmail", "==", recipientEmail)
-      .limit(1)
-      .get();
+    // 1. Try querying/fetching rollup from DynamoDB first
+    let existingDoc: any = null;
+    let existingId: string | null = null;
+    let found = false;
 
-    if (!existing.empty) {
-      const docRef = existing.docs[0].ref;
-      const prev = existing.docs[0].data();
-      const prevNames: string[] = prev.likerNames ?? [];
+    try {
+      const qRes = await docClient.send(new QueryCommand({
+        TableName: "RealTimeChat",
+        IndexName: "participantId-updatedAt-index",
+        KeyConditionExpression: "participantId = :p",
+        FilterExpression: "#type = :t AND postId = :postId",
+        ExpressionAttributeNames: { "#type": "type" },
+        ExpressionAttributeValues: {
+          ":p": recipientEmail,
+          ":t": "roar_post_like",
+          ":postId": postId
+        },
+        Limit: 1
+      }));
+      if (qRes.Items && qRes.Items.length > 0) {
+        existingDoc = qRes.Items[0];
+        existingId = (existingDoc.sk as string).split("#")[1];
+        found = true;
+      }
+    } catch (dynErr) {
+      console.warn(`${TAG} notifyPostReaction DynamoDB query error:`, dynErr);
+    }
+
+    // 2. Fallback to Firestore
+    if (!found) {
+      const existing = await db.collection("notifications")
+        .where("type", "==", "roar_post_like")
+        .where("postId", "==", postId)
+        .where("recipientEmail", "==", recipientEmail)
+        .limit(1)
+        .get();
+
+      if (!existing.empty) {
+        existingDoc = existing.docs[0].data();
+        existingId = existing.docs[0].id;
+        found = true;
+      }
+    }
+
+    if (found && existingDoc && existingId) {
+      const prevNames: string[] = existingDoc.likerNames ?? [];
       const updatedNames = [actorName, ...prevNames.filter((n) => n !== actorName)].slice(0, 3);
-      const likerCount = (prev.likerCount ?? 1) + 1;
-      await docRef.update({
+      const likerCount = (existingDoc.likerCount ?? 1) + 1;
+
+      const updatedData = {
+        ...existingDoc,
         likerNames: updatedNames,
         likerCount,
         message: buildLikeMessage(updatedNames, likerCount),
         isRead: false,
         updatedAt: now,
-      });
-      console.log(`${TAG} notifyPostReaction: rolled up existing doc ${docRef.id}`);
+      };
+
+      const dynamoItem = {
+        roomId: "ROOM#NOTIFICATION",
+        sk: `NOTIFICATION#${existingId}#${existingDoc.createdAt ?? now}`,
+        participantId: post.authorUserId || recipientEmail,
+        ...updatedData
+      };
+
+      await dualWrite("notifications", existingId, "RealTimeChat", dynamoItem);
+      console.log(`${TAG} notifyPostReaction: rolled up existing doc ${existingId}`);
     } else {
-      const ref = await notifCollection.add({
+      const notifId = uuidv4();
+      const payload = {
         type: "roar_post_like",
         recipientEmail,
         recipientUid: post.authorUserId,
@@ -490,8 +620,17 @@ export async function notifyPostReaction(
         isRead: false,
         createdAt: now,
         updatedAt: now,
-      });
-      console.log(`${TAG} notifyPostReaction: created new doc ${ref.id}`);
+      };
+
+      const dynamoItem = {
+        roomId: "ROOM#NOTIFICATION",
+        sk: `NOTIFICATION#${notifId}#${now}`,
+        participantId: post.authorUserId || recipientEmail,
+        ...payload
+      };
+
+      await dualWrite("notifications", notifId, "RealTimeChat", dynamoItem);
+      console.log(`${TAG} notifyPostReaction: created new doc ${notifId}`);
     }
   } catch (err) {
     console.error(`${TAG} notifyPostReaction ERROR:`, err);
@@ -533,7 +672,8 @@ export async function notifyPostComment(
       ? `${commenterUsername} commented on your post: "${commentPreview.slice(0, 60)}"`
       : `${commenterUsername} commented on your ROAR post`;
 
-    const ref = await db.collection("notifications").add({
+    const notifId = uuidv4();
+    const payload = {
       type: "roar_post_comment",
       recipientEmail,
       recipientUid: post.authorUserId,
@@ -544,8 +684,17 @@ export async function notifyPostComment(
       isRead: false,
       createdAt: now,
       updatedAt: now,
-    });
-    console.log(`${TAG} notifyPostComment: created doc ${ref.id}`);
+    };
+
+    const dynamoItem = {
+      roomId: "ROOM#NOTIFICATION",
+      sk: `NOTIFICATION#${notifId}#${now}`,
+      participantId: post.authorUserId || recipientEmail,
+      ...payload
+    };
+
+    await dualWrite("notifications", notifId, "RealTimeChat", dynamoItem);
+    console.log(`${TAG} notifyPostComment: created doc ${notifId}`);
   } catch (err) {
     console.error(`${TAG} notifyPostComment ERROR:`, err);
   }
@@ -582,9 +731,6 @@ export async function notifyRoomMessageReaction(
       return;
     }
 
-    // const recipientEmail = await resolveEmailForUid(recipientUid);
-    // console.log(`${TAG} notifyRoomMessageReaction: recipientEmail=${recipientEmail}`);
-
     const recipientEmail =
       msg.authorEmail ?? (await resolveEmailForUid(recipientUid));
 
@@ -596,28 +742,65 @@ export async function notifyRoomMessageReaction(
     }
 
     const now = Date.now();
-
-    // Rollup: one notification per message (not per actor)
     const notifId = `reaction_${msgId}`;
-    const notifRef = db.collection("notifications").doc(notifId);
-    const existing = await notifRef.get();
 
-    if (existing.exists) {
-      const prev = existing.data()!;
-      const prevNames: string[] = prev.likerNames ?? [];
+    let existingDoc: any = null;
+    let found = false;
+
+    // 1. Try querying DynamoDB first
+    try {
+      const qRes = await docClient.send(new QueryCommand({
+        TableName: "RealTimeChat",
+        KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+        ExpressionAttributeValues: {
+          ":r": "ROOM#NOTIFICATION",
+          ":p": `NOTIFICATION#${notifId}#`
+        },
+        Limit: 1
+      }));
+      if (qRes.Items && qRes.Items.length > 0) {
+        existingDoc = qRes.Items[0];
+        found = true;
+      }
+    } catch (dynErr) {
+      console.warn(`${TAG} notifyRoomMessageReaction DynamoDB query failed:`, dynErr);
+    }
+
+    // 2. Fallback to Firestore
+    if (!found) {
+      const existing = await db.collection("notifications").doc(notifId).get();
+      if (existing.exists) {
+        existingDoc = existing.data();
+        found = true;
+      }
+    }
+
+    if (found && existingDoc) {
+      const prevNames: string[] = existingDoc.likerNames ?? [];
       const updatedNames = [actorName, ...prevNames.filter((n) => n !== actorName)].slice(0, 3);
-      const likerCount = (prev.likerCount ?? 1) + 1;
-      await notifRef.update({
+      const likerCount = (existingDoc.likerCount ?? 1) + 1;
+
+      const updatedData = {
+        ...existingDoc,
         likerNames: updatedNames,
         likerCount,
         message: buildLikeMessage(updatedNames, likerCount),
         isRead: false,
         updatedAt: now,
         ...(recipientEmail ? { recipientEmail } : {}),
-      });
+      };
+
+      const dynamoItem = {
+        roomId: "ROOM#NOTIFICATION",
+        sk: `NOTIFICATION#${notifId}#${existingDoc.createdAt ?? now}`,
+        participantId: recipientUid || recipientEmail,
+        ...updatedData
+      };
+
+      await dualWrite("notifications", notifId, "RealTimeChat", dynamoItem);
       console.log(`${TAG} notifyRoomMessageReaction: rolled up doc ${notifId}. likerCount=${likerCount}`);
     } else {
-      await notifRef.set({
+      const payload = {
         type: "roar_post_like",
         reaction,
         postId: msgId,
@@ -633,7 +816,16 @@ export async function notifyRoomMessageReaction(
         isRead: false,
         createdAt: now,
         updatedAt: now,
-      });
+      };
+
+      const dynamoItem = {
+        ...payload,
+        roomId: "ROOM#NOTIFICATION",
+        sk: `NOTIFICATION#${notifId}#${now}`,
+        participantId: recipientUid || recipientEmail,
+      };
+
+      await dualWrite("notifications", notifId, "RealTimeChat", dynamoItem);
       console.log(`${TAG} notifyRoomMessageReaction: created new doc ${notifId} with recipientUid=${recipientUid} recipientEmail=${recipientEmail}`);
     }
   } catch (err) {
@@ -670,16 +862,6 @@ export async function notifyRoomMessageComment(
       return;
     }
 
-    // const recipientEmail = await resolveEmailForUid(recipientUid);
-    // console.log(`${TAG} notifyRoomMessageComment: recipientEmail=${recipientEmail}`);
-
-    // // Also guard by email (catches OAuth users whose userId != UID)
-    // if (recipientEmail && recipientEmail === actorEmail) {
-    //   console.log(`${TAG} notifyRoomMessageComment: same email as actor, skipping`);
-    //   return;
-    // }
-
-
      const recipientEmail =
       msg.authorEmail ?? (await resolveEmailForUid(recipientUid));
 
@@ -694,10 +876,10 @@ export async function notifyRoomMessageComment(
       console.error(`${TAG} notifyRoomMessageComment: ABORTING — no email for uid=${recipientUid}`);
       return;
     }
-    
+
     const now = Date.now();
-    const ref = db.collection("notifications").doc();
-    await ref.set({
+    const notifId = uuidv4();
+    const payload = {
       type: "roar_post_comment",
       postId: msgId,
       roomId,
@@ -715,8 +897,17 @@ export async function notifyRoomMessageComment(
       createdAt: now,
       updatedAt: now,
       isRead: false,
-    });
-    console.log(`${TAG} notifyRoomMessageComment: created doc ${ref.id} with recipientUid=${recipientUid} recipientEmail=${recipientEmail}`);
+    };
+
+    const dynamoItem = {
+      ...payload,
+      roomId: "ROOM#NOTIFICATION",
+      sk: `NOTIFICATION#${notifId}#${now}`,
+      participantId: recipientUid || recipientEmail,
+    };
+
+    await dualWrite("notifications", notifId, "RealTimeChat", dynamoItem);
+    console.log(`${TAG} notifyRoomMessageComment: created doc ${notifId} with recipientUid=${recipientUid} recipientEmail=${recipientEmail}`);
   } catch (err) {
     console.error(`${TAG} notifyRoomMessageComment ERROR:`, err);
   }

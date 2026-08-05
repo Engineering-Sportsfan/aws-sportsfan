@@ -265,14 +265,45 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
-// Same canonical resolution as /api/roar/profile/route.ts — tries
-// users/{userId} first, falls back to users/{email}. Using the same
-// resolver here (instead of getUserInfo, which resolves differently)
-// prevents this route from reading/writing a different doc than the
-// one /api/roar/profile reads, which was causing onboardingCompleted
-// to appear false even when the real doc had it set to true.
+// Same canonical resolution as /api/roar/profile/route.ts
 async function resolveUserDoc(userId: string, email: string) {
+  // Try direct lookup from DynamoDB first
+  try {
+    const getRes = await docClient.send(new GetCommand({
+      TableName: "IdentityAndAccess",
+      Key: { entityId: `USER#${userId}`, sk: "USER#META" }
+    }));
+    if (getRes.Item) {
+      return { id: userId, data: getRes.Item };
+    }
+  } catch (dynErr) {
+    console.warn("[onboarding resolveUserDoc] DynamoDB direct get failed:", dynErr);
+  }
+
+  // Check by email in DynamoDB
+  if (email) {
+    try {
+      const emailRes = await docClient.send(new QueryCommand({
+        TableName: "IdentityAndAccess",
+        IndexName: "email-index",
+        KeyConditionExpression: "email = :email",
+        ExpressionAttributeValues: { ":email": email },
+        Limit: 1
+      }));
+      if (emailRes.Items && emailRes.Items.length > 0) {
+        const item = emailRes.Items[0];
+        const uid = (item.entityId as string).replace(/^USER#/, "");
+        return { id: uid, data: item };
+      }
+    } catch (dynErr) {
+      console.warn("[onboarding resolveUserDoc] DynamoDB email GSI check failed:", dynErr);
+    }
+  }
+
+  // Fallback to Firestore
   let docRef = db.collection("users").doc(userId);
   let snap = await docRef.get();
   if (!snap.exists) {
@@ -280,7 +311,7 @@ async function resolveUserDoc(userId: string, email: string) {
     snap = await docRef.get();
     if (!snap.exists) return null;
   }
-  return { docRef, snap };
+  return { id: docRef.id, data: snap.data() };
 }
 
 export async function GET(req: NextRequest) {
@@ -290,7 +321,7 @@ export async function GET(req: NextRequest) {
   const resolved = await resolveUserDoc(user.userId, user.email);
   if (!resolved) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
-  const data = resolved.snap.data();
+  const data = resolved.data;
 
   return NextResponse.json({
     success: true,
@@ -315,16 +346,48 @@ export async function POST(req: NextRequest) {
     engagementPrefs?: string[];
   };
 
-  await resolved.docRef.set(
-    {
-      sports: sports ?? [],
-      followEntities: followEntities ?? [],
-      engagementPrefs: engagementPrefs ?? [],
-      onboardingCompleted: true,
-      onboardingCompletedAt: Date.now(),
-    },
-    { merge: true }
-  );
+  const resolvedUserId = resolved.id;
+  const updates = {
+    sports: sports ?? [],
+    followEntities: followEntities ?? [],
+    engagementPrefs: engagementPrefs ?? [],
+    onboardingCompleted: true,
+    onboardingCompletedAt: Date.now(),
+  };
+
+  // 1. Update in DynamoDB first
+  try {
+    let updateExpression = "SET";
+    const expressionAttributeNames: Record<string, string> = {};
+    const expressionAttributeValues: Record<string, any> = {};
+
+    Object.keys(updates).forEach((key, index) => {
+      const valKey = `:val${index}`;
+      const nameKey = `#name${index}`;
+      updateExpression += ` ${nameKey} = ${valKey},`;
+      expressionAttributeNames[nameKey] = key;
+      expressionAttributeValues[valKey] = (updates as any)[key];
+    });
+
+    updateExpression = updateExpression.slice(0, -1);
+
+    await docClient.send(new UpdateCommand({
+      TableName: "IdentityAndAccess",
+      Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
+      UpdateExpression: updateExpression,
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues
+    }));
+  } catch (dynErr) {
+    console.warn("[onboarding POST] DynamoDB update failed:", dynErr);
+  }
+
+  // 2. Sync to Firestore
+  try {
+    await db.collection("users").doc(resolvedUserId).set(updates, { merge: true });
+  } catch (fsErr) {
+    console.warn("[onboarding POST] Firestore fallback sync failed:", fsErr);
+  }
 
   return NextResponse.json({ success: true, onboardingCompleted: true });
 }
@@ -343,20 +406,76 @@ export async function PATCH(req: NextRequest) {
     engagementPrefs?: string[];
   };
 
+  const resolvedUserId = resolved.id;
   const updates: Record<string, any> = { updatedAt: Date.now() };
   if (sports !== undefined) updates.sports = sports;
   if (followEntities !== undefined) updates.followEntities = followEntities;
   if (engagementPrefs !== undefined) updates.engagementPrefs = engagementPrefs;
 
-  await resolved.docRef.set(updates, { merge: true });
-  const updated = await resolved.docRef.get();
-  const data = updated.data();
+  // 1. Update in DynamoDB first
+  try {
+    let updateExpression = "SET";
+    const expressionAttributeNames: Record<string, string> = {};
+    const expressionAttributeValues: Record<string, any> = {};
+
+    Object.keys(updates).forEach((key, index) => {
+      const valKey = `:val${index}`;
+      const nameKey = `#name${index}`;
+      updateExpression += ` ${nameKey} = ${valKey},`;
+      expressionAttributeNames[nameKey] = key;
+      expressionAttributeValues[valKey] = updates[key];
+    });
+
+    updateExpression = updateExpression.slice(0, -1);
+
+    await docClient.send(new UpdateCommand({
+      TableName: "IdentityAndAccess",
+      Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
+      UpdateExpression: updateExpression,
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues
+    }));
+  } catch (dynErr) {
+    console.warn("[onboarding PATCH] DynamoDB update failed:", dynErr);
+  }
+
+  // 2. Sync to Firestore
+  try {
+    await db.collection("users").doc(resolvedUserId).set(updates, { merge: true });
+  } catch (fsErr) {
+    console.warn("[onboarding PATCH] Firestore fallback sync failed:", fsErr);
+  }
+
+  // Fetch updated data from DynamoDB first, then fallback to Firestore
+  let finalData: any = null;
+  try {
+    const getRes = await docClient.send(new GetCommand({
+      TableName: "IdentityAndAccess",
+      Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" }
+    }));
+    if (getRes.Item) {
+      finalData = getRes.Item;
+    }
+  } catch (dynErr) {
+    console.warn("[onboarding PATCH] Fetching updated profile failed:", dynErr);
+  }
+
+  if (!finalData) {
+    try {
+      const snap = await db.collection("users").doc(resolvedUserId).get();
+      if (snap.exists) {
+        finalData = snap.data();
+      }
+    } catch (fsErr) {
+      console.warn("[onboarding PATCH] Firestore fallback fetch failed:", fsErr);
+    }
+  }
 
   return NextResponse.json({
     success: true,
-    sports: data?.sports ?? [],
-    followEntities: data?.followEntities ?? [],
-    engagementPrefs: data?.engagementPrefs ?? [],
-    onboardingCompleted: data?.onboardingCompleted ?? false,
+    sports: finalData?.sports ?? [],
+    followEntities: finalData?.followEntities ?? [],
+    engagementPrefs: finalData?.engagementPrefs ?? [],
+    onboardingCompleted: finalData?.onboardingCompleted ?? false,
   });
 }

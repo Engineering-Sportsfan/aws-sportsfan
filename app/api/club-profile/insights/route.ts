@@ -1,5 +1,11 @@
+// app/api/club-profile/insights/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 // ─── POST: Create Insights & Strengths 
 export async function POST(req: NextRequest) {
@@ -14,7 +20,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate insights array
     const sanitizedInsights = (insights || []).map(
       (item: { title: string; description: string }) => ({
         title: item.title || "",
@@ -22,27 +27,36 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    // Validate strengths array (array of strings)
     const sanitizedStrengths = (strengths || []).filter(
-      (s: unknown) => typeof s === "string" && s.trim().length > 0
+      (s: unknown) => typeof s === "string" && (s as string).trim().length > 0
     );
 
+    const now = Date.now();
+    const id = `club_insight_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
     const insightsData = {
+      id,
       clubProfileId,
       insights: sanitizedInsights,
       strengths: sanitizedStrengths,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const docRef = await db.collection("clubInsights").add(insightsData);
+    const dynamoItem = {
+      entityId: `CLUB_INSIGHT#${id}`,
+      sk: "INSIGHT#META",
+      ...insightsData,
+    };
+
+    await dualWrite("clubInsights", id, "SportsData", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      insightsDoc: { id: docRef.id, ...insightsData },
+      insightsDoc: insightsData,
     });
   } catch (error) {
-    console.error("Create insights error:", error);
+    console.error("Create club insights error:", error);
     return NextResponse.json(
       { success: false, message: "Create failed: " + (error as Error).message },
       { status: 500 }
@@ -50,63 +64,85 @@ export async function POST(req: NextRequest) {
   }
 }
 
-
-
-
-
+// ─── GET: List Insights
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const clubProfileId = searchParams.get("clubProfileId");
     const limit = parseInt(searchParams.get("limit") || "20");
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
 
-    let query: FirebaseFirestore.Query = db.collection("clubInsights");
+    let insightsDocs: any[] = [];
 
-    if (clubProfileId) {
-      query = query.where("clubProfileId", "==", clubProfileId);
-    }
+    // 1. Scan DynamoDB
+    try {
+      let filterExpr = "begins_with(entityId, :prefix)";
+      const exprVals: Record<string, any> = {
+        ":prefix": "CLUB_INSIGHT#",
+      };
 
-    query = query.orderBy("createdAt", "desc").limit(limit);
-
-    // Use cursor-based pagination instead of offset
-    if (lastDocId && lastDocCreatedAt) {
-      const lastDocRef = db.collection("clubInsights").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
+      if (clubProfileId) {
+        filterExpr += " AND clubProfileId = :cpId";
+        exprVals[":cpId"] = clubProfileId;
       }
+
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprVals,
+          Limit: 100,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        insightsDocs = scanRes.Items.map((item) => ({
+          id: item.id || (item.entityId as string).replace(/^CLUB_INSIGHT#/, ""),
+          ...item,
+        }));
+      }
+    } catch (e) {
+      console.warn("[club-profile insights GET] DynamoDB notice:", e);
     }
 
-    const snapshot = await query.get();
+    // 2. Fallback to Firestore
+    if (insightsDocs.length === 0 && db) {
+      let query: FirebaseFirestore.Query = db.collection("clubInsights");
 
-    const insightsDocs = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+      if (clubProfileId) {
+        query = query.where("clubProfileId", "==", clubProfileId);
+      }
 
-    // Get last document for next page cursor
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      query = query.orderBy("createdAt", "desc").limit(limit);
+      const snapshot = await query.get();
+
+      insightsDocs = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    }
+
+    insightsDocs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const paged = insightsDocs.slice(0, limit);
+    const lastDoc = paged[paged.length - 1];
 
     return NextResponse.json({
       success: true,
-      insightsDocs,
+      insightsDocs: paged,
       pagination: {
         limit,
-        hasMore: insightsDocs.length === limit,
-        nextCursor: insightsDocs.length === limit
+        hasMore: insightsDocs.length > limit,
+        nextCursor: insightsDocs.length > limit
           ? {
               lastDocId: lastDoc?.id,
-              lastDocCreatedAt: lastDoc?.data()?.createdAt,
+              lastDocCreatedAt: lastDoc?.createdAt,
             }
           : null,
       },
     });
   } catch (error) {
-    console.error("Fetch insights error:", error);
+    console.error("Fetch club insights error:", error);
     return NextResponse.json(
-      { success: false, message: "Fetch failed" },
+      { success: false, message: "Fetch failed: " + (error as Error).message },
       { status: 500 }
     );
   }

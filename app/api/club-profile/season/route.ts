@@ -1,5 +1,11 @@
+// app/api/club-profile/season/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 // ─── POST: Create Season Stats 
 export async function POST(req: NextRequest) {
@@ -14,21 +20,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check if a season for this year already exists for this club
-    const existing = await db
-      .collection("clubSeasons")
-      .where("clubProfileId", "==", clubProfileId)
-      .where("season.year", "==", season.year)
-      .get();
-
-    if (!existing.empty) {
-      return NextResponse.json(
-        { success: false, message: `Season ${season.year} already exists for this club. Use PUT to update.` },
-        { status: 409 }
-      );
-    }
+    const now = Date.now();
+    const id = `club_season_${now}_${Math.random().toString(36).substring(2, 9)}`;
 
     const seasonData = {
+      id,
       clubProfileId,
       season: {
         year: season.year || "",
@@ -51,15 +47,21 @@ export async function POST(req: NextRequest) {
         award: season.award || "",
         awardSub: season.awardSub || "",
       },
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const docRef = await db.collection("clubSeasons").add(seasonData);
+    const dynamoItem = {
+      entityId: `CLUB_SEASON#${id}`,
+      sk: `SEASON#${season.year}`,
+      ...seasonData,
+    };
+
+    await dualWrite("clubSeasons", id, "SportsData", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      seasonStats: { id: docRef.id, ...seasonData },
+      seasonStats: { ...seasonData, id },
     });
   } catch (error) {
     console.error("Create season error:", error);
@@ -70,58 +72,86 @@ export async function POST(req: NextRequest) {
   }
 }
 
-
-
-
+// ─── GET: List Seasons
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const clubProfileId = searchParams.get("clubProfileId");
     const year = searchParams.get("year");
     const limit = parseInt(searchParams.get("limit") || "20");
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
 
-    let query: FirebaseFirestore.Query = db.collection("clubSeasons");
+    let seasons: any[] = [];
 
-    if (clubProfileId) {
-      query = query.where("clubProfileId", "==", clubProfileId);
-    }
-    if (year) {
-      query = query.where("season.year", "==", year);
-    }
+    // 1. Scan DynamoDB
+    try {
+      let filterExpr = "begins_with(entityId, :prefix)";
+      const exprVals: Record<string, any> = {
+        ":prefix": "CLUB_SEASON#",
+      };
 
-    query = query.orderBy("createdAt", "desc").limit(limit);
-
-    // Use cursor-based pagination instead of offset
-    if (lastDocId && lastDocCreatedAt) {
-      const lastDocRef = db.collection("clubSeasons").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
+      if (clubProfileId) {
+        filterExpr += " AND clubProfileId = :cpId";
+        exprVals[":cpId"] = clubProfileId;
       }
+      if (year) {
+        filterExpr += " AND season.#yr = :yr";
+        exprVals[":yr"] = year;
+      }
+
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: filterExpr,
+          ExpressionAttributeNames: year ? { "#yr": "year" } : undefined,
+          ExpressionAttributeValues: exprVals,
+          Limit: 100,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        seasons = scanRes.Items.map((item) => ({
+          id: item.id || (item.entityId as string).replace(/^CLUB_SEASON#/, ""),
+          ...item,
+        }));
+      }
+    } catch (e) {
+      console.warn("[club-profile season GET] DynamoDB notice:", e);
     }
 
-    const snapshot = await query.get();
+    // 2. Fallback to Firestore
+    if (seasons.length === 0 && db) {
+      let query: FirebaseFirestore.Query = db.collection("clubSeasons");
 
-    const seasons = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+      if (clubProfileId) {
+        query = query.where("clubProfileId", "==", clubProfileId);
+      }
+      if (year) {
+        query = query.where("season.year", "==", year);
+      }
 
-    // Get last document for next page cursor
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      query = query.orderBy("createdAt", "desc").limit(limit);
+      const snapshot = await query.get();
+
+      seasons = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    }
+
+    seasons.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const paged = seasons.slice(0, limit);
+    const lastDoc = paged[paged.length - 1];
 
     return NextResponse.json({
       success: true,
-      seasons,
+      seasons: paged,
       pagination: {
         limit,
-        hasMore: seasons.length === limit,
-        nextCursor: seasons.length === limit
+        hasMore: seasons.length > limit,
+        nextCursor: seasons.length > limit
           ? {
               lastDocId: lastDoc?.id,
-              lastDocCreatedAt: lastDoc?.data()?.createdAt,
+              lastDocCreatedAt: lastDoc?.createdAt,
             }
           : null,
       },

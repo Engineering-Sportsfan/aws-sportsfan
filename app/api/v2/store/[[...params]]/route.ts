@@ -1,7 +1,13 @@
+// api/v2/store/[[...params]]/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/firebaseAdmin';
 import { StoreService } from '@/app/api/v2/store/store.service';
 import { fetchUserMembership } from '@/app/api/v2/store/membership.helper';
+import { docClient } from '@/lib/dynamodb';
+import { GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+
+export const dynamic = 'force-dynamic';
 
 const storeService = new StoreService(db);
 
@@ -87,12 +93,35 @@ export async function GET(
         }
         if (subpath === 'athlete-bookings') {
           // GET /api/v2/store/users/:userId/athlete-bookings
-          const bookingsSnap = await db
-            .collection('athleteBookings')
-            .doc(userId)
-            .collection('items')
-            .get();
-          const bookings = bookingsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          let bookings: any[] = [];
+          let fetchedFromDynamo = false;
+
+          try {
+            const queryRes = await docClient.send(new QueryCommand({
+              TableName: 'SportsData',
+              KeyConditionExpression: 'entityId = :pk AND begins_with(sk, :sk)',
+              ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':sk': 'ATHLETE_BOOKING#' }
+            }));
+            if (queryRes.Items) {
+              bookings = queryRes.Items.map(item => ({ id: (item.sk as string).replace(/^ATHLETE_BOOKING#/, ''), ...item }));
+              fetchedFromDynamo = true;
+            }
+          } catch (dynErr) {
+            console.warn('[V2 Store GET athlete-bookings] DynamoDB query failed:', dynErr);
+          }
+
+          if (!fetchedFromDynamo) {
+            try {
+              const bookingsSnap = await db
+                .collection('athleteBookings')
+                .doc(userId)
+                .collection('items')
+                .get();
+              bookings = bookingsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            } catch (fsErr) {
+              console.error('[V2 Store GET athlete-bookings] Firestore fallback failed:', fsErr);
+            }
+          }
           return NextResponse.json(bookings);
         }
         if (subpath === 'membership') {
@@ -227,18 +256,47 @@ export async function GET(
     }
 
     if (firstSegment === 'membership-plans') {
-      const snapshot = await db
-        .collection('storeProducts')
-        .where('category', 'in', ['Memberships', 'memberships'])
-        .get();
+      let plans: any[] = [];
+      let fetchedFromDynamo = false;
 
-      const plans = snapshot.docs
-        .map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }))
-        .filter((plan: any) => !plan.governance_state || plan.governance_state === 'approved');
+      // Try DynamoDB scan
+      try {
+        const res = await docClient.send(new ScanCommand({
+          TableName: 'StoreAndCommerce',
+          FilterExpression: 'begins_with(entityId, :pk) AND (category = :c1 OR category = :c2)',
+          ExpressionAttributeValues: {
+            ':pk': 'PRODUCT#',
+            ':c1': 'Memberships',
+            ':c2': 'memberships'
+          }
+        }));
+        if (res.Items) {
+          plans = res.Items.map(item => ({ id: (item.entityId as string).replace(/^PRODUCT#/, ''), ...item }));
+          fetchedFromDynamo = true;
+        }
+      } catch (dynErr) {
+        console.warn('[V2 Store GET membership-plans] DynamoDB scan failed:', dynErr);
+      }
 
+      // Fallback to Firestore
+      if (!fetchedFromDynamo || plans.length === 0) {
+        try {
+          const snapshot = await db
+            .collection('storeProducts')
+            .where('category', 'in', ['Memberships', 'memberships'])
+            .get();
+
+          plans = snapshot.docs
+            .map((doc) => ({
+              id: doc.id,
+              ...doc.data(),
+            }));
+        } catch (fsErr) {
+          console.error('[V2 Store GET membership-plans] Firestore fallback failed:', fsErr);
+        }
+      }
+
+      plans = plans.filter((plan: any) => !plan.governance_state || plan.governance_state === 'approved');
       return NextResponse.json(plans);
     }
 
@@ -346,28 +404,78 @@ export async function POST(
         if (!planId) {
           return NextResponse.json({ error: 'planId is required' }, { status: 400 });
         }
-        const planDoc = await db.collection('storeProducts').doc(planId).get();
-        if (!planDoc.exists) {
+
+        let planInfo: any = null;
+        let fetchedFromDynamo = false;
+        try {
+          const resPlan = await docClient.send(new GetCommand({
+            TableName: 'StoreAndCommerce',
+            Key: { entityId: `PRODUCT#${planId}`, sk: `PRODUCT#${planId}` }
+          }));
+          if (resPlan.Item) {
+            planInfo = resPlan.Item;
+            fetchedFromDynamo = true;
+          }
+        } catch (dynErr) {
+          console.warn('[V2 Store POST membership] DynamoDB plan get failed:', dynErr);
+        }
+
+        if (!fetchedFromDynamo) {
+          try {
+            const planDoc = await db.collection('storeProducts').doc(planId).get();
+            if (planDoc.exists) {
+              planInfo = planDoc.data();
+            }
+          } catch (fsErr) {
+            console.error('[V2 Store POST membership] Firestore fallback failed:', fsErr);
+          }
+        }
+
+        if (!planInfo) {
           return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
         }
-        const planInfo = planDoc.data();
-        const durationDays = planInfo?.durationDays || 30;
+
+        const durationDays = planInfo.durationDays || 30;
         const now = new Date();
         const renewalDate = new Date(now.getTime() + durationDays * 86400 * 1000);
-        const membershipUpdate = {
+        const membershipUpdate: any = {
           currentPlanId: planId,
-          currentPlanName: planInfo?.name || planInfo?.title || 'Membership Plan',
+          currentPlanName: planInfo.name || planInfo.title || 'Membership Plan',
           status: 'active',
           startDate: now.toISOString(),
           renewalDate: renewalDate.toISOString(),
           autoRenew: true,
-          updatedAt: now,
+          updatedAt: now.getTime(),
         };
-        await db.collection('userMemberships').doc(userId).set(membershipUpdate, { merge: true });
+
+        // Dual-write to DynamoDB
+        try {
+          await docClient.send(new PutCommand({
+            TableName: 'IdentityAndAccess',
+            Item: {
+              entityId: `USER#${userId}`,
+              sk: 'MEMBERSHIP',
+              ...membershipUpdate
+            }
+          }));
+        } catch (dynErr) {
+          console.warn('[V2 Store POST membership] DynamoDB write failed:', dynErr);
+        }
+
+        // Firestore sync
+        try {
+          await db.collection('userMemberships').doc(userId).set({
+            ...membershipUpdate,
+            updatedAt: now
+          }, { merge: true });
+        } catch (fsErr) {
+          console.warn('[V2 Store POST membership] Firestore sync failed:', fsErr);
+        }
+
         return NextResponse.json({
           hasMembership: true,
           membership: { id: userId, ...membershipUpdate },
-          plan: { id: planDoc.id, ...planInfo },
+          plan: { id: planId, ...planInfo },
         });
       }
     }
@@ -379,11 +487,36 @@ export async function POST(
       const listingId = pathParams[3];
 
       if (pathParams[2] === 'listings') {
-        const athleteDoc = await db.collection('storeProducts').doc(athleteId).get();
-        if (!athleteDoc.exists) {
+        let athleteData: any = null;
+        let fetchedFromDynamo = false;
+        try {
+          const resAthlete = await docClient.send(new GetCommand({
+            TableName: 'StoreAndCommerce',
+            Key: { entityId: `PRODUCT#${athleteId}`, sk: `PRODUCT#${athleteId}` }
+          }));
+          if (resAthlete.Item) {
+            athleteData = resAthlete.Item;
+            fetchedFromDynamo = true;
+          }
+        } catch (dynErr) {
+          console.warn('[V2 Store athlete purchase] DynamoDB athlete get failed:', dynErr);
+        }
+
+        if (!fetchedFromDynamo) {
+          try {
+            const athleteDoc = await db.collection('storeProducts').doc(athleteId).get();
+            if (athleteDoc.exists) {
+              athleteData = athleteDoc.data();
+            }
+          } catch (fsErr) {
+            console.error('[V2 Store athlete purchase] Firestore athlete get failed:', fsErr);
+          }
+        }
+
+        if (!athleteData) {
           return NextResponse.json({ error: 'Athlete not found' }, { status: 404 });
         }
-        const athleteData = athleteDoc.data();
+
         if (athleteData?.governance_state !== 'approved') {
           return NextResponse.json({ error: 'Athlete profile is not approved for purchases' }, { status: 403 });
         }

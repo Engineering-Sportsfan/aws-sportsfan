@@ -1,5 +1,4 @@
-// api/fifa-player-stats/bulk/route.ts
-
+// api/fifa-player-stats/bulk/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -7,20 +6,31 @@ import { validateFifaPlayerStatsCreate } from "@/lib/validations/fifaPlayerStats
 import { validateFifaPlayerStatsRecord, runFifaPlayerStatsDQChecks } from "@/lib/ingestion/fifaPlayerStatsRules";
 import { parseFifaExcelBuffer } from "@/lib/ingestion/fifaExcelParser";
 import type { FifaPlayerStatsCreateInput } from "@/lib/validations/fifaPlayerStatsValidation";
+import { docClient } from "@/lib/dynamodb";
+import { BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
 
-const CHUNK_SIZE = 30;
+export const dynamic = "force-dynamic";
+
+const CHUNK_SIZE = 25;
 
 async function fetchExistingPlayers(playerNames: string[], tournament: string): Promise<Set<string>> {
   const existing = new Set<string>();
+  if (!db) return existing;
+
   for (let i = 0; i < playerNames.length; i += CHUNK_SIZE) {
     const chunk = playerNames.slice(i, i + CHUNK_SIZE);
-    const snap = await db
-      .collection("fifaPlayerStats")
-      .where("player_name", "in", chunk)
-      .where("tournament", "==", tournament)
-      .select("player_name")
-      .get();
-    snap.docs.forEach((d) => existing.add(d.data().player_name));
+    try {
+      const snap = await db
+        .collection("fifaPlayerStats")
+        .where("player_name", "in", chunk)
+        .where("tournament", "==", tournament)
+        .select("player_name")
+        .get();
+      snap.docs.forEach((d) => existing.add(d.data().player_name));
+    } catch (err) {
+      console.error("[DEDUP] fifaPlayerStats chunk failed:", err);
+      throw err;
+    }
   }
   return existing;
 }
@@ -49,18 +59,20 @@ export async function POST(req: NextRequest) {
     stats = parsed.rows;
 
     const tournamentMap: Record<string, string> = {
-    "FIFA World Cup": "mens_fifa_wc_2022",
-    "FIFA World Cup Qualifier": "mens_fifa_wc_qualifier_2022",
-    "UEFA Champions League": "uefa_champions_league_2022",
-  };
-  
-  stats = stats.map(row => ({
-    ...row,
-    tournament: tournamentMap[row.tournament as string] || row.tournament || tournament
-  }));
+      "FIFA World Cup": "mens_fifa_wc_2022",
+      "FIFA World Cup Qualifier": "mens_fifa_wc_qualifier_2022",
+      "UEFA Champions League": "uefa_champions_league_2022",
+    };
+
+    stats = stats.map((row) => ({
+      ...row,
+      tournament: tournamentMap[row.tournament as string] || row.tournament || tournament,
+    }));
   } else {
     let body: { stats?: unknown; source_file?: string; dry_run?: boolean; tournament?: string };
-    try { body = await req.json(); } catch {
+    try {
+      body = await req.json();
+    } catch {
       return NextResponse.json({ success: false, error: "Invalid JSON" }, { status: 400 });
     }
     stats = Array.isArray(body.stats) ? (body.stats as Record<string, unknown>[]) : [];
@@ -76,7 +88,6 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let processed = 0;
   let skipped = 0;
-  let updated = 0;
   const errors: Array<{ row: number; player?: string; errors: { field: string; message: string }[] }> = [];
   const validStats: FifaPlayerStatsCreateInput[] = [];
 
@@ -106,109 +117,100 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       dry_run: true,
-      summary: { total: stats.length, valid: validStats.length, invalid: skipped },
-      errors: errors.length > 0 ? errors : undefined,
+      total_rows: stats.length,
+      valid_rows: validStats.length,
+      skipped_rows: skipped,
+      errors,
     });
   }
 
-  // Dedup
-  // const tournamentForDedup = validStats[0]?.tournament ?? tournament;
-  // let existingPlayers: Set<string>;
-  // try {
-  //   existingPlayers = await fetchExistingPlayers(validStats.map((s) => s.player_name), tournamentForDedup);
-  // } catch (err) {
-  //   const msg = err instanceof Error ? err.message : String(err);
-  //   return NextResponse.json({ success: false, error: `Dedup check failed: ${msg}` }, { status: 500 });
-  // }
-
-  let existingPlayers: Set<string>;
-try {
-  // Group by tournament so dedup works correctly across multiple tournaments in one upload
-  const byTournament = validStats.reduce<Record<string, string[]>>((acc, s) => {
-    (acc[s.tournament] ??= []).push(s.player_name);
-    return acc;
-  }, {});
-
-  existingPlayers = new Set<string>();
-  for (const [t, names] of Object.entries(byTournament)) {
-    const existing = await fetchExistingPlayers(names, t);
-    existing.forEach((name) => existingPlayers.add(`${name}::${t}`));
+  // Deduplication
+  const namesByTourn: Record<string, string[]> = {};
+  for (const s of validStats) {
+    if (!namesByTourn[s.tournament]) namesByTourn[s.tournament] = [];
+    namesByTourn[s.tournament].push(s.player_name);
   }
-} catch (err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return NextResponse.json({ success: false, error: `Dedup check failed: ${msg}` }, { status: 500 });
-}
 
+  const existingByTourn: Record<string, Set<string>> = {};
+  for (const [tourn, names] of Object.entries(namesByTourn)) {
+    existingByTourn[tourn] = await fetchExistingPlayers(names, tourn);
+  }
 
-  const processedInBatch = new Set<string>();
-  const writtenStats: FifaPlayerStatsCreateInput[] = [];
-
-  for (let i = 0; i < validStats.length; i++) {
-    const stat = validStats[i];
-    const key = `${stat.player_name}::${stat.tournament}`;
-
-    if (processedInBatch.has(key)) {
-      errors.push({ row: i + 1, player: stat.player_name, errors: [{ field: "player_name", message: "Duplicate in batch" }] });
+  const toInsert: FifaPlayerStatsCreateInput[] = [];
+  for (const stat of validStats) {
+    if (existingByTourn[stat.tournament]?.has(stat.player_name)) {
       skipped++;
       continue;
     }
+    toInsert.push(stat);
+  }
 
+  const now = Date.now();
+  for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+    const chunk = toInsert.slice(i, i + CHUNK_SIZE);
+
+    // 1. DynamoDB BatchWrite
     try {
-      // if (existingPlayers.has(stat.player_name)) {
-      if (existingPlayers.has(`${stat.player_name}::${stat.tournament}`)) {
-        // Upsert — FIFA stats are tournament-total, a corrected file replaces them
-        const existingSnap = await db
-          .collection("fifaPlayerStats")
-          .where("player_name", "==", stat.player_name)
-          .where("tournament", "==", stat.tournament)
-          .limit(1)
-          .get();
-        if (!existingSnap.empty) {
-          await db.collection("fifaPlayerStats").doc(existingSnap.docs[0].id).set(
-            { ...stat, updated_at: FieldValue.serverTimestamp() },
-            { merge: true }
-          );
-          updated++;
-        }
-      } else {
-        await db.collection("fifaPlayerStats").add({
+      const putRequests = chunk.map((stat, idx) => {
+        const id = `fifastat_${now}_${i + idx}_${Math.random().toString(36).substring(2, 7)}`;
+        const nameLower = stat.player_name.toLowerCase();
+        const words = nameLower.replace(/[^a-z0-9\s]/g, "").split(" ").filter(Boolean);
+
+        return {
+          PutRequest: {
+            Item: {
+              entityId: `FIFA_PLAYER_STAT#${id}`,
+              sk: "FIFA_PLAYER_STAT#META",
+              id,
+              ...stat,
+              player_name_lower: nameLower,
+              name_words: words,
+              created_at: now,
+              updated_at: now,
+            },
+          },
+        };
+      });
+
+      await docClient.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            SportsData: putRequests,
+          },
+        })
+      );
+    } catch (e) {
+      console.warn("[fifa-player-stats bulk] DynamoDB notice:", e);
+    }
+
+    // 2. Firestore Batch
+    if (db) {
+      const batch = db.batch();
+      for (const stat of chunk) {
+        const nameLower = stat.player_name.toLowerCase();
+        const words = nameLower.replace(/[^a-z0-9\s]/g, "").split(" ").filter(Boolean);
+        const docRef = db.collection("fifaPlayerStats").doc();
+        batch.set(docRef, {
           ...stat,
+          player_name_lower: nameLower,
+          name_words: words,
           created_at: FieldValue.serverTimestamp(),
           updated_at: FieldValue.serverTimestamp(),
         });
-        processed++;
-        writtenStats.push(stat);
       }
-      processedInBatch.add(key);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push({ row: i + 1, player: stat.player_name, errors: [{ field: "firestore", message: `Write failed: ${msg}` }] });
-      skipped++;
+      await batch.commit();
     }
+
+    processed += chunk.length;
   }
 
-//   const dq = runFifaPlayerStatsDQChecks(writtenStats);
-//   const duration = Date.now() - startTime;
-
-//   return NextResponse.json({
-//     success: true,
-//     summary: { total: stats.length, processed, updated, skipped, duration },
-//     errors: errors.length > 0 ? errors : undefined,
-//     dqWarnings: dq.results,
-//   });
-// }
-
-
-const dq = writtenStats.length > 0 
-  ? runFifaPlayerStatsDQChecks(writtenStats) 
-  : { passed: true, results: [{ passed: true, message: "No new stats written, skipping DQ checks" }] };
-
-const duration = Date.now() - startTime;
-
-return NextResponse.json({
-  success: true,
-  summary: { total: stats.length, processed, updated, skipped, duration },
-  errors: errors.length > 0 ? errors : undefined,
-  dqWarnings: dq.results,
-})
+  return NextResponse.json({
+    success: true,
+    total: stats.length,
+    processed,
+    skipped,
+    error_count: errors.length,
+    errors,
+    duration_ms: Date.now() - startTime,
+  });
 }

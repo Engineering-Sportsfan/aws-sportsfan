@@ -15,7 +15,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
-import type { RoomMessage } from "@/app/models/RoomMessage";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 async function resolveUserId(email: string, userId: string): Promise<string | null> {
   const info = await getUserInfo(userId, undefined, email);
@@ -27,7 +30,8 @@ export async function POST(
   { params }: { params: Promise<{ roomId: string; msgId: string }> }
 ) {
   try {
-    const { roomId, msgId } = await params;
+    const resolvedParams = await params;
+    const { roomId, msgId } = resolvedParams;
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -40,16 +44,69 @@ export async function POST(
     const pinRef = db.collection("roarRooms").doc(roomId).collection("userPins").doc(resolvedUserId);
 
     if (action === "unpin") {
-      await pinRef.delete();
+      // 1. Delete from DynamoDB first
+      try {
+        await docClient.send(new DeleteCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${roomId}`, sk: `PIN#${resolvedUserId}` }
+        }));
+      } catch (dynErr) {
+        console.warn("[Pin POST] DynamoDB unpin failed:", dynErr);
+      }
+
+      // 2. Sync to Firestore
+      try {
+        await pinRef.delete();
+      } catch (fsErr) {
+        console.warn("[Pin POST] Firestore unpin fallback failed:", fsErr);
+      }
+
       return NextResponse.json({ success: true, pin: null });
     }
 
     // action === "pin"
-    const msgRef = db.collection("roarRooms").doc(roomId).collection("messages").doc(msgId);
-    const msgSnap = await msgRef.get();
-    if (!msgSnap.exists) return NextResponse.json({ error: "Message not found" }, { status: 404 });
+    // Fetch message DynamoDB-first by querying chatId = msgId
+    let msgData: any = null;
+    let fetchedFromDynamo = false;
+    try {
+      const qRes = await docClient.send(new QueryCommand({
+        TableName: "RealTimeChat",
+        KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+        FilterExpression: "chatId = :m",
+        ExpressionAttributeValues: {
+          ":r": `ROOM#${roomId}`,
+          ":p": `MSG#${roomId}#`,
+          ":m": msgId
+        },
+        Limit: 1
+      }));
+      if (qRes.Items && qRes.Items.length > 0) {
+        msgData = qRes.Items[0];
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[Pin POST] DynamoDB message fetch failed:", dynErr);
+    }
 
-    const data = msgSnap.data() as RoomMessage;
+    const msgRef = db.collection("roarRooms").doc(roomId).collection("messages").doc(msgId);
+    let msgExists = fetchedFromDynamo;
+    let fallbackMsgData: any = null;
+
+    if (!msgExists) {
+      try {
+        const snap = await msgRef.get();
+        if (snap.exists) {
+          msgExists = true;
+          fallbackMsgData = snap.data();
+        }
+      } catch (fsErr) {
+        console.warn("[Pin POST] Firestore message fetch fallback failed:", fsErr);
+      }
+    }
+
+    if (!msgExists) return NextResponse.json({ error: "Message not found" }, { status: 404 });
+
+    const data = msgData || fallbackMsgData || {};
     const pinDoc = {
       msgId,
       pinnedAt: Date.now(),
@@ -57,7 +114,27 @@ export async function POST(
       authorUsername: data.authorUsername ?? "Fan",
       type: data.type ?? "post",
     };
-    await pinRef.set(pinDoc);
+
+    // 1. Put pin in DynamoDB
+    try {
+      await docClient.send(new PutCommand({
+        TableName: "RealTimeChat",
+        Item: {
+          roomId: `ROOM#${roomId}`,
+          sk: `PIN#${resolvedUserId}`,
+          ...pinDoc
+        }
+      }));
+    } catch (dynErr) {
+      console.warn("[Pin POST] DynamoDB pin failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      await pinRef.set(pinDoc);
+    } catch (fsErr) {
+      console.warn("[Pin POST] Firestore pin fallback failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, pin: pinDoc });
   } catch (error: unknown) {

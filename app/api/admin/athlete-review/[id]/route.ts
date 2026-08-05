@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/getUser";
 import { getAthletePipelineConfig } from "@/lib/athletePipelineAuth";
 
+export const dynamic = "force-dynamic";
+
+
 // GET /api/admin/athlete-review/:id — full draft detail (proposed vs current values, source URLs, trigger reason)
 export async function GET(
   req: NextRequest,

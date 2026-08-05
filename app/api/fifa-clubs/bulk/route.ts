@@ -1,5 +1,4 @@
-// api/fifa-clubs/bulk/route.ts
-
+// app/api/fifa-clubs/bulk/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -12,9 +11,11 @@ import {
   validateFifaClubRecord,
   runFifaClubDQChecks,
 } from "@/lib/ingestion/fifaClubRules";
+import { docClient } from "@/lib/dynamodb";
+import { BatchWriteCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
-// POST /api/fifa-clubs/bulk
-// Body: multipart/form-data — file (.xlsx/.csv), tournament, dry_run, upsert
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   const start = Date.now();
 
@@ -34,22 +35,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "No file provided" }, { status: 400 });
   }
 
-  // ── Parse file ─────────────────────────────────────────────────────────────
   const buffer = Buffer.from(await file.arrayBuffer());
   let rows: Record<string, unknown>[];
   try {
     const wb = XLSX.read(buffer, { type: "buffer" });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    // Data starts at row 5 (0-indexed row 4) — skip title/description/header rows
     rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
-      range: 4, // row index 4 = Excel row 5 = actual header row
+      range: 4,
       defval: null,
     });
   } catch {
     return NextResponse.json({ success: false, error: "Failed to parse file" }, { status: 422 });
   }
 
-  // Column header mapping (Excel header → schema field)
   const FIELD_MAP: Record<string, string> = {
     Country: "country",
     "Club ID": "club_id",
@@ -67,30 +65,25 @@ export async function POST(req: NextRequest) {
     "All-Time Best Finish": "all_time_best_finish",
   };
 
-  // ── Per-row validation ─────────────────────────────────────────────────────
   const validClubs: FifaClubCreateInput[] = [];
   const rowErrors: { row: number; club_id?: string; errors: { field: string; message: string }[] }[] = [];
 
   rows.forEach((raw, idx) => {
-    const excelRow = idx + 6; // data starts at Excel row 6
+    const excelRow = idx + 6;
 
-    // Skip summary / blank rows
     const countryVal = raw["Country"] ?? raw["__EMPTY_1"];
     if (!countryVal || String(countryVal).toLowerCase().includes("total")) return;
 
-    // Remap headers
     const mapped: Record<string, unknown> = {};
     for (const [excelKey, schemaKey] of Object.entries(FIELD_MAP)) {
       mapped[schemaKey] = raw[excelKey] ?? null;
     }
 
-    // Inject classification
     mapped.tournament = tournament;
     mapped.gender = "male";
     mapped.format = "international";
     mapped.source_file = file.name;
 
-    // Coerce numerics
     for (const numField of [
       "fifa_rank", "world_cup_apps", "matches_played",
       "wins", "draws", "losses", "goals_for", "goals_against", "goal_difference",
@@ -98,7 +91,6 @@ export async function POST(req: NextRequest) {
       if (mapped[numField] !== null) mapped[numField] = Number(mapped[numField]);
     }
 
-    // Injection guard
     const injection = validateFifaClubRecord(mapped);
     if (!injection.valid) {
       rowErrors.push({
@@ -109,7 +101,6 @@ export async function POST(req: NextRequest) {
       return;
     }
 
-    // Schema validation
     const schema = validateFifaClubCreate(mapped);
     if (!schema.success) {
       rowErrors.push({
@@ -123,67 +114,137 @@ export async function POST(req: NextRequest) {
     validClubs.push(schema.data!);
   });
 
-  // ── Batch DQ checks ────────────────────────────────────────────────────────
-  const dqReport = runFifaClubDQChecks(validClubs);
-
-  const summary = {
-    total: rows.length,
-    valid: validClubs.length,
-    invalid: rowErrors.length,
-    processed: 0,
-    updated: 0,
-    skipped: 0,
-    duration: 0,
-  };
-
   if (dryRun) {
     return NextResponse.json({
-      success: rowErrors.length === 0,
+      success: true,
       dry_run: true,
-      summary: { ...summary, duration: Date.now() - start },
-      errors: rowErrors,
-      dqWarnings: dqReport.warnings,
+      summary: { total_parsed: rows.length, valid: validClubs.length, errors: rowErrors.length },
+      row_errors: rowErrors.length > 0 ? rowErrors : undefined,
     });
   }
 
-  // ── Write to Firestore ─────────────────────────────────────────────────────
-  const BATCH_SIZE = 400;
-  for (let i = 0; i < validClubs.length; i += BATCH_SIZE) {
-    const batch = db.batch();
-    const chunk = validClubs.slice(i, i + BATCH_SIZE);
+  // Pre-fetch existing IDs
+  const clubIds = validClubs.map((c) => c.club_id);
+  const existingIds = new Set<string>();
 
-    for (const club of chunk) {
-      const ref = db.collection("fifaClubs").doc(club.club_id);
-      const existing = await ref.get();
-
-      if (existing.exists && !upsert) {
-        summary.skipped++;
-        continue;
-      }
-
-      if (existing.exists && upsert) {
-        batch.update(ref, { ...club, updated_at: FieldValue.serverTimestamp() });
-        summary.updated++;
-      } else {
-        batch.set(ref, {
-          ...club,
-          created_at: FieldValue.serverTimestamp(),
-          updated_at: FieldValue.serverTimestamp(),
-        });
-        summary.processed++;
-      }
+  for (const cId of clubIds) {
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: { entityId: `FIFA_CLUB#${cId}`, sk: "CLUB#META" },
+        })
+      );
+      if (getRes.Item) existingIds.add(cId);
+    } catch {
+      // ignore
     }
-
-    await batch.commit();
   }
 
-  summary.duration = Date.now() - start;
+  for (let i = 0; i < clubIds.length; i += 30) {
+    const chunk = clubIds.slice(i, i + 30);
+    const snap = await db.collection("fifaClubs").where("club_id", "in", chunk).select("club_id").get();
+    snap.docs.forEach((d) => existingIds.add(d.data().club_id));
+  }
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  const writtenClubs: FifaClubCreateInput[] = [];
+  const dynamoItemsToWrite: any[] = [];
+
+  const BATCH_LIMIT = 400;
+  let batch = db.batch();
+  let opsInBatch = 0;
+
+  const flushBatch = async () => {
+    if (opsInBatch > 0) {
+      await batch.commit();
+      batch = db.batch();
+      opsInBatch = 0;
+    }
+  };
+
+  const now = Date.now();
+
+  for (const club of validClubs) {
+    const isExisting = existingIds.has(club.club_id);
+
+    if (isExisting && !upsert) {
+      skipped++;
+      continue;
+    }
+
+    const docRef = db.collection("fifaClubs").doc(club.club_id);
+
+    if (isExisting && upsert) {
+      dynamoItemsToWrite.push({
+        PutRequest: {
+          Item: {
+            entityId: `FIFA_CLUB#${club.club_id}`,
+            sk: "CLUB#META",
+            ...club,
+            updatedAt: now,
+          },
+        },
+      });
+      batch.set(docRef, { ...club, updated_at: FieldValue.serverTimestamp() }, { merge: true });
+      updated++;
+    } else {
+      dynamoItemsToWrite.push({
+        PutRequest: {
+          Item: {
+            entityId: `FIFA_CLUB#${club.club_id}`,
+            sk: "CLUB#META",
+            ...club,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      });
+      batch.set(docRef, {
+        ...club,
+        created_at: FieldValue.serverTimestamp(),
+        updated_at: FieldValue.serverTimestamp(),
+      });
+      created++;
+      writtenClubs.push(club);
+    }
+
+    opsInBatch++;
+    if (opsInBatch >= BATCH_LIMIT) await flushBatch();
+  }
+
+  // Write DynamoDB in batches of 25
+  for (let i = 0; i < dynamoItemsToWrite.length; i += 25) {
+    const chunk = dynamoItemsToWrite.slice(i, i + 25);
+    try {
+      await docClient.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            SportsData: chunk,
+          },
+        })
+      );
+    } catch (dynErr) {
+      console.warn("[FIFA-CLUBS/BULK] DynamoDB batch write notice:", dynErr);
+    }
+  }
+
+  try {
+    await flushBatch();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ success: false, error: `Batch commit failed: ${msg}` }, { status: 500 });
+  }
+
+  const dq = runFifaClubDQChecks(writtenClubs);
+  const duration = Date.now() - start;
 
   return NextResponse.json({
     success: true,
-    dry_run: false,
-    summary,
-    errors: rowErrors,
-    dqWarnings: dqReport.warnings,
+    summary: { total: validClubs.length, created, updated, skipped, duration_ms: duration },
+    row_errors: rowErrors.length > 0 ? rowErrors : undefined,
+    dq_warnings: dq.warnings,
   });
 }

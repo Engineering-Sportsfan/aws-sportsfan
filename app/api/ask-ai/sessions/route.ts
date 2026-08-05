@@ -1,12 +1,13 @@
-// app/api/ask-ai/sessions/route.ts
+// app/api/ask-ai/sessions/route.ts — Migrated to AWS DynamoDB (RealTimeChat Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-// ── Same canonical resolution pattern used across ROAR (dolly, messages,
-// votes) — ensures Ask AI sessions are filed under the same
-// users/{actualUserId} as everything else, not a divergent/spoofable ID.
+export const dynamic = "force-dynamic";
+
 async function resolveUser(
   email: string,
   userId: string
@@ -22,7 +23,6 @@ async function resolveUser(
 }
 
 // GET: list every Ask AI session for this user, most-recently-updated first.
-// Powers the Ask AI "Chat History" panel (mirrors /api/roar/dolly/rooms).
 export async function GET(req: NextRequest) {
   try {
     const user = await getUser(req);
@@ -35,49 +35,104 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
     }
 
-    if (!db) {
-      return NextResponse.json({ error: "Database not initialized" }, { status: 500 });
+    let sessions: any[] = [];
+
+    // 1. Query DynamoDB RealTimeChat
+    try {
+      const qSessions = await docClient.send(
+        new QueryCommand({
+          TableName: "RealTimeChat",
+          KeyConditionExpression: "roomId = :rId AND begins_with(sk, :skPrefix)",
+          ExpressionAttributeValues: {
+            ":rId": `ASKAI#${resolved.id}`,
+            ":skPrefix": "SESSION#",
+          },
+          ScanIndexForward: false,
+          Limit: 50,
+        })
+      );
+
+      if (qSessions.Items && qSessions.Items.length > 0) {
+        sessions = await Promise.all(
+          qSessions.Items.map(async (item) => {
+            const sessionId = item.sessionId || item.sk.replace(/^SESSION#/, "");
+
+            // Fetch first and last message for preview
+            const qMsgs = await docClient.send(
+              new QueryCommand({
+                TableName: "RealTimeChat",
+                KeyConditionExpression: "roomId = :rId AND begins_with(sk, :skPrefix)",
+                ExpressionAttributeValues: {
+                  ":rId": `ASKAI#${resolved.id}#${sessionId}`,
+                  ":skPrefix": "MSG#",
+                },
+                ScanIndexForward: true,
+                Limit: 50,
+              })
+            );
+
+            const msgItems = (qMsgs.Items as any[]) || [];
+            const userMsgs = msgItems.filter((m) => m.role === "user");
+            const firstQuestion = userMsgs[0]?.content as string | undefined;
+            const lastMessage = msgItems[msgItems.length - 1]?.content as string | undefined;
+            const updatedAtMs = item.updatedAt || Date.now();
+            const customTitle = item.customTitle as string | undefined;
+
+            return {
+              sessionId,
+              title: customTitle || firstQuestion?.slice(0, 60) || "New chat",
+              subtitle: lastMessage?.slice(0, 80) || "",
+              dateLabel: new Date(updatedAtMs).toLocaleDateString([], {
+                month: "short",
+                day: "numeric",
+              }),
+            };
+          })
+        );
+      }
+    } catch (e) {
+      console.warn("[ask-ai GET sessions] DynamoDB notice:", e);
     }
 
-    const sessionsSnap = await db
-      .collection("askaiConversations")
-      .doc(resolved.id)
-      .collection("sessions")
-      .orderBy("updatedAt", "desc")
-      .limit(50)
-      .get();
+    // 2. Fallback to Firestore
+    if (sessions.length === 0 && db) {
+      const sessionsSnap = await db
+        .collection("askaiConversations")
+        .doc(resolved.id)
+        .collection("sessions")
+        .orderBy("updatedAt", "desc")
+        .limit(50)
+        .get();
 
-    if (sessionsSnap.empty) {
-      return NextResponse.json({ success: true, sessions: [] });
+      if (!sessionsSnap.empty) {
+        sessions = await Promise.all(
+          sessionsSnap.docs.map(async (doc) => {
+            const data = doc.data();
+            const msgCol = doc.ref.collection("messages");
+
+            const [firstSnap, lastSnap] = await Promise.all([
+              msgCol.where("role", "==", "user").orderBy("timestamp", "asc").limit(1).get(),
+              msgCol.orderBy("timestamp", "desc").limit(1).get(),
+            ]);
+
+            const firstQuestion = firstSnap.docs[0]?.data()?.content as string | undefined;
+            const lastMessage = lastSnap.docs[0]?.data()?.content as string | undefined;
+            const updatedAtMs = data.updatedAt?.toMillis?.() ?? Date.now();
+            const customTitle = data.customTitle as string | undefined;
+
+            return {
+              sessionId: doc.id,
+              title: customTitle || firstQuestion?.slice(0, 60) || "New chat",
+              subtitle: lastMessage?.slice(0, 80) || "",
+              dateLabel: new Date(updatedAtMs).toLocaleDateString([], {
+                month: "short",
+                day: "numeric",
+              }),
+            };
+          })
+        );
+      }
     }
-
-    // For each session, pull its first user message (title) and last
-    // message (subtitle preview) — two small queries per session, but
-    // capped at 50 sessions so it stays cheap.
-  
-const sessions = await Promise.all(
-  sessionsSnap.docs.map(async (doc) => {
-    const data = doc.data();
-    const msgCol = doc.ref.collection("messages");
-
-    const [firstSnap, lastSnap] = await Promise.all([
-      msgCol.where("role", "==", "user").orderBy("timestamp", "asc").limit(1).get(),
-      msgCol.orderBy("timestamp", "desc").limit(1).get(),
-    ]);
-
-    const firstQuestion = firstSnap.docs[0]?.data()?.content as string | undefined;
-    const lastMessage = lastSnap.docs[0]?.data()?.content as string | undefined;
-    const updatedAtMs = data.updatedAt?.toMillis?.() ?? Date.now();
-    const customTitle = data.customTitle as string | undefined;
-
-    return {
-      sessionId: doc.id,
-      title: customTitle || firstQuestion?.slice(0, 60) || "New chat",
-      subtitle: lastMessage?.slice(0, 80) || "",
-      dateLabel: new Date(updatedAtMs).toLocaleDateString([], { month: "short", day: "numeric" }),
-    };
-  })
-);
 
     return NextResponse.json({ success: true, sessions });
   } catch (error: unknown) {

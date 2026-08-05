@@ -1,6 +1,11 @@
+// api/admin/store/addMerchandise/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
-import { FieldValue } from "firebase-admin/firestore";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, PutCommand, DeleteCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 interface MerchandiseInput {
   title: string;
@@ -24,16 +29,73 @@ export async function GET(req: NextRequest) {
     const id = req.nextUrl.searchParams.get("id");
 
     if (id) {
-      const doc = await db.collection("storeProducts").doc(id).get();
-      if (!doc.exists) {
+      let merchandiseData: any = null;
+      let fetchedFromDynamo = false;
+
+      // 1. Try DynamoDB first
+      try {
+        const getRes = await docClient.send(new GetCommand({
+          TableName: "StoreAndCommerce",
+          Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` }
+        }));
+        if (getRes.Item) {
+          merchandiseData = { id, ...getRes.Item };
+          fetchedFromDynamo = true;
+        }
+      } catch (dynErr) {
+        console.warn("[AddMerchandise GET] DynamoDB get failed, trying Firestore:", dynErr);
+      }
+
+      // 2. Fallback to Firestore
+      if (!fetchedFromDynamo) {
+        try {
+          const doc = await db.collection("storeProducts").doc(id).get();
+          if (doc.exists) {
+            merchandiseData = { id: doc.id, ...doc.data() };
+          }
+        } catch (fsErr) {
+          console.error("[AddMerchandise GET] Firestore fallback failed:", fsErr);
+        }
+      }
+
+      if (!merchandiseData) {
         return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
       }
-      return NextResponse.json({ success: true, data: { id: doc.id, ...doc.data() } });
+      return NextResponse.json({ success: true, data: merchandiseData });
     }
 
-    const snapshot = await db.collection("storeProducts").where("category", "==", "memorabilia").get();
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return NextResponse.json({ success: true, data });
+    let list: any[] = [];
+    let fetchedFromDynamo = false;
+
+    // 1. Try DynamoDB Scan
+    try {
+      const scanRes = await docClient.send(new ScanCommand({
+        TableName: "StoreAndCommerce",
+        FilterExpression: "begins_with(entityId, :p) AND category = :cat",
+        ExpressionAttributeValues: { ":p": "PRODUCT#", ":cat": "memorabilia" }
+      }));
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        list = scanRes.Items.map(item => ({
+          id: (item.entityId as string).replace(/^PRODUCT#/, ""),
+          ...item
+        }));
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[AddMerchandise GET list] DynamoDB scan failed:", dynErr);
+    }
+
+    // 2. Fallback to Firestore
+    if (!fetchedFromDynamo || list.length === 0) {
+      try {
+        const snapshot = await db.collection("storeProducts").where("category", "==", "memorabilia").get();
+        list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (fsErr) {
+        console.error("[AddMerchandise GET list] Firestore fallback failed:", fsErr);
+      }
+    }
+
+    return NextResponse.json({ success: true, data: list });
   } catch (error: unknown) {
     console.error("Error fetching merchandise:", error);
     const msg = error instanceof Error ? error.message : "Internal Server Error";
@@ -74,20 +136,41 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check unique serialNo across storeProducts
-    const snapshot = await db.collection("storeProducts")
-      .where("serialNo", "==", serialNo)
-      .limit(1)
-      .get();
+    // Check unique serialNo across storeProducts in DynamoDB
+    let serialExists = false;
+    try {
+      const scanRes = await docClient.send(new ScanCommand({
+        TableName: "StoreAndCommerce",
+        FilterExpression: "begins_with(entityId, :p) AND serialNo = :sn",
+        ExpressionAttributeValues: {
+          ":p": "PRODUCT#",
+          ":sn": serialNo
+        }
+      }));
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        serialExists = true;
+      }
+    } catch (e) {
+      console.warn("DynamoDB serialNo scan notice:", e);
+    }
 
-    if (!snapshot.empty) {
+    if (!serialExists) {
+      const snapshot = await db.collection("storeProducts")
+        .where("serialNo", "==", serialNo)
+        .limit(1)
+        .get();
+      if (!snapshot.empty) {
+        serialExists = true;
+      }
+    }
+
+    if (serialExists) {
       return NextResponse.json(
         { success: false, error: `Serial Number "${serialNo}" is already in use by another product` },
         { status: 409 }
       );
     }
 
-    // Map display labels to actual stored values (validation check)
     const validStates = ["pending review", "approved", "rejected"];
     if (!validStates.includes(governance_state)) {
       return NextResponse.json(
@@ -96,9 +179,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Generate slug/timestamp based document ID
     const baseSlug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     const documentId = `${baseSlug}-${Date.now()}`;
+    const now = Date.now();
 
     const newMerchandise = {
       category: "memorabilia",
@@ -116,11 +199,30 @@ export async function POST(req: NextRequest) {
       status: "available",
       lockedBy: null,
       lockExpiresAt: null,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    await db.collection("storeProducts").doc(documentId).set(newMerchandise);
+    // 1. Put in DynamoDB first
+    try {
+      await docClient.send(new PutCommand({
+        TableName: "StoreAndCommerce",
+        Item: {
+          entityId: `PRODUCT#${documentId}`,
+          sk: `PRODUCT#${documentId}`,
+          ...newMerchandise
+        }
+      }));
+    } catch (dynErr) {
+      console.warn("[AddMerchandise POST] DynamoDB write failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      await db.collection("storeProducts").doc(documentId).set(newMerchandise);
+    } catch (fsErr) {
+      console.warn("[AddMerchandise POST] Firestore sync failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, id: documentId }, { status: 201 });
   } catch (error: unknown) {
@@ -167,19 +269,32 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    const docRef = db.collection("storeProducts").doc(id);
-    const docSnap = await docRef.get();
-    if (!docSnap.exists) {
-      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    // Check unique serialNo excluding self in DynamoDB
+    let serialExists = false;
+    try {
+      const scanRes = await docClient.send(new ScanCommand({
+        TableName: "StoreAndCommerce",
+        FilterExpression: "begins_with(entityId, :p) AND serialNo = :sn",
+        ExpressionAttributeValues: {
+          ":p": "PRODUCT#",
+          ":sn": serialNo
+        }
+      }));
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        serialExists = scanRes.Items.some(item => (item.entityId as string).replace(/^PRODUCT#/, "") !== id);
+      }
+    } catch (e) {
+      console.warn("DynamoDB serialNo scan check notice:", e);
     }
 
-    // Check unique serialNo excluding self
-    const snapshot = await db.collection("storeProducts")
-      .where("serialNo", "==", serialNo)
-      .get();
+    if (!serialExists) {
+      const snapshot = await db.collection("storeProducts")
+        .where("serialNo", "==", serialNo)
+        .get();
+      serialExists = snapshot.docs.some(doc => doc.id !== id);
+    }
 
-    const isDuplicate = snapshot.docs.some(doc => doc.id !== id);
-    if (isDuplicate) {
+    if (serialExists) {
       return NextResponse.json(
         { success: false, error: `Serial Number "${serialNo}" is already in use by another product` },
         { status: 409 }
@@ -194,6 +309,7 @@ export async function PUT(req: NextRequest) {
       );
     }
 
+    const now = Date.now();
     const updatedMerchandise = {
       title,
       athlete,
@@ -206,10 +322,35 @@ export async function PUT(req: NextRequest) {
       governance_state,
       image,
       ownerHistory: Array.isArray(ownerHistory) ? ownerHistory.filter(x => x && x.trim() !== "") : [],
-      updatedAt: FieldValue.serverTimestamp(),
+      updatedAt: now,
     };
 
-    await docRef.update(updatedMerchandise);
+    // 1. Update in DynamoDB first
+    try {
+      const getRes = await docClient.send(new GetCommand({
+        TableName: "StoreAndCommerce",
+        Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` }
+      }));
+      const existingItem = getRes.Item;
+      await docClient.send(new PutCommand({
+        TableName: "StoreAndCommerce",
+        Item: {
+          ...existingItem,
+          ...updatedMerchandise,
+          entityId: `PRODUCT#${id}`,
+          sk: `PRODUCT#${id}`
+        }
+      }));
+    } catch (dynErr) {
+      console.warn("[AddMerchandise PUT] DynamoDB update failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      await db.collection("storeProducts").doc(id).set(updatedMerchandise, { merge: true });
+    } catch (fsErr) {
+      console.warn("[AddMerchandise PUT] Firestore fallback failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, id }, { status: 200 });
   } catch (error: unknown) {
@@ -226,14 +367,23 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Missing id parameter" }, { status: 400 });
     }
 
-    const docRef = db.collection("storeProducts").doc(id);
-    const docSnap = await docRef.get();
-    if (!docSnap.exists) {
-      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    // 1. Delete from DynamoDB first
+    try {
+      await docClient.send(new DeleteCommand({
+        TableName: "StoreAndCommerce",
+        Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` }
+      }));
+    } catch (dynErr) {
+      console.warn("[AddMerchandise DELETE] DynamoDB delete failed:", dynErr);
     }
 
-    await docRef.delete();
-
+    // 2. Sync to Firestore
+    try {
+      await db.collection("storeProducts").doc(id).delete();
+    } catch (fsErr) {
+      console.warn("[AddMerchandise DELETE] Firestore fallback delete failed:", fsErr);
+    }
+    
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error: unknown) {
     console.error("Error deleting merchandise:", error);

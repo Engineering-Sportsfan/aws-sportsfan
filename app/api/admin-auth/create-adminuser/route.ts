@@ -1,14 +1,52 @@
+// app/api/admin-auth/create-adminuser/route.ts — Migrated to AWS DynamoDB (UserData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import bcrypt from "bcryptjs";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const snap = await db.collection("admin_users").orderBy("createdAt", "desc").get();
-    const users = snap.docs.map(d => ({
-      email: d.id,
-      ...d.data(),
-    }));
+    let users: any[] = [];
+
+    // 1. Try DynamoDB
+    try {
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "UserData",
+          FilterExpression: "begins_with(userId, :auPrefix) AND sk = :pSk",
+          ExpressionAttributeValues: {
+            ":auPrefix": "ADMIN_USER#",
+            ":pSk": "PROFILE#META",
+          },
+          Limit: 50,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        users = scanRes.Items.map((d) => ({
+          email: d.email || (d.userId as string).replace(/^ADMIN_USER#/, ""),
+          ...d,
+        }));
+      }
+    } catch (e) {
+      console.warn("[admin-auth create-adminuser GET] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
+    if (users.length === 0 && db) {
+      const snap = await db.collection("admin_users").orderBy("createdAt", "desc").get();
+      users = snap.docs.map(d => ({
+        email: d.id,
+        ...d.data(),
+      }));
+    }
+
+    users.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
     return NextResponse.json({ users, total: users.length });
   } catch (error: unknown) {
     console.error("ADMIN USERS GET ERROR:", error);
@@ -29,20 +67,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const adminRef = db.collection("admin_users").doc(email);
-    const adminDoc = await adminRef.get();
+    let existing: any = null;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "UserData",
+          Key: { userId: `ADMIN_USER#${email}`, sk: "PROFILE#META" },
+        })
+      );
+      if (getRes.Item) existing = getRes.Item;
+    } catch {}
 
-    if (adminDoc.exists) {
+    if (!existing && db) {
+      const adminDoc = await db.collection("admin_users").doc(email).get();
+      if (adminDoc.exists) existing = adminDoc.data();
+    }
+
+    if (existing) {
       return NextResponse.json(
         { error: "Admin user already exists with this email" },
         { status: 409 }
       );
     }
 
-    // Generate a secure temporary password (like Google Workspace)
+    // Generate a secure temporary password
     const generatedPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8);
     const hashedPassword = await bcrypt.hash(generatedPassword, 12);
 
+    const now = Date.now();
     const newAdminData = {
       email,
       firstName,
@@ -51,23 +103,30 @@ export async function POST(req: NextRequest) {
       employeeId: employeeId || null,
       departmentId: departmentId || null,
       password: hashedPassword,
-      isFirstLogin: true, // Flag for forcing password change on first login
+      isFirstLogin: true,
       roles: roles || ["sf360Staff"],
       status: "active",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    await adminRef.set(newAdminData);
+    await dualWrite({
+      tableName: "UserData",
+      dynamoItem: {
+        userId: `ADMIN_USER#${email}`,
+        sk: "PROFILE#META",
+        ...newAdminData,
+      },
+      firestoreRef: db.collection("admin_users").doc(email),
+      firestoreData: newAdminData,
+    });
 
-    // Don't send hashedPassword back, but DO return the generated password 
-    // so the admin can securely share it with the new user (or it would be emailed).
     const { password: _, ...safeAdminData } = newAdminData;
 
     return NextResponse.json({
       success: true,
       user: safeAdminData,
-      generatedPassword: generatedPassword, // Admin UI can display this once
+      generatedPassword: generatedPassword,
     }, { status: 201 });
 
   } catch (error: unknown) {
