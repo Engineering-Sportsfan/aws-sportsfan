@@ -623,6 +623,12 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Orders Management", icon: "◉",
+        children: [
+          { href: "/admin/order-management/athlete-store", label: "Athlete Store" },
+        ],
+      },
+      {
         label: "Athletes Management", icon: "◉",
         children: [
           { href: "/admin/athlete-management/list", label: "Athlete Profiles" },
