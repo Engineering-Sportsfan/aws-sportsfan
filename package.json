@@ -13,6 +13,8 @@
     "automate:engagements": "node automation/generateEngagements.js"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1103.0",
+    "@aws-sdk/lib-dynamodb": "^3.1103.0",
     "@ckeditor/ckeditor5-build-classic": "^41.4.2",
     "@ckeditor/ckeditor5-react": "^11.1.2",
     "axios": "^1.13.6",
