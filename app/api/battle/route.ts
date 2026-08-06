@@ -5,7 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
 import { transporter } from "@/lib/mailer";
 import { awardUserPoints } from "@/lib/userPoints";
-import { ScanCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand, QueryCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -32,43 +32,57 @@ async function getStandardizedUserInfo(
   providedName?: string,
   providedEmail?: string
 ) {
+  let userData: Record<string, any> | null = null;
+
+  // 1. Try DynamoDB IdentityAndAccess first
   try {
-    const userRef = db.collection("users").doc(userId);
-    const userSnap = await userRef.get();
-
-    if (userSnap.exists) {
-      const userData = userSnap.data();
-
-      let userName = "";
-      if (providedName && providedName !== "Unknown User") {
-        userName = providedName;
-      } else if (userData?.firstName) {
-        userName = [userData.firstName, userData.lastName].filter(Boolean).join(" ");
-      } else if (userData?.name) {
-        userName = userData.name;
-      } else if (userData?.email) {
-        userName = userData.email.split("@")[0];
-      } else {
-        userName = "User";
-      }
-
-      const userEmail = providedEmail || userData?.email || "";
-      return { userName, userEmail, userData };
+    const res = await docClient.send(
+      new GetCommand({
+        TableName: "IdentityAndAccess",
+        Key: { entityId: `USER#${userId}`, sk: "USER#META" },
+      })
+    );
+    if (res.Item) {
+      userData = res.Item as Record<string, any>;
     }
-
-    return {
-      userName: providedName || "User",
-      userEmail: providedEmail || "",
-      userData: null,
-    };
-  } catch (error) {
-    console.error("Error getting user info:", error);
-    return {
-      userName: providedName || "User",
-      userEmail: providedEmail || "",
-      userData: null,
-    };
+  } catch (dynErr) {
+    console.warn("[getStandardizedUserInfo] DynamoDB get notice:", dynErr);
   }
+
+  // 2. Fallback to Firestore
+  if (!userData) {
+    try {
+      const userSnap = await db.collection("users").doc(userId).get();
+      if (userSnap.exists) {
+        userData = userSnap.data() as Record<string, any>;
+      }
+    } catch (fsErr) {
+      console.warn("[getStandardizedUserInfo] Firestore fallback notice:", fsErr);
+    }
+  }
+
+  if (userData) {
+    let userName = "";
+    if (providedName && providedName !== "Unknown User") {
+      userName = providedName;
+    } else if (userData.firstName) {
+      userName = [userData.firstName, userData.lastName].filter(Boolean).join(" ");
+    } else if (userData.name) {
+      userName = userData.name;
+    } else if (userData.email) {
+      userName = (userData.email as string).split("@")[0];
+    } else {
+      userName = "User";
+    }
+    const userEmail = providedEmail || userData.email || "";
+    return { userName, userEmail, userData };
+  }
+
+  return {
+    userName: providedName || "User",
+    userEmail: providedEmail || "",
+    userData: null,
+  };
 }
 
 async function sendBattleInviteEmails(
@@ -197,11 +211,13 @@ export async function POST(req: NextRequest) {
       );
     } catch (_) {}
 
-    // In-app notifications for friends
+    // In-app notifications for friends — DynamoDB primary, Firestore fallback
     if (invitedFriends && invitedFriends.length > 0) {
       for (const friend of invitedFriends) {
         try {
-          await db.collection("notifications").add({
+          const notifId = `notif_${now}_${Math.random().toString(36).substring(2, 9)}`;
+          const notifData = {
+            id: notifId,
             type: "BATTLE_INVITE",
             recipientEmail: friend.email,
             senderName: standardizedName,
@@ -212,7 +228,30 @@ export async function POST(req: NextRequest) {
             message: `${standardizedName} has invited you to a Fan Battle!`,
             isRead: false,
             createdAt: now,
-          });
+          };
+
+          // 1. Write to DynamoDB IdentityAndAccess
+          try {
+            await docClient.send(
+              new PutCommand({
+                TableName: "IdentityAndAccess",
+                Item: {
+                  entityId: `USER#${friend.email}`,
+                  sk: `NOTIF#${now}#${notifId}`,
+                  ...notifData,
+                },
+              })
+            );
+          } catch (dynNotifErr) {
+            console.warn("[battle notification] DynamoDB write notice:", dynNotifErr);
+          }
+
+          // 2. Dual-write to Firestore as backup
+          try {
+            await db.collection("notifications").doc(notifId).set(notifData);
+          } catch (fsNotifErr) {
+            console.warn("[battle notification] Firestore fallback notice:", fsNotifErr);
+          }
         } catch (notifErr) {
           console.warn("Notification error:", notifErr);
         }
