@@ -13,7 +13,7 @@ export async function GET(
       TableName: "SportsData",
       Key: {
         entityId: `ATHLETE#${athleteId}`,
-        sk: "PROFILE#META",
+        sk: "PROFILE#ATHLETE",
       },
     });
 
