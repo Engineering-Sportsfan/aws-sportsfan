@@ -4,16 +4,16 @@ import { docClient } from "@/lib/dynamodb";
 
 export async function GET(
   request: Request,
-  { params }: { params: { athleteProfileId: string } }
+  { params }: { params: Promise<{ athleteProfileId: string }> }
 ) {
   try {
-    const athleteId = params.athleteProfileId;
+    const { athleteProfileId } = await params;
 
     const command = new GetCommand({
       TableName: "SportsData",
       Key: {
-        entityId: `ATHLETE#${athleteId}`,
-        sk: "PROFILE#ATHLETE",
+        entityId: `ATHLETE#${athleteProfileId}`,
+        sk: "PROFILE#META",
       },
     });
 
