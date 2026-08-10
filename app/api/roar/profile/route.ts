@@ -32,7 +32,22 @@ async function resolveUserDoc(userId: string, email: string) {
     console.warn("[profile resolveUserDoc] DynamoDB direct get failed:", dynErr);
   }
 
-  // Check by email in DynamoDB
+  // Try direct lookup with email as partition key next
+  if (email && email !== userId) {
+    try {
+      const getRes = await docClient.send(new GetCommand({
+        TableName: "IdentityAndAccess",
+        Key: { entityId: `USER#${email}`, sk: "USER#META" }
+      }));
+      if (getRes.Item) {
+        return { id: email, data: getRes.Item };
+      }
+    } catch (dynErr) {
+      console.warn("[profile resolveUserDoc] DynamoDB direct get by email failed:", dynErr);
+    }
+  }
+
+  // Check by email in DynamoDB GSI
   if (email) {
     try {
       const emailRes = await docClient.send(new QueryCommand({
@@ -90,6 +105,11 @@ export async function GET(req: NextRequest) {
         }));
         if (getRes.Item) {
           userData = getRes.Item;
+        } else {
+          const resolved = await resolveUserDoc(resolvedUserId, resolvedUserId.includes("@") ? resolvedUserId : "");
+          if (resolved) {
+            userData = resolved.data;
+          }
         }
       } catch (dynErr) {
         console.warn("[profile GET] DynamoDB target user get failed:", dynErr);

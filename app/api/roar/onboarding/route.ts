@@ -283,7 +283,22 @@ async function resolveUserDoc(userId: string, email: string) {
     console.warn("[onboarding resolveUserDoc] DynamoDB direct get failed:", dynErr);
   }
 
-  // Check by email in DynamoDB
+  // Try direct lookup with email as partition key next
+  if (email && email !== userId) {
+    try {
+      const getRes = await docClient.send(new GetCommand({
+        TableName: "IdentityAndAccess",
+        Key: { entityId: `USER#${email}`, sk: "USER#META" }
+      }));
+      if (getRes.Item) {
+        return { id: email, data: getRes.Item };
+      }
+    } catch (dynErr) {
+      console.warn("[onboarding resolveUserDoc] DynamoDB direct get by email failed:", dynErr);
+    }
+  }
+
+  // Check by email in DynamoDB GSI
   if (email) {
     try {
       const emailRes = await docClient.send(new QueryCommand({

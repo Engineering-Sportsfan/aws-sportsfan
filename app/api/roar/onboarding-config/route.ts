@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
         }
       }));
 
-      if (res.Items) {
+      if (res.Items && res.Items.length > 0) {
         let filtered = res.Items;
         if (!includeInactive) {
           filtered = res.Items.filter(item => item.active === true);
