@@ -306,10 +306,11 @@ async function resolveUserDoc(userId: string, email: string) {
         IndexName: "email-index",
         KeyConditionExpression: "email = :email",
         ExpressionAttributeValues: { ":email": email },
-        Limit: 1
+        Limit: 5
       }));
       if (emailRes.Items && emailRes.Items.length > 0) {
-        const item = emailRes.Items[0];
+        const metaItem = emailRes.Items.find(item => item.sk === "USER#META");
+        const item = metaItem || emailRes.Items[0];
         const uid = (item.entityId as string).replace(/^USER#/, "");
         return { id: uid, data: item };
       }
@@ -368,6 +369,7 @@ export async function POST(req: NextRequest) {
     engagementPrefs: engagementPrefs ?? [],
     onboardingCompleted: true,
     onboardingCompletedAt: Date.now(),
+    email: user.email,
   };
 
   // 1. Update in DynamoDB first
@@ -422,7 +424,7 @@ export async function PATCH(req: NextRequest) {
   };
 
   const resolvedUserId = resolved.id;
-  const updates: Record<string, any> = { updatedAt: Date.now() };
+  const updates: Record<string, any> = { updatedAt: Date.now(), email: user.email };
   if (sports !== undefined) updates.sports = sports;
   if (followEntities !== undefined) updates.followEntities = followEntities;
   if (engagementPrefs !== undefined) updates.engagementPrefs = engagementPrefs;
