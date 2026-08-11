@@ -109,7 +109,8 @@ async function migrateCollection(collectionName: string, prefix: string) {
             const item = {
                 roomId: `ROOM#${roomId}`, 
                 sk: `${prefix}#${doc.id}#${timestamp}`, 
-                ...data
+                ...data,
+                ...(data.isActive !== undefined && { isActive: data.isActive ? "true" : "false" })
             };
 
             const size = calculateItemSize(item);
