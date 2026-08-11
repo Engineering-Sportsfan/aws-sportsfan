@@ -245,6 +245,7 @@ export async function POST(req: NextRequest) {
       matchId,
       privacy, // "public" | "private" | "premium"
       isTestingRoom,
+      botConfig,
     } = body;
 
     if (!name?.trim()) {
@@ -309,25 +310,26 @@ export async function POST(req: NextRequest) {
       const VALID_PRIVACY = ["public", "private", "premium"];
       const normalizedPrivacy = VALID_PRIVACY.includes(privacy) ? privacy : "public";
 
-      const newRoom: ChatRoom & { matchId?: string; privacy?: string; isTestingRoom?: boolean } = {
-        roomId: roomRef.id,
-        name: name.trim(),
-        sport: sport || "general",
-        createdAt: Date.now(),
-        isActive: isActive !== undefined ? Boolean(isActive) : true,
-        privacy: normalizedPrivacy, // stored, but doesn't affect visibility/isActive yet
-        fanCount: 0,
-        createdByUid: user.userId,
-        isTestingRoom: Boolean(isTestingRoom),
-        ...(icon && { icon }),
-        ...(description && { description: description.trim() }),
-        ...(scheduledStartTime && {
-          scheduledStartTime: Number(scheduledStartTime),
-        }),
-        ...(score && { score }),
-        ...(scoreSubtitle && { scoreSubtitle }),
-        ...(matchId && { matchId }),
-      };
+  const newRoom: ChatRoom & { matchId?: string; privacy?: string; isTestingRoom?: boolean; botConfig?: Record<string, unknown> } = {
+    roomId: roomRef.id,
+    name: name.trim(),
+    sport: sport || "general",
+    createdAt: Date.now(),
+    isActive: isActive !== undefined ? Boolean(isActive) : true,
+    privacy: normalizedPrivacy, // stored, but doesn't affect visibility/isActive yet
+    fanCount: 0,
+    createdByUid: user.userId,
+    isTestingRoom: Boolean(isTestingRoom),
+    ...(icon && { icon }),
+    ...(description && { description: description.trim() }),
+    ...(scheduledStartTime && {
+      scheduledStartTime: Number(scheduledStartTime),
+    }),
+    ...(score && { score }),
+    ...(scoreSubtitle && { scoreSubtitle }),
+    ...(matchId && { matchId }),
+    ...(botConfig && { botConfig }),
+  };
 
       await roomRef.set(newRoom);
       return NextResponse.json({ success: true, room: newRoom });
