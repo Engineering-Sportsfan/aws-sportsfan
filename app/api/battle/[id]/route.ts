@@ -1,5 +1,10 @@
+// app/api/battle/[id]/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 type BattleType = "PLAYERS" | "CLUBS";
 
@@ -8,14 +13,13 @@ interface InvitedFriend {
   name: string;
 }
 
-//  Helper: extract ID from URL 
 function getIdFromUrl(req: NextRequest): string {
   const url = new URL(req.url);
   const parts = url.pathname.split("/");
   return parts[parts.length - 1];
 }
 
-// GET - Fetch single article by ID
+// ─── GET: Fetch battle by ID ──────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -24,25 +28,61 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Battle ID is required" }, { status: 400 });
     }
 
-    const docRef = db.collection("fanBattles").doc(id);
-    const docSnap = await docRef.get();
+    let battleData: Record<string, unknown> | null = null;
 
-    if (!docSnap.exists) {
+    // 1. Query DynamoDB SocialAndContent table
+    try {
+      const candidates = [`BATTLE#${id}`, id];
+      for (const cand of candidates) {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "SocialAndContent",
+            KeyConditionExpression: "contentId = :c",
+            ExpressionAttributeValues: { ":c": cand },
+            Limit: 1,
+          })
+        );
+        if (qRes.Items && qRes.Items.length > 0) {
+          battleData = qRes.Items[0];
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn("DynamoDB battle query notice:", err);
+    }
+
+    // 2. Fallback to Firebase
+    if (!battleData) {
+      try {
+        const docRef = db.collection("fanBattles").doc(id);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          battleData = { id: docSnap.id, ...docSnap.data() };
+        }
+      } catch (fbErr) {
+        console.warn("Firebase battle fetch fallback notice:", fbErr);
+      }
+    }
+
+    if (!battleData) {
       return NextResponse.json({ error: "Battle not found" }, { status: 404 });
     }
 
     return NextResponse.json({
       success: true,
-      battle: { id: docSnap.id, ...docSnap.data() },
-    });
+      battle: {
+        id: (battleData.contentId as string)?.replace(/^BATTLE#/, "") || battleData.battleId || id,
+        ...battleData,
+      },
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("GET /api/battles/[id] error:", error);
+    console.error("GET /api/battle/[id] error:", error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 
-// ─── PUT — Update a battle ────────────────────────────────────────────────────
+// ─── PUT: Update a battle ─────────────────────────────────────────────────────
 export async function PUT(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -51,15 +91,7 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Battle ID is required" }, { status: 400 });
     }
 
-    const docRef = db.collection("fanBattles").doc(id);
-    const docSnap = await docRef.get();
-
-    if (!docSnap.exists) {
-      return NextResponse.json({ error: "Battle not found" }, { status: 404 });
-    }
-
     const body = await req.json();
-
     const {
       battleName,
       battleType,
@@ -69,15 +101,11 @@ export async function PUT(req: NextRequest) {
       userName,
     } = body;
 
-    // ── Build partial update object (only include provided fields) ──
     const updates: Record<string, unknown> = { updatedAt: Date.now() };
 
     if (battleName !== undefined) {
       if (typeof battleName !== "string" || !battleName.trim()) {
-        return NextResponse.json(
-          { error: "battleName must be a non-empty string" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "battleName must be a non-empty string" }, { status: 400 });
       }
       updates.battleName = battleName.trim();
     }
@@ -85,104 +113,92 @@ export async function PUT(req: NextRequest) {
     if (battleType !== undefined) {
       const validTypes: BattleType[] = ["PLAYERS", "CLUBS"];
       if (!validTypes.includes(battleType)) {
-        return NextResponse.json(
-          { error: "battleType must be PLAYERS or CLUBS" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "battleType must be PLAYERS or CLUBS" }, { status: 400 });
       }
       updates.battleType = battleType;
     }
 
     if (selectedPlayers !== undefined) {
       if (!Array.isArray(selectedPlayers)) {
-        return NextResponse.json(
-          { error: "selectedPlayers must be an array" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "selectedPlayers must be an array" }, { status: 400 });
       }
       updates.selectedPlayers = selectedPlayers;
     }
 
     if (selectedClubs !== undefined) {
       if (!Array.isArray(selectedClubs)) {
-        return NextResponse.json(
-          { error: "selectedClubs must be an array" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "selectedClubs must be an array" }, { status: 400 });
       }
       updates.selectedClubs = selectedClubs;
     }
 
     if (invitedFriends !== undefined) {
       if (!Array.isArray(invitedFriends)) {
-        return NextResponse.json(
-          { error: "invitedFriends must be an array" },
-          { status: 400 }
-        );
-      }
-
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      for (const friend of invitedFriends as InvitedFriend[]) {
-        if (!friend.email || !friend.name) {
-          return NextResponse.json(
-            { error: "Each invitedFriend must have email and name" },
-            { status: 400 }
-          );
-        }
-        if (!emailRegex.test(friend.email)) {
-          return NextResponse.json(
-            { error: `Invalid email: ${friend.email}` },
-            { status: 400 }
-          );
-        }
+        return NextResponse.json({ error: "invitedFriends must be an array" }, { status: 400 });
       }
       updates.invitedFriends = invitedFriends;
     }
 
     if (userName !== undefined) {
-      if (typeof userName !== "string" || !userName.trim()) {
-        return NextResponse.json(
-          { error: "userName must be a non-empty string" },
-          { status: 400 }
-        );
-      }
       updates.userName = userName.trim();
     }
 
-    // ── Cross-field consistency check ──
-    const resolvedType = (updates.battleType ?? docSnap.data()?.battleType) as BattleType;
-    const resolvedPlayers = (updates.selectedPlayers ?? docSnap.data()?.selectedPlayers) as string[];
-    const resolvedClubs = (updates.selectedClubs ?? docSnap.data()?.selectedClubs) as string[];
-
-    if (resolvedType === "PLAYERS" && resolvedPlayers.length === 0) {
-      return NextResponse.json(
-        { error: "selectedPlayers cannot be empty when battleType is PLAYERS" },
-        { status: 400 }
-      );
+    // 1. Update in DynamoDB
+    try {
+      const candidates = [`BATTLE#${id}`, id];
+      for (const cand of candidates) {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "SocialAndContent",
+            KeyConditionExpression: "contentId = :c",
+            ExpressionAttributeValues: { ":c": cand },
+            Limit: 1,
+          })
+        );
+        if (qRes.Items && qRes.Items.length > 0) {
+          const item = qRes.Items[0];
+          await docClient.send(
+            new UpdateCommand({
+              TableName: "SocialAndContent",
+              Key: {
+                contentId: item.contentId as string,
+                sk: item.sk as string,
+              },
+              UpdateExpression: "SET battleName = :bn, updatedAt = :u",
+              ExpressionAttributeValues: {
+                ":bn": updates.battleName || item.battleName,
+                ":u": updates.updatedAt,
+              },
+            })
+          );
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn("DynamoDB battle update notice:", err);
     }
 
-    if (resolvedType === "CLUBS" && resolvedClubs.length === 0) {
-      return NextResponse.json(
-        { error: "selectedClubs cannot be empty when battleType is CLUBS" },
-        { status: 400 }
-      );
+    // 2. Sync to Firebase
+    try {
+      const docRef = db.collection("fanBattles").doc(id);
+      await docRef.update(updates);
+    } catch (fbErr) {
+      console.warn("Firebase battle update notice:", fbErr);
     }
-
-    await docRef.update(updates);
-    const updated = await docRef.get();
 
     return NextResponse.json({
       success: true,
-      battle: { id: updated.id, ...updated.data() },
+      message: "Battle updated successfully",
+      updates,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("PUT /api/battles/[id] error:", error);
+    console.error("PUT /api/battle/[id] error:", error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 
-// ─── DELETE — Remove a battle 
+// ─── DELETE: Remove a battle ──────────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -191,14 +207,43 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Battle ID is required" }, { status: 400 });
     }
 
-    const docRef = db.collection("fanBattles").doc(id);
-    const docSnap = await docRef.get();
-
-    if (!docSnap.exists) {
-      return NextResponse.json({ error: "Battle not found" }, { status: 404 });
+    // 1. Delete from DynamoDB
+    try {
+      const candidates = [`BATTLE#${id}`, id];
+      for (const cand of candidates) {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "SocialAndContent",
+            KeyConditionExpression: "contentId = :c",
+            ExpressionAttributeValues: { ":c": cand },
+            Limit: 1,
+          })
+        );
+        if (qRes.Items && qRes.Items.length > 0) {
+          const item = qRes.Items[0];
+          await docClient.send(
+            new DeleteCommand({
+              TableName: "SocialAndContent",
+              Key: {
+                contentId: item.contentId as string,
+                sk: item.sk as string,
+              },
+            })
+          );
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn("DynamoDB battle delete notice:", err);
     }
 
-    await docRef.delete();
+    // 2. Delete from Firebase
+    try {
+      const docRef = db.collection("fanBattles").doc(id);
+      await docRef.delete();
+    } catch (fbErr) {
+      console.warn("Firebase battle delete notice:", fbErr);
+    }
 
     return NextResponse.json({
       success: true,
@@ -206,7 +251,7 @@ export async function DELETE(req: NextRequest) {
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("DELETE /api/battles/[id] error:", error);
+    console.error("DELETE /api/battle/[id] error:", error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

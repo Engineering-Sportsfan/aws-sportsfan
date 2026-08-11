@@ -1,19 +1,54 @@
-// app/api/team360/route.ts
+// app/api/team360/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
-//  GET all posts 
+export const dynamic = "force-dynamic";
+
+// GET all posts
 export async function GET() {
   try {
-    const snap = await db
-      .collection("team360Posts")
-      .orderBy("createdAt", "desc")
-      .get();
+    let posts: any[] = [];
 
-    const posts = snap.docs.map(d => ({
-      id: d.id,
-      ...d.data(),
-    }));
+    // 1. Try DynamoDB SocialAndContent table
+    try {
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "SocialAndContent",
+          FilterExpression: "begins_with(contentId, :tPrefix)",
+          ExpressionAttributeValues: {
+            ":tPrefix": "TEAM_POST#",
+          },
+          Limit: 100,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        posts = scanRes.Items.map((item) => ({
+          id: item.id || (item.contentId as string).replace(/^TEAM_POST#/, ""),
+          ...item,
+        }));
+      }
+    } catch (e) {
+      console.warn("[team360 GET] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
+    if (posts.length === 0 && db) {
+      const snap = await db
+        .collection("team360Posts")
+        .orderBy("createdAt", "desc")
+        .get();
+
+      posts = snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+      }));
+    }
+
+    posts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
     return NextResponse.json({ posts, total: posts.length });
 
@@ -23,7 +58,7 @@ export async function GET() {
   }
 }
 
-//  POST create new post 
+// POST create new post
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -36,9 +71,9 @@ export async function POST(req: NextRequest) {
       comments,
       live,
       shares,
-      image,      // This is now a URL string from frontend
-      logo,       // This is now a URL string from frontend
-      catlogo,    // Array with URL strings
+      image,
+      logo,
+      catlogo,
       hasVideo,
     } = body;
 
@@ -50,7 +85,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const now = Date.now();
+    const id = `tpost_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
     const newPost = {
+      id,
       teamName,
       title,
       category: category ?? [],
@@ -58,21 +97,31 @@ export async function POST(req: NextRequest) {
       comments: Number(comments) || 0,
       live: Number(live) || 0,
       shares: Number(shares) || 0,
-      image,      // Stores URL like "/Content/Drops/Images/123456-photo.jpg"
-      logo,       // Stores URL like "/Content/Drops/Images/123456-logo.png"
+      image,
+      logo,
       catlogo: catlogo ?? [],
       hasVideo: hasVideo ?? false,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const docRef = await db.collection("team360Posts").add(newPost);
+    // Dual-write
+    await dualWrite({
+      tableName: "SocialAndContent",
+      dynamoItem: {
+        contentId: `TEAM_POST#${id}`,
+        sk: `POST#${now}`,
+        ...newPost,
+      },
+      firestoreRef: db.collection("team360Posts").doc(id),
+      firestoreData: newPost,
+    });
 
     return NextResponse.json(
       {
         success: true,
-        id: docRef.id,
-        post: { id: docRef.id, ...newPost },
+        id,
+        post: newPost,
       },
       { status: 201 }
     );

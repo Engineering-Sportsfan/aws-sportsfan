@@ -1,236 +1,18 @@
-// // api/roar/rooms/[roomId]/presence/route.ts
-
-// import { NextRequest, NextResponse } from "next/server";
-// import { db } from "@/lib/firebaseAdmin";
-// import { getUser } from "@/lib/getUser";
-// import { getUserInfo } from "@/lib/userPoints";
-
-// const PRESENCE_TTL_MS = 60_000;
-
-// async function resolveUser(
-//   email: string,
-//   userId: string
-// ): Promise<{ id: string; snap: FirebaseFirestore.DocumentSnapshot } | null> {
-//   const info = await getUserInfo(userId, undefined, email);
-//   if (!info.exists) return null;
-
-//   const snap = await db.collection("users").doc(info.actualUserId).get();
-//   if (!snap.exists) return null;
-
-//   return { id: info.actualUserId, snap };
-// }
-
-// // POST — join / heartbeat
-// //
-// // FIX: previously this never returned pinnedPost, but the client's join()
-// // handler unconditionally did setPinnedPost(res.data.pinnedPost ?? null) —
-// // since the field was always undefined here, the pin got reset to null on
-// // every single page load/refresh, even though it still existed in
-// // Firestore. Now resolves the user's pin doc in parallel with the rest of
-// // this handler and includes it in the response, so the banner is correct
-// // immediately instead of waiting ~2s for the GET refresh.
-// export async function POST(
-//   req: NextRequest,
-//   { params }: { params: Promise<{ roomId: string }> },
-// ) {
-//   try {
-//     const { roomId } = await params;
-//     const user = await getUser(req);
-//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-//     const resolved = await resolveUser(user.email, user.userId);
-//     if (!resolved) {
-//       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
-//     }
-//     const { id: resolvedUserId, snap: userSnap } = resolved;
-//     const userData = userSnap.data() as { username: string; badge?: string; avatarUrl?: string };
-
-//     const roomRef = db.collection("roarRooms").doc(roomId);
-//     const presenceRef = roomRef.collection("presence").doc(resolvedUserId);
-//     const joinedRef = roomRef.collection("joinedUsers").doc(resolvedUserId);
-//     const pinRef = roomRef.collection("userPins").doc(resolvedUserId);
-
-//     const [joinedSnap, pinSnap] = await Promise.all([
-//       joinedRef.get(),
-//       pinRef.get(),
-//     ]);
-//     const isFirstJoin = !joinedSnap.exists;
-
-//     await presenceRef.set(
-//       {
-//         uid: resolvedUserId,
-//         username: userData.username,
-//         avatarUrl: userData.avatarUrl ?? null,
-//         badge: userData.badge ?? null,
-//         joinedAt: Date.now(),
-//         lastSeenAt: Date.now(),
-//       },
-//       { merge: true },
-//     );
-
-//     if (isFirstJoin) {
-//       await db.runTransaction(async (tx) => {
-//         const roomSnap = await tx.get(roomRef);
-//         const prev = roomSnap.exists ? (roomSnap.data()?.totalJoinCount ?? 0) : 0;
-
-//         tx.set(joinedRef, {
-//           uid: resolvedUserId,
-//           firstJoinedAt: Date.now(),
-//         });
-
-//         tx.set(roomRef, { totalJoinCount: prev + 1 }, { merge: true });
-//       });
-//     }
-
-//     // const cutoff = Date.now() - PRESENCE_TTL_MS;
-//     // const activeSnap = await presenceRef.parent
-//     //   .where("lastSeenAt", ">=", cutoff)
-//     //   .get();
-
-//     // const roomSnap = await roomRef.get();
-//     // const totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
-
-//     // return NextResponse.json({
-//     //   success: true,
-//     //   fanCount: activeSnap.size,
-//     //   totalJoinCount,
-//     //   pinnedPost: pinSnap.exists ? pinSnap.data() : null,
-//     // });
-//     const cutoff = Date.now() - PRESENCE_TTL_MS;
-//     const activeSnap = await presenceRef.parent
-//       .where("lastSeenAt", ">=", cutoff)
-//       .orderBy("lastSeenAt", "desc")
-//       .limit(3)
-//       .get();
-
-//     const fans = activeSnap.docs.map((d) => {
-//       const data = d.data();
-//       return {
-//         uid: data.uid,
-//         username: data.username,
-//         avatarUrl: data.avatarUrl ?? null,
-//         badge: data.badge ?? null,
-//       };
-//     });
-
-//     const roomSnap = await roomRef.get();
-//     const totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
-
-//     return NextResponse.json({
-//       success: true,
-//       fanCount: activeSnap.size, 
-//       totalJoinCount,
-//       fans,
-//       pinnedPost: pinSnap.exists ? pinSnap.data() : null,
-//     });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-// // DELETE — explicit leave
-// export async function DELETE(
-//   req: NextRequest,
-//   { params }: { params: Promise<{ roomId: string }> },
-// ) {
-//   try {
-//     const { roomId } = await params;
-//     const user = await getUser(req);
-//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-//     const resolved = await resolveUser(user.email, user.userId);
-//     if (!resolved) {
-//       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
-//     }
-
-//     await db
-//       .collection("roarRooms")
-//       .doc(roomId)
-//       .collection("presence")
-//       .doc(resolved.id)
-//       .delete();
-
-//     return NextResponse.json({ success: true });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-// // GET — list currently active users in the room (most recent first)
-// //
-// // Also returns the caller's private pinned post for this room
-// // (`pinnedPost`, or null). Piggybacks on the request the client already
-// // fires (refreshActiveFans, ~2s after join, then every 120s) — no
-// // dedicated GET /pin endpoint. Pin doc lives at
-// // roarRooms/{roomId}/userPins/{uid}, keyed by the resolved canonical user
-// // id, and is only ever read for the requesting user — never exposed in the
-// // `fans` list or any other shared response.
-// export async function GET(
-//   req: NextRequest,
-//   { params }: { params: Promise<{ roomId: string }> },
-// ) {
-//   try {
-//     const { roomId } = await params;
-//     const user = await getUser(req);
-//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-//     const cutoff = Date.now() - PRESENCE_TTL_MS;
-//     const snap = await db
-//       .collection("roarRooms")
-//       .doc(roomId)
-//       .collection("presence")
-//       .where("lastSeenAt", ">=", cutoff)
-//       .orderBy("lastSeenAt", "desc")
-//       .get();
-
-//     const fans = snap.docs.map((d) => {
-//       const data = d.data();
-//       return {
-//         uid: data.uid,
-//         username: data.username,
-//         avatarUrl: data.avatarUrl ?? null,
-//         badge: data.badge ?? null,
-//       };
-//     });
-
-//     const resolved = await resolveUser(user.email, user.userId);
-//     const [roomSnap, pinSnap] = await Promise.all([
-//       db.collection("roarRooms").doc(roomId).get(),
-//       resolved
-//         ? db.collection("roarRooms").doc(roomId).collection("userPins").doc(resolved.id).get()
-//         : Promise.resolve(null),
-//     ]);
-
-//     return NextResponse.json({
-//       success: true,
-//       fanCount: fans.length,
-//       fans,
-//       totalJoinCount: roomSnap.data()?.totalJoinCount ?? 0,
-//       pinnedPost: pinSnap?.exists ? pinSnap.data() : null,
-//     });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-
-
-
-
 // api/roar/rooms/[roomId]/presence/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import {
   PRESENCE_TTL_MS,
   buildPresencePayload,
   type FanRecord,
 } from "./presence.contract";
+
+export const dynamic = "force-dynamic";
 
 async function resolveUser(
   email: string,
@@ -258,41 +40,76 @@ async function getRoomRef(roomId: string) {
   return roomRef;
 }
 
-// Fetches the full active-presence set for a room (TTL-filtered, no
-// `.limit()`) and maps it to FanRecord[] for buildPresencePayload. Both
-// POST and GET call this exact function so fanCount/fans can't diverge
-// between the two routes, and neither route can accidentally reintroduce
-// a `.limit()` before counting (that was the bug: the old POST query
-// capped fanCount at 3 by limiting before reading `.size`).
+// Fetches active fan records from DynamoDB first, falling back to Firestore
 async function fetchActiveFanRecords(
   roomRef: FirebaseFirestore.DocumentReference,
+  roomId: string,
   now: number,
 ): Promise<FanRecord[]> {
   const cutoff = now - PRESENCE_TTL_MS;
-  const snap = await roomRef
-    .collection("presence")
-    .where("lastSeenAt", ">=", cutoff)
-    .get();
+  let activeRecords: FanRecord[] = [];
+  let fetchedFromDynamo = false;
 
-  return snap.docs.map((d) => {
-    const data = d.data();
-    return {
-      uid: data.uid,
-      username: data.username,
-      avatarUrl: data.avatarUrl ?? null,
-      badge: data.badge ?? null,
-      lastSeenAt: data.lastSeenAt,
-    };
-  });
+  try {
+    const res = await docClient.send(new QueryCommand({
+      TableName: "RealTimeChat",
+      KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+      FilterExpression: "lastSeenAt >= :c",
+      ExpressionAttributeValues: {
+        ":r": `ROOM#${roomId}`,
+        ":p": "PRESENCE#",
+        ":c": cutoff
+      }
+    }));
+
+    if (res.Items) {
+      activeRecords = res.Items.map((item) => ({
+        uid: item.uid,
+        username: item.username,
+        avatarUrl: item.avatarUrl ?? null,
+        badge: item.badge ?? null,
+        lastSeenAt: item.lastSeenAt
+      }));
+      fetchedFromDynamo = true;
+    }
+  } catch (dynErr) {
+    console.warn("[Presence GET/POST] DynamoDB active presence fetch failed:", dynErr);
+  }
+
+  // Fallback to Firestore
+  if (!fetchedFromDynamo) {
+    try {
+      const snap = await roomRef
+        .collection("presence")
+        .where("lastSeenAt", ">=", cutoff)
+        .get();
+
+      activeRecords = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          uid: data.uid,
+          username: data.username,
+          avatarUrl: data.avatarUrl ?? null,
+          badge: data.badge ?? null,
+          lastSeenAt: data.lastSeenAt,
+        };
+      });
+    } catch (fsErr) {
+      console.error("[Presence GET/POST] Firestore active presence fallback failed:", fsErr);
+    }
+  }
+
+  return activeRecords;
 }
 
 // POST — join / heartbeat
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ roomId: string }> },
+  { params }: { params: Promise<{ roomId: string }> | { roomId: string } }
 ) {
   try {
-    const { roomId } = await params;
+    const resolvedParams = await params;
+    const { roomId } = resolvedParams;
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -304,54 +121,156 @@ export async function POST(
     const userData = userSnap.data() as { username: string; badge?: string; avatarUrl?: string };
 
     const roomRef = await getRoomRef(roomId);
-    const presenceRef = roomRef.collection("presence").doc(resolvedUserId);
-    const joinedRef = roomRef.collection("joinedUsers").doc(resolvedUserId);
     const pinRef = roomRef.collection("userPins").doc(resolvedUserId);
 
-    const [joinedSnap, pinSnap] = await Promise.all([
-      joinedRef.get(),
-      pinRef.get(),
-    ]);
-    const isFirstJoin = !joinedSnap.exists;
     const now = Date.now();
 
-    await presenceRef.set(
-      {
-        uid: resolvedUserId,
-        username: userData.username,
-        avatarUrl: userData.avatarUrl ?? null,
-        badge: userData.badge ?? null,
-        joinedAt: now,
-        lastSeenAt: now,
-      },
-      { merge: true },
-    );
-
-    if (isFirstJoin) {
-      await db.runTransaction(async (tx) => {
-        const roomSnap = await tx.get(roomRef);
-        const prev = roomSnap.exists ? (roomSnap.data()?.totalJoinCount ?? 0) : 0;
-
-        tx.set(joinedRef, {
-          uid: resolvedUserId,
-          firstJoinedAt: now,
-        });
-
-        if (roomSnap.exists) {
-          tx.set(roomRef, { totalJoinCount: prev + 1 }, { merge: true });
-        }
-      });
+    // 1. Write presence and check first join in DynamoDB first
+    let isFirstJoin = true;
+    try {
+      const getJoined = await docClient.send(new GetCommand({
+        TableName: "RealTimeChat",
+        Key: { roomId: `ROOM#${roomId}`, sk: `JOINED#${resolvedUserId}` }
+      }));
+      if (getJoined.Item) {
+        isFirstJoin = false;
+      }
+    } catch (dynErr) {
+      console.warn("[Presence POST] DynamoDB joined check failed:", dynErr);
     }
 
-    const [activeRecords, roomSnap] = await Promise.all([
-      fetchActiveFanRecords(roomRef, now),
-      roomRef.get(),
-    ]);
-    const totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
+    try {
+      // A. Write presence doc
+      await docClient.send(new PutCommand({
+        TableName: "RealTimeChat",
+        Item: {
+          roomId: `ROOM#${roomId}`,
+          sk: `PRESENCE#${resolvedUserId}`,
+          uid: resolvedUserId,
+          username: userData.username,
+          avatarUrl: userData.avatarUrl ?? null,
+          badge: userData.badge ?? null,
+          joinedAt: now,
+          lastSeenAt: now
+        }
+      }));
 
+      // B. If first join, write joined record and increment totalJoinCount
+      if (isFirstJoin) {
+        await docClient.send(new PutCommand({
+          TableName: "RealTimeChat",
+          Item: {
+            roomId: `ROOM#${roomId}`,
+            sk: `JOINED#${resolvedUserId}`,
+            uid: resolvedUserId,
+            firstJoinedAt: now
+          }
+        }));
+
+        const candidates = [`ROOM#${roomId}`, roomId];
+        for (const cand of candidates) {
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: "RealTimeChat",
+              Key: { roomId: cand, sk: `META#${roomId}` },
+              UpdateExpression: "ADD totalJoinCount :one",
+              ExpressionAttributeValues: { ":one": 1 }
+            }));
+          } catch (e) {}
+        }
+      }
+    } catch (dynErr) {
+      console.warn("[Presence POST] DynamoDB write failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    const presenceRef = roomRef.collection("presence").doc(resolvedUserId);
+    const joinedRef = roomRef.collection("joinedUsers").doc(resolvedUserId);
+
+    try {
+      await presenceRef.set(
+        {
+          uid: resolvedUserId,
+          username: userData.username,
+          avatarUrl: userData.avatarUrl ?? null,
+          badge: userData.badge ?? null,
+          joinedAt: now,
+          lastSeenAt: now,
+        },
+        { merge: true },
+      );
+
+      const joinedSnap = await joinedRef.get();
+      if (!joinedSnap.exists) {
+        await db.runTransaction(async (tx) => {
+          const roomSnap = await tx.get(roomRef);
+          const prev = roomSnap.exists ? (roomSnap.data()?.totalJoinCount ?? 0) : 0;
+
+          tx.set(joinedRef, {
+            uid: resolvedUserId,
+            firstJoinedAt: now,
+          });
+
+          if (roomSnap.exists) {
+            tx.set(roomRef, { totalJoinCount: prev + 1 }, { merge: true });
+          }
+        });
+      }
+    } catch (fsErr) {
+      console.warn("[Presence POST] Firestore sync failed:", fsErr);
+    }
+
+    // 3. Fetch active records and pin
+    let pinData: any = null;
+    let fetchedPinFromDynamo = false;
+    try {
+      const getPin = await docClient.send(new GetCommand({
+        TableName: "RealTimeChat",
+        Key: { roomId: `ROOM#${roomId}`, sk: `PIN#${resolvedUserId}` }
+      }));
+      if (getPin.Item) {
+        pinData = getPin.Item;
+        fetchedPinFromDynamo = true;
+      }
+    } catch (e) {}
+
+    if (!fetchedPinFromDynamo) {
+      try {
+        const pinSnap = await pinRef.get();
+        if (pinSnap.exists) {
+          pinData = pinSnap.data();
+        }
+      } catch (e) {}
+    }
+
+    let totalJoinCount = 0;
+    let fetchedCountFromDynamo = false;
+    try {
+      const candidates = [`ROOM#${roomId}`, roomId];
+      for (const cand of candidates) {
+        const getMeta = await docClient.send(new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: cand, sk: `META#${roomId}` }
+        }));
+        if (getMeta.Item) {
+          totalJoinCount = getMeta.Item.totalJoinCount ?? 0;
+          fetchedCountFromDynamo = true;
+          break;
+        }
+      }
+    } catch (e) {}
+
+    if (!fetchedCountFromDynamo) {
+      try {
+        const roomSnap = await roomRef.get();
+        totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
+      } catch (e) {}
+    }
+
+    const activeRecords = await fetchActiveFanRecords(roomRef, roomId, now);
     const payload = buildPresencePayload(activeRecords, {
       totalJoinCount,
-      pinnedPost: pinSnap.exists ? pinSnap.data() : null,
+      pinnedPost: pinData,
     });
 
     return NextResponse.json({ success: true, ...payload });
@@ -364,10 +283,11 @@ export async function POST(
 // DELETE — explicit leave
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ roomId: string }> },
+  { params }: { params: Promise<{ roomId: string }> | { roomId: string } }
 ) {
   try {
-    const { roomId } = await params;
+    const resolvedParams = await params;
+    const { roomId } = resolvedParams;
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -376,11 +296,26 @@ export async function DELETE(
       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
     }
 
-    const roomRef = await getRoomRef(roomId);
-    await roomRef
-      .collection("presence")
-      .doc(resolved.id)
-      .delete();
+    // 1. Delete from DynamoDB first
+    try {
+      await docClient.send(new DeleteCommand({
+        TableName: "RealTimeChat",
+        Key: { roomId: `ROOM#${roomId}`, sk: `PRESENCE#${resolved.id}` }
+      }));
+    } catch (dynErr) {
+      console.warn("[Presence DELETE] DynamoDB delete failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      const roomRef = await getRoomRef(roomId);
+      await roomRef
+        .collection("presence")
+        .doc(resolved.id)
+        .delete();
+    } catch (fsErr) {
+      console.warn("[Presence DELETE] Firestore delete failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
@@ -389,17 +324,14 @@ export async function DELETE(
   }
 }
 
-// GET — list currently active users in the room (most recent first), plus
-// the caller's private pinned post for this room. Pin doc lives at
-// roarRooms/{roomId}/userPins/{uid}, keyed by the resolved canonical user
-// id, and is only ever read for the requesting user — never exposed in
-// the shared `fans` list.
+// GET — list active fans & pinned post
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ roomId: string }> },
+  { params }: { params: Promise<{ roomId: string }> | { roomId: string } }
 ) {
   try {
-    const { roomId } = await params;
+    const resolvedParams = await params;
+    const { roomId } = resolvedParams;
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -407,17 +339,60 @@ export async function GET(
     const resolved = await resolveUser(user.email, user.userId);
     const roomRef = await getRoomRef(roomId);
 
-    const [activeRecords, roomSnap, pinSnap] = await Promise.all([
-      fetchActiveFanRecords(roomRef, now),
-      roomRef.get(),
-      resolved
-        ? roomRef.collection("userPins").doc(resolved.id).get()
-        : Promise.resolve(null),
-    ]);
+    // 1. Get pin doc from DynamoDB first
+    let pinData: any = null;
+    let fetchedPinFromDynamo = false;
+    if (resolved) {
+      try {
+        const getPin = await docClient.send(new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${roomId}`, sk: `PIN#${resolved.id}` }
+        }));
+        if (getPin.Item) {
+          pinData = getPin.Item;
+          fetchedPinFromDynamo = true;
+        }
+      } catch (e) {}
+    }
 
+    if (resolved && !fetchedPinFromDynamo) {
+      try {
+        const pinSnap = await roomRef.collection("userPins").doc(resolved.id).get();
+        if (pinSnap.exists) {
+          pinData = pinSnap.data();
+        }
+      } catch (e) {}
+    }
+
+    // 2. Get totalJoinCount from DynamoDB first
+    let totalJoinCount = 0;
+    let fetchedCountFromDynamo = false;
+    try {
+      const candidates = [`ROOM#${roomId}`, roomId];
+      for (const cand of candidates) {
+        const getMeta = await docClient.send(new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: cand, sk: `META#${roomId}` }
+        }));
+        if (getMeta.Item) {
+          totalJoinCount = getMeta.Item.totalJoinCount ?? 0;
+          fetchedCountFromDynamo = true;
+          break;
+        }
+      }
+    } catch (e) {}
+
+    if (!fetchedCountFromDynamo) {
+      try {
+        const roomSnap = await roomRef.get();
+        totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
+      } catch (e) {}
+    }
+
+    const activeRecords = await fetchActiveFanRecords(roomRef, roomId, now);
     const payload = buildPresencePayload(activeRecords, {
-      totalJoinCount: roomSnap.data()?.totalJoinCount ?? 0,
-      pinnedPost: pinSnap?.exists ? pinSnap.data() : null,
+      totalJoinCount,
+      pinnedPost: pinData,
     });
 
     return NextResponse.json({ success: true, ...payload });

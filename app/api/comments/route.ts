@@ -1,716 +1,466 @@
-// import { NextRequest, NextResponse } from "next/server";
-// import { db } from "@/lib/firebaseAdmin";
-
-// interface Comment {
-//     contentId: string;
-//     contentType: string; // Dynamic - accepts any string
-//     userId: string;
-//     userName: string;
-//     userEmail?: string;
-//     userAvatar?: string;
-//     commentText: string;
-//     parentCommentId?: string;
-//     likes?: number;
-//     likedBy?: string[];
-//     timestamp?: number; // For video/audio: time in seconds when comment was made
-//     createdAt: number;
-//     updatedAt: number;
-//     isFlagged?: boolean;
-//     flaggedAt?: number | null;
-//     metadata?: {
-//         contentTitle?: string;
-//         contentUrl?: string;
-//     };
-// }
-
-// // ─── GET: Fetch comments for specific content ─────────────────────────────────
-// export async function GET(req: NextRequest) {
-//     try {
-//         const { searchParams } = new URL(req.url);
-//         const contentId = searchParams.get("contentId");
-//         const parentCommentId = searchParams.get("parentCommentId");
-//         const limit = parseInt(searchParams.get("limit") || "20");
-//         const lastDocId = searchParams.get("lastDocId");
-//         const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
-
-//         if (!contentId && !parentCommentId) {
-//             return NextResponse.json(
-//                 { error: "contentId or parentCommentId is required" },
-//                 { status: 400 }
-//             );
-//         }
-
-//         let query = db.collection("comments").orderBy("createdAt", "desc");
-
-//         // Fetch replies for a specific comment
-//         if (parentCommentId) {
-//             query = db.collection("comments")
-//                 .where("parentCommentId", "==", parentCommentId)
-//                 .orderBy("createdAt", "asc");
-//         } 
-//         // Fetch top-level comments for content
-//         else {
-//             query = db.collection("comments")
-//                 .where("contentId", "==", contentId)
-//                 .where("parentCommentId", "==", null) // Only top-level comments
-//                 .orderBy("createdAt", "desc");
-//         }
-
-//         query = query.limit(limit);
-
-//         // Pagination
-//         if (lastDocId && lastDocCreatedAt) {
-//             const lastDocRef = db.collection("comments").doc(lastDocId);
-//             const lastDoc = await lastDocRef.get();
-//             if (lastDoc.exists) {
-//                 query = query.startAfter(lastDoc);
-//             }
-//         }
-
-//         const snapshot = await query.get();
-//         const comments = snapshot.docs.map((doc) => ({
-//             id: doc.id,
-//             ...doc.data(),
-//         }));
-
-//         // If fetching top-level comments, also get reply counts
-//         if (!parentCommentId) {
-//             const commentsWithReplyCounts = await Promise.all(
-//                 comments.map(async (comment) => {
-//                     const repliesQuery = await db.collection("comments")
-//                         .where("parentCommentId", "==", comment.id)
-//                         .count()
-//                         .get();
-                    
-//                     return {
-//                         ...comment,
-//                         replyCount: repliesQuery.data().count,
-//                     };
-//                 })
-//             );
-
-//             const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-
-//             return NextResponse.json({
-//                 success: true,
-//                 comments: commentsWithReplyCounts,
-//                 pagination: {
-//                     limit,
-//                     hasMore: comments.length === limit,
-//                     nextCursor: comments.length === limit
-//                         ? {
-//                             lastDocId: lastDoc?.id,
-//                             lastDocCreatedAt: lastDoc?.data()?.createdAt,
-//                         }
-//                         : null,
-//                 },
-//             });
-//         }
-
-//         // For replies, return as-is
-//         const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-//         return NextResponse.json({
-//             success: true,
-//             comments,
-//             pagination: {
-//                 limit,
-//                 hasMore: comments.length === limit,
-//                 nextCursor: comments.length === limit
-//                     ? {
-//                         lastDocId: lastDoc?.id,
-//                         lastDocCreatedAt: lastDoc?.data()?.createdAt,
-//                     }
-//                     : null,
-//             },
-//         });
-
-//     } catch (error: unknown) {
-//         const msg = error instanceof Error ? error.message : "Unexpected error";
-//         console.error("Error fetching comments:", error);
-//         return NextResponse.json({ error: msg }, { status: 500 });
-//     }
-// }
-
-// // ─── POST: Create a new comment ──────────────────────────────────────────────
-// export async function POST(req: NextRequest) {
-//     try {
-//         const body = await req.json();
-
-//         const {
-//             contentId,
-//             contentType,
-//             commentText,
-//             userId,
-//             userName,
-//             userEmail,
-//             userAvatar,
-//             parentCommentId,
-//             timestamp,
-//             metadata,
-//         } = body;
-
-//         // Validation
-//         if (!contentId || !contentType || !commentText || !userId || !userName) {
-//             return NextResponse.json(
-//                 { error: "contentId, contentType, commentText, userId, and userName are required" },
-//                 { status: 400 }
-//             );
-//         }
-
-//         // Optional: Check for spam (1 comment per 30 seconds)
-//         const recentCommentsQuery = await db.collection("comments")
-//             .where("userId", "==", userId)
-//             .where("contentId", "==", contentId)
-//             .where("createdAt", ">", Date.now() - 30000) // 30 seconds
-//             .limit(1)
-//             .get();
-
-//         if (!recentCommentsQuery.empty) {
-//             return NextResponse.json(
-//                 { error: "Please wait a moment before commenting again" },
-//                 { status: 429 }
-//             );
-//         }
-
-//         const newComment: Comment = {
-//             contentId,
-//             contentType,
-//             userId,
-//             userName,
-//             userEmail: userEmail || "",
-//             userAvatar: userAvatar || "",
-//             commentText: commentText.trim(),
-//             parentCommentId: parentCommentId || null,
-//             likes: 0,
-//             likedBy: [],
-//             timestamp: timestamp || null,
-//             createdAt: Date.now(),
-//             updatedAt: Date.now(),
-//             isFlagged: false,
-//             flaggedAt: null,
-//             metadata: metadata || {},
-//         };
-
-//         const docRef = await db.collection("comments").add(newComment);
-
-//         return NextResponse.json(
-//             {
-//                 success: true,
-//                 id: docRef.id,
-//                 comment: { id: docRef.id, ...newComment },
-//             },
-//             { status: 201 }
-//         );
-
-//     } catch (error: unknown) {
-//         const msg = error instanceof Error ? error.message : "Unexpected error";
-//         console.error("Error creating comment:", error);
-//         return NextResponse.json({ error: msg }, { status: 500 });
-//     }
-// }
-
-// // ─── PUT: Update a comment (like/unlike, edit) ──────────────────────────────
-// export async function PUT(req: NextRequest) {
-//     try {
-//         const body = await req.json();
-//         const { commentId, userId, action, commentText } = body;
-
-//         if (!commentId || !userId) {
-//             return NextResponse.json(
-//                 { error: "commentId and userId are required" },
-//                 { status: 400 }
-//             );
-//         }
-
-//         const commentRef = db.collection("comments").doc(commentId);
-//         const commentDoc = await commentRef.get();
-
-//         if (!commentDoc.exists) {
-//             return NextResponse.json(
-//                 { error: "Comment not found" },
-//                 { status: 404 }
-//             );
-//         }
-
-//         // Handle like/unlike
-//         if (action === "like" || action === "unlike") {
-//             const commentData = commentDoc.data();
-//             const likedBy = commentData?.likedBy || [];
-//             const isLiked = likedBy.includes(userId);
-
-//             if (action === "like" && !isLiked) {
-//                 await commentRef.update({
-//                     likes: (commentData?.likes || 0) + 1,
-//                     likedBy: [...likedBy, userId],
-//                     updatedAt: Date.now(),
-//                 });
-//             } else if (action === "unlike" && isLiked) {
-//                 await commentRef.update({
-//                     likes: (commentData?.likes || 0) - 1,
-//                     likedBy: likedBy.filter((id: string) => id !== userId),
-//                     updatedAt: Date.now(),
-//                 });
-//             }
-
-//             const updatedDoc = await commentRef.get();
-//             return NextResponse.json({
-//                 success: true,
-//                 comment: { id: updatedDoc.id, ...updatedDoc.data() },
-//             });
-//         }
-
-//         // Handle edit comment
-//         if (commentText) {
-//             const commentData = commentDoc.data();
-//             if (commentData?.userId !== userId) {
-//                 return NextResponse.json(
-//                     { error: "You can only edit your own comments" },
-//                     { status: 403 }
-//                 );
-//             }
-
-//             await commentRef.update({
-//                 commentText: commentText.trim(),
-//                 updatedAt: Date.now(),
-//             });
-
-//             const updatedDoc = await commentRef.get();
-//             return NextResponse.json({
-//                 success: true,
-//                 comment: { id: updatedDoc.id, ...updatedDoc.data() },
-//             });
-//         }
-
-//         return NextResponse.json(
-//             { error: "Invalid action" },
-//             { status: 400 }
-//         );
-
-//     } catch (error: unknown) {
-//         const msg = error instanceof Error ? error.message : "Unexpected error";
-//         console.error("Error updating comment:", error);
-//         return NextResponse.json({ error: msg }, { status: 500 });
-//     }
-// }
-
-// // ─── DELETE: Delete a comment (owner only) ───────────────────────────────────
-// export async function DELETE(req: NextRequest) {
-//     try {
-//         const { searchParams } = new URL(req.url);
-//         const commentId = searchParams.get("commentId");
-//         const userId = searchParams.get("userId");
-
-//         if (!commentId || !userId) {
-//             return NextResponse.json(
-//                 { error: "commentId and userId are required" },
-//                 { status: 400 }
-//             );
-//         }
-
-//         const commentRef = db.collection("comments").doc(commentId);
-//         const commentDoc = await commentRef.get();
-
-//         if (!commentDoc.exists) {
-//             return NextResponse.json(
-//                 { error: "Comment not found" },
-//                 { status: 404 }
-//             );
-//         }
-
-//         const commentData = commentDoc.data();
-
-//         // Only comment owner can delete
-//         if (commentData?.userId !== userId) {
-//             return NextResponse.json(
-//                 { error: "You can only delete your own comments" },
-//                 { status: 403 }
-//             );
-//         }
-
-//         // Hard delete
-//         await commentRef.delete();
-
-//         return NextResponse.json({
-//             success: true,
-//             message: "Comment deleted successfully",
-//         });
-
-//     } catch (error: unknown) {
-//         const msg = error instanceof Error ? error.message : "Unexpected error";
-//         console.error("Error deleting comment:", error);
-//         return NextResponse.json({ error: msg }, { status: 500 });
-//     }
-// }
-
-
-
-
-
-
+// app/api/comments/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { v4 as uuidv4 } from "uuid";
+import {
+  QueryCommand,
+  ScanCommand,
+  GetCommand,
+  DeleteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 
+export const dynamic = "force-dynamic";
+
 interface Comment {
-    contentId: string;
-    contentType: string;
-    userId: string;
-    userName: string;
-    userEmail?: string;
-    userAvatar?: string;
-    commentText: string;
-    parentCommentId?: string | null;
-    likes?: number;
-    likedBy?: string[];
-    replyCount?: number;
-    timestamp?: number;
-    createdAt: number;
-    updatedAt: number;
-    isFlagged?: boolean;
-    flaggedAt?: number | null;
-    metadata?: {
-        contentTitle?: string;
-        contentUrl?: string;
-    };
+  id?: string;
+  contentId: string;
+  contentType: string;
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  userAvatar?: string;
+  commentText: string;
+  parentCommentId?: string | null;
+  likes?: number;
+  likedBy?: string[];
+  replyCount?: number;
+  timestamp?: number;
+  createdAt: number;
+  updatedAt: number;
+  isFlagged?: boolean;
+  flaggedAt?: number | null;
+  metadata?: {
+    contentTitle?: string;
+    contentUrl?: string;
+  };
 }
 
-// Simple in-memory cache to prevent duplicate requests
-const cache = new Map<string, { data: unknown; timestamp: number }>();
-const CACHE_DURATION = 5000; // 5 seconds
-
-// ─── GET: Fetch comments (NO extra count queries) ─────────────────────────────
+// ─── GET: Fetch comments ─────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-    try {
-        const { searchParams } = new URL(req.url);
-        const contentId = searchParams.get("contentId");
-        const parentCommentId = searchParams.get("parentCommentId");
-        const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
-        const lastDocId = searchParams.get("lastDocId");
+  try {
+    const { searchParams } = new URL(req.url);
+    const contentId = searchParams.get("contentId");
+    const parentCommentId = searchParams.get("parentCommentId");
+    const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
 
-        if (!contentId && !parentCommentId) {
-            return NextResponse.json(
-                { error: "contentId or parentCommentId is required" },
-                { status: 400 }
-            );
-        }
-
-        const cacheKey = `${contentId}-${parentCommentId}-${limit}-${lastDocId}`;
-        const cached = cache.get(cacheKey);
-        if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-            return NextResponse.json(cached.data);
-        }
-
-        let query: FirebaseFirestore.Query;
-
-        if (parentCommentId) {
-            query = db.collection("comments")
-                .where("parentCommentId", "==", parentCommentId)
-                .orderBy("createdAt", "asc");
-        } else {
-            query = db.collection("comments")
-                .where("contentId", "==", contentId)
-                .where("parentCommentId", "==", null)
-                .orderBy("createdAt", "desc");
-        }
-
-        query = query.limit(limit);
-
-        if (lastDocId) {
-            const lastDocRef = db.collection("comments").doc(lastDocId);
-            const lastDoc = await lastDocRef.get();
-            if (lastDoc.exists) {
-                query = query.startAfter(lastDoc);
-            }
-        }
-
-        const snapshot = await query.get();
-
-        const comments = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-            replyCount: doc.data().replyCount || 0,
-        }));
-
-        const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-        const responseData = {
-            success: true,
-            comments,
-            pagination: {
-                limit,
-                hasMore: comments.length === limit,
-                nextCursor: comments.length === limit && lastDoc
-                    ? { lastDocId: lastDoc.id, lastDocCreatedAt: lastDoc.data().createdAt }
-                    : null,
-            },
-        };
-
-        cache.set(cacheKey, { data: responseData, timestamp: Date.now() });
-
-        if (cache.size > 100) {
-            const now = Date.now();
-            for (const [key, value] of cache.entries()) {
-                if (now - value.timestamp > 30000) cache.delete(key);
-            }
-        }
-
-        return NextResponse.json(responseData);
-
-    } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : "Unexpected error";
-        console.error("Error fetching comments:", error);
-        return NextResponse.json({ error: msg }, { status: 500 });
+    if (!contentId && !parentCommentId) {
+      return NextResponse.json(
+        { error: "contentId or parentCommentId is required" },
+        { status: 400 }
+      );
     }
+
+    let comments: Array<Record<string, unknown>> = [];
+
+    // 1. If fetching replies to a comment, use GSI parentCommentId-createdAt-index
+    if (parentCommentId) {
+      try {
+        const replyRes = await docClient.send(
+          new QueryCommand({
+            TableName: "SocialAndContent",
+            IndexName: "parentCommentId-createdAt-index",
+            KeyConditionExpression: "parentCommentId = :p",
+            ExpressionAttributeValues: { ":p": parentCommentId },
+            Limit: limit,
+          })
+        );
+        if (replyRes.Items && replyRes.Items.length > 0) {
+          comments = replyRes.Items;
+        }
+      } catch (err) {
+        console.warn("DynamoDB parentCommentId-createdAt-index query notice:", err);
+      }
+    } else {
+      // 2. Fetch top-level comments for contentId
+      try {
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: "SocialAndContent",
+            FilterExpression: "contentId = :c AND (attribute_not_exists(parentCommentId) OR parentCommentId = :nullVal)",
+            ExpressionAttributeValues: {
+              ":c": contentId,
+              ":nullVal": null,
+            },
+            Limit: limit,
+          })
+        );
+        if (scanRes.Items && scanRes.Items.length > 0) {
+          comments = scanRes.Items;
+        }
+      } catch (err) {
+        console.warn("DynamoDB top-level comments scan notice:", err);
+      }
+    }
+
+    // 3. Fallback to Firebase if DynamoDB returned no items
+    if (comments.length === 0) {
+      try {
+        let query: FirebaseFirestore.Query;
+        if (parentCommentId) {
+          query = db
+            .collection("comments")
+            .where("parentCommentId", "==", parentCommentId)
+            .orderBy("createdAt", "asc")
+            .limit(limit);
+        } else {
+          query = db
+            .collection("comments")
+            .where("contentId", "==", contentId)
+            .where("parentCommentId", "==", null)
+            .orderBy("createdAt", "desc")
+            .limit(limit);
+        }
+        const snapshot = await query.get();
+        comments = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+          replyCount: doc.data().replyCount || 0,
+        }));
+      } catch (fbErr) {
+        console.warn("Firebase comments fallback notice:", fbErr);
+      }
+    }
+
+    const formatted = comments.map((c) => ({
+      id: c.id || (c.commentId as string) || (c.contentId as string)?.replace(/^COMMENT#/, ""),
+      ...c,
+    }));
+
+    return NextResponse.json({
+      success: true,
+      comments: formatted.slice(0, limit),
+      pagination: {
+        limit,
+        hasMore: formatted.length > limit,
+        nextCursor: null,
+      },
+    }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unexpected error";
+    console.error("GET /api/comments error:", error);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
 
-// ─── POST: Create comment — increments post commentCount atomically ───────────
+// ─── POST: Create comment ────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-    try {
-        const body = await req.json();
+  try {
+    const body = await req.json();
+    const {
+      contentId,
+      contentType,
+      commentText,
+      userId,
+      userName,
+      userEmail,
+      userAvatar,
+      parentCommentId,
+      timestamp,
+      metadata,
+    } = body;
 
-        const {
-            contentId,
-            contentType,
-            commentText,
-            userId,
-            userName,
-            userEmail,
-            userAvatar,
-            parentCommentId,
-            timestamp,
-            metadata,
-        } = body;
-
-        if (!contentId || !contentType || !commentText || !userId || !userName) {
-            return NextResponse.json(
-                { error: "contentId, contentType, commentText, userId, and userName are required" },
-                { status: 400 }
-            );
-        }
-
-        // Spam guard: 1 comment per 10 seconds per user per content
-        const recentQuery = await db.collection("comments")
-            .where("userId", "==", userId)
-            .where("contentId", "==", contentId)
-            .where("createdAt", ">", Date.now() - 10000)
-            .limit(1)
-            .get();
-
-        if (!recentQuery.empty) {
-            return NextResponse.json(
-                { error: "Please wait a moment before commenting again" },
-                { status: 429 }
-            );
-        }
-
-        const now = Date.now();
-        const newComment: Comment = {
-            contentId,
-            contentType,
-            userId,
-            userName,
-            userEmail: userEmail || "",
-            userAvatar: userAvatar || "",
-            commentText: commentText.trim(),
-            parentCommentId: parentCommentId || null,
-            likes: 0,
-            likedBy: [],
-            replyCount: 0,
-            timestamp: timestamp || null,
-            createdAt: now,
-            updatedAt: now,
-            isFlagged: false,
-            flaggedAt: null,
-            metadata: metadata || {},
-        };
-
-        const docRef = await db.collection("comments").add(newComment);
-
-        if (parentCommentId) {
-            // Reply → increment replyCount on parent comment only
-            const parentRef = db.collection("comments").doc(parentCommentId);
-            await parentRef.update({
-                replyCount: FieldValue.increment(1),
-                updatedAt: now,
-            });
-        } else {
-            // Top-level comment → increment commentCount on the post/article document
-            // This is a single atomic write, no extra reads — safe for quota
-            const contentCollection = contentType === "post" ? "posts" : "articles";
-            const contentRef = db.collection(contentCollection).doc(contentId);
-            await contentRef.update({
-                commentCount: FieldValue.increment(1),
-                updatedAt: now,
-            }).catch((err) => {
-                // Non-fatal: if the post doc doesn't exist or field missing, log and continue
-                console.warn("[comments POST] Could not increment commentCount:", err.message);
-            });
-        }
-
-        // Bust cache for this contentId
-        for (const [key] of cache.entries()) {
-            if (key.startsWith(contentId)) cache.delete(key);
-        }
-
-        return NextResponse.json(
-            { success: true, id: docRef.id, comment: { id: docRef.id, ...newComment } },
-            { status: 201 }
-        );
-
-    } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : "Unexpected error";
-        console.error("Error creating comment:", error);
-        return NextResponse.json({ error: msg }, { status: 500 });
+    if (!contentId || !contentType || !commentText || !userId || !userName) {
+      return NextResponse.json(
+        { error: "contentId, contentType, commentText, userId, and userName are required" },
+        { status: 400 }
+      );
     }
+
+    const now = Date.now();
+    const commentId = uuidv4();
+
+    const newComment: Comment = {
+      id: commentId,
+      contentId,
+      contentType,
+      userId,
+      userName,
+      userEmail: userEmail || "",
+      userAvatar: userAvatar || "",
+      commentText: commentText.trim(),
+      parentCommentId: parentCommentId || null,
+      likes: 0,
+      likedBy: [],
+      replyCount: 0,
+      timestamp: timestamp || null,
+      createdAt: now,
+      updatedAt: now,
+      isFlagged: false,
+      flaggedAt: null,
+      metadata: metadata || {},
+    };
+
+    // ── Dual-Write to DynamoDB & Firebase ────────────────────────────────────
+    const dynamoItem = {
+      ...newComment,
+      contentId: `COMMENT#${commentId}`,
+      sk: `COMMENT#${now}`,
+      commentId,
+    };
+
+    await dualWrite("comments", commentId, "SocialAndContent", dynamoItem);
+
+    if (parentCommentId) {
+      try {
+        await db.collection("comments").doc(parentCommentId).update({
+          replyCount: FieldValue.increment(1),
+          updatedAt: now,
+        });
+      } catch (fbErr) {
+        console.warn("Firebase increment replyCount sync notice:", fbErr);
+      }
+    } else {
+      const contentCollection = contentType === "post" ? "socialPosts" : "articles";
+      try {
+        await db.collection(contentCollection).doc(contentId).update({
+          commentCount: FieldValue.increment(1),
+          updatedAt: now,
+        });
+      } catch (fbErr) {
+        console.warn("Firebase increment post commentCount sync notice:", fbErr);
+      }
+    }
+
+    return NextResponse.json(
+      { success: true, id: commentId, comment: { id: commentId, ...newComment } },
+      { status: 201 }
+    );
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unexpected error";
+    console.error("POST /api/comments error:", error);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
 
 // ─── PUT: Like/unlike or edit a comment ──────────────────────────────────────
 export async function PUT(req: NextRequest) {
-    try {
-        const body = await req.json();
-        const { commentId, userId, action, commentText } = body;
+  try {
+    const body = await req.json();
+    const { commentId, userId, action, commentText } = body;
 
-        if (!commentId || !userId) {
-            return NextResponse.json(
-                { error: "commentId and userId are required" },
-                { status: 400 }
-            );
-        }
-
-        const commentRef = db.collection("comments").doc(commentId);
-        const commentDoc = await commentRef.get();
-
-        if (!commentDoc.exists) {
-            return NextResponse.json({ error: "Comment not found" }, { status: 404 });
-        }
-
-        const commentData = commentDoc.data();
-
-        if (action === "like" || action === "unlike") {
-            const likedBy = commentData?.likedBy || [];
-            const isLiked = likedBy.includes(userId);
-
-            if (action === "like" && !isLiked) {
-                await commentRef.update({
-                    likes: (commentData?.likes || 0) + 1,
-                    likedBy: [...likedBy, userId],
-                    updatedAt: Date.now(),
-                });
-            } else if (action === "unlike" && isLiked) {
-                await commentRef.update({
-                    likes: Math.max(0, (commentData?.likes || 0) - 1),
-                    likedBy: likedBy.filter((id: string) => id !== userId),
-                    updatedAt: Date.now(),
-                });
-            } else {
-                return NextResponse.json({ error: "Already liked or not liked" }, { status: 400 });
-            }
-
-            if (commentData?.contentId) {
-                for (const [key] of cache.entries()) {
-                    if (key.startsWith(commentData.contentId)) cache.delete(key);
-                }
-            }
-
-            const updatedDoc = await commentRef.get();
-            return NextResponse.json({ success: true, comment: { id: updatedDoc.id, ...updatedDoc.data() } });
-        }
-
-        if (commentText) {
-            if (commentData?.userId !== userId) {
-                return NextResponse.json({ error: "You can only edit your own comments" }, { status: 403 });
-            }
-
-            await commentRef.update({ commentText: commentText.trim(), updatedAt: Date.now() });
-
-            if (commentData?.contentId) {
-                for (const [key] of cache.entries()) {
-                    if (key.startsWith(commentData.contentId)) cache.delete(key);
-                }
-            }
-
-            const updatedDoc = await commentRef.get();
-            return NextResponse.json({ success: true, comment: { id: updatedDoc.id, ...updatedDoc.data() } });
-        }
-
-        return NextResponse.json({ error: "Invalid action or missing data" }, { status: 400 });
-
-    } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : "Unexpected error";
-        console.error("Error updating comment:", error);
-        return NextResponse.json({ error: msg }, { status: 500 });
+    if (!commentId || !userId) {
+      return NextResponse.json(
+        { error: "commentId and userId are required" },
+        { status: 400 }
+      );
     }
+
+    // 1. Fetch Comment
+    let commentData: Record<string, unknown> | null = null;
+
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :c",
+          ExpressionAttributeValues: { ":c": `COMMENT#${commentId}` },
+          Limit: 1,
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) {
+        commentData = qRes.Items[0];
+      }
+    } catch (err) {
+      console.warn("DynamoDB comment query notice:", err);
+    }
+
+    if (!commentData) {
+      try {
+        const doc = await db.collection("comments").doc(commentId).get();
+        if (doc.exists) commentData = doc.data() as Record<string, unknown>;
+      } catch (fbErr) {
+        console.warn("Firebase comment fetch notice:", fbErr);
+      }
+    }
+
+    if (!commentData) {
+      return NextResponse.json({ error: "Comment not found" }, { status: 404 });
+    }
+
+    const now = Date.now();
+
+    if (action === "like" || action === "unlike") {
+      const likedBy = Array.isArray(commentData.likedBy) ? [...(commentData.likedBy as string[])] : [];
+      const isLiked = likedBy.includes(userId);
+      let likes = typeof commentData.likes === "number" ? commentData.likes : 0;
+
+      if (action === "like" && !isLiked) {
+        likedBy.push(userId);
+        likes += 1;
+      } else if (action === "unlike" && isLiked) {
+        const idx = likedBy.indexOf(userId);
+        if (idx !== -1) likedBy.splice(idx, 1);
+        likes = Math.max(0, likes - 1);
+      } else {
+        return NextResponse.json({ error: "Already liked or not liked" }, { status: 400 });
+      }
+
+      // Update DynamoDB
+      try {
+        await docClient.send(
+          new UpdateCommand({
+            TableName: "SocialAndContent",
+            Key: {
+              contentId: (commentData.contentId as string) || `COMMENT#${commentId}`,
+              sk: (commentData.sk as string) || `COMMENT#${commentData.createdAt || now}`,
+            },
+            UpdateExpression: "SET likes = :l, likedBy = :lb, updatedAt = :u",
+            ExpressionAttributeValues: {
+              ":l": likes,
+              ":lb": likedBy,
+              ":u": now,
+            },
+          })
+        );
+      } catch (err) {
+        console.warn("DynamoDB update comment like notice:", err);
+      }
+
+      // Sync to Firebase
+      try {
+        await db.collection("comments").doc(commentId).update({
+          likes,
+          likedBy,
+          updatedAt: now,
+        });
+      } catch (fbErr) {
+        console.warn("Firebase comment like update notice:", fbErr);
+      }
+
+      return NextResponse.json({
+        success: true,
+        comment: { id: commentId, ...commentData, likes, likedBy, updatedAt: now },
+      });
+    }
+
+    if (commentText) {
+      if (commentData.userId !== userId) {
+        return NextResponse.json({ error: "You can only edit your own comments" }, { status: 403 });
+      }
+
+      const cleanText = commentText.trim();
+
+      // Update DynamoDB
+      try {
+        await docClient.send(
+          new UpdateCommand({
+            TableName: "SocialAndContent",
+            Key: {
+              contentId: (commentData.contentId as string) || `COMMENT#${commentId}`,
+              sk: (commentData.sk as string) || `COMMENT#${commentData.createdAt || now}`,
+            },
+            UpdateExpression: "SET commentText = :ct, updatedAt = :u",
+            ExpressionAttributeValues: {
+              ":ct": cleanText,
+              ":u": now,
+            },
+          })
+        );
+      } catch (err) {
+        console.warn("DynamoDB update comment text notice:", err);
+      }
+
+      // Sync to Firebase
+      try {
+        await db.collection("comments").doc(commentId).update({
+          commentText: cleanText,
+          updatedAt: now,
+        });
+      } catch (fbErr) {
+        console.warn("Firebase update comment text notice:", fbErr);
+      }
+
+      return NextResponse.json({
+        success: true,
+        comment: { id: commentId, ...commentData, commentText: cleanText, updatedAt: now },
+      });
+    }
+
+    return NextResponse.json({ error: "Invalid action or missing data" }, { status: 400 });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unexpected error";
+    console.error("PUT /api/comments error:", error);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
 
-// ─── DELETE: Delete comment — decrements post commentCount atomically ─────────
+// ─── DELETE: Delete comment ──────────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
-    try {
-        const { searchParams } = new URL(req.url);
-        const commentId = searchParams.get("commentId");
-        const userId = searchParams.get("userId");
+  try {
+    const { searchParams } = new URL(req.url);
+    const commentId = searchParams.get("commentId");
+    const userId = searchParams.get("userId");
 
-        if (!commentId || !userId) {
-            return NextResponse.json(
-                { error: "commentId and userId are required" },
-                { status: 400 }
-            );
-        }
-
-        const commentRef = db.collection("comments").doc(commentId);
-        const commentDoc = await commentRef.get();
-
-        if (!commentDoc.exists) {
-            return NextResponse.json({ error: "Comment not found" }, { status: 404 });
-        }
-
-        const commentData = commentDoc.data();
-
-        if (commentData?.userId !== userId) {
-            return NextResponse.json({ error: "You can only delete your own comments" }, { status: 403 });
-        }
-
-        const batch = db.batch();
-
-        if (commentData?.parentCommentId) {
-            // Reply → decrement replyCount on parent comment only
-            const parentRef = db.collection("comments").doc(commentData.parentCommentId);
-            batch.update(parentRef, {
-                replyCount: FieldValue.increment(-1),
-                updatedAt: Date.now(),
-            });
-        } else {
-            // Top-level comment → decrement commentCount on the post/article document
-            const contentCollection = commentData?.contentType === "post" ? "posts" : "articles";
-            const contentRef = db.collection(contentCollection).doc(commentData?.contentId);
-            // Clamp to 0 via a transaction-safe approach:
-            // FieldValue.increment(-1) is safe because Firestore won't go below 0
-            // if you set a security rule; here we just use it and rely on the UI clamp.
-            batch.update(contentRef, {
-                commentCount: FieldValue.increment(-1),
-                updatedAt: Date.now(),
-            });
-        }
-
-        // Cascade-delete all replies to this comment
-        const repliesSnapshot = await db.collection("comments")
-            .where("parentCommentId", "==", commentId)
-            .get();
-
-        repliesSnapshot.docs.forEach((replyDoc) => batch.delete(replyDoc.ref));
-        batch.delete(commentRef);
-
-        await batch.commit();
-
-        if (commentData?.contentId) {
-            for (const [key] of cache.entries()) {
-                if (key.startsWith(commentData.contentId)) cache.delete(key);
-            }
-        }
-
-        return NextResponse.json({ success: true, message: "Comment deleted successfully" });
-
-    } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : "Unexpected error";
-        console.error("Error deleting comment:", error);
-        return NextResponse.json({ error: msg }, { status: 500 });
+    if (!commentId || !userId) {
+      return NextResponse.json(
+        { error: "commentId and userId are required" },
+        { status: 400 }
+      );
     }
+
+    // 1. Fetch Comment
+    let commentData: Record<string, unknown> | null = null;
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :c",
+          ExpressionAttributeValues: { ":c": `COMMENT#${commentId}` },
+          Limit: 1,
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) commentData = qRes.Items[0];
+    } catch (err) {
+      console.warn("DynamoDB fetch comment for delete notice:", err);
+    }
+
+    if (!commentData) {
+      try {
+        const doc = await db.collection("comments").doc(commentId).get();
+        if (doc.exists) commentData = doc.data() as Record<string, unknown>;
+      } catch (fbErr) {
+        console.warn("Firebase fetch comment for delete notice:", fbErr);
+      }
+    }
+
+    if (!commentData) {
+      return NextResponse.json({ error: "Comment not found" }, { status: 404 });
+    }
+
+    if (commentData.userId !== userId) {
+      return NextResponse.json({ error: "You can only delete your own comments" }, { status: 403 });
+    }
+
+    // 2. Delete from DynamoDB
+    try {
+      await docClient.send(
+        new DeleteCommand({
+          TableName: "SocialAndContent",
+          Key: {
+            contentId: (commentData.contentId as string) || `COMMENT#${commentId}`,
+            sk: (commentData.sk as string) || `COMMENT#${commentData.createdAt || Date.now()}`,
+          },
+        })
+      );
+    } catch (err) {
+      console.warn("DynamoDB delete comment notice:", err);
+    }
+
+    // 3. Delete from Firebase
+    try {
+      await db.collection("comments").doc(commentId).delete();
+    } catch (fbErr) {
+      console.warn("Firebase delete comment notice:", fbErr);
+    }
+
+    return NextResponse.json({ success: true, message: "Comment deleted successfully" });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unexpected error";
+    console.error("DELETE /api/comments error:", error);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }

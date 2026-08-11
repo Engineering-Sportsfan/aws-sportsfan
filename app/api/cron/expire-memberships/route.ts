@@ -1,5 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebaseAdmin';
+// app/api/cron/expire-memberships/route.ts — Migrated to AWS DynamoDB (GamificationAndWallet Table)
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,48 +15,111 @@ export async function GET(req: NextRequest) {
     }
 
     const nowIso = new Date().toISOString();
-
-    // Query active or cancelled memberships past renewal date with autoRenew == false
-    const snapshot = await db
-      .collection('userMemberships')
-      .where('autoRenew', '==', false)
-      .get();
-
-    const batch = db.batch();
     let expiredCount = 0;
     let autoRenewLogCount = 0;
 
-    snapshot.docs.forEach((doc) => {
-      const data = doc.data();
-      if ((data.status === 'active' || data.status === 'cancelled') && data.renewalDate && data.renewalDate <= nowIso) {
-        batch.update(doc.ref, { status: 'expired', updatedAt: nowIso });
-        expiredCount++;
+    // 1. Process via Firestore if available
+    if (db) {
+      const snapshot = await db
+        .collection("userMemberships")
+        .where("autoRenew", "==", false)
+        .get();
+
+      for (const doc of snapshot.docs) {
+        const data = doc.data();
+        if (
+          (data.status === "active" || data.status === "cancelled") &&
+          data.renewalDate &&
+          data.renewalDate <= nowIso
+        ) {
+          const updated = {
+            ...data,
+            status: "expired",
+            updatedAt: nowIso,
+          };
+          const dynamoItem = {
+            userId: `USER#${doc.id}`,
+            sk: `MEMBERSHIP#${doc.id}`,
+            ...updated,
+          };
+          await dualWrite("userMemberships", doc.id, "GamificationAndWallet", dynamoItem);
+          expiredCount++;
+        }
       }
-    });
 
-    // Also check autoRenew == true memberships past renewalDate for manual review log
-    const autoRenewSnapshot = await db
-      .collection('userMemberships')
-      .where('autoRenew', '==', true)
-      .where('status', '==', 'active')
-      .get();
+      const autoRenewSnapshot = await db
+        .collection("userMemberships")
+        .where("autoRenew", "==", true)
+        .where("status", "==", "active")
+        .get();
 
-    const overdueBatch = db.batch();
-    autoRenewSnapshot.docs.forEach((doc) => {
-      const data = doc.data();
-      if (data.renewalDate && data.renewalDate <= nowIso) {
-        autoRenewLogCount++;
-        overdueBatch.update(doc.ref, { renewalOverdue: true, updatedAt: nowIso });
-        console.log(`[expireMemberships] User membership ${doc.id} autoRenew is true, past renewalDate (${data.renewalDate}). Marked renewalOverdue: true for manual review.`);
+      for (const doc of autoRenewSnapshot.docs) {
+        const data = doc.data();
+        if (data.renewalDate && data.renewalDate <= nowIso) {
+          autoRenewLogCount++;
+          const updated = {
+            ...data,
+            renewalOverdue: true,
+            updatedAt: nowIso,
+          };
+          const dynamoItem = {
+            userId: `USER#${doc.id}`,
+            sk: `MEMBERSHIP#${doc.id}`,
+            ...updated,
+          };
+          await dualWrite("userMemberships", doc.id, "GamificationAndWallet", dynamoItem);
+          console.log(`[expireMemberships] User membership ${doc.id} autoRenew is true, past renewalDate (${data.renewalDate}). Marked renewalOverdue: true.`);
+        }
       }
-    });
+    } else {
+      // DynamoDB Direct Scan
+      try {
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: "GamificationAndWallet",
+            FilterExpression: "begins_with(userId, :uPrefix) AND begins_with(sk, :mPrefix)",
+            ExpressionAttributeValues: {
+              ":uPrefix": "USER#",
+              ":mPrefix": "MEMBERSHIP#",
+            },
+          })
+        );
 
-    if (autoRenewLogCount > 0) {
-      await overdueBatch.commit();
-    }
-
-    if (expiredCount > 0) {
-      await batch.commit();
+        if (scanRes.Items) {
+          for (const item of scanRes.Items) {
+            const uid = (item.userId as string).replace(/^USER#/, "");
+            if (
+              item.autoRenew === false &&
+              (item.status === "active" || item.status === "cancelled") &&
+              item.renewalDate &&
+              item.renewalDate <= nowIso
+            ) {
+              const updated = {
+                ...item,
+                status: "expired",
+                updatedAt: nowIso,
+              };
+              await dualWrite("userMemberships", uid, "GamificationAndWallet", updated);
+              expiredCount++;
+            } else if (
+              item.autoRenew === true &&
+              item.status === "active" &&
+              item.renewalDate &&
+              item.renewalDate <= nowIso
+            ) {
+              autoRenewLogCount++;
+              const updated = {
+                ...item,
+                renewalOverdue: true,
+                updatedAt: nowIso,
+              };
+              await dualWrite("userMemberships", uid, "GamificationAndWallet", updated);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[expire-memberships] DynamoDB scan notice:", e);
+      }
     }
 
     return NextResponse.json({
@@ -60,7 +129,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error: any) {
     return NextResponse.json(
-      { error: error.message || 'Failed to run expireMemberships cron' },
+      { error: error.message || "Failed to run expireMemberships cron" },
       { status: 500 }
     );
   }

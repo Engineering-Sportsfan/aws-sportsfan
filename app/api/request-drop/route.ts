@@ -1,8 +1,12 @@
-// Admin Panel: app/api/request-drop/route.ts
+// app/api/request-drop/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
-// Define types
+export const dynamic = "force-dynamic";
+
 type RequestStatus = "pending" | "approved" | "rejected" | "completed";
 
 interface RequestData {
@@ -17,7 +21,6 @@ interface RequestData {
     isFlagged: boolean;
 }
 
-// POST - User submits a drop request
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
@@ -30,23 +33,36 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        const now = Date.now();
+        const id = `drop_req_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
         const requestData: RequestData = {
             userName: userName.trim(),
             message: message.trim(),
             audioTitle: audioTitle || null,
             userId: userId || null,
             status: "pending",
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
+            createdAt: now,
+            updatedAt: now,
             isRead: false,
             isFlagged: false,
         };
 
-        const docRef = await db.collection("dropRequests").add(requestData);
+        await dualWrite({
+            tableName: "SocialAndContent",
+            dynamoItem: {
+                contentId: `DROP_REQUEST#${id}`,
+                sk: `REQUEST#${now}`,
+                id,
+                ...requestData,
+            },
+            firestoreRef: db.collection("dropRequests").doc(id),
+            firestoreData: requestData,
+        });
 
         return NextResponse.json({
             success: true,
-            request: { id: docRef.id, ...requestData }
+            request: { id, ...requestData }
         });
     } catch (error: unknown) {
         console.error("Request drop POST error:", error);
@@ -57,41 +73,70 @@ export async function POST(req: NextRequest) {
     }
 }
 
-// GET - Fetch drop requests (with filters)
 export async function GET(req: NextRequest) {
     try {
         const { searchParams } = new URL(req.url);
         const status = searchParams.get("status");
         const limit = parseInt(searchParams.get("limit") || "50");
-        
-        let query: FirebaseFirestore.Query = db.collection("dropRequests")
-            .orderBy("createdAt", "desc");
 
-        if (status && status !== "all") {
-            query = query.where("status", "==", status);
+        let requests: any[] = [];
+
+        try {
+            let filterExpr = "begins_with(contentId, :drPrefix)";
+            const exprVals: Record<string, any> = {
+                ":drPrefix": "DROP_REQUEST#",
+            };
+
+            if (status && status !== "all") {
+                filterExpr += " AND #st = :st";
+                exprVals[":st"] = status;
+            }
+
+            const scanRes = await docClient.send(
+                new ScanCommand({
+                    TableName: "SocialAndContent",
+                    FilterExpression: filterExpr,
+                    ExpressionAttributeNames: (status && status !== "all") ? { "#st": "status" } : undefined,
+                    ExpressionAttributeValues: exprVals,
+                    Limit: 100,
+                })
+            );
+
+            if (scanRes.Items && scanRes.Items.length > 0) {
+                requests = scanRes.Items.map((item) => ({
+                    id: item.id || (item.contentId as string).replace(/^DROP_REQUEST#/, ""),
+                    ...item,
+                }));
+            }
+        } catch (e) {
+            console.warn("[request-drop GET] DynamoDB notice:", e);
         }
 
-        const snapshot = await query.limit(limit).get();
-        
-        const requests = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
+        if (requests.length === 0 && db) {
+            let query: FirebaseFirestore.Query = db.collection("dropRequests").orderBy("createdAt", "desc");
+            if (status && status !== "all") {
+                query = query.where("status", "==", status);
+            }
+            const snapshot = await query.limit(limit).get();
+            requests = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+        }
 
-        const allRequestsSnapshot = await db.collection("dropRequests").get();
-        const allRequests = allRequestsSnapshot.docs;
-        
+        requests.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
         const stats = {
-            total: allRequests.length,
-            pending: allRequests.filter(doc => doc.data().status === "pending").length,
-            approved: allRequests.filter(doc => doc.data().status === "approved").length,
-            rejected: allRequests.filter(doc => doc.data().status === "rejected").length,
-            completed: allRequests.filter(doc => doc.data().status === "completed").length,
+            total: requests.length,
+            pending: requests.filter(doc => doc.status === "pending").length,
+            approved: requests.filter(doc => doc.status === "approved").length,
+            rejected: requests.filter(doc => doc.status === "rejected").length,
+            completed: requests.filter(doc => doc.status === "completed").length,
         };
 
         return NextResponse.json({ 
             success: true, 
-            requests,
+            requests: requests.slice(0, limit),
             stats,
             count: requests.length
         });
@@ -99,127 +144,6 @@ export async function GET(req: NextRequest) {
         console.error("Request drop GET error:", error);
         return NextResponse.json(
             { success: false, message: "Failed to fetch requests" },
-            { status: 500 }
-        );
-    }
-}
-
-// PATCH - Update request status (admin only)
-export async function PATCH(req: NextRequest) {
-    try {
-        const body = await req.json();
-        const { requestId, status, adminNote } = body;
-
-        // Validate requestId
-        if (!requestId || typeof requestId !== 'string') {
-            return NextResponse.json(
-                { success: false, message: "Valid requestId is required" },
-                { status: 400 }
-            );
-        }
-
-        // Validate status if provided
-        const validStatuses: RequestStatus[] = ["pending", "approved", "rejected", "completed"];
-        if (status && !validStatuses.includes(status as RequestStatus)) {
-            return NextResponse.json(
-                { success: false, message: "Invalid status. Must be one of: pending, approved, rejected, completed" },
-                { status: 400 }
-            );
-        }
-
-        // Check if document exists before updating
-        const docRef = db.collection("dropRequests").doc(requestId);
-        const docSnapshot = await docRef.get();
-        
-        if (!docSnapshot.exists) {
-            return NextResponse.json(
-                { success: false, message: "Request not found" },
-                { status: 404 }
-            );
-        }
-
-        // Build update data - use a simple object literal instead of interface
-        const updateData: {
-            updatedAt: number;
-            status?: RequestStatus;
-            adminNote?: string;
-        } = { 
-            updatedAt: Date.now()
-        };
-        
-        if (status) {
-            updateData.status = status as RequestStatus;
-        }
-        
-        if (adminNote !== undefined && adminNote !== null) {
-            updateData.adminNote = adminNote;
-        }
-
-        // Perform update - convert to Firestore-compatible format
-       await docRef.update(updateData as FirebaseFirestore.UpdateData<typeof updateData>);
-
-        // Get updated document
-        const updatedDoc = await docRef.get();
-        const updatedRequest = { 
-            id: updatedDoc.id, 
-            ...updatedDoc.data() 
-        };
-
-        return NextResponse.json({
-            success: true,
-            message: `Request ${status ? `marked as ${status}` : 'updated'} successfully`,
-            request: updatedRequest
-        });
-
-    } catch (error: unknown) {
-        console.error("Request drop PATCH error:", error);
-        
-        const errorMessage = error instanceof Error ? error.message : "Failed to update request";
-        
-        return NextResponse.json(
-            { 
-                success: false, 
-                message: errorMessage
-            },
-            { status: 500 }
-        );
-    }
-}
-
-// DELETE - Delete a request
-export async function DELETE(req: NextRequest) {
-    try {
-        const { searchParams } = new URL(req.url);
-        const requestId = searchParams.get("requestId");
-
-        if (!requestId) {
-            return NextResponse.json(
-                { success: false, message: "requestId is required" },
-                { status: 400 }
-            );
-        }
-
-        // Check if document exists
-        const docRef = db.collection("dropRequests").doc(requestId);
-        const docSnapshot = await docRef.get();
-        
-        if (!docSnapshot.exists) {
-            return NextResponse.json(
-                { success: false, message: "Request not found" },
-                { status: 404 }
-            );
-        }
-
-        await docRef.delete();
-
-        return NextResponse.json({
-            success: true,
-            message: "Request deleted successfully"
-        });
-    } catch (error: unknown) {
-        console.error("Request drop DELETE error:", error);
-        return NextResponse.json(
-            { success: false, message: "Failed to delete request" },
             { status: 500 }
         );
     }

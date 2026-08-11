@@ -1,105 +1,14 @@
-// //api/roar/rooms/[roomId]/messages/[msgId]/react/route.ts
-
-// import { NextRequest, NextResponse } from "next/server";
-// import { db } from "@/lib/firebaseAdmin";
-// import { getUser } from "@/lib/getUser";
-// import { FieldValue } from "firebase-admin/firestore";
-
-// export async function POST(
-//   req: NextRequest,
-//   { params }: { params: Promise<{ roomId: string; msgId: string }> },
-// ) {
-//   try {
-//     const { roomId, msgId } = await params;
-//     const user = await getUser(req);
-//     if (!user) {
-//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-//     }
-
-//     const body = await req.json();
-//     const { reaction }: { reaction: "fire" | "noChance" | "heart" } = body;
-
-//     if (reaction !== "fire" && reaction !== "noChance" && reaction !== "heart") {
-//       return NextResponse.json(
-//         { error: "reaction must be 'fire', 'noChance' or 'heart'" },
-//         { status: 400 },
-//       );
-//     }
-
-//     // Resolve user ID
-//     let resolvedUserId = user.email;
-//     let userSnap = await db.collection("users").doc(user.email).get();
-//     if (!userSnap.exists) {
-//       userSnap = await db.collection("users").doc(user.userId).get();
-//       if (userSnap.exists) {
-//         resolvedUserId = user.userId;
-//       }
-//     }
-
-//     let field = "fireCount";
-//     if (reaction === "noChance") field = "noChanceCount";
-//     else if (reaction === "heart") field = "heartCount";
-//     const msgRef = db
-//       .collection("roarRooms")
-//       .doc(roomId)
-//       .collection("messages")
-//       .doc(msgId);
-
-//     const reactionRef = msgRef.collection("reactions").doc(`${resolvedUserId}_${reaction}`);
-
-//     let finalCount = 0;
-
-//     await db.runTransaction(async (tx) => {
-//       const [msgSnap, reactionSnap] = await Promise.all([
-//         tx.get(msgRef),
-//         tx.get(reactionRef),
-//       ]);
-
-//       if (!msgSnap.exists) {
-//         throw new Error("Message not found");
-//       }
-
-//       if (reactionSnap.exists) {
-//         throw new Error("Already reacted");
-//       }
-
-//       const current = (msgSnap.data() as any)[field] ?? 0;
-//       finalCount = current + 1;
-
-//       tx.update(msgRef, {
-//         [field]: FieldValue.increment(1),
-//       });
-
-//       tx.set(reactionRef, {
-//         reaction,
-//         reactedAt: Date.now(),
-//       });
-//     });
-
-//     return NextResponse.json({ success: true, [field]: finalCount });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     if (msg === "Message not found") {
-//       return NextResponse.json({ error: msg }, { status: 404 });
-//     }
-//     if (msg === "Already reacted") {
-//       return NextResponse.json({ error: msg }, { status: 400 });
-//     }
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-
-
-
 // api/roar/rooms/[roomId]/messages/[msgId]/react/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { FieldValue } from "firebase-admin/firestore";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
-// ── Shared user resolver (1 read on the happy path) ─────────────────────────
+export const dynamic = "force-dynamic";
+
 async function resolveUserId(email: string, uid: string): Promise<string | null> {
   const emailSnap = await db.collection("users").doc(email).get();
   if (emailSnap.exists) return email;
@@ -112,10 +21,11 @@ async function resolveUserId(email: string, uid: string): Promise<string | null>
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ roomId: string; msgId: string }> }
+  { params }: { params: Promise<{ roomId: string; msgId: string }> | { roomId: string; msgId: string } }
 ) {
   try {
-    const { roomId, msgId } = await params;
+    const resolvedParams = await params;
+    const { roomId, msgId } = resolvedParams;
     const user = await getUser(req);
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -141,76 +51,184 @@ export async function POST(
       reaction === "heart"    ? "heartCount"    :
       "fireCount";
 
-    const msgRef = db
-      .collection("roarRooms")
-      .doc(roomId)
-      .collection("messages")
-      .doc(msgId);
+    // 1. Fetch Parent Room Message from DynamoDB first
+    let msgItem: any = null;
+    try {
+      const qRes = await docClient.send(new QueryCommand({
+        TableName: "RealTimeChat",
+        KeyConditionExpression: "roomId = :r AND begins_with(sk, :s)",
+        ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${msgId}` },
+        Limit: 1
+      }));
+      if (qRes.Items && qRes.Items.length > 0) {
+        msgItem = qRes.Items[0];
+      }
+    } catch (dynErr) {
+      console.warn("[MessageReact] DynamoDB msg fetch failed:", dynErr);
+    }
 
-    const reactionRef = msgRef
-      .collection("reactions")
-      .doc(`${resolvedUserId}_${reaction}`);
+    // Fallback: Check Firestore
+    let msgExists = !!msgItem;
+    let fallbackData: any = null;
+    const msgRef = db.collection("roarRooms").doc(roomId).collection("messages").doc(msgId);
 
-    // ── HEART — toggle (like / unlike) ──────────────────────────────────────
-    //
-    // Previously the transaction threw "Already reacted" when the reaction doc
-    // already existed. That was correct for fire/noChance (one-way) but wrong
-    // for heart, which needs to toggle: second tap should UNLIKE.
-    //
+    if (!msgExists) {
+      try {
+        const snap = await msgRef.get();
+        if (snap.exists) {
+          msgExists = true;
+          fallbackData = snap.data();
+        }
+      } catch (fsErr) {
+        console.warn("[MessageReact] Firestore message fetch failed:", fsErr);
+      }
+    }
+
+    if (!msgExists) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 });
+    }
+
+    const msgData = msgItem || fallbackData || {};
+
+    // 2. Check if already reacted in DynamoDB first
+    let alreadyReacted = false;
+    try {
+      const reactionRes = await docClient.send(new GetCommand({
+        TableName: "RealTimeChat",
+        Key: { roomId: `ROOM#${roomId}`, sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}` }
+      }));
+      alreadyReacted = !!reactionRes.Item;
+    } catch (dynErr) {
+      console.warn("[MessageReact] DynamoDB reaction check failed, checking Firestore:", dynErr);
+      try {
+        const reactionSnap = await msgRef.collection("reactions").doc(`${resolvedUserId}_${reaction}`).get();
+        alreadyReacted = reactionSnap.exists;
+      } catch (fsErr) {
+        console.warn("[MessageReact] Firestore reaction check failed:", fsErr);
+      }
+    }
+
+    const currentCount = msgData[field] ?? 0;
+    const reactionRef = msgRef.collection("reactions").doc(`${resolvedUserId}_${reaction}`);
+
     if (reaction === "heart") {
       let liked = false;
       let finalCount = 0;
 
-      await db.runTransaction(async (tx) => {
-        const [msgSnap, reactionSnap] = await Promise.all([
-          tx.get(msgRef),
-          tx.get(reactionRef),
-        ]);
+      if (alreadyReacted) {
+        // Toggle off / UNLIKE
+        liked = false;
+        finalCount = Math.max(0, currentCount - 1);
 
-        if (!msgSnap.exists) throw new Error("Message not found");
+        // A. Update DynamoDB
+        try {
+          await docClient.send(new DeleteCommand({
+            TableName: "RealTimeChat",
+            Key: { roomId: `ROOM#${roomId}`, sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}` }
+          }));
 
-        const current = (msgSnap.data() as any).heartCount ?? 0;
-
-        if (reactionSnap.exists) {
-          // Already liked → UNLIKE
-          liked = false;
-          finalCount = Math.max(0, current - 1);
-          tx.update(msgRef, { heartCount: FieldValue.increment(-1) });
-          tx.delete(reactionRef);
-        } else {
-          // Not yet liked → LIKE
-          liked = true;
-          finalCount = current + 1;
-          tx.update(msgRef, { heartCount: FieldValue.increment(1) });
-          tx.set(reactionRef, { reaction, reactedAt: Date.now() });
+          if (msgItem) {
+            await docClient.send(new UpdateCommand({
+              TableName: "RealTimeChat",
+              Key: { roomId: `ROOM#${roomId}`, sk: msgItem.sk },
+              UpdateExpression: "SET heartCount = :hc, likeCount = :lc",
+              ExpressionAttributeValues: { ":hc": finalCount, ":lc": finalCount }
+            }));
+          }
+        } catch (dynErr) {
+          console.warn("[MessageReact] DynamoDB unlike failed:", dynErr);
         }
-      });
+
+        // B. Update Firestore (Sync/Fallback)
+        try {
+          await db.runTransaction(async (tx) => {
+            tx.update(msgRef, { heartCount: FieldValue.increment(-1) });
+            tx.delete(reactionRef);
+          });
+        } catch (fsErr) {
+          console.warn("[MessageReact] Firestore unlike sync failed:", fsErr);
+        }
+      } else {
+        // Toggle on / LIKE
+        liked = true;
+        finalCount = currentCount + 1;
+
+        // A. Update DynamoDB
+        try {
+          await docClient.send(new PutCommand({
+            TableName: "RealTimeChat",
+            Item: {
+              roomId: `ROOM#${roomId}`,
+              sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}`,
+              reaction: reaction,
+              reactedAt: Date.now()
+            }
+          }));
+
+          if (msgItem) {
+            await docClient.send(new UpdateCommand({
+              TableName: "RealTimeChat",
+              Key: { roomId: `ROOM#${roomId}`, sk: msgItem.sk },
+              UpdateExpression: "SET heartCount = :hc, likeCount = :lc",
+              ExpressionAttributeValues: { ":hc": finalCount, ":lc": finalCount }
+            }));
+          }
+        } catch (dynErr) {
+          console.warn("[MessageReact] DynamoDB like failed:", dynErr);
+        }
+
+        // B. Update Firestore (Sync/Fallback)
+        try {
+          await db.runTransaction(async (tx) => {
+            tx.update(msgRef, { heartCount: FieldValue.increment(1) });
+            tx.set(reactionRef, { reaction, reactedAt: Date.now() });
+          });
+        } catch (fsErr) {
+          console.warn("[MessageReact] Firestore like sync failed:", fsErr);
+        }
+      }
 
       return NextResponse.json({ success: true, liked, heartCount: finalCount });
     }
 
-    // ── FIRE / NOCHANCE — one-way (no undo) ─────────────────────────────────
-    //
-    // Behaviour unchanged from original: a second tap is a no-op (400).
-    // We keep the 400 here so the frontend can catch it silently if needed.
-    //
-    let finalCount = 0;
+    // FIRE / NOCHANCE — one-way (no undo)
+    if (alreadyReacted) throw new Error("Already reacted");
 
-    await db.runTransaction(async (tx) => {
-      const [msgSnap, reactionSnap] = await Promise.all([
-        tx.get(msgRef),
-        tx.get(reactionRef),
-      ]);
+    const finalCount = currentCount + 1;
 
-      if (!msgSnap.exists) throw new Error("Message not found");
-      if (reactionSnap.exists) throw new Error("Already reacted");
+    // A. Update DynamoDB
+    try {
+      await docClient.send(new PutCommand({
+        TableName: "RealTimeChat",
+        Item: {
+          roomId: `ROOM#${roomId}`,
+          sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}`,
+          reaction: reaction,
+          reactedAt: Date.now()
+        }
+      }));
 
-      const current = (msgSnap.data() as any)[field] ?? 0;
-      finalCount = current + 1;
+      if (msgItem) {
+        await docClient.send(new UpdateCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${roomId}`, sk: msgItem.sk },
+          UpdateExpression: `SET ${field} = :fc`,
+          ExpressionAttributeValues: { ":fc": finalCount }
+        }));
+      }
+    } catch (dynErr) {
+      console.warn("[MessageReact] DynamoDB react failed:", dynErr);
+    }
 
-      tx.update(msgRef, { [field]: FieldValue.increment(1) });
-      tx.set(reactionRef, { reaction, reactedAt: Date.now() });
-    });
+    // B. Update Firestore (Sync/Fallback)
+    try {
+      await db.runTransaction(async (tx) => {
+        tx.update(msgRef, { [field]: FieldValue.increment(1) });
+        tx.set(reactionRef, { reaction, reactedAt: Date.now() });
+      });
+    } catch (fsErr) {
+      console.warn("[MessageReact] Firestore react sync failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, [field]: finalCount });
 

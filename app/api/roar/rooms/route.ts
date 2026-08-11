@@ -1,33 +1,17 @@
-
-
-// api/roar/rooms/route.ts
-
+// app/api/roar/rooms/route.ts — Migrated to AWS DynamoDB (RealTimeChat Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import type { ChatRoom } from "@/app/models/ChatRoom";
+
+export const dynamic = "force-dynamic";
 
 // ────────────────────────────────────────────────────────────────────────────
 // GET  /api/roar/rooms
 // ────────────────────────────────────────────────────────────────────────────
-//
-// Optimisations vs original:
-//
-//  1. Server-side WHERE filter  — `isActive == true` pushed into the query so
-//     Firestore only returns matching docs. Inactive rooms are never read.
-//     Requires a single-field index on `isActive` (auto-created by Firestore).
-//
-//  2. Server-side ORDER BY      — `orderBy("createdAt", "desc")` replaces the
-//     in-process .sort(). Firestore returns docs pre-sorted; no JS work needed.
-//
-//  3. Pagination via `limit` + timestamp cursor — avoids reading the whole
-//     collection on every request. Client passes `?lastCreatedAt=<ts>` for the
-//     next page. Default page size 20, max 50.
-//
-//  4. Field mask (`select`)     — only the fields the client actually needs are
-//     transferred. Large fields (e.g. future rich descriptions) are excluded
-//     unless you add them here.
-//
 export async function GET(req: NextRequest) {
   try {
     const user = await getUser(req);
@@ -37,57 +21,79 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
-    const lastCreatedAt = searchParams.get("lastCreatedAt")
-      ? parseInt(searchParams.get("lastCreatedAt")!, 10)
-      : null;
 
-    const includeInactive = searchParams.get("includeInactive") === "true";
+    let rooms: ChatRoom[] = [];
 
-    // ── FIX 1 + 2: filter & sort pushed to Firestore ─────────────────────────
-    // Composite index required: isActive ASC + createdAt DESC
-    // Firestore will prompt you to create it on first run (check server logs).
-    // let query = db
-    //   .collection("roarRooms")
-    //   .where("isActive", "==", true)
-    //   .orderBy("createdAt", "desc")
-    //   .limit(limit);
-    let query = db.collection("roarRooms") as FirebaseFirestore.Query;
-if (!includeInactive) {
-  query = query.where("isActive", "==", true);
-}
-query = query.orderBy("createdAt", "desc").limit(limit);
-
-    // ── FIX 3: timestamp cursor (zero extra doc reads) ───────────────────────
-    if (lastCreatedAt !== null) {
-      query = query.startAfter(lastCreatedAt);
+    // 1. Try querying DynamoDB RealTimeChat table using isActive-order-index or prefix scan
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "RealTimeChat",
+          IndexName: "isActive-order-index",
+          KeyConditionExpression: "isActive = :act",
+          ExpressionAttributeValues: { ":act": "true" },
+          ScanIndexForward: false,
+          Limit: limit,
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) {
+        rooms = qRes.Items.map((item) => ({
+          roomId: (item.roomId as string)?.replace(/^ROOM#/, "") || item.id,
+          name: item.name as string,
+          sport: (item.sport as string) || "general",
+          createdAt: Number(item.createdAt || Date.now()),
+          isActive: item.isActive === "true" || item.isActive === true,
+          fanCount: Number(item.fanCount || 0),
+          icon: item.icon as string | undefined,
+          description: item.description as string | undefined,
+          scheduledStartTime: item.scheduledStartTime as number | undefined,
+          score: item.score as string | undefined,
+          scoreSubtitle: item.scoreSubtitle as string | undefined,
+          watchAlongRoomId: item.watchAlongRoomId as string | undefined,
+          matchId: item.matchId as string | undefined,
+          botConfig: item.botConfig as any,
+          isTestingRoom: Boolean(item.isTestingRoom),
+        }));
+      }
+    } catch (dynErr) {
+      console.warn("DynamoDB roar rooms query notice:", dynErr);
     }
 
-    // ── FIX 4: field mask — only transfer what the client needs ──────────────
-    // Add/remove fields here to match your ChatRoom list UI requirements.
-    const snapshot = await query
-      .select(
-        "roomId",
-        "name",
-        "icon",
-        "sport",
-        "description",
-        "createdAt",
-        "isActive",
-        "fanCount",
-        "scheduledStartTime",
-        "score",
-        "scoreSubtitle",
-        "watchAlongRoomId",
-        "matchId",
-        "botConfig",
-        "isTestingRoom"
-      )
-      .get();
+    // 2. Fallback to Firebase
+    if (rooms.length === 0) {
+      try {
+        const snapshot = await db
+          .collection("roarRooms")
+          .where("isActive", "==", true)
+          .orderBy("createdAt", "desc")
+          .limit(limit)
+          .select(
+            "roomId",
+            "name",
+            "icon",
+            "sport",
+            "description",
+            "createdAt",
+            "isActive",
+            "fanCount",
+            "scheduledStartTime",
+            "score",
+            "scoreSubtitle",
+            "watchAlongRoomId",
+            "matchId",
+            "botConfig",
+            "isTestingRoom"
+          )
+          .get();
 
-    const rooms: ChatRoom[] = snapshot.docs.map((doc) => ({
-      ...(doc.data() as ChatRoom),
-      roomId: doc.id, // ensure roomId is always present even if missing from data
-    }));
+        rooms = snapshot.docs.map((doc) => ({
+          ...(doc.data() as ChatRoom),
+          roomId: doc.id,
+        }));
+      } catch (fbErr) {
+        console.warn("Firebase roar rooms fallback notice:", fbErr);
+      }
+    }
 
     const lastRoom = rooms[rooms.length - 1];
 
@@ -102,7 +108,7 @@ query = query.orderBy("createdAt", "desc").limit(limit);
             ? { lastCreatedAt: lastRoom?.createdAt ?? null }
             : null,
       },
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("GET /api/roar/rooms error:", error);
@@ -113,117 +119,6 @@ query = query.orderBy("createdAt", "desc").limit(limit);
 // ────────────────────────────────────────────────────────────────────────────
 // POST  /api/roar/rooms
 // ────────────────────────────────────────────────────────────────────────────
-//
-// No quota issues in the original POST — it's a single write.
-// Minor improvements:
-//  - Input sanitisation consolidated
-//  - `isActive` defaults to true explicitly (unchanged behaviour, cleaner)
-//
-
-
-// export async function POST(req: NextRequest) {
-//   try {
-//     const user = await getUser(req);
-//     if (!user) {
-//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-//     }
-
-//     const body = await req.json();
-//     const {
-//       name,
-//       icon,
-//       sport,
-//       description,
-//       isActive,
-//       scheduledStartTime,
-//       score,
-//       scoreSubtitle,
-//       createWatchAlong,
-//       matchId,
-//     } = body;
-
-//     if (!name?.trim()) {
-//       return NextResponse.json(
-//         { error: "Room name is required" },
-//         { status: 400 }
-//       );
-//     }
-
-// if (createWatchAlong === true) {
-//   try {
-//     // 1. Create a matching Match record
-//     const matchRef = await db.collection("watchAlongMatches").add({
-//       title: name.trim(),
-//       createdAt: Date.now(),
-//       updatedAt: Date.now(),
-//     });
-
-//     // 2. Derive initials
-//     const initials = name.trim()
-//       .split(" ")
-//       .map((w) => w[0])
-//       .join("")
-//       .toUpperCase()
-//       .slice(0, 2);
-
-//     // 3. Create the watchAlongRoom document ONLY
-//     const watchAlongRoomData = {
-//       name: name.trim(),
-//       role: "Host",
-//       badge: "Live",
-//       badgeColor: "bg-pink-600",
-//       borderColor: "border-pink-500",
-//       initials,
-//       displayPicture: "",
-//       isLive: true,
-//       watching: "0",
-//       engagement: "0%",
-//       active: "0",
-//       liveMatchId: matchRef.id,
-//       hostUserId: user.email || user.userId || null,
-//       coHostUserId: null,
-//       createdAt: Date.now(),
-//       updatedAt: Date.now(),
-//     };
-
-//     const watchAlongRef = await db.collection("watchAlongRooms").add(watchAlongRoomData);
-//     return NextResponse.json({ success: true, watchAlongRoomId: watchAlongRef.id });
-//   } catch (err) {
-//     console.error("Failed to create Watchalong Room:", err);
-//     return NextResponse.json({ error: "Failed to create Watchalong Room" }, { status: 500 });
-//   }
-//     } else {
-//       // Create ONLY ROAR room
-//       const roomRef = db.collection("roarRooms").doc();
-//       const newRoom: ChatRoom & { matchId?: string } = {
-//         roomId: roomRef.id,
-//         name: name.trim(),
-//         sport: sport || "general",
-//         createdAt: Date.now(),
-//         isActive: isActive !== undefined ? Boolean(isActive) : true,
-//         fanCount: 0,
-//         ...(icon && { icon }),
-//         ...(description && { description: description.trim() }),
-//         ...(scheduledStartTime && {
-//           scheduledStartTime: Number(scheduledStartTime),
-//         }),
-//         ...(score && { score }),
-//         ...(scoreSubtitle && { scoreSubtitle }),
-//         ...(matchId && { matchId }),
-//       };
-
-//       await roomRef.set(newRoom);
-//       return NextResponse.json({ success: true, room: newRoom });
-//     }
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     console.error("POST /api/roar/rooms error:", error);
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-
-
 export async function POST(req: NextRequest) {
   try {
     const user = await getUser(req);
@@ -243,42 +138,35 @@ export async function POST(req: NextRequest) {
       scoreSubtitle,
       createWatchAlong,
       matchId,
-      privacy, // "public" | "private" | "premium"
+      privacy,
       isTestingRoom,
       botConfig,
     } = body;
 
     if (!name?.trim()) {
-      return NextResponse.json(
-        { error: "Room name is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Room name is required" }, { status: 400 });
     }
 
     const VALID_PRIVACY = ["public", "private", "premium"];
     const normalizedPrivacy = VALID_PRIVACY.includes(privacy) ? privacy : "public";
-    // Private/premium rooms get flagged for manual review before going live,
-    // matching the "reviewed within 24 hours" copy in the confirm step.
-    const needsReview = normalizedPrivacy !== "public";
+    const now = Date.now();
 
     if (createWatchAlong === true) {
       try {
-        // 1. Create a matching Match record
         const matchRef = await db.collection("watchAlongMatches").add({
           title: name.trim(),
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
+          createdAt: now,
+          updatedAt: now,
         });
 
-        // 2. Derive initials
-        const initials = name.trim()
+        const initials = name
+          .trim()
           .split(" ")
-          .map((w) => w[0])
+          .map((w: string) => w[0])
           .join("")
           .toUpperCase()
           .slice(0, 2);
 
-        // 3. Create the watchAlongRoom document ONLY
         const watchAlongRoomData = {
           name: name.trim(),
           role: "Host",
@@ -294,8 +182,8 @@ export async function POST(req: NextRequest) {
           liveMatchId: matchRef.id,
           hostUserId: user.email || user.userId || null,
           coHostUserId: null,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
+          createdAt: now,
+          updatedAt: now,
         };
 
         const watchAlongRef = await db.collection("watchAlongRooms").add(watchAlongRoomData);
@@ -305,33 +193,43 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to create Watchalong Room" }, { status: 500 });
       }
     } else {
-      // Create ONLY ROAR room
-      const roomRef = db.collection("roarRooms").doc();
-      const VALID_PRIVACY = ["public", "private", "premium"];
-      const normalizedPrivacy = VALID_PRIVACY.includes(privacy) ? privacy : "public";
+      const roomId = `room_${now}_${Math.random().toString(36).substring(2, 9)}`;
 
-  const newRoom: ChatRoom & { matchId?: string; privacy?: string; isTestingRoom?: boolean; botConfig?: Record<string, unknown> } = {
-    roomId: roomRef.id,
-    name: name.trim(),
-    sport: sport || "general",
-    createdAt: Date.now(),
-    isActive: isActive !== undefined ? Boolean(isActive) : true,
-    privacy: normalizedPrivacy, // stored, but doesn't affect visibility/isActive yet
-    fanCount: 0,
-    createdByUid: user.userId,
-    isTestingRoom: Boolean(isTestingRoom),
-    ...(icon && { icon }),
-    ...(description && { description: description.trim() }),
-    ...(scheduledStartTime && {
-      scheduledStartTime: Number(scheduledStartTime),
-    }),
-    ...(score && { score }),
-    ...(scoreSubtitle && { scoreSubtitle }),
-    ...(matchId && { matchId }),
-    ...(botConfig && { botConfig }),
-  };
+      const newRoom: ChatRoom & {
+        matchId?: string;
+        privacy?: string;
+        isTestingRoom?: boolean;
+        botConfig?: Record<string, unknown>;
+      } = {
+        roomId,
+        name: name.trim(),
+        sport: sport || "general",
+        createdAt: now,
+        isActive: isActive !== undefined ? Boolean(isActive) : true,
+        privacy: normalizedPrivacy,
+        fanCount: 0,
+        createdByUid: user.userId,
+        isTestingRoom: Boolean(isTestingRoom),
+        ...(icon && { icon }),
+        ...(description && { description: description.trim() }),
+        ...(scheduledStartTime && { scheduledStartTime: Number(scheduledStartTime) }),
+        ...(score && { score }),
+        ...(scoreSubtitle && { scoreSubtitle }),
+        ...(matchId && { matchId }),
+        ...(botConfig && { botConfig }),
+      };
 
-      await roomRef.set(newRoom);
+      // ── Dual-Write to RealTimeChat in DynamoDB & roarRooms in Firebase ─────────
+      const dynamoItem = {
+        ...newRoom,
+        roomId: `ROOM#${roomId}`,
+        sk: `META#${roomId}`,
+        isActive: newRoom.isActive ? "true" : "false",
+        order: now,
+      };
+
+      await dualWrite("roarRooms", roomId, "RealTimeChat", dynamoItem);
+
       return NextResponse.json({ success: true, room: newRoom });
     }
   } catch (error: unknown) {

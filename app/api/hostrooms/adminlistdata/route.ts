@@ -1,11 +1,10 @@
+// app/api/hostrooms/adminlistdata/route.ts — Migrated to AWS DynamoDB (RealTimeChat Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
-
-interface FirestoreError extends Error {
-  message: string;
-  code?: string;
-}
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
@@ -14,122 +13,113 @@ export async function GET(req: NextRequest) {
     const userId = searchParams.get("userId");
     const status = searchParams.get("status");
     const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
-    const lastDocId = searchParams.get("lastDocId");
 
     // Case 1: Fetch single room by ID
     if (roomId) {
-      const docRef = db.collection("rooms").doc(roomId);
-      const doc = await docRef.get();
-
-      if (!doc.exists) {
-        return NextResponse.json(
-          { success: false, error: "Room not found" },
-          { status: 404 }
+      let room: any = null;
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: "RealTimeChat",
+            Key: {
+              roomId: `ROOM#${roomId}`,
+              sk: "ROOM#META",
+            },
+          })
         );
+        if (getRes.Item) {
+          room = { id: roomId, ...getRes.Item };
+        }
+      } catch (e) {
+        console.warn("[hostrooms adminlistdata single GET] DynamoDB notice:", e);
+      }
+
+      if (!room) {
+        const docRef = db.collection("rooms").doc(roomId);
+        const doc = await docRef.get();
+
+        if (!doc.exists) {
+          return NextResponse.json(
+            { success: false, error: "Room not found" },
+            { status: 404 }
+          );
+        }
+        room = { id: doc.id, ...doc.data() };
       }
 
       return NextResponse.json({
         success: true,
-        room: { id: doc.id, ...doc.data() },
+        room,
       });
     }
 
-    // Case 2: Fetch rooms for a specific user (for host dashboard)
-    if (userId) {
-      try {
-        let query = db
-          .collection("rooms")
-          .where("userId", "==", userId);
-        
-        query = query.orderBy("updatedAt", "desc");
-        
-        const snapshot = await query.get();
+    // Case 2 & 3: Fetch rooms by userId or admin query
+    let rooms: any[] = [];
+    try {
+      let filterExpr = "sk = :skMeta";
+      const exprVals: Record<string, any> = {
+        ":skMeta": "ROOM#META",
+      };
 
-        const rooms = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
+      if (userId) {
+        filterExpr += " AND (userId = :uId OR hostUserId = :uId)";
+        exprVals[":uId"] = userId;
+      }
+      if (status && status !== "all") {
+        filterExpr += " AND #st = :st";
+        exprVals[":st"] = status;
+      }
+
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "RealTimeChat",
+          FilterExpression: filterExpr,
+          ExpressionAttributeNames: status && status !== "all" ? { "#st": "status" } : undefined,
+          ExpressionAttributeValues: exprVals,
+          Limit: 100,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        rooms = (scanRes.Items as any[]).map((item) => ({
+          id: (item.roomId as string)?.replace(/^ROOM#/, "") || item.id,
+          ...item,
         }));
-
-        return NextResponse.json({
-          success: true,
-          rooms,
-          total: rooms.length,
-        });
-      } catch (queryError: unknown) {
-        const error = queryError as FirestoreError;
-        // Handle missing index error
-        if (error.message?.includes("index")) {
-          const indexUrlMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
-          const indexUrl = indexUrlMatch ? indexUrlMatch[0] : null;
-          return NextResponse.json({
-            success: false,
-            error: "Please create the required Firestore index",
-            indexUrl: indexUrl,
-            message: error.message
-          }, { status: 400 });
-        }
-        throw queryError;
       }
+    } catch (e) {
+      console.warn("[hostrooms adminlistdata scan GET] DynamoDB notice:", e);
     }
 
-    // Case 3: Admin Panel - Fetch ALL rooms (no userId filter)
-    let query: FirebaseFirestore.Query = db.collection("rooms");
+    // Fallback to Firestore
+    if (rooms.length === 0) {
+      let query: FirebaseFirestore.Query = db.collection("rooms");
 
-    // Add filters
-    if (status && status !== "all") {
-      query = query.where("status", "==", status);
-    }
-
-    // Add ordering - this may require an index if combined with where
-    query = query.orderBy("updatedAt", "desc");
-
-    // Pagination
-    if (lastDocId) {
-      const lastDocRef = db.collection("rooms").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
+      if (userId) {
+        query = query.where("userId", "==", userId);
       }
+      if (status && status !== "all") {
+        query = query.where("status", "==", status);
+      }
+
+      query = query.orderBy("updatedAt", "desc");
+      const snapshot = await query.limit(limit).get();
+      rooms = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
     }
 
-    const snapshot = await query.limit(limit).get();
-
-    const rooms = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    rooms.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+    const paginatedRooms = rooms.slice(0, limit);
 
     return NextResponse.json({
       success: true,
-      rooms,
-      pagination: {
-        limit,
-        hasMore: rooms.length === limit,
-        nextCursor: rooms.length === limit ? lastDoc?.id : null,
-      },
+      rooms: paginatedRooms,
       total: rooms.length,
     });
-
   } catch (error: unknown) {
-    console.error("[rooms GET] Error:", error);
-    
-    const firestoreError = error as FirestoreError;
-    
-    // Handle specific Firestore errors
-    if (firestoreError.message?.includes("index")) {
-      const indexUrlMatch = firestoreError.message.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
-      const indexUrl = indexUrlMatch ? indexUrlMatch[0] : null;
-      return NextResponse.json({
-        success: false,
-        error: "Firestore index required. Please create the following index:",
-        message: firestoreError.message,
-        indexUrl: indexUrl
-      }, { status: 400 });
-    }
-    
     const msg = error instanceof Error ? error.message : "Unexpected error";
+    console.error("[hostrooms adminlistdata GET]", error);
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

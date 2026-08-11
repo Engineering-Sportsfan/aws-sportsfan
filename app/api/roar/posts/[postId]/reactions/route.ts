@@ -1,177 +1,209 @@
-// // api/roar/posts/[postId]/reactions/route.ts
-// // GET  /api/roar/posts/:postId/reactions
-// //
-// // Returns the list of users who reacted and what reaction they gave,
-// // sorted most-recent first. Used by ReactionsDialog (LinkedIn-style viewer).
-// //
-// // Firestore structure:
-// //   roarPosts/{postId}/likes/{userId}
-// //     { reaction: "heart"|"fire"|"laugh"|"sad"|"thumb", reactedAt: number, userId: string }
-// //
-// // Quota cost per request:
-// //   1      — user auth
-// //   1      — roarPost doc (existence check)
-// //   N      — likes subcollection docs (up to `limit`, default 100)
-// //   M      — user profile docs (batch, parallel)
-// //   ─────────────────────────────────────────────
-// //   2 + N + M  reads total
-
-// import { NextRequest, NextResponse } from "next/server";
-// import { db } from "@/lib/firebaseAdmin";
-// import { getUser } from "@/lib/getUser";
-
-// export async function GET(
-//   req: NextRequest,
-//   { params }: { params: { postId: string } }
-// ) {
-//   try {
-//     const user = await getUser(req);
-//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-//     const { postId } = params;
-//     if (!postId) return NextResponse.json({ error: "postId is required" }, { status: 400 });
-
-//     const { searchParams } = new URL(req.url);
-//     const limit = Math.min(parseInt(searchParams.get("limit") || "100"), 200);
-
-//     // Existence check — one read, also lets us return 404 cleanly
-//     const postSnap = await db.collection("roarPosts").doc(postId).get();
-//     if (!postSnap.exists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
-
-//     // ── Fetch likes, newest first ─────────────────────────────────────────────
-//     // orderBy("reactedAt", "desc") requires a single-field index on reactedAt
-//     // (auto-created by Firestore on first query).
-//     const likesSnap = await db
-//       .collection("roarPosts")
-//       .doc(postId)
-//       .collection("likes")
-//       .orderBy("reactedAt", "desc")
-//       .limit(limit)
-//       .get();
-
-//     if (likesSnap.empty) return NextResponse.json({ success: true, reactors: [], total: 0 });
-
-//     // ── Batch-fetch user profiles in parallel ─────────────────────────────────
-//     const userIds = likesSnap.docs.map((d) => d.id);
-//     const profileSnaps = await Promise.all(
-//       userIds.map((uid) => db.collection("users").doc(uid).get())
-//     );
-
-//     const reactors = likesSnap.docs.map((likeDoc, idx) => {
-//       const likeData = likeDoc.data() as { reaction?: string; reactedAt?: number };
-//       const profile  = profileSnaps[idx].data() as { username?: string; avatarUrl?: string; badge?: string } | undefined;
-
-//       return {
-//         userId:     likeDoc.id,
-//         username:   profile?.username  ?? likeDoc.id,
-//         avatarUrl:  profile?.avatarUrl ?? undefined,
-//         badge:      profile?.badge     ?? "RISING_FAN",
-//         reaction:   likeData.reaction  ?? "heart",  // legacy docs default to heart
-//         reactedAt:  likeData.reactedAt ?? 0,
-//       };
-//     });
-
-//     return NextResponse.json({ success: true, reactors, total: reactors.length });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     console.error(`GET /api/roar/posts/${params.postId}/reactions error:`, error);
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-
-
-
-
-
 // api/roar/posts/[postId]/reactions/route.ts
 // GET  /api/roar/posts/:postId/reactions
-// GET  /api/roar/posts/:postId/reactions?roomId=xyz   (NEW — room messages)
-//
-// Returns the list of users who reacted and what reaction they gave,
-// sorted most-recent first. Used by ReactionsDialog (LinkedIn-style viewer).
-//
-// Firestore structure (post, default):
-//   roarPosts/{postId}/likes/{userId}
-//     { reaction: "heart"|"fire"|"laugh"|"sad"|"thumb", reactedAt: number, userId: string }
-//
-// Firestore structure (room message, when roomId is provided):
-//   roarRooms/{roomId}/messages/{postId}/likes/{userId}
-//     same shape as above — only the parent doc differs.
-//
-// Quota cost per request:
-//   1      — user auth
-//   1      — parent doc (post or room message) existence check
-//   N      — likes subcollection docs (up to `limit`, default 100)
-//   M      — user profile docs (batch, parallel)
-//   ─────────────────────────────────────────────
-//   2 + N + M  reads total
+// GET  /api/roar/posts/:postId/reactions?roomId=xyz
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { postId: string } }
+  { params }: { params: Promise<{ postId: string }> }
 ) {
   try {
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { postId } = params;
+    const resolvedParams = await params;
+    const { postId } = resolvedParams;
     if (!postId) return NextResponse.json({ error: "postId is required" }, { status: 400 });
 
     const { searchParams } = new URL(req.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "100"), 200);
     const roomId = searchParams.get("roomId") || undefined;
 
-    // ── Resolve parent doc — post or room message ───────────────────────────
-    const parentRef = roomId
-      ? db.collection("roarRooms").doc(roomId).collection("messages").doc(postId)
-      : db.collection("roarPosts").doc(postId);
+    // 1. Existence check & fetch likes from DynamoDB first
+    let reactorsData: any[] = [];
+    let parentExists = false;
+    let fetchedFromDynamo = false;
 
-    // Existence check — one read, also lets us return 404 cleanly
-    const parentSnap = await parentRef.get();
-    if (!parentSnap.exists) {
+    try {
+      if (roomId) {
+        // Query parent room message in RealTimeChat
+        const msgRes = await docClient.send(new QueryCommand({
+          TableName: "RealTimeChat",
+          KeyConditionExpression: "roomId = :r AND sk = :s",
+          ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${postId}` },
+          Limit: 1
+        }));
+        if (msgRes.Items && msgRes.Items.length > 0) {
+          parentExists = true;
+          // Fetch reactions for this message in RealTimeChat
+          const reactionsRes = await docClient.send(new QueryCommand({
+            TableName: "RealTimeChat",
+            KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+            ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": `LIKE#${postId}#` },
+            Limit: limit
+          }));
+          if (reactionsRes.Items) {
+            reactorsData = reactionsRes.Items.map(item => ({
+              userId: (item.sk as string).split("#")[2],
+              reaction: item.reaction ?? "heart",
+              reactedAt: item.reactedAt ?? 0
+            }));
+            fetchedFromDynamo = true;
+          }
+        }
+      } else {
+        // Query parent post in SocialAndContent
+        const postRes = await docClient.send(new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+          ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
+          Limit: 1
+        }));
+        if (postRes.Items && postRes.Items.length > 0) {
+          parentExists = true;
+          // Fetch likes for this post in SocialAndContent
+          const reactionsRes = await docClient.send(new QueryCommand({
+            TableName: "SocialAndContent",
+            KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+            ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "LIKE#" },
+            Limit: limit
+          }));
+          if (reactionsRes.Items) {
+            reactorsData = reactionsRes.Items.map(item => ({
+              userId: (item.sk as string).split("#")[1],
+              reaction: item.reaction ?? "heart",
+              reactedAt: item.reactedAt ?? 0
+            }));
+            fetchedFromDynamo = true;
+          }
+        }
+      }
+    } catch (dynErr) {
+      console.warn("[Reactions] DynamoDB fetch failed, trying Firestore:", dynErr);
+    }
+
+    // Fallback: Check Firestore
+    if (!fetchedFromDynamo) {
+      try {
+        const parentRef = roomId
+          ? db.collection("roarRooms").doc(roomId).collection("messages").doc(postId)
+          : db.collection("roarPosts").doc(postId);
+
+        const parentSnap = await parentRef.get();
+        if (parentSnap.exists) {
+          parentExists = true;
+          const likesSnap = await parentRef
+              .collection("likes")
+              .orderBy("reactedAt", "desc")
+              .limit(limit)
+              .get();
+
+          reactorsData = likesSnap.docs.map(doc => {
+            const data = doc.data();
+            return {
+              userId: doc.id,
+              reaction: data.reaction ?? "heart",
+              reactedAt: data.reactedAt ?? 0
+            };
+          });
+        }
+      } catch (fsErr) {
+        console.warn("[Reactions] Firestore fetch failed:", fsErr);
+      }
+    }
+
+    if (!parentExists) {
       return NextResponse.json({ error: roomId ? "Message not found" : "Post not found" }, { status: 404 });
     }
 
-    // ── Fetch likes, newest first ─────────────────────────────────────────────
-    // orderBy("reactedAt", "desc") requires a single-field index on reactedAt
-    // (auto-created by Firestore on first query).
-    const likesSnap = await parentRef
-      .collection("likes")
-      .orderBy("reactedAt", "desc")
-      .limit(limit)
-      .get();
+    if (reactorsData.length === 0) {
+      return NextResponse.json({ success: true, reactors: [], total: 0 });
+    }
 
-    if (likesSnap.empty) return NextResponse.json({ success: true, reactors: [], total: 0 });
+    // 2. Fetch User Profiles in parallel
+    const userIds = reactorsData.map(r => r.userId);
+    const profileMap = new Map<string, any>();
 
-    // ── Batch-fetch user profiles in parallel ─────────────────────────────────
-    const userIds = likesSnap.docs.map((d) => d.id);
-    const profileSnaps = await Promise.all(
-      userIds.map((uid) => db.collection("users").doc(uid).get())
-    );
+    // Try DynamoDB batch get first
+    let fetchedProfiles = false;
+    try {
+      const keys = userIds.map(uid => ({
+        entityId: `USER#${uid}`,
+        sk: "USER#META"
+      }));
 
-    const reactors = likesSnap.docs.map((likeDoc, idx) => {
-      const likeData = likeDoc.data() as { reaction?: string; reactedAt?: number };
-      const profile  = profileSnaps[idx].data() as { username?: string; avatarUrl?: string; badge?: string } | undefined;
+      const chunkSize = 100;
+      const chunks = [];
+      for (let i = 0; i < keys.length; i += chunkSize) {
+        chunks.push(keys.slice(i, i + chunkSize));
+      }
 
+      const batchResults = await Promise.all(chunks.map(chunk =>
+        docClient.send(new BatchGetCommand({
+          RequestItems: {
+            "IdentityAndAccess": {
+              Keys: chunk
+            }
+          }
+        }))
+      ));
+
+      batchResults.forEach(res => {
+        const items = res.Responses?.["IdentityAndAccess"] || [];
+        items.forEach(item => {
+          const uid = (item.entityId as string).replace(/^USER#/, "");
+          profileMap.set(uid, item);
+        });
+      });
+      fetchedProfiles = true;
+    } catch (dynErr) {
+      console.warn("[Reactions] DynamoDB batch get profiles failed, trying Firestore:", dynErr);
+    }
+
+    // Fallback: Fetch user profiles from Firestore
+    if (!fetchedProfiles || profileMap.size < userIds.length) {
+      try {
+        const missingUserIds = userIds.filter(uid => !profileMap.has(uid));
+        const profileSnaps = await Promise.all(
+          missingUserIds.map((uid) => db.collection("users").doc(uid).get())
+        );
+        profileSnaps.forEach((snap, idx) => {
+          const uid = missingUserIds[idx];
+          if (snap.exists) {
+            profileMap.set(uid, snap.data());
+          }
+        });
+      } catch (fsErr) {
+        console.warn("[Reactions] Firestore batch profiles fallback failed:", fsErr);
+      }
+    }
+
+    const reactors = reactorsData.map(r => {
+      const profile = profileMap.get(r.userId);
       return {
-        userId:     likeDoc.id,
-        username:   profile?.username  ?? likeDoc.id,
-        avatarUrl:  profile?.avatarUrl ?? undefined,
-        badge:      profile?.badge     ?? "RISING_FAN",
-        reaction:   likeData.reaction  ?? "heart",  // legacy docs default to heart
-        reactedAt:  likeData.reactedAt ?? 0,
+        userId: r.userId,
+        username: profile?.username || profile?.userName || r.userId,
+        avatarUrl: profile?.avatarUrl || undefined,
+        badge: profile?.badge || "RISING_FAN",
+        reaction: r.reaction,
+        reactedAt: r.reactedAt
       };
     });
+
+    // Sort by reactedAt desc
+    reactors.sort((a, b) => b.reactedAt - a.reactedAt);
 
     return NextResponse.json({ success: true, reactors, total: reactors.length });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error(`GET /api/roar/posts/${params.postId}/reactions error:`, error);
+    console.error(`GET /api/roar/posts/reactions error:`, error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

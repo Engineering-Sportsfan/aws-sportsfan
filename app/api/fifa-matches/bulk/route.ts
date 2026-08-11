@@ -1,5 +1,4 @@
-// api/fifa-matches/bulk/route.ts
-
+// app/api/fifa-matches/bulk/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -7,15 +6,40 @@ import { validateFifaMatchCreate } from "@/lib/validations/fifaMatchValidation";
 import { validateFifaMatchRecord, runFifaMatchDQChecks } from "@/lib/ingestion/fifaMatchRules";
 import { parseFifaExcelBuffer } from "@/lib/ingestion/fifaExcelParser";
 import type { FifaMatchCreateInput } from "@/lib/validations/fifaMatchValidation";
+import { docClient } from "@/lib/dynamodb";
+import { BatchWriteCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 const CHUNK_SIZE = 30;
 
 async function fetchExistingMatchIds(matchIds: string[]): Promise<Set<string>> {
   const existing = new Set<string>();
+
+  // 1. Check DynamoDB SportsData
+  for (const mId of matchIds) {
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: { entityId: `FIFA_MATCH#${mId}`, sk: "FIFA#META" },
+        })
+      );
+      if (getRes.Item) existing.add(mId);
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. Check Firestore fallback
   for (let i = 0; i < matchIds.length; i += CHUNK_SIZE) {
     const chunk = matchIds.slice(i, i + CHUNK_SIZE);
-    const snap = await db.collection("fifaMatches").where("match_id", "in", chunk).select("match_id").get();
-    snap.docs.forEach((d) => existing.add(d.data().match_id));
+    try {
+      const snap = await db.collection("fifaMatches").where("match_id", "in", chunk).select("match_id").get();
+      snap.docs.forEach((d) => existing.add(d.data().match_id));
+    } catch (err) {
+      console.error("[DEDUP] FIFA Matches chunk query failed:", err);
+    }
   }
   return existing;
 }
@@ -102,6 +126,7 @@ export async function POST(req: NextRequest) {
 
   const processedInBatch = new Set<string>();
   const writtenMatches: FifaMatchCreateInput[] = [];
+  const dynamoItemsToWrite: any[] = [];
 
   const BATCH_LIMIT = 400;
   let batch = db.batch();
@@ -114,6 +139,8 @@ export async function POST(req: NextRequest) {
       opsInBatch = 0;
     }
   };
+
+  const now = Date.now();
 
   for (let i = 0; i < validMatches.length; i++) {
     const match = validMatches[i];
@@ -128,17 +155,35 @@ export async function POST(req: NextRequest) {
 
     if (existingIds.has(match.match_id)) {
       if (upsert) {
-        // Update existing
+        dynamoItemsToWrite.push({
+          PutRequest: {
+            Item: {
+              entityId: `FIFA_MATCH#${match.match_id}`,
+              sk: "FIFA#META",
+              ...match,
+              updatedAt: now,
+            },
+          },
+        });
         batch.set(docRef, { ...match, updated_at: FieldValue.serverTimestamp() }, { merge: true });
         updated++;
       } else {
-        // Skip
         console.log(`[ROW ${i + 1}] SKIP (exists): ${match.match_id}`);
         skipped++;
         continue;
       }
     } else {
-      // New record
+      dynamoItemsToWrite.push({
+        PutRequest: {
+          Item: {
+            entityId: `FIFA_MATCH#${match.match_id}`,
+            sk: "FIFA#META",
+            ...match,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      });
       batch.set(docRef, {
         ...match,
         created_at: FieldValue.serverTimestamp(),
@@ -151,6 +196,22 @@ export async function POST(req: NextRequest) {
     processedInBatch.add(match.match_id);
     opsInBatch++;
     if (opsInBatch >= BATCH_LIMIT) await flushBatch();
+  }
+
+  // Write DynamoDB in batches of 25
+  for (let i = 0; i < dynamoItemsToWrite.length; i += 25) {
+    const chunk = dynamoItemsToWrite.slice(i, i + 25);
+    try {
+      await docClient.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            SportsData: chunk,
+          },
+        })
+      );
+    } catch (dynErr) {
+      console.warn("[FIFA-MATCHES/BULK] DynamoDB batch write notice:", dynErr);
+    }
   }
 
   try {

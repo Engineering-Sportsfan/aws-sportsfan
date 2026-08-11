@@ -101,6 +101,9 @@
 import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
 // Helper for consistent user ID
 function generateConsistentUserId(email: string): string {
@@ -120,54 +123,97 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async signIn({ user }) {
       try {
         const email = user.email!;
-        const userRef = db.collection("users").doc(email);
-        const userDoc = await userRef.get();
-
+        const cleanEmail = email.trim().toLowerCase();
         const consistentUserId = generateConsistentUserId(email);
         const nameParts = (user.name ?? "").split(" ");
         const firstName = nameParts[0] ?? "";
         const lastName = nameParts.slice(1).join(" ") ?? "";
 
-        if (!userDoc.exists) {
-            // Create new user with consistent ID
-            await userRef.set({
-                email,
-                userId: consistentUserId, // Consistent ID, not google_xxx
-                firstName,
-                lastName,
-                avatar: user.image ?? "",
-                provider: "google",
-                authProviders: { google: true, emailPassword: false },
-                isVerified: true,
-                status: "active",
-                role: "user",
-                totalPoints: 0,
-                pointsBreakdown: {},
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                lastLoginAt: Date.now(),
-            });
+        // 1. Check if user exists in DynamoDB first
+        let exists = false;
+        let existingData: any = null;
+
+        try {
+          const uRes = await docClient.send(new GetCommand({
+            TableName: "IdentityAndAccess",
+            Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" }
+          }));
+          if (uRes.Item) {
+            exists = true;
+            existingData = uRes.Item;
+          }
+        } catch (dynErr) {
+          console.warn("DynamoDB signin user check failed:", dynErr);
+        }
+
+        // Fallback check to Firestore
+        if (!exists) {
+          try {
+            const userDoc = await db.collection("users").doc(cleanEmail).get();
+            if (userDoc.exists) {
+              exists = true;
+              existingData = userDoc.data();
+            }
+          } catch (fsErr) {
+            console.warn("Firestore signin user check failed:", fsErr);
+          }
+        }
+
+        if (!exists) {
+          // Create new user with consistent ID
+          const newUserData = {
+            email: cleanEmail,
+            userId: consistentUserId,
+            firstName,
+            lastName,
+            avatar: user.image ?? "",
+            provider: "google",
+            authProviders: { google: true, emailPassword: false },
+            isVerified: true,
+            status: "active",
+            role: "user",
+            totalPoints: 0,
+            pointsBreakdown: {},
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            lastLoginAt: Date.now(),
+          };
+
+          const dynamoUserItem = {
+            entityId: `USER#${cleanEmail}`,
+            sk: "USER#META",
+            ...newUserData
+          };
+
+          await dualWrite("users", cleanEmail, "IdentityAndAccess", dynamoUserItem);
         } else {
-            const data = userDoc.data()!;
-            if (data.status === "disabled") return false;
-            
-            // Update existing user
-            const updateData: Record<string, unknown> = {
-                lastLoginAt: Date.now(),
-                updatedAt: Date.now(),
+          if (existingData.status === "disabled") return false;
+          
+          // Update existing user
+          const updateData: Record<string, unknown> = {
+            lastLoginAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          
+          if (existingData.userId && existingData.userId.startsWith("google_")) {
+            updateData.userId = consistentUserId;
+          }
+          
+          // Add Google as auth provider if not already
+          const authProviders = existingData.authProviders || {};
+          if (!authProviders.google) {
+            updateData.authProviders = {
+              ...authProviders,
+              google: true
             };
-            
-            // If userId is inconsistent, fix it
-            if (data.userId && data.userId.startsWith("google_")) {
-                updateData.userId = consistentUserId;
-            }
-            
-            // Add Google as auth provider if not already
-            if (!data.authProviders?.google) {
-                updateData['authProviders.google'] = true;
-            }
-            
-            await userRef.update(updateData);
+          }
+          
+          const updatedDynamoUser = {
+            ...existingData,
+            ...updateData
+          };
+
+          await dualWrite("users", cleanEmail, "IdentityAndAccess", updatedDynamoUser);
         }
         return true;
       } catch (error) {
@@ -179,9 +225,34 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user, account }) {
       if (account?.provider === "google" && user?.email) {
         try {
-          const userDoc = await db.collection("users").doc(user.email).get();
-          if (userDoc.exists) {
-            const data = userDoc.data()!;
+          const cleanEmail = user.email.trim().toLowerCase();
+          let exists = false;
+          let data: any = null;
+
+          // 1. Try DynamoDB first
+          try {
+            const uRes = await docClient.send(new GetCommand({
+              TableName: "IdentityAndAccess",
+              Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" }
+            }));
+            if (uRes.Item) {
+              data = uRes.Item;
+              exists = true;
+            }
+          } catch (dynErr) {
+            console.warn("DynamoDB jwt callback check failed:", dynErr);
+          }
+
+          // 2. Fallback to Firestore
+          if (!exists) {
+            const userDoc = await db.collection("users").doc(cleanEmail).get();
+            if (userDoc.exists) {
+              data = userDoc.data()!;
+              exists = true;
+            }
+          }
+
+          if (exists && data) {
             token.role   = data.role   ?? "user";
             token.status = data.status ?? "active";
             token.dbUser = {

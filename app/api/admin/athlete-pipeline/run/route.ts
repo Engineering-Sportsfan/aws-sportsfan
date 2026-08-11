@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/getUser";
 import { getAthletePipelineConfig } from "@/lib/athletePipelineAuth";
 
+export const dynamic = "force-dynamic";
+
+
 // POST /api/admin/athlete-pipeline/run
 // body: { athlete_id: string, athlete_name: string, sport: string }
 // Manual re-check of one athlete against its licensed source feed; never

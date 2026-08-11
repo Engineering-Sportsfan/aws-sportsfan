@@ -1,6 +1,12 @@
+// app/api/club-profile/media/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 // ─── POST: Create Media Item(s) 
 export async function POST(req: NextRequest) {
@@ -9,7 +15,6 @@ export async function POST(req: NextRequest) {
 
     const clubProfileId = formData.get("clubProfileId") as string;
 
-    // Support uploading multiple media items at once
     const titles = formData.getAll("titles") as string[];
     const viewsCounts = formData.getAll("views") as string[];
     const times = formData.getAll("times") as string[];
@@ -36,7 +41,6 @@ export async function POST(req: NextRequest) {
       const views = viewsCounts[i] || "0";
       const time = times[i] || "";
 
-      // Upload thumbnail to Cloudinary
       let thumbnailUrl = "";
       if (thumbnailFiles[i] && thumbnailFiles[i].size > 0) {
         const bytes = await thumbnailFiles[i].arrayBuffer();
@@ -57,18 +61,28 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const now = Date.now();
+    const id = `club_media_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
     const mediaData = {
+      id,
       clubProfileId,
       mediaItems,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const docRef = await db.collection("clubMedia").add(mediaData);
+    const dynamoItem = {
+      entityId: `CLUB_MEDIA#${id}`,
+      sk: "MEDIA#META",
+      ...mediaData,
+    };
+
+    await dualWrite("clubMedia", id, "SportsData", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      media: { id: docRef.id, ...mediaData },
+      media: mediaData,
     });
   } catch (error) {
     console.error("Create media error:", error);
@@ -79,45 +93,70 @@ export async function POST(req: NextRequest) {
   }
 }
 
-
+// ─── GET: List Media Items
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const clubProfileId = searchParams.get("clubProfileId");
     const limit = parseInt(searchParams.get("limit") || "12");
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
 
-    let query: FirebaseFirestore.Query = db.collection("clubMedia");
+    let mediaDocs: any[] = [];
 
-    if (clubProfileId) {
-      query = query.where("clubProfileId", "==", clubProfileId);
-    }
+    // 1. Scan DynamoDB
+    try {
+      let filterExpr = "begins_with(entityId, :prefix)";
+      const exprVals: Record<string, any> = {
+        ":prefix": "CLUB_MEDIA#",
+      };
 
-    query = query.orderBy("createdAt", "desc").limit(limit);
-
-    // Use cursor-based pagination instead of offset
-    if (lastDocId && lastDocCreatedAt) {
-      const lastDocRef = db.collection("clubMedia").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
+      if (clubProfileId) {
+        filterExpr += " AND clubProfileId = :cpId";
+        exprVals[":cpId"] = clubProfileId;
       }
+
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprVals,
+          Limit: 100,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        mediaDocs = scanRes.Items.map((item) => ({
+          id: item.id || (item.entityId as string).replace(/^CLUB_MEDIA#/, ""),
+          ...item,
+        }));
+      }
+    } catch (e) {
+      console.warn("[club-profile media GET] DynamoDB notice:", e);
     }
 
-    const snapshot = await query.get();
+    // 2. Fallback to Firestore
+    if (mediaDocs.length === 0 && db) {
+      let query: FirebaseFirestore.Query = db.collection("clubMedia");
 
-    const mediaDocs = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+      if (clubProfileId) {
+        query = query.where("clubProfileId", "==", clubProfileId);
+      }
 
-    // Get last document for next page cursor
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      query = query.orderBy("createdAt", "desc").limit(limit);
+      const snapshot = await query.get();
+
+      mediaDocs = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    }
+
+    mediaDocs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const paged = mediaDocs.slice(0, limit);
+    const lastDoc = paged[paged.length - 1];
 
     return NextResponse.json({
       success: true,
-      mediaDocs,
+      mediaDocs: paged,
       pagination: {
         limit,
         hasMore: mediaDocs.length === limit,

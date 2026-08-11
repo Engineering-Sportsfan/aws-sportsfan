@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { FieldValue } from "firebase-admin/firestore";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export async function POST(
   req: NextRequest,
@@ -32,45 +34,96 @@ export async function POST(
       .collection("comments")
       .doc(commentId);
 
-    const reactionRef = commentRef.collection("reactions").doc(resolvedUserId);
+    // 1. Fetch parent comment & reaction record from DynamoDB first
+    let commentItem: any = null;
+    let alreadyReacted = false;
+    let fetchedFromDynamo = false;
 
-    let finalHeartCount = 0;
-
-    await db.runTransaction(async (tx) => {
-      const [commentSnap, reactionSnap] = await Promise.all([
-        tx.get(commentRef),
-        tx.get(reactionRef),
+    try {
+      const [commentRes, reactionRes] = await Promise.all([
+        docClient.send(new GetCommand({
+          TableName: "SocialAndContent",
+          Key: { contentId: `POST#${postId}`, sk: `COMMENT#${commentId}` }
+        })),
+        docClient.send(new GetCommand({
+          TableName: "SocialAndContent",
+          Key: { contentId: `POST#${postId}`, sk: `COMMENT_REACT#${commentId}#${resolvedUserId}` }
+        }))
       ]);
 
-      if (!commentSnap.exists) {
-        throw new Error("Comment not found");
+      if (commentRes.Item) {
+        commentItem = commentRes.Item;
+        alreadyReacted = !!reactionRes.Item;
+        fetchedFromDynamo = true;
       }
+    } catch (dynErr) {
+      console.warn("[CommentReact] DynamoDB check failed:", dynErr);
+    }
 
-      if (reactionSnap.exists) {
-        throw new Error("Already reacted");
+    // Fallback: Check Firestore
+    if (!fetchedFromDynamo) {
+      try {
+        const commentSnap = await commentRef.get();
+        if (commentSnap.exists) {
+          commentItem = commentSnap.data();
+          const reactionSnap = await commentRef.collection("reactions").doc(resolvedUserId).get();
+          alreadyReacted = reactionSnap.exists;
+        }
+      } catch (fsErr) {
+        console.warn("[CommentReact] Firestore check failed:", fsErr);
       }
+    }
 
-      const current = (commentSnap.data() as any).heartCount ?? 0;
-      finalHeartCount = current + 1;
+    if (!commentItem) {
+      return NextResponse.json({ error: "Comment not found" }, { status: 404 });
+    }
 
-      tx.update(commentRef, {
-        heartCount: FieldValue.increment(1),
+    if (alreadyReacted) {
+      return NextResponse.json({ error: "Already reacted" }, { status: 400 });
+    }
+
+    const currentHeartCount = commentItem.heartCount ?? 0;
+    const finalHeartCount = currentHeartCount + 1;
+
+    // 2. Write to DynamoDB
+    try {
+      await docClient.send(new PutCommand({
+        TableName: "SocialAndContent",
+        Item: {
+          contentId: `POST#${postId}`,
+          sk: `COMMENT_REACT#${commentId}#${resolvedUserId}`,
+          reactedAt: Date.now()
+        }
+      }));
+
+      await docClient.send(new UpdateCommand({
+        TableName: "SocialAndContent",
+        Key: { contentId: `POST#${postId}`, sk: `COMMENT#${commentId}` },
+        UpdateExpression: "SET heartCount = :hc",
+        ExpressionAttributeValues: { ":hc": finalHeartCount }
+      })).catch((e) => console.warn("[CommentReact] Failed to update comment heartCount in DynamoDB:", e));
+    } catch (dynErr) {
+      console.warn("[CommentReact] DynamoDB write failed:", dynErr);
+    }
+
+    // 3. Sync/Fallback to Firestore
+    try {
+      const reactionRef = commentRef.collection("reactions").doc(resolvedUserId);
+      await db.runTransaction(async (tx) => {
+        tx.update(commentRef, {
+          heartCount: FieldValue.increment(1),
+        });
+        tx.set(reactionRef, {
+          reactedAt: Date.now(),
+        });
       });
-
-      tx.set(reactionRef, {
-        reactedAt: Date.now(),
-      });
-    });
+    } catch (fsErr) {
+      console.warn("[CommentReact] Firestore write failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, heartCount: finalHeartCount });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
-    if (msg === "Comment not found") {
-      return NextResponse.json({ error: msg }, { status: 404 });
-    }
-    if (msg === "Already reacted") {
-      return NextResponse.json({ error: msg }, { status: 400 });
-    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

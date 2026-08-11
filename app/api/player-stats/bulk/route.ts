@@ -1,5 +1,4 @@
-// api/player-stats/bulk/route.ts
-
+// api/player-stats/bulk/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -7,14 +6,20 @@ import { validatePlayerStatsCreate } from "../../../../lib/validations/playerSta
 import { validatePlayerStatsRecord, runPlayerStatsDQChecks } from "../../../../lib/ingestion/playerStatsRules";
 import { parseExcelBuffer, parseCSVBuffer } from "../../../../lib/ingestion/excelParser";
 import type { PlayerStatsCreateInput } from "../../../../lib/validations/playerStatsValidation";
+import { docClient } from "@/lib/dynamodb";
+import { BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
 
-const CHUNK_SIZE = 30;
+export const dynamic = "force-dynamic";
+
+const CHUNK_SIZE = 25;
 
 async function fetchExistingPlayers(
   playerNames: string[],
   tournament: string
 ): Promise<Set<string>> {
   const existing = new Set<string>();
+  if (!db) return existing;
+
   for (let i = 0; i < playerNames.length; i += CHUNK_SIZE) {
     const chunk = playerNames.slice(i, i + CHUNK_SIZE);
     try {
@@ -79,7 +84,7 @@ export async function POST(req: NextRequest) {
   const errors: Array<{ row: number; player?: string; errors: { field: string; message: string }[] }> = [];
   const validStats: PlayerStatsCreateInput[] = [];
 
-  // ── Pre-validation ────────────────────────────────────────────────────────
+  // Pre-validation
   for (let i = 0; i < stats.length; i++) {
     const record = { ...stats[i], source_file: sourceFile } as Record<string, unknown>;
     if (tournament && !record.tournament) record.tournament = tournament;
@@ -105,66 +110,101 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       dry_run: true,
-      summary: { total: stats.length, valid: validStats.length, invalid: skipped },
-      errors: errors.length > 0 ? errors : undefined,
+      total_rows: stats.length,
+      valid_rows: validStats.length,
+      skipped_rows: skipped,
+      errors,
     });
   }
 
-  // ── Dedup ─────────────────────────────────────────────────────────────────
-  const tournamentForDedup = validStats[0]?.tournament ?? tournament;
-  let existingPlayers: Set<string>;
-  try {
-    existingPlayers = await fetchExistingPlayers(
-      validStats.map((s) => s.player_name),
-      tournamentForDedup
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ success: false, error: `Dedup check failed: ${msg}` }, { status: 500 });
+  // Deduplication
+  const namesByTourn: Record<string, string[]> = {};
+  for (const s of validStats) {
+    if (!namesByTourn[s.tournament]) namesByTourn[s.tournament] = [];
+    namesByTourn[s.tournament].push(s.player_name);
   }
 
-  const processedInBatch = new Set<string>();
-  const writtenStats: PlayerStatsCreateInput[] = [];
+  const existingByTourn: Record<string, Set<string>> = {};
+  for (const [tourn, names] of Object.entries(namesByTourn)) {
+    existingByTourn[tourn] = await fetchExistingPlayers(names, tourn);
+  }
 
-  // ── Firestore writes ──────────────────────────────────────────────────────
-  for (let i = 0; i < validStats.length; i++) {
-    const stat = validStats[i];
-    const key = `${stat.player_name}::${stat.tournament}`;
-
-    if (existingPlayers.has(stat.player_name)) {
-      errors.push({ row: i + 1, player: stat.player_name, errors: [{ field: "player_name", message: `Already exists in DB for ${stat.tournament}` }] });
+  // Chunked batch write to DynamoDB & Firestore
+  const toInsert: PlayerStatsCreateInput[] = [];
+  for (const stat of validStats) {
+    if (existingByTourn[stat.tournament]?.has(stat.player_name)) {
       skipped++;
       continue;
     }
-    if (processedInBatch.has(key)) {
-      errors.push({ row: i + 1, player: stat.player_name, errors: [{ field: "player_name", message: "Duplicate in batch" }] });
-      skipped++;
-      continue;
-    }
+    toInsert.push(stat);
+  }
 
+  const now = Date.now();
+  for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
+    const chunk = toInsert.slice(i, i + CHUNK_SIZE);
+
+    // 1. DynamoDB BatchWrite
     try {
-      await db.collection("playerStats").add({
-        ...stat,
-        created_at: FieldValue.serverTimestamp(),
-        updated_at: FieldValue.serverTimestamp(),
-      });
-      processedInBatch.add(key);
-      writtenStats.push(stat);
-      processed++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push({ row: i + 1, player: stat.player_name, errors: [{ field: "firestore", message: `Write failed: ${msg}` }] });
-      skipped++;
-    }
-  }
+      const putRequests = chunk.map((stat, idx) => {
+        const id = `pstat_${now}_${i + idx}_${Math.random().toString(36).substring(2, 7)}`;
+        const nameLower = stat.player_name.toLowerCase();
+        const words = nameLower.replace(/[^a-z0-9\s]/g, "").split(" ").filter(Boolean);
 
-  const dq = runPlayerStatsDQChecks(writtenStats);
-  const duration = Date.now() - startTime;
+        return {
+          PutRequest: {
+            Item: {
+              entityId: `PLAYER_STAT#${id}`,
+              sk: "PLAYER_STAT#META",
+              id,
+              ...stat,
+              player_name_lower: nameLower,
+              name_words: words,
+              created_at: now,
+              updated_at: now,
+            },
+          },
+        };
+      });
+
+      await docClient.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            SportsData: putRequests,
+          },
+        })
+      );
+    } catch (e) {
+      console.warn("[player-stats bulk] DynamoDB notice:", e);
+    }
+
+    // 2. Firestore Batch
+    if (db) {
+      const batch = db.batch();
+      for (const stat of chunk) {
+        const nameLower = stat.player_name.toLowerCase();
+        const words = nameLower.replace(/[^a-z0-9\s]/g, "").split(" ").filter(Boolean);
+        const docRef = db.collection("playerStats").doc();
+        batch.set(docRef, {
+          ...stat,
+          player_name_lower: nameLower,
+          name_words: words,
+          created_at: FieldValue.serverTimestamp(),
+          updated_at: FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    }
+
+    processed += chunk.length;
+  }
 
   return NextResponse.json({
     success: true,
-    summary: { total: stats.length, processed, skipped, duration },
-    errors: errors.length > 0 ? errors : undefined,
-    dqWarnings: dq.warnings,
+    total: stats.length,
+    processed,
+    skipped,
+    error_count: errors.length,
+    errors,
+    duration_ms: Date.now() - startTime,
   });
 }

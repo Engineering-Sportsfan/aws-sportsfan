@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { awardUserPoints, getUserInfo } from "@/lib/userPoints";
 
+export const dynamic = "force-dynamic";
+
 // POST: Award points for user activity (Service 1)
 export async function POST(req: NextRequest) {
   try {

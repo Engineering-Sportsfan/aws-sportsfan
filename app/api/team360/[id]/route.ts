@@ -1,13 +1,19 @@
-// app/api/team360/[id]/route.ts
+// app/api/team360/[id]/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 function getIdFromUrl(req: NextRequest): string {
   const url = new URL(req.url);
   const parts = url.pathname.split("/");
   return parts[parts.length - 1];
 }
-//  GET single post 
+
+// GET single post
 export async function GET(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -16,13 +22,40 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const doc = await db.collection("team360Posts").doc(id).get();
+    let post: any = null;
 
-    if (!doc.exists) {
+    // 1. Try DynamoDB
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :cid",
+          ExpressionAttributeValues: {
+            ":cid": `TEAM_POST#${id}`,
+          },
+          Limit: 1,
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) {
+        post = { id, ...qRes.Items[0] };
+      }
+    } catch (e) {
+      console.warn("[team360 [id] GET] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
+    if (!post && db) {
+      const doc = await db.collection("team360Posts").doc(id).get();
+      if (doc.exists) {
+        post = { id: doc.id, ...doc.data() };
+      }
+    }
+
+    if (!post) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ post: { id: doc.id, ...doc.data() } });
+    return NextResponse.json({ post });
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
@@ -30,7 +63,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// PUT update post 
+// PUT update post
 export async function PUT(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -40,10 +73,33 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const docRef = db.collection("team360Posts").doc(id);
-    const doc = await docRef.get();
+    let existing: any = null;
+    let existingSk = `POST#${Date.now()}`;
 
-    if (!doc.exists) {
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :cid",
+          ExpressionAttributeValues: {
+            ":cid": `TEAM_POST#${id}`,
+          },
+          Limit: 1,
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) {
+        existing = qRes.Items[0];
+        existingSk = existing.sk || existingSk;
+      }
+    } catch {}
+
+    if (!existing && db) {
+      const docRef = db.collection("team360Posts").doc(id);
+      const doc = await docRef.get();
+      if (doc.exists) existing = doc.data();
+    }
+
+    if (!existing) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 });
     }
 
@@ -51,41 +107,42 @@ export async function PUT(req: NextRequest) {
       updatedAt: Date.now(),
     };
 
-    // Strings
     if (body.teamName !== undefined) updates.teamName = body.teamName;
     if (body.title !== undefined) updates.title = body.title;
 
-    // Numbers
     if (body.likes !== undefined) updates.likes = Number(body.likes) || 0;
     if (body.comments !== undefined) updates.comments = Number(body.comments) || 0;
     if (body.live !== undefined) updates.live = Number(body.live) || 0;
     if (body.shares !== undefined) updates.shares = Number(body.shares) || 0;
 
-    // Media
     if (body.image !== undefined) updates.image = body.image;
     if (body.logo !== undefined) updates.logo = body.logo;
 
-    // Arrays
-    if (body.category !== undefined) {
-      updates.category = body.category ?? [];
-    }
+    if (body.category !== undefined) updates.category = body.category ?? [];
+    if (body.catlogo !== undefined) updates.catlogo = body.catlogo ?? [];
+    if (body.hasVideo !== undefined) updates.hasVideo = body.hasVideo;
 
-    if (body.catlogo !== undefined) {
-      updates.catlogo = body.catlogo ?? [];
-    }
+    const updatedItem = {
+      ...existing,
+      ...updates,
+      id,
+    };
 
-    // Boolean
-    if (body.hasVideo !== undefined) {
-      updates.hasVideo = body.hasVideo;
-    }
-
-    await docRef.update(updates);
-
-    const updated = await docRef.get();
+    // Dual-write
+    await dualWrite({
+      tableName: "SocialAndContent",
+      dynamoItem: {
+        contentId: `TEAM_POST#${id}`,
+        sk: existingSk,
+        ...updatedItem,
+      },
+      firestoreRef: db.collection("team360Posts").doc(id),
+      firestoreData: updates,
+    });
 
     return NextResponse.json({
       success: true,
-      post: { id: updated.id, ...updated.data() },
+      post: updatedItem,
     });
 
   } catch (error: unknown) {
@@ -93,7 +150,8 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-//  DELETE post 
+
+// DELETE post
 export async function DELETE(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -102,19 +160,42 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const docRef = db.collection("team360Posts").doc(id);
-    const doc    = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json({ error: "Post not found" }, { status: 404 });
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :cid",
+          ExpressionAttributeValues: {
+            ":cid": `TEAM_POST#${id}`,
+          },
+        })
+      );
+      if (qRes.Items) {
+        for (const item of qRes.Items) {
+          await docClient.send(
+            new DeleteCommand({
+              TableName: "SocialAndContent",
+              Key: {
+                contentId: item.contentId,
+                sk: item.sk,
+              },
+            })
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("[team360 [id] DELETE] DynamoDB notice:", e);
     }
 
-    await docRef.delete();
+    if (db) {
+      const docRef = db.collection("team360Posts").doc(id);
+      const doc = await docRef.get();
+      if (doc.exists) {
+        await docRef.delete();
+      }
+    }
 
-    return NextResponse.json({
-      success: true,
-      message: `Post ${id} deleted successfully`,
-    });
+    return NextResponse.json({ success: true, message: "Deleted" });
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";

@@ -4,6 +4,8 @@ import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth.config";
 import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 export interface UserSession {
   role: string;
@@ -131,12 +133,41 @@ export async function isAuthorizedForMatch(user: UserSession, matchId: string): 
   }
   // For any authenticated user (host, user, etc.), check if they are the room's host or co-host
   try {
-    const roomsSnap = await db.collection("watchAlongRooms")
-      .where("liveMatchId", "==", matchId)
-      .limit(1)
-      .get();
-    if (!roomsSnap.empty) {
-      const roomData = roomsSnap.docs[0].data();
+    let foundRoom = false;
+    let roomData: any = null;
+
+    // 1. Try DynamoDB Scan (safe limit of total watchAlongRooms < 24)
+    try {
+      const scanRes = await docClient.send(new ScanCommand({
+        TableName: "RealTimeChat",
+        FilterExpression: "begins_with(sk, :prefix) AND liveMatchId = :matchId",
+        ExpressionAttributeValues: {
+          ":prefix": "ROOM_WATCHALONG#",
+          ":matchId": matchId
+        },
+        Limit: 1
+      }));
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        roomData = scanRes.Items[0];
+        foundRoom = true;
+      }
+    } catch (dynErr) {
+      console.warn("DynamoDB scan watchAlongRooms failed, trying fallback:", dynErr);
+    }
+
+    // 2. Fallback to Firestore
+    if (!foundRoom) {
+      const roomsSnap = await db.collection("watchAlongRooms")
+        .where("liveMatchId", "==", matchId)
+        .limit(1)
+        .get();
+      if (!roomsSnap.empty) {
+        roomData = roomsSnap.docs[0].data();
+        foundRoom = true;
+      }
+    }
+
+    if (foundRoom && roomData) {
       // Allow both host and co-host (by user ID, email, or name)
       const coHosts = roomData.coHostUserId
         ? roomData.coHostUserId.split(",").map((id: string) => id.trim().toLowerCase())

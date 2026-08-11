@@ -1,182 +1,3 @@
-
-// // app/api/roar/posts/[postId]/likesection/route.ts
-
-// import { NextRequest, NextResponse } from "next/server";
-// import { db } from "@/lib/firebaseAdmin";
-// import { FieldValue } from "firebase-admin/firestore";
-// import { getUser } from "@/lib/getUser";
-// import { notifyPostReaction, notifyRoomMessageReaction } from "@/lib/roarNotifyHelpers";
-
-// type ReactionType = "heart" | "fire" | "mindblown" | "goat" | "clap" | "nochance" | string;
-
-// function getTargetRef(postId: string, roomId?: string) {
-//   if (roomId) {
-//     return db.collection("roarRooms").doc(roomId).collection("messages").doc(postId);
-//   }
-//   return db.collection("roarPosts").doc(postId);
-// }
-
-// function reactionCountField(reaction: string): string {
-//   const map: Record<string, string> = {
-//     heart: "heartCount", fire: "fireCount", mindblown: "mindblownCount",
-//     goat: "goatCount", clap: "clapCount", nochance: "nochanceCount",
-//     laugh: "laughCount", sad: "sadCount", thumb: "thumbCount",
-//   };
-//   return map[reaction] ?? `${reaction}Count`;
-// }
-
-// // ─── POST — add or switch reaction ───────────────────────────────────────────
-
-// export async function POST(
-//   req: NextRequest,
-//   { params }: { params: { postId: string } }
-// ) {
-//   try {
-//     const user = await getUser(req);
-//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-//     const body = await req.json();
-//     const reaction: ReactionType = body.reaction;
-//     const roomId: string | undefined = body.roomId;
-
-//     if (!reaction) return NextResponse.json({ error: "reaction is required" }, { status: 400 });
-
-//     const { postId } = params;
-//     // userId here is your app's userId (may be email-derived or Firebase UID
-//     // depending on how your JWT was minted — used as the reactions map key)
-//     const userId = user.userId;
-//     const targetRef = getTargetRef(postId, roomId);
-
-//     const snap = await targetRef.get();
-//     if (!snap.exists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
-
-//     const data = snap.data()!;
-//     const reactions: Record<string, string> = data.reactions ?? {};
-//     const previousReaction = reactions[userId] ?? null;
-//     const isSameReaction = previousReaction === reaction;
-
-//     // if (isSameReaction) {
-//     //   const newLikeCount = Math.max(0, (data.likeCount ?? 0) - 1);
-//     //   await targetRef.update({
-//     //     [`reactions.${userId}`]: FieldValue.delete(),
-//     //     likeCount: newLikeCount,
-//     //     [reactionCountField(previousReaction)]: Math.max(0, (data[reactionCountField(previousReaction)] ?? 0) - 1),
-//     //   });
-//     //   return NextResponse.json({ success: true, action: "removed", reaction: null, likeCount: newLikeCount });
-//     // }
-
-//     if (isSameReaction) {
-//       const newLikeCount = Math.max(0, (data.likeCount ?? 0) - 1);
-//       await targetRef.update({
-//         [`reactions.${userId}`]: FieldValue.delete(),
-//         likeCount: newLikeCount,
-//         [reactionCountField(previousReaction)]: Math.max(0, (data[reactionCountField(previousReaction)] ?? 0) - 1),
-//       });
-//       if (roomId) await targetRef.collection("likes").doc(userId).delete();
-//       return NextResponse.json({ success: true, action: "removed", reaction: null, likeCount: newLikeCount });
-//     }
-
-//     const update: Record<string, any> = {
-//       [`reactions.${userId}`]: reaction,
-//       [reactionCountField(reaction)]: (data[reactionCountField(reaction)] ?? 0) + 1,
-//     };
-
-//     if (previousReaction) {
-//       update[reactionCountField(previousReaction)] = Math.max(0, (data[reactionCountField(previousReaction)] ?? 0) - 1);
-//     }
-
-//     const newLikeCount = (data.likeCount ?? 0) + (previousReaction ? 0 : 1);
-//     update.likeCount = newLikeCount;
-
-//     await targetRef.update(update);
-//     if (roomId) {
-//       await targetRef.collection("likes").doc(userId).set({
-//         reaction: reaction,
-//         reactedAt: Date.now(),
-//         userId,
-//       });
-//     }
-
-//     // Fire notification non-blocking (posts only, not room messages)
-//     // if (!roomId) {
-//     //   notifyPostReaction(postId, userId, reaction).catch(() => {});
-//     // }
-//     if (roomId) {
-//       notifyRoomMessageReaction(roomId, postId, userId, reaction).catch(() => { });
-//     } else {
-//       notifyPostReaction(postId, userId, reaction).catch(() => { });
-//     }
-
-//     return NextResponse.json({
-//       success: true,
-//       action: previousReaction ? "switched" : "added",
-//       reaction,
-//       likeCount: newLikeCount,
-//     });
-//   } catch (err) {
-//     const msg = err instanceof Error ? err.message : "Unexpected error";
-//     console.error("[likesection POST]", err);
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-// // ─── DELETE — remove reaction ─────────────────────────────────────────────────
-
-// export async function DELETE(
-//   req: NextRequest,
-//   { params }: { params: { postId: string } }
-// ) {
-//   try {
-//     const user = await getUser(req);
-//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-//     const { searchParams } = new URL(req.url);
-//     const roomId = searchParams.get("roomId") ?? undefined;
-//     const { postId } = params;
-//     const userId = user.userId;
-//     const targetRef = getTargetRef(postId, roomId);
-
-//     const snap = await targetRef.get();
-//     if (!snap.exists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
-
-//     const data = snap.data()!;
-//     const reactions: Record<string, string> = data.reactions ?? {};
-//     const previousReaction = reactions[userId] ?? null;
-
-//     if (!previousReaction) {
-//       return NextResponse.json({ success: true, action: "removed", reaction: null, likeCount: data.likeCount ?? 0 });
-//     }
-
-//     // const newLikeCount = Math.max(0, (data.likeCount ?? 0) - 1);
-//     // await targetRef.update({
-//     //   [`reactions.${userId}`]: FieldValue.delete(),
-//     //   likeCount: newLikeCount,
-//     //   [reactionCountField(previousReaction)]: Math.max(0, (data[reactionCountField(previousReaction)] ?? 0) - 1),
-//     // });
-
-//     // return NextResponse.json({ success: true, action: "removed", reaction: null, likeCount: newLikeCount });
-//     const newLikeCount = Math.max(0, (data.likeCount ?? 0) - 1);
-// await targetRef.update({
-//   [`reactions.${userId}`]: FieldValue.delete(),
-//   likeCount: newLikeCount,
-//   [reactionCountField(previousReaction)]: Math.max(0, (data[reactionCountField(previousReaction)] ?? 0) - 1),
-// });
-// if (roomId) await targetRef.collection("likes").doc(userId).delete();
-
-// return NextResponse.json({ success: true, action: "removed", reaction: null, likeCount: newLikeCount });
-
-//   } catch (err) {
-//     const msg = err instanceof Error ? err.message : "Unexpected error";
-//     console.error("[likesection DELETE]", err);
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-
-
-
-
-
 // app/api/roar/posts/[postId]/likesection/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
@@ -186,6 +7,10 @@ import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { notifyPostReaction, notifyRoomMessageReaction } from "@/lib/roarNotifyHelpers";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 type ReactionType = "heart" | "fire" | "mindblown" | "goat" | "clap" | "nochance" | string;
 
@@ -198,18 +23,23 @@ function getTargetRef(postId: string, roomId?: string) {
 
 function reactionCountField(reaction: string): string {
   const map: Record<string, string> = {
-    heart: "heartCount", fire: "fireCount", mindblown: "mindblownCount",
-    goat: "goatCount", clap: "clapCount", nochance: "nochanceCount",
-    laugh: "laughCount", sad: "sadCount", thumb: "thumbCount",
+    heart: "heartCount",
+    fire: "fireCount",
+    mindblown: "mindblownCount",
+    goat: "goatCount",
+    clap: "clapCount",
+    nochance: "nochanceCount",
+    laugh: "laughCount",
+    sad: "sadCount",
+    thumb: "thumbCount",
   };
   return map[reaction] ?? `${reaction}Count`;
 }
 
 // ─── POST — add or switch reaction ───────────────────────────────────────────
-
 export async function POST(
   req: NextRequest,
-  { params }: { params: { postId: string } }
+  { params }: { params: Promise<{ postId: string }> }
 ) {
   try {
     const user = await getUser(req);
@@ -221,104 +51,246 @@ export async function POST(
 
     if (!reaction) return NextResponse.json({ error: "reaction is required" }, { status: 400 });
 
-    const { postId } = params;
+    const resolvedParams = await params;
+    const { postId } = resolvedParams;
 
-    // Resolve to the canonical users/{id} doc — same source of truth used by
-    // rooms/messages (via resolveUser -> getUserInfo) — so the reactions map
-    // key and the likes/{id} doc ID always match the real Firestore user
-    // doc, regardless of auth provider (Google vs custom, email-derived vs
-    // sanitized-ID accounts, etc). Previously this used the raw user.userId
-    // straight off the session, which for some accounts (e.g. Google-auth
-    // users where the doc ID doesn't match the JWT's userId field) produced
-    // an unresolved ID. That ID then flowed into likes/{userId} and got
-    // returned to the client as reactor.userId, which downstream broke
-    // "view profile" clicks from the reactions dialog (404 Profile not found).
     const info = await getUserInfo(user.userId, undefined, user.email);
     if (!info.exists) {
       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
     }
     const userId = info.actualUserId;
 
+    // 1. Fetch parent document from DynamoDB first
+    let parentItem: any = null;
+    try {
+      if (roomId) {
+        const msgRes = await docClient.send(new QueryCommand({
+          TableName: "RealTimeChat",
+          KeyConditionExpression: "roomId = :r AND sk = :s",
+          ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${postId}` },
+          Limit: 1
+        }));
+        if (msgRes.Items && msgRes.Items.length > 0) {
+          parentItem = msgRes.Items[0];
+        }
+      } else {
+        const postRes = await docClient.send(new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+          ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
+          Limit: 1
+        }));
+        if (postRes.Items && postRes.Items.length > 0) {
+          parentItem = postRes.Items[0];
+        }
+      }
+    } catch (dynErr) {
+      console.warn("[LikeSection] DynamoDB parent fetch failed:", dynErr);
+    }
+
+    // Fallback parent check
+    let parentExists = !!parentItem;
+    let fallbackData: any = null;
     const targetRef = getTargetRef(postId, roomId);
 
-    const snap = await targetRef.get();
-    if (!snap.exists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
+    if (!parentExists) {
+      try {
+        const snap = await targetRef.get();
+        if (snap.exists) {
+          parentExists = true;
+          fallbackData = snap.data();
+        }
+      } catch (fsErr) {
+        console.warn("[LikeSection] Firestore parent fetch failed:", fsErr);
+      }
+    }
 
-    const data = snap.data()!;
-    const reactions: Record<string, string> = data.reactions ?? {};
+    if (!parentExists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
+
+    const data = parentItem || fallbackData || {};
+    const reactions = { ...(data.reactions ?? {}) };
     const previousReaction = reactions[userId] ?? null;
     const isSameReaction = previousReaction === reaction;
     const postOwnerId: string | undefined = data.authorUid;
 
+    const newLikeCount = Math.max(0, (data.likeCount ?? 0) + (isSameReaction ? -1 : (previousReaction ? 0 : 1)));
+
     if (isSameReaction) {
-      const newLikeCount = Math.max(0, (data.likeCount ?? 0) - 1);
-      await targetRef.update({
-        [`reactions.${userId}`]: FieldValue.delete(),
-        likeCount: newLikeCount,
-        [reactionCountField(previousReaction)]: Math.max(0, (data[reactionCountField(previousReaction)] ?? 0) - 1),
-      });
-      if (roomId) await targetRef.collection("likes").doc(userId).delete();
-      if (postOwnerId && postOwnerId !== userId) {
-        db.collection("users").doc(postOwnerId).set(
-          { [`activityCounts.likesReceived`]: FieldValue.increment(-1) },
-          { merge: true }
-        ).catch(() => { });
+      // Toggle reaction off
+      delete reactions[userId];
+      const prevField = reactionCountField(previousReaction);
+      const newPrevFieldCount = Math.max(0, (data[prevField] ?? 1) - 1);
+
+      // Update DynamoDB
+      try {
+        if (roomId) {
+          await docClient.send(new DeleteCommand({
+            TableName: "RealTimeChat",
+            Key: { roomId: `ROOM#${roomId}`, sk: `LIKE#${postId}#${userId}` }
+          }));
+        } else {
+          await docClient.send(new DeleteCommand({
+            TableName: "SocialAndContent",
+            Key: { contentId: `POST#${postId}`, sk: `LIKE#${userId}` }
+          }));
+        }
+
+        if (parentItem) {
+          if (roomId) {
+            await docClient.send(new UpdateCommand({
+              TableName: "RealTimeChat",
+              Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${postId}` },
+              UpdateExpression: "SET reactions = :r, likeCount = :lc, #pf = :pfc",
+              ExpressionAttributeNames: { "#pf": prevField },
+              ExpressionAttributeValues: { ":r": reactions, ":lc": newLikeCount, ":pfc": newPrevFieldCount }
+            }));
+          } else {
+            await docClient.send(new UpdateCommand({
+              TableName: "SocialAndContent",
+              Key: { contentId: `POST#${postId}`, sk: parentItem.sk },
+              UpdateExpression: "SET reactions = :r, likeCount = :lc, #pf = :pfc",
+              ExpressionAttributeNames: { "#pf": prevField },
+              ExpressionAttributeValues: { ":r": reactions, ":lc": newLikeCount, ":pfc": newPrevFieldCount }
+            }));
+          }
+        }
+      } catch (dynErr) {
+        console.warn("[LikeSection] DynamoDB remove reaction failed:", dynErr);
       }
+
+      // Sync/Fallback to Firestore
+      try {
+        await targetRef.update({
+          [`reactions.${userId}`]: FieldValue.delete(),
+          likeCount: newLikeCount,
+          [reactionCountField(previousReaction)]: FieldValue.increment(-1),
+        });
+        if (roomId) await targetRef.collection("likes").doc(userId).delete();
+        if (postOwnerId && postOwnerId !== userId) {
+          db.collection("users").doc(postOwnerId).set(
+            { [`activityCounts.likesReceived`]: FieldValue.increment(-1) },
+            { merge: true }
+          ).catch(() => { });
+        }
+      } catch (fsErr) {
+        console.warn("[LikeSection] Firestore remove reaction sync failed:", fsErr);
+      }
+
       return NextResponse.json({ success: true, action: "removed", reaction: null, likeCount: newLikeCount });
     }
 
-    const update: Record<string, any> = {
-      [`reactions.${userId}`]: reaction,
-      [reactionCountField(reaction)]: (data[reactionCountField(reaction)] ?? 0) + 1,
-    };
+    // Add or Switch reaction
+    reactions[userId] = reaction;
+    const field = reactionCountField(reaction);
+    const newFieldCount = (data[field] ?? 0) + 1;
 
+    let updateExpr = "SET reactions = :r, likeCount = :lc, #f = :fc";
+    let attrNames: Record<string, string> = { "#f": field };
+    let attrVals: Record<string, any> = { ":r": reactions, ":lc": newLikeCount, ":fc": newFieldCount };
+
+    let prevField = "";
+    let newPrevFieldCount = 0;
     if (previousReaction) {
-      update[reactionCountField(previousReaction)] = Math.max(0, (data[reactionCountField(previousReaction)] ?? 0) - 1);
+      prevField = reactionCountField(previousReaction);
+      newPrevFieldCount = Math.max(0, (data[prevField] ?? 1) - 1);
+      updateExpr += ", #pf = :pfc";
+      attrNames["#pf"] = prevField;
+      attrVals[":pfc"] = newPrevFieldCount;
     }
 
-    const newLikeCount = (data.likeCount ?? 0) + (previousReaction ? 0 : 1);
-    update.likeCount = newLikeCount;
+    // Update DynamoDB
+    try {
+      if (roomId) {
+        await docClient.send(new PutCommand({
+          TableName: "RealTimeChat",
+          Item: {
+            roomId: `ROOM#${roomId}`,
+            sk: `LIKE#${postId}#${userId}`,
+            reaction: reaction,
+            reactedAt: Date.now()
+          }
+        }));
+      } else {
+        await docClient.send(new PutCommand({
+          TableName: "SocialAndContent",
+          Item: {
+            contentId: `POST#${postId}`,
+            sk: `LIKE#${userId}`,
+            reaction: reaction,
+            reactedAt: Date.now()
+          }
+        }));
+      }
 
-    await targetRef.update(update);
-    if (roomId) {
-      await targetRef.collection("likes").doc(userId).set({
-        reaction: reaction,
-        reactedAt: Date.now(),
-        userId,
-      });
+      if (parentItem) {
+        if (roomId) {
+          await docClient.send(new UpdateCommand({
+            TableName: "RealTimeChat",
+            Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${postId}` },
+            UpdateExpression: updateExpr,
+            ExpressionAttributeNames: attrNames,
+            ExpressionAttributeValues: attrVals
+          }));
+        } else {
+          await docClient.send(new UpdateCommand({
+            TableName: "SocialAndContent",
+            Key: { contentId: `POST#${postId}`, sk: parentItem.sk },
+            UpdateExpression: updateExpr,
+            ExpressionAttributeNames: attrNames,
+            ExpressionAttributeValues: attrVals
+          }));
+        }
+      }
+    } catch (dynErr) {
+      console.warn("[LikeSection] DynamoDB add/switch reaction failed:", dynErr);
     }
 
+    // Sync/Fallback to Firestore
+    try {
+      const fsUpdate: Record<string, any> = {
+        [`reactions.${userId}`]: reaction,
+        [field]: FieldValue.increment(1),
+        likeCount: newLikeCount
+      };
+      if (previousReaction) {
+        fsUpdate[prevField] = FieldValue.increment(-1);
+      }
+      await targetRef.update(fsUpdate);
 
+      if (roomId) {
+        await targetRef.collection("likes").doc(userId).set({
+          reaction: reaction,
+          reactedAt: Date.now(),
+          userId,
+        });
+      }
 
-    // ── 1. Reactor's own points (participation: React) ──────────────────────
-    // Only on a genuinely new reaction, not a switch or repeat of the same one.
+      if (postOwnerId && postOwnerId !== userId && !previousReaction) {
+        db.collection("users").doc(postOwnerId).set(
+          { [`activityCounts.likesReceived`]: FieldValue.increment(1) },
+          { merge: true }
+        ).catch(() => { });
+      }
+    } catch (fsErr) {
+      console.warn("[LikeSection] Firestore add/switch reaction sync failed:", fsErr);
+    }
+
+    // Award reactor points
     if (!previousReaction) {
       const info = await getUserInfo(user.userId, undefined, user.email);
       awardRoarPointsByReason({
-        actualUserId: userId, // already resolved above
+        actualUserId: userId,
         authUserId: user.userId,
         userName: info.userName,
         userEmail: user.email,
         userExists: info.exists,
         reason: "REACT",
-        points: 3, // §3 updated React value
+        points: 3,
         transactionId: `react_${postId}_${userId}_${roomId ?? "post"}`,
         metadata: { postId, roomId, reaction },
       }).catch(() => { });
     }
 
-    // ── 2. Post owner's Community-ladder counter (likes received) ───────────
-    // Separate write, separate doc — not something awardUserPoints touches.
-    // Only increment when this reaction is brand new (not a same-reaction
-    // toggle-off, and not a reaction-type switch, which is still "1 like" not 2).
-    if (postOwnerId && postOwnerId !== userId && !previousReaction) {
-      db.collection("users").doc(postOwnerId).set(
-        { [`activityCounts.likesReceived`]: FieldValue.increment(1) },
-        { merge: true }
-      ).catch(() => { });
-    }
-
-    // Fire notification non-blocking
     if (roomId) {
       notifyRoomMessageReaction(roomId, postId, userId, reaction).catch(() => { });
     } else {
@@ -339,10 +311,9 @@ export async function POST(
 }
 
 // ─── DELETE — remove reaction ─────────────────────────────────────────────────
-
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { postId: string } }
+  { params }: { params: Promise<{ postId: string }> }
 ) {
   try {
     const user = await getUser(req);
@@ -350,46 +321,130 @@ export async function DELETE(
 
     const { searchParams } = new URL(req.url);
     const roomId = searchParams.get("roomId") ?? undefined;
-    const { postId } = params;
+    const resolvedParams = await params;
+    const { postId } = resolvedParams;
 
-    // Same resolution as POST — see comment there.
     const info = await getUserInfo(user.userId, undefined, user.email);
     if (!info.exists) {
       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
     }
     const userId = info.actualUserId;
 
+    let parentItem: any = null;
+    try {
+      if (roomId) {
+        const msgRes = await docClient.send(new QueryCommand({
+          TableName: "RealTimeChat",
+          KeyConditionExpression: "roomId = :r AND sk = :s",
+          ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${postId}` },
+          Limit: 1
+        }));
+        if (msgRes.Items && msgRes.Items.length > 0) {
+          parentItem = msgRes.Items[0];
+        }
+      } else {
+        const postRes = await docClient.send(new QueryCommand({
+          TableName: "SocialAndContent",
+          KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+          ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
+          Limit: 1
+        }));
+        if (postRes.Items && postRes.Items.length > 0) {
+          parentItem = postRes.Items[0];
+        }
+      }
+    } catch (dynErr) {
+      console.warn("[LikeSection] DynamoDB parent fetch failed:", dynErr);
+    }
+
+    let parentExists = !!parentItem;
+    let fallbackData: any = null;
     const targetRef = getTargetRef(postId, roomId);
 
-    const snap = await targetRef.get();
-    if (!snap.exists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
+    if (!parentExists) {
+      try {
+        const snap = await targetRef.get();
+        if (snap.exists) {
+          parentExists = true;
+          fallbackData = snap.data();
+        }
+      } catch (fsErr) {
+        console.warn("[LikeSection] Firestore parent fetch failed:", fsErr);
+      }
+    }
 
-    const data = snap.data()!;
-    const reactions: Record<string, string> = data.reactions ?? {};
+    if (!parentExists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
+
+    const data = parentItem || fallbackData || {};
+    const reactions = { ...(data.reactions ?? {}) };
     const previousReaction = reactions[userId] ?? null;
-
 
     if (!previousReaction) {
       return NextResponse.json({ success: true, action: "removed", reaction: null, likeCount: data.likeCount ?? 0 });
     }
 
     const newLikeCount = Math.max(0, (data.likeCount ?? 0) - 1);
-    await targetRef.update({
-      [`reactions.${userId}`]: FieldValue.delete(),
-      likeCount: newLikeCount,
-      [reactionCountField(previousReaction)]: Math.max(0, (data[reactionCountField(previousReaction)] ?? 0) - 1),
-    });
-    if (roomId) await targetRef.collection("likes").doc(userId).delete();
-    const postOwnerId: string | undefined = data.authorUid;
-    if (postOwnerId && postOwnerId !== userId) {
-      db.collection("users").doc(postOwnerId).set(
-        { [`activityCounts.likesReceived`]: FieldValue.increment(-1) },
-        { merge: true }
-      ).catch(() => { });
+    delete reactions[userId];
+    const prevField = reactionCountField(previousReaction);
+    const newPrevFieldCount = Math.max(0, (data[prevField] ?? 1) - 1);
+
+    // Update DynamoDB
+    try {
+      if (roomId) {
+        await docClient.send(new DeleteCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${roomId}`, sk: `LIKE#${postId}#${userId}` }
+        }));
+      } else {
+        await docClient.send(new DeleteCommand({
+          TableName: "SocialAndContent",
+          Key: { contentId: `POST#${postId}`, sk: `LIKE#${userId}` }
+        }));
+      }
+
+      if (parentItem) {
+        if (roomId) {
+          await docClient.send(new UpdateCommand({
+            TableName: "RealTimeChat",
+            Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${postId}` },
+            UpdateExpression: "SET reactions = :r, likeCount = :lc, #pf = :pfc",
+            ExpressionAttributeNames: { "#pf": prevField },
+            ExpressionAttributeValues: { ":r": reactions, ":lc": newLikeCount, ":pfc": newPrevFieldCount }
+          }));
+        } else {
+          await docClient.send(new UpdateCommand({
+            TableName: "SocialAndContent",
+            Key: { contentId: `POST#${postId}`, sk: parentItem.sk },
+            UpdateExpression: "SET reactions = :r, likeCount = :lc, #pf = :pfc",
+            ExpressionAttributeNames: { "#pf": prevField },
+            ExpressionAttributeValues: { ":r": reactions, ":lc": newLikeCount, ":pfc": newPrevFieldCount }
+          }));
+        }
+      }
+    } catch (dynErr) {
+      console.warn("[LikeSection] DynamoDB delete reaction failed:", dynErr);
+    }
+
+    // Sync/Fallback to Firestore
+    try {
+      await targetRef.update({
+        [`reactions.${userId}`]: FieldValue.delete(),
+        likeCount: newLikeCount,
+        [prevField]: FieldValue.increment(-1),
+      });
+      if (roomId) await targetRef.collection("likes").doc(userId).delete();
+      const postOwnerId: string | undefined = data.authorUid;
+      if (postOwnerId && postOwnerId !== userId) {
+        db.collection("users").doc(postOwnerId).set(
+          { [`activityCounts.likesReceived`]: FieldValue.increment(-1) },
+          { merge: true }
+        ).catch(() => { });
+      }
+    } catch (fsErr) {
+      console.warn("[LikeSection] Firestore delete reaction sync failed:", fsErr);
     }
 
     return NextResponse.json({ success: true, action: "removed", reaction: null, likeCount: newLikeCount });
-
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unexpected error";
     console.error("[likesection DELETE]", err);

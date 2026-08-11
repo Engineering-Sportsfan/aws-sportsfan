@@ -67,7 +67,7 @@ export default function LoginCard() {
             setLoading(true);
             setError("");
 
-            const response = await api.post("/api/auth/login", {
+            const response = await api.post("/api/admin-auth/login", {
                 email,
                 password,
             });

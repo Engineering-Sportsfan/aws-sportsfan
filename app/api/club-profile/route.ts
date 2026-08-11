@@ -1,7 +1,12 @@
+// app/api/club-profile/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,6 +31,7 @@ export async function POST(req: NextRequest) {
 
     // Files
     const avatarFile = formData.get("avatar") as File | null;
+    const avatarUrl = formData.get("avatarUrl") as string;
 
     if (!name || !team) {
       return NextResponse.json(
@@ -35,8 +41,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Upload avatar
-    let avatarUrl = "";
-    if (avatarFile) {
+    let resolvedAvatarUrl = "";
+    if (avatarUrl) {
+      resolvedAvatarUrl = avatarUrl;
+    } else if (avatarFile) {
       const bytes = await avatarFile.arrayBuffer();
       const buffer = Buffer.from(bytes);
       const base64 = `data:${avatarFile.type};base64,${buffer.toString("base64")}`;
@@ -44,8 +52,10 @@ export async function POST(req: NextRequest) {
         folder: "club-profiles/avatars",
         public_id: `${Date.now()}-${avatarFile.name.replace(/\s/g, "_")}`,
       });
-      avatarUrl = uploadRes.secure_url;
+      resolvedAvatarUrl = uploadRes.secure_url;
     }
+
+    const docId = `club_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
     const profileData = {
       name,
@@ -53,7 +63,7 @@ export async function POST(req: NextRequest) {
       battingStyle: battingStyle || "",
       bowlingStyle: bowlingStyle || "",
       about: about || "",
-      avatar: avatarUrl,
+      avatar: resolvedAvatarUrl,
       stats: {
         runs: statsRuns || "0",
         sr: statsSr || "0",
@@ -67,70 +77,85 @@ export async function POST(req: NextRequest) {
       },
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      nameLower: name.toLowerCase(),
     };
 
-    const docRef = await db.collection("clubProfiles").add(profileData);
+    // ── Dual-Write to DynamoDB & Firebase ────────────────────────────────────
+    const dynamoItem = {
+      entityId: `PROFILE_CLUB#${docId}`,
+      sk: "PROFILE",
+      id: docId,
+      ...profileData,
+    };
+
+    await dualWrite("clubProfiles", docId, "SportsData", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      profile: { id: docRef.id, ...profileData },
+      profile: { id: docId, ...profileData },
     });
   } catch (error) {
     console.error("Create club profile error:", error);
+    const msg = error instanceof Error ? error.message : "Create failed";
     return NextResponse.json(
-      { success: false, message: "Create failed: " + (error as Error).message },
+      { success: false, message: `Create failed: ${msg}` },
       { status: 500 }
     );
   }
 }
 
-
-
-
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const limit = parseInt(searchParams.get("limit") || "20");
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
 
-    const collectionRef = db.collection("clubProfiles");
-    
-    let query = collectionRef
-      .orderBy("createdAt", "desc")
-      .limit(limit);
-    
-    // Use cursor-based pagination instead of offset (no count needed)
-    if (lastDocId && lastDocCreatedAt) {
-      const lastDocRef = db.collection("clubProfiles").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
+    // 1. Scan DynamoDB SportsData for club profiles
+    const scanRes = await docClient.send(
+      new ScanCommand({
+        TableName: "SportsData",
+        FilterExpression: "begins_with(entityId, :prefix)",
+        ExpressionAttributeValues: {
+          ":prefix": "PROFILE_CLUB",
+        },
+      })
+    );
+
+    let profiles: Array<Record<string, unknown>> = [];
+
+    if (scanRes.Items && scanRes.Items.length > 0) {
+      profiles = scanRes.Items.map((item) => ({
+        id: (item.id as string) || (item.entityId as string)?.replace(/^PROFILE_CLUB#/, ""),
+        ...item,
+      }));
+      profiles.sort((a, b) => ((b.createdAt as number) || 0) - ((a.createdAt as number) || 0));
+    } else {
+      // Fallback to Firebase
+      try {
+        const snapshot = await db.collection("clubProfiles").orderBy("createdAt", "desc").limit(limit).get();
+        profiles = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+      } catch (err) {
+        console.warn("Firebase clubProfiles fallback notice:", err);
       }
     }
-    
-    const snapshot = await query.get();
-    
-    const profiles = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    
-    // Get last document for next page cursor
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-    
+
+    const paginated = profiles.slice(0, limit);
+    const lastDoc = paginated[paginated.length - 1];
+
     return NextResponse.json({
       success: true,
-      profiles,
+      profiles: paginated,
       pagination: {
         limit,
-        hasMore: profiles.length === limit,
-        nextCursor: profiles.length === limit ? {
+        hasMore: profiles.length > limit,
+        nextCursor: profiles.length > limit ? {
           lastDocId: lastDoc?.id,
-          lastDocCreatedAt: lastDoc?.data()?.createdAt
-        } : null
+          lastDocCreatedAt: lastDoc?.createdAt,
+        } : null,
       },
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Fetch club profiles error:", error);
     return NextResponse.json(

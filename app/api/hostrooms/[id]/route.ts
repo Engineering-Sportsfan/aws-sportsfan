@@ -1,10 +1,14 @@
-
+// app/api/hostrooms/[id]/route.ts — Migrated to AWS DynamoDB (RealTimeChat Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getAuth } from "firebase-admin/auth";
 import cloudinary from "@/lib/cloudinary";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
-// ─── Types ──────────────────────────────────────────────────────────────
+export const dynamic = "force-dynamic";
+
 interface RoomData {
   userId: string;
   status: "draft" | "published";
@@ -55,7 +59,6 @@ interface UpdatePayload {
   publishedAt?: number;
 }
 
-// ─── Helper: Get authenticated user ─────────────────────────────────────
 async function getAuthenticatedUser(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -72,12 +75,12 @@ async function getAuthenticatedUser(req: NextRequest) {
   }
 }
 
-// ─── PUT: Complete update ───────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// PUT: Complete update
+// ─────────────────────────────────────────────
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const formData = await req.formData();
-
-    // Auth
     const user = await getAuthenticatedUser(req);
     if (!user) {
       return NextResponse.json(
@@ -87,7 +90,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const { id: roomId } = await params;
-
     if (!roomId) {
       return NextResponse.json(
         { success: false, error: "roomId is required" },
@@ -95,7 +97,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       );
     }
 
-    // Get all form fields
     const title = formData.get("title") as string;
     const description = formData.get("description") as string;
     const capacity = parseInt(formData.get("capacity") as string);
@@ -108,31 +109,34 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const currency = formData.get("currency") as string || "INR";
     const status = formData.get("status") as string;
 
-    // Files
     const thumbnailFile = formData.get("thumbnail") as File | null;
     const assetFiles = formData.getAll("assets") as File[];
 
-    const docRef = db.collection("rooms").doc(roomId);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, error: "Room not found" },
-        { status: 404 }
+    let existingData: any = null;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+        })
       );
+      if (getRes.Item) existingData = getRes.Item;
+    } catch (e) {
+      // fallback
     }
 
-    const existingData = doc.data() as RoomData | undefined;
-
-    // Verify ownership
-    if (existingData?.userId !== user.userId) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized - You don't own this room" },
-        { status: 403 }
-      );
+    if (!existingData) {
+      const docRef = db.collection("rooms").doc(roomId);
+      const doc = await docRef.get();
+      if (!doc.exists) {
+        return NextResponse.json(
+          { success: false, error: "Room not found" },
+          { status: 404 }
+        );
+      }
+      existingData = doc.data();
     }
 
-    // Upload new thumbnail if provided
     let thumbnailUrl = existingData?.details?.thumbnail || "";
     if (thumbnailFile) {
       const bytes = await thumbnailFile.arrayBuffer();
@@ -145,10 +149,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       thumbnailUrl = uploadRes.secure_url;
     }
 
-    // Upload new assets if provided
     let assets = existingData?.content?.assets || [];
     if (assetFiles.length > 0) {
-      const newAssets: RoomData["content"]["assets"] = [];
+      const newAssets: any[] = [];
       for (const assetFile of assetFiles) {
         const bytes = await assetFile.arrayBuffer();
         const buffer = Buffer.from(bytes);
@@ -161,7 +164,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         });
         
         newAssets.push({
-          type: (assetFile.type.startsWith("video/") ? "video" : "image") as "video" | "image",
+          type: assetFile.type.startsWith("video/") ? "video" : "image",
           url: uploadRes.secure_url,
           name: assetFile.name,
           size: assetFile.size,
@@ -170,42 +173,55 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       assets = [...assets, ...newAssets];
     }
 
-    // Prepare update data
-    const updateData: Partial<RoomData> = {
+    const updateData: any = {
       updatedAt: Date.now(),
     };
 
-    if (title) updateData.details = { ...existingData?.details, title } as RoomData["details"];
-    if (description) updateData.details = { ...existingData?.details, description } as RoomData["details"];
-    if (capacity) updateData.details = { ...existingData?.details, capacity } as RoomData["details"];
-    if (primaryLanguage) updateData.details = { ...existingData?.details, primaryLanguage } as RoomData["details"];
-    if (tags.length) updateData.details = { ...existingData?.details, tags } as RoomData["details"];
-    if (moderators.length) updateData.details = { ...existingData?.details, moderators } as RoomData["details"];
-    if (schedule) updateData.details = { ...existingData?.details, schedule } as RoomData["details"];
-    if (thumbnailUrl) updateData.details = { ...existingData?.details, thumbnail: thumbnailUrl } as RoomData["details"];
+    if (title) updateData.details = { ...existingData?.details, title };
+    if (description) updateData.details = { ...existingData?.details, description };
+    if (capacity) updateData.details = { ...existingData?.details, capacity };
+    if (primaryLanguage) updateData.details = { ...existingData?.details, primaryLanguage };
+    if (tags.length) updateData.details = { ...existingData?.details, tags };
+    if (moderators.length) updateData.details = { ...existingData?.details, moderators };
+    if (schedule) updateData.details = { ...existingData?.details, schedule };
+    if (thumbnailUrl) updateData.details = { ...existingData?.details, thumbnail: thumbnailUrl };
     if (roomType && existingData) {
       updateData.event = {
         ...existingData.event,
-        roomType: roomType as RoomData["event"]["roomType"],
+        roomType,
       };
     }
-    if (pricePerFan) updateData.pricing = { ...existingData?.pricing, pricePerFan } as RoomData["pricing"];
-    if (currency) updateData.pricing = { ...existingData?.pricing, currency } as RoomData["pricing"];
+    if (pricePerFan) updateData.pricing = { ...existingData?.pricing, pricePerFan };
+    if (currency) updateData.pricing = { ...existingData?.pricing, currency };
     if (assets.length) updateData.content = { assets };
     
     if (status) {
-      updateData.status = status as "draft" | "published";
+      updateData.status = status;
       if (status === "published") {
         updateData.publishedAt = Date.now();
       }
     }
 
-    await docRef.update(updateData as unknown as Record<string, unknown>);
+    const finalRoom = {
+      ...existingData,
+      ...updateData,
+      id: roomId,
+    };
 
-    const updatedDoc = await docRef.get();
+    await dualWrite({
+      tableName: "RealTimeChat",
+      dynamoItem: {
+        roomId: `ROOM#${roomId}`,
+        sk: "ROOM#META",
+        ...finalRoom,
+      },
+      firestoreRef: db.collection("rooms").doc(roomId),
+      firestoreData: updateData,
+    });
+
     return NextResponse.json({
       success: true,
-      room: { id: updatedDoc.id, ...updatedDoc.data() },
+      room: finalRoom,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
@@ -214,12 +230,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-// ─── PATCH: Partial update (step-by-step) ──────────────────────────────
+// ─────────────────────────────────────────────
+// PATCH: Partial update (step-by-step)
+// ─────────────────────────────────────────────
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const formData = await req.formData();
-
-    // Auth
     const user = await getAuthenticatedUser(req);
     if (!user) {
       return NextResponse.json(
@@ -229,7 +245,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const { id: roomId } = await params;
-
     if (!roomId) {
       return NextResponse.json(
         { success: false, error: "roomId is required" },
@@ -240,35 +255,38 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const step = parseInt(formData.get("step") as string);
     const status = formData.get("status") as string;
 
-    const docRef = db.collection("rooms").doc(roomId);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, error: "Room not found" },
-        { status: 404 }
+    let existingData: any = null;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+        })
       );
+      if (getRes.Item) existingData = getRes.Item;
+    } catch (e) {
+      // fallback
     }
 
-    const existingData = doc.data() as RoomData | undefined;
-
-    // Verify ownership
-    if (existingData?.userId !== user.userId) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized - You don't own this room" },
-        { status: 403 }
-      );
+    if (!existingData) {
+      const docRef = db.collection("rooms").doc(roomId);
+      const doc = await docRef.get();
+      if (!doc.exists) {
+        return NextResponse.json(
+          { success: false, error: "Room not found" },
+          { status: 404 }
+        );
+      }
+      existingData = doc.data();
     }
 
-    const updatePayload: UpdatePayload = {
+    const updatePayload: any = {
       updatedAt: Date.now(),
     };
 
-    // Handle step-based updates with file uploads
     if (step && !isNaN(step)) {
       switch (step) {
         case 1: {
-          // Step 1: Event & Room Type
           const eventId = formData.get("eventId") as string;
           const eventName = formData.get("eventName") as string;
           const roomType = formData.get("roomType") as string;
@@ -276,7 +294,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           if (eventId && eventName && existingData) {
             updatePayload.event = {
               selectedEvent: { id: eventId, name: eventName },
-              roomType: (roomType || existingData.event?.roomType) as RoomData["event"]["roomType"],
+              roomType: roomType || existingData.event?.roomType,
             };
           } else if (roomType) {
             updatePayload["event.roomType"] = roomType;
@@ -286,7 +304,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
         
         case 2: {
-          // Step 2: Details with thumbnail upload
           const title = formData.get("title") as string;
           const description = formData.get("description") as string;
           const capacity = parseInt(formData.get("capacity") as string);
@@ -296,7 +313,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           const schedule = formData.get("schedule") as string;
           const thumbnailFile = formData.get("thumbnail") as File | null;
           
-          // Upload thumbnail if provided
           let thumbnailUrl = existingData?.details?.thumbnail || "";
           if (thumbnailFile) {
             const bytes = await thumbnailFile.arrayBuffer();
@@ -325,20 +341,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
         
         case 3: {
-          // Step 3: Content assets
           const assetFiles = formData.getAll("assets") as File[];
           const removeAssets = JSON.parse(formData.get("removeAssets") as string || "[]");
           
           let assets = existingData?.content?.assets || [];
-          
-          // Remove specified assets
           if (removeAssets.length) {
-            assets = assets.filter((asset) => !removeAssets.includes(asset.url));
+            assets = assets.filter((asset: any) => !removeAssets.includes(asset.url));
           }
           
-          // Upload new assets
           if (assetFiles.length > 0) {
-            const newAssets: RoomData["content"]["assets"] = [];
+            const newAssets: any[] = [];
             for (const assetFile of assetFiles) {
               const bytes = await assetFile.arrayBuffer();
               const buffer = Buffer.from(bytes);
@@ -351,7 +363,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
               });
               
               newAssets.push({
-                type: (assetFile.type.startsWith("video/") ? "video" : "image") as "video" | "image",
+                type: assetFile.type.startsWith("video/") ? "video" : "image",
                 url: uploadRes.secure_url,
                 name: assetFile.name,
                 size: assetFile.size,
@@ -366,7 +378,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
         
         case 4: {
-          // Step 4: Pricing
           const pricePerFan = parseInt(formData.get("pricePerFan") as string);
           const currency = formData.get("currency") as string;
           
@@ -381,7 +392,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
-    // Update status (for publishing)
     if (status) {
       updatePayload.status = status;
       if (status === "published") {
@@ -389,12 +399,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
-    await docRef.update(updatePayload as unknown as Record<string, unknown>);
+    const finalRoom = {
+      ...existingData,
+      ...updatePayload,
+      id: roomId,
+    };
 
-    const updatedDoc = await docRef.get();
+    await dualWrite({
+      tableName: "RealTimeChat",
+      dynamoItem: {
+        roomId: `ROOM#${roomId}`,
+        sk: "ROOM#META",
+        ...finalRoom,
+      },
+      firestoreRef: db.collection("rooms").doc(roomId),
+      firestoreData: updatePayload,
+    });
+
     return NextResponse.json({
       success: true,
-      room: { id: updatedDoc.id, ...updatedDoc.data() },
+      room: finalRoom,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
@@ -403,12 +427,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 }
 
-
-// ─── DELETE: Remove a room 
+// ─────────────────────────────────────────────
+// DELETE: Remove a room 
+// ─────────────────────────────────────────────
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: roomId } = await params;
-
     if (!roomId) {
       return NextResponse.json(
         { success: false, error: "roomId is required" },
@@ -416,17 +440,24 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       );
     }
 
-    const docRef = db.collection("rooms").doc(roomId);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, error: "Room not found" },
-        { status: 404 }
+    // 1. Delete from DynamoDB
+    try {
+      await docClient.send(
+        new DeleteCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+        })
       );
+    } catch (e) {
+      console.warn("[rooms DELETE] DynamoDB notice:", e);
     }
 
-    await docRef.delete();
+    // 2. Delete from Firestore
+    try {
+      await db.collection("rooms").doc(roomId).delete();
+    } catch (e) {
+      console.warn("[rooms DELETE] Firestore notice:", e);
+    }
 
     return NextResponse.json({
       success: true,

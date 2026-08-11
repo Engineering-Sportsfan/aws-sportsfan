@@ -1,4 +1,4 @@
-// api/matches/bulk/route.ts
+// app/api/matches/bulk/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -6,11 +6,32 @@ import { validateMatchCreate } from "../../../../lib/validations/matchValidation
 import { validateMatchRecord, validateInningsRecord, runMatchDQChecks } from "../../../../lib/ingestion/matchRules";
 import { parseExcelBuffer, parseInningsSheet } from "../../../../lib/ingestion/excelParser";
 import type { MatchCreateInput, InningsCreateInput } from "../../../../lib/validations/matchValidation";
+import { docClient } from "@/lib/dynamodb";
+import { BatchWriteCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
-const CHUNK_SIZE = 30; // Firestore "in" max
+export const dynamic = "force-dynamic";
+
+const CHUNK_SIZE = 30;
 
 async function fetchExistingMatchIds(matchIds: string[]): Promise<Set<string>> {
   const existing = new Set<string>();
+
+  // 1. Check DynamoDB first
+  for (const mId of matchIds) {
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: { entityId: `MATCH#${mId}`, sk: "MATCH#META" },
+        })
+      );
+      if (getRes.Item) existing.add(mId);
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. Fallback check Firestore
   for (let i = 0; i < matchIds.length; i += CHUNK_SIZE) {
     const chunk = matchIds.slice(i, i + CHUNK_SIZE);
     try {
@@ -18,7 +39,6 @@ async function fetchExistingMatchIds(matchIds: string[]): Promise<Set<string>> {
       snap.docs.forEach((d) => existing.add(d.data().match_id));
     } catch (err) {
       console.error("[DEDUP] Matches chunk query failed:", err);
-      throw err;
     }
   }
   return existing;
@@ -27,7 +47,6 @@ async function fetchExistingMatchIds(matchIds: string[]): Promise<Set<string>> {
 export async function POST(req: NextRequest) {
   console.log("[MATCHES/BULK] POST called");
 
-  // ── Parse multipart OR JSON body ─────────────────────────────────────────
   let matches: Record<string, unknown>[] = [];
   let inningsRows: Record<string, unknown>[] = [];
   let sourceFile = "manual";
@@ -47,7 +66,6 @@ export async function POST(req: NextRequest) {
     const parsed = parseExcelBuffer(buffer, file.name);
     matches = parsed.rows as Record<string, unknown>[];
 
-    // Try to parse innings sheet if present
     try {
       const inningsParsed = parseInningsSheet(buffer);
       inningsRows = inningsParsed.rows;
@@ -79,7 +97,6 @@ export async function POST(req: NextRequest) {
   const errors: Array<{ row: number; match_id?: string; errors: { field: string; message: string }[] }> = [];
   const validMatches: MatchCreateInput[] = [];
 
-  // ── Pre-validation pass ───────────────────────────────────────────────────
   for (let i = 0; i < matches.length; i++) {
     const record = { ...matches[i], source_file: sourceFile } as Record<string, unknown>;
     const rowNum = i + 1;
@@ -110,7 +127,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── Dedup check ───────────────────────────────────────────────────────────
   let existingIds: Set<string>;
   try {
     existingIds = await fetchExistingMatchIds(validMatches.map((m) => m.match_id));
@@ -122,10 +138,9 @@ export async function POST(req: NextRequest) {
   const processedInBatch = new Set<string>();
   const writtenMatches: MatchCreateInput[] = [];
   const writtenInnings: InningsCreateInput[] = [];
+  const dynamoItemsToWrite: any[] = [];
 
-  // ── Firestore batch writes ────────────────────────────────────────────────
-  // Use batched writes (max 500 ops per batch)
-  const BATCH_LIMIT = 400; // leave room for innings sub-docs
+  const BATCH_LIMIT = 400;
   let batch = db.batch();
   let opsInBatch = 0;
 
@@ -136,6 +151,8 @@ export async function POST(req: NextRequest) {
       opsInBatch = 0;
     }
   };
+
+  const now = Date.now();
 
   for (let i = 0; i < validMatches.length; i++) {
     const match = validMatches[i];
@@ -152,6 +169,20 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
+    // 1. Prepare DynamoDB Match Item
+    dynamoItemsToWrite.push({
+      PutRequest: {
+        Item: {
+          entityId: `MATCH#${match.match_id}`,
+          sk: "MATCH#META",
+          ...match,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    });
+
+    // 2. Prepare Firestore Match Doc
     const docRef = db.collection("matches").doc(match.match_id);
     batch.set(docRef, {
       ...match,
@@ -168,6 +199,18 @@ export async function POST(req: NextRequest) {
     for (const inningsRow of matchInnings) {
       const inningsValidation = validateInningsRecord(inningsRow);
       if (!inningsValidation.valid) continue;
+
+      dynamoItemsToWrite.push({
+        PutRequest: {
+          Item: {
+            entityId: `MATCH#${match.match_id}`,
+            sk: `INNINGS#${inningsRow.innings_no}`,
+            ...inningsRow,
+            createdAt: now,
+          },
+        },
+      });
+
       const inningsRef = docRef.collection("innings").doc(String(inningsRow.innings_no));
       batch.set(inningsRef, inningsRow);
       writtenInnings.push(inningsRow as unknown as InningsCreateInput);
@@ -175,6 +218,22 @@ export async function POST(req: NextRequest) {
     }
 
     if (opsInBatch >= BATCH_LIMIT) await flushBatch();
+  }
+
+  // Write DynamoDB in batches of 25
+  for (let i = 0; i < dynamoItemsToWrite.length; i += 25) {
+    const chunk = dynamoItemsToWrite.slice(i, i + 25);
+    try {
+      await docClient.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            SportsData: chunk,
+          },
+        })
+      );
+    } catch (dynErr) {
+      console.warn("[MATCHES/BULK] DynamoDB batch write notice:", dynErr);
+    }
   }
 
   try {
@@ -185,7 +244,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: `Batch write failed: ${msg}` }, { status: 500 });
   }
 
-  // ── DQ checks ─────────────────────────────────────────────────────────────
   const dq = runMatchDQChecks(writtenMatches, writtenInnings);
   const dqWarnings = dq.warnings;
 

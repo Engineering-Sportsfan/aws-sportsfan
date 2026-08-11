@@ -1,49 +1,100 @@
+// app/api/watch-along/[id]/route.ts — Migrated to AWS DynamoDB (RealTimeChat Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import cloudinary from "@/lib/cloudinary";
 import { getUserSessionAndRole } from "@/lib/auth";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-// Helper function to extract ID from URL
+export const dynamic = "force-dynamic";
+
 function getIdFromUrl(req: NextRequest): string | null {
   const url = new URL(req.url);
   const pathParts = url.pathname.split('/');
   return pathParts[pathParts.length - 1] || null;
 }
-// GET Request
+
+// ─────────────────────────────────────────────
+// GET  /api/watch-along/[id]
+// ─────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
-    const id   = getIdFromUrl(req);
-
+    const id = getIdFromUrl(req);
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const doc = await db.collection("watchAlongRooms").doc(id).get();
+    let roomData: any = null;
 
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, message: "Room not found" },
-        { status: 404 }
+    // 1. Check DynamoDB RealTimeChat
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: {
+            roomId: `ROOM#${id}`,
+            sk: "ROOM#META",
+          },
+        })
       );
+      if (getRes.Item) {
+        roomData = {
+          id,
+          ...getRes.Item,
+        };
+      }
+    } catch (dynErr) {
+      console.warn("[watch-along/[id] GET] DynamoDB notice:", dynErr);
     }
 
-    const data = doc.data()!;
+    // 2. Fallback to Firestore
+    if (!roomData) {
+      const doc = await db.collection("watchAlongRooms").doc(id).get();
+      if (!doc.exists) {
+        return NextResponse.json(
+          { success: false, message: "Room not found" },
+          { status: 404 }
+        );
+      }
+      roomData = { id: doc.id, ...doc.data() };
+    }
 
     // Fetch related live match
     let liveMatch = null;
-    if (data.liveMatchId) {
-      const matchDoc = await db
-        .collection("watchAlongMatches")
-        .doc(data.liveMatchId)
-        .get();
-      if (matchDoc.exists) {
-        liveMatch = { id: matchDoc.id, ...matchDoc.data() };
+    if (roomData.liveMatchId) {
+      try {
+        const mGet = await docClient.send(
+          new GetCommand({
+            TableName: "SportsData",
+            Key: { entityId: `MATCH#${roomData.liveMatchId}`, sk: "MATCH#META" },
+          })
+        );
+        if (mGet.Item) {
+          liveMatch = { id: roomData.liveMatchId, ...mGet.Item };
+        }
+      } catch (e) {
+        // fallback
+      }
+
+      if (!liveMatch) {
+        try {
+          const matchDoc = await db
+            .collection("watchAlongMatches")
+            .doc(roomData.liveMatchId)
+            .get();
+          if (matchDoc.exists) {
+            liveMatch = { id: matchDoc.id, ...matchDoc.data() };
+          }
+        } catch (e) {
+          // ignore
+        }
       }
     }
 
     return NextResponse.json({
       success: true,
-      room: { id: doc.id, ...data, liveMatch },
+      room: { ...roomData, liveMatch },
     });
   } catch (error) {
     console.error("[watch-along/[id] GET]", error);
@@ -54,7 +105,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// PUT Request
+// ─────────────────────────────────────────────
+// PUT  /api/watch-along/[id]
+// ─────────────────────────────────────────────
 export async function PUT(req: NextRequest) {
   try {
     const user = await getUserSessionAndRole(req);
@@ -65,37 +118,52 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    const id   = getIdFromUrl(req);
-
+    const id = getIdFromUrl(req);
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const docRef = db.collection("watchAlongRooms").doc(id);
-    const existing = await docRef.get();
+    let existingData: any = null;
 
-    if (!existing.exists) {
-      return NextResponse.json(
-        { success: false, message: "Room not found" },
-        { status: 404 }
+    // Check DynamoDB
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
+        })
       );
+      if (getRes.Item) existingData = getRes.Item;
+    } catch (e) {
+      // fallback
     }
 
-    const roomData = existing.data();
-    const coHosts = roomData?.coHostUserId
-      ? roomData.coHostUserId.split(",").map((id: string) => id.trim().toLowerCase())
+    if (!existingData) {
+      const docRef = db.collection("watchAlongRooms").doc(id);
+      const existing = await docRef.get();
+      if (!existing.exists) {
+        return NextResponse.json(
+          { success: false, message: "Room not found" },
+          { status: 404 }
+        );
+      }
+      existingData = existing.data();
+    }
+
+    const coHosts = existingData?.coHostUserId
+      ? existingData.coHostUserId.split(",").map((cId: string) => cId.trim().toLowerCase())
       : [];
     const isCoHost = coHosts.some(
-      (id: string) =>
-        id === user.userId?.toLowerCase() ||
-        id === user.name?.toLowerCase() ||
-        id === user.email?.toLowerCase()
+      (cId: string) =>
+        cId === user.userId?.toLowerCase() ||
+        cId === user.name?.toLowerCase() ||
+        cId === user.email?.toLowerCase()
     );
 
-    const isOwner = roomData?.hostUserId && (
-      roomData.hostUserId.toLowerCase() === user.userId?.toLowerCase() ||
-      roomData.hostUserId.toLowerCase() === user.name?.toLowerCase() ||
-      roomData.hostUserId.toLowerCase() === user.email?.toLowerCase()
+    const isOwner = existingData?.hostUserId && (
+      existingData.hostUserId.toLowerCase() === user.userId?.toLowerCase() ||
+      existingData.hostUserId.toLowerCase() === user.name?.toLowerCase() ||
+      existingData.hostUserId.toLowerCase() === user.email?.toLowerCase()
     );
 
     const authorizedRoles = ["super_admin", "admin", "host"];
@@ -116,7 +184,6 @@ export async function PUT(req: NextRequest) {
     const formData = await req.formData();
     const updates: Record<string, unknown> = { updatedAt: Date.now() };
 
-    // Only update fields that were actually sent
     const fields = ["name", "role", "badge", "badgeColor", "borderColor", "watching", "engagement", "active", "hostUserId", "coHostUserId", "sport"];
     for (const field of fields) {
       const val = formData.get(field);
@@ -135,20 +202,12 @@ export async function PUT(req: NextRequest) {
     const liveMatchId = formData.get("liveMatchId");
     if (liveMatchId !== null) {
       if (liveMatchId && liveMatchId !== "null") {
-        const matchDoc = await db.collection("watchAlongMatches").doc(liveMatchId as string).get();
-        if (!matchDoc.exists) {
-          return NextResponse.json(
-            { success: false, message: `liveMatchId "${liveMatchId}" does not exist` },
-            { status: 400 }
-          );
-        }
         updates.liveMatchId = liveMatchId as string;
       } else {
         updates.liveMatchId = null;
       }
     }
 
-    // Recompute initials if name changed
     if (updates.name) {
       updates.initials = (updates.name as string)
         .split(" ")
@@ -158,7 +217,6 @@ export async function PUT(req: NextRequest) {
         .slice(0, 2);
     }
 
-    // Upload new display picture if provided
     const dpFile = formData.get("displayPicture") as File | null;
     if (dpFile && dpFile.size > 0) {
       const bytes = await dpFile.arrayBuffer();
@@ -172,12 +230,26 @@ export async function PUT(req: NextRequest) {
       updates.displayPicture = uploaded.secure_url;
     }
 
-    await docRef.update(updates);
+    const finalData = {
+      ...existingData,
+      ...updates,
+      id,
+    };
 
-    const updated = await docRef.get();
+    await dualWrite({
+      tableName: "RealTimeChat",
+      dynamoItem: {
+        roomId: `ROOM#${id}`,
+        sk: "ROOM#META",
+        ...finalData,
+      },
+      firestoreRef: db.collection("watchAlongRooms").doc(id),
+      firestoreData: updates,
+    });
+
     return NextResponse.json({
       success: true,
-      room: { id: updated.id, ...updated.data() },
+      room: finalData,
     });
   } catch (error) {
     console.error("[watch-along/[id] PUT]", error);
@@ -188,8 +260,9 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-
-// DELETE Request
+// ─────────────────────────────────────────────
+// DELETE  /api/watch-along/[id]
+// ─────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
     const user = await getUserSessionAndRole(req);
@@ -208,28 +281,40 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    const id   = getIdFromUrl(req);
-
+    const id = getIdFromUrl(req);
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const docRef = db.collection("watchAlongRooms").doc(id);
-    const existing = await docRef.get();
-
-    if (!existing.exists) {
-      return NextResponse.json(
-        { success: false, message: "Room not found" },
-        { status: 404 }
+    let existingData: any = null;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
+        })
       );
+      if (getRes.Item) existingData = getRes.Item;
+    } catch (e) {
+      // fallback
     }
 
-    // Ownership check: Host can only delete their own room
-    const roomData = existing.data();
-    const isOwner = roomData?.hostUserId && (
-      roomData.hostUserId.toLowerCase() === user.userId?.toLowerCase() ||
-      roomData.hostUserId.toLowerCase() === user.name?.toLowerCase() ||
-      roomData.hostUserId.toLowerCase() === user.email?.toLowerCase()
+    if (!existingData) {
+      const docRef = db.collection("watchAlongRooms").doc(id);
+      const existing = await docRef.get();
+      if (!existing.exists) {
+        return NextResponse.json(
+          { success: false, message: "Room not found" },
+          { status: 404 }
+        );
+      }
+      existingData = existing.data();
+    }
+
+    const isOwner = existingData?.hostUserId && (
+      existingData.hostUserId.toLowerCase() === user.userId?.toLowerCase() ||
+      existingData.hostUserId.toLowerCase() === user.name?.toLowerCase() ||
+      existingData.hostUserId.toLowerCase() === user.email?.toLowerCase()
     );
 
     if (user.role === "host" && !isOwner) {
@@ -239,15 +324,32 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    // Delete all chat messages in the sub-collection first
-    //
-    const chatsSnap = await docRef.collection("chats").get();
-    const batch = db.batch();
-    chatsSnap.docs.forEach((chatDoc) => batch.delete(chatDoc.ref));
-    await batch.commit();
+    // 1. Delete from DynamoDB
+    try {
+      await docClient.send(
+        new DeleteCommand({
+          TableName: "RealTimeChat",
+          Key: {
+            roomId: `ROOM#${id}`,
+            sk: "ROOM#META",
+          },
+        })
+      );
+    } catch (dynErr) {
+      console.warn("[watch-along/[id] DELETE] DynamoDB delete warning:", dynErr);
+    }
 
-    // Delete the room itself
-    await docRef.delete();
+    // 2. Delete from Firestore
+    try {
+      const docRef = db.collection("watchAlongRooms").doc(id);
+      const chatsSnap = await docRef.collection("chats").get();
+      const batch = db.batch();
+      chatsSnap.docs.forEach((chatDoc) => batch.delete(chatDoc.ref));
+      await batch.commit();
+      await docRef.delete();
+    } catch (fsErr) {
+      console.warn("[watch-along/[id] DELETE] Firestore delete warning:", fsErr);
+    }
 
     return NextResponse.json({ success: true, message: "Room deleted" });
   } catch (error) {

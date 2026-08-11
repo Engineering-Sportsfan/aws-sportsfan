@@ -1,89 +1,21 @@
+// app/api/watch-along/route.ts — Migrated to AWS DynamoDB (RealTimeChat & SportsData)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import cloudinary from "@/lib/cloudinary";
 import { getUserSessionAndRole } from "@/lib/auth";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { v4 as uuidv4 } from "uuid";
 
-/* ─────────────────────────────────────────────
-   GET  /api/watch-along
-   Returns all rooms with their related live match
-   Query params:
-     ?isLive=true        → filter live rooms only
-     ?limit=10&page=1    → pagination
-   ───────────────────────────────────────────── */
-// export async function GET(req: NextRequest) {
-//   try {
-//     const { searchParams } = new URL(req.url);
-//     const isLiveFilter = searchParams.get("isLive");
-//     const limit = parseInt(searchParams.get("limit") || "20");
-//     const page = parseInt(searchParams.get("page") || "1");
+export const dynamic = "force-dynamic";
 
-//     let query: FirebaseFirestore.Query = db.collection("watchAlongRooms");
-
-//     if (isLiveFilter === "true") {
-//       query = query.where("isLive", "==", true);
-//     }
-
-//     // Total count
-//     const countSnap = await query.count().get();
-//     const totalItems = countSnap.data().count;
-
-//     // Paginated rooms
-//     const snapshot = await query
-//       .orderBy("createdAt", "desc")
-//       .limit(limit)
-//       .offset((page - 1) * limit)
-//       .get();
-
-//     // For each room, fetch its related live match (if any) in parallel
-//     const rooms = await Promise.all(
-//       snapshot.docs.map(async (doc) => {
-//         const data = doc.data();
-
-//         let liveMatch = null;
-//         if (data.liveMatchId) {
-//           const matchDoc = await db
-//             .collection("watchAlongMatches")
-//             .doc(data.liveMatchId)
-//             .get();
-//           if (matchDoc.exists) {
-//             liveMatch = { id: matchDoc.id, ...matchDoc.data() };
-//           }
-//         }
-
-//         return {
-//           id: doc.id,
-//           ...data,
-//           liveMatch, // nested relation
-//         };
-//       })
-//     );
-
-//     return NextResponse.json({
-//       success: true,
-//       rooms,
-//       pagination: {
-//         currentPage: page,
-//         totalPages: Math.ceil(totalItems / limit),
-//         totalItems,
-//         itemsPerPage: limit,
-//       },
-//     });
-//   } catch (error) {
-//     console.error("[watch-along GET]", error);
-//     return NextResponse.json(
-//       { success: false, message: "Failed to fetch rooms: " + (error as Error).message },
-//       { status: 500 }
-//     );
-//   }
-// }
-
-// Define types for the data structures
 interface WatchAlongRoom {
   id: string;
   liveMatchId?: string;
   isLive?: boolean;
   createdAt?: number;
-  [key: string]: unknown; // For other dynamic fields
+  [key: string]: unknown;
 }
 
 interface LiveMatch {
@@ -91,81 +23,134 @@ interface LiveMatch {
   [key: string]: unknown;
 }
 
+/* ─────────────────────────────────────────────
+   GET  /api/watch-along
+   Returns all rooms with their related live match
+   Query params:
+     ?isLive=true        → filter live rooms only
+     ?limit=20           → pagination limit
+───────────────────────────────────────────── */
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const isLiveFilter = searchParams.get("isLive");
     const limit = parseInt(searchParams.get("limit") || "20");
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
 
-    let query: FirebaseFirestore.Query = db.collection("watchAlongRooms");
+    let roomsData: WatchAlongRoom[] = [];
 
-    if (isLiveFilter === "true") {
-      query = query.where("isLive", "==", true);
-    }
+    // 1. Query DynamoDB RealTimeChat table for rooms
+    try {
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "RealTimeChat",
+          FilterExpression: "sk = :skMeta",
+          ExpressionAttributeValues: {
+            ":skMeta": "ROOM#META",
+          },
+          Limit: 100,
+        })
+      );
 
-    query = query.orderBy("createdAt", "desc").limit(limit);
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        let items = (scanRes.Items as any[]).filter(
+          (item) => item.isWatchAlong === true || item.type === "watchalong" || (item.roomId && (item.roomId as string).startsWith("ROOM#watchalong_")) || item.liveMatchId
+        );
 
-    // Use cursor-based pagination instead of offset
-    if (lastDocId && lastDocCreatedAt) {
-      const lastDocRef = db.collection("watchAlongRooms").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
+        if (isLiveFilter === "true") {
+          items = items.filter((item) => item.isLive === true || item.isLive === "true");
+        }
+
+        roomsData = items.map((item) => ({
+          id: (item.roomId as string)?.replace(/^ROOM#/, "") || item.id,
+          name: item.name,
+          role: item.role,
+          badge: item.badge,
+          badgeColor: item.badgeColor,
+          borderColor: item.borderColor,
+          initials: item.initials,
+          displayPicture: item.displayPicture,
+          isLive: Boolean(item.isLive),
+          watching: item.watching,
+          engagement: item.engagement,
+          active: item.active,
+          liveMatchId: item.liveMatchId,
+          hostUserId: item.hostUserId,
+          coHostUserId: item.coHostUserId,
+          sport: item.sport,
+          createdAt: Number(item.createdAt || Date.now()),
+          updatedAt: Number(item.updatedAt || Date.now()),
+        }));
       }
+    } catch (dynErr) {
+      console.warn("[watch-along GET] DynamoDB scan warning:", dynErr);
     }
 
-    const snapshot = await query.get();
+    // 2. Fallback to Firestore if no rooms in DynamoDB
+    if (roomsData.length === 0) {
+      let query: FirebaseFirestore.Query = db.collection("watchAlongRooms");
+      if (isLiveFilter === "true") {
+        query = query.where("isLive", "==", true);
+      }
+      query = query.orderBy("createdAt", "desc").limit(limit);
 
-    const roomsData: WatchAlongRoom[] = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as WatchAlongRoom[];
+      const snapshot = await query.get();
+      roomsData = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as WatchAlongRoom[];
+    }
 
-    // Batch fetch all related matches in ONE query instead of N queries
-    const liveMatchIds = roomsData
+    // Sort by createdAt desc and slice to limit
+    roomsData.sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+    const paginatedRooms = roomsData.slice(0, limit);
+
+    // Fetch related matches in parallel from DynamoDB / Firestore
+    const liveMatchIds = paginatedRooms
       .map((room) => room.liveMatchId)
       .filter((id): id is string => Boolean(id));
 
-    const matchesMap = new Map<string, LiveMatch>(); // Changed to const
+    const matchesMap = new Map<string, LiveMatch>();
     if (liveMatchIds.length > 0) {
-      // Firestore 'in' limit is 30, so batch if needed
-      const batchSize = 30;
-      for (let i = 0; i < liveMatchIds.length; i += batchSize) {
-        const batch = liveMatchIds.slice(i, i + batchSize);
-        const matchesSnapshot = await db
-          .collection("watchAlongMatches")
-          .where("__name__", "in", batch)
-          .get();
+      await Promise.all(
+        liveMatchIds.map(async (mId) => {
+          try {
+            const mGet = await docClient.send(
+              new GetCommand({
+                TableName: "SportsData",
+                Key: { entityId: `MATCH#${mId}`, sk: "MATCH#META" },
+              })
+            );
+            if (mGet.Item) {
+              matchesMap.set(mId, { id: mId, ...mGet.Item });
+              return;
+            }
+          } catch (e) {
+            // fallback
+          }
 
-        matchesSnapshot.docs.forEach((doc) => {
-          matchesMap.set(doc.id, { id: doc.id, ...doc.data() } as LiveMatch);
-        });
-      }
+          try {
+            const matchDoc = await db.collection("watchAlongMatches").doc(mId).get();
+            if (matchDoc.exists) {
+              matchesMap.set(mId, { id: matchDoc.id, ...matchDoc.data() } as LiveMatch);
+            }
+          } catch (e) {
+            // ignore
+          }
+        })
+      );
     }
 
-    // Attach matches to rooms
-    const rooms = roomsData.map((room) => ({
+    const rooms = paginatedRooms.map((room) => ({
       ...room,
       liveMatch: room.liveMatchId ? matchesMap.get(room.liveMatchId) || null : null,
     }));
-
-    // Get last document for next page cursor
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
 
     return NextResponse.json({
       success: true,
       rooms,
       pagination: {
         limit,
-        hasMore: rooms.length === limit,
-        nextCursor: rooms.length === limit
-          ? {
-              lastDocId: lastDoc?.id,
-              lastDocCreatedAt: lastDoc?.data()?.createdAt,
-            }
-          : null,
+        hasMore: roomsData.length > limit,
       },
     });
   } catch (error) {
@@ -180,8 +165,7 @@ export async function GET(req: NextRequest) {
 /* ─────────────────────────────────────────────
    POST  /api/watch-along
    Creates a new Watch Along room (expert card)
-   Body: multipart/form-data
-   ───────────────────────────────────────────── */
+───────────────────────────────────────────── */
 export async function POST(req: NextRequest) {
   try {
     const user = await getUserSessionAndRole(req);
@@ -202,7 +186,6 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
 
-    // ── Required fields ──
     const name = formData.get("name") as string;
     const role = formData.get("role") as string;
     const badge = formData.get("badge") as string;
@@ -214,7 +197,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Optional fields ──
     const badgeColor = (formData.get("badgeColor") as string) || "bg-pink-600";
     const borderColor = (formData.get("borderColor") as string) || "border-pink-500";
     const isLive = formData.get("isLive") === "true";
@@ -222,11 +204,10 @@ export async function POST(req: NextRequest) {
     const engagement = (formData.get("engagement") as string) || "0%";
     const active = (formData.get("active") as string) || "0";
     const liveMatchId = (formData.get("liveMatchId") as string) || null;
-    const hostUserId = (formData.get("hostUserId") as string) || user.userId || null;  // Default to authenticated user ID
-    const coHostUserId = (formData.get("coHostUserId") as string) || null;  // Optional co-host
+    const hostUserId = (formData.get("hostUserId") as string) || user.userId || null;
+    const coHostUserId = (formData.get("coHostUserId") as string) || null;
     const sport = (formData.get("sport") as string) || "cricket";
 
-    // ── Upload display picture ──
     let displayPicture = "";
     const dpFile = formData.get("displayPicture") as File | null;
     if (dpFile && dpFile.size > 0) {
@@ -241,7 +222,6 @@ export async function POST(req: NextRequest) {
       displayPicture = uploaded.secure_url;
     }
 
-    // ── Derive initials from name ──
     const initials = name
       .split(" ")
       .map((w) => w[0])
@@ -249,29 +229,35 @@ export async function POST(req: NextRequest) {
       .toUpperCase()
       .slice(0, 2);
 
-    // ── Validate liveMatchId if provided ──
-    if (liveMatchId) {
-      const matchDoc = await db.collection("watchAlongMatches").doc(liveMatchId).get();
-      if (!matchDoc.exists) {
-        return NextResponse.json(
-          { success: false, message: `liveMatchId "${liveMatchId}" does not exist in watchAlongMatches` },
-          { status: 400 }
-        );
-      }
-    }
-
-    // ── Auto-create a Match record if no liveMatchId provided ──
+    const roomId = uuidv4();
     let resolvedMatchId = liveMatchId;
+
     if (!resolvedMatchId) {
-      const matchRef = await db.collection("watchAlongMatches").add({
+      const matchId = uuidv4();
+      const matchData = {
         title: name,
         createdAt: Date.now(),
         updatedAt: Date.now(),
+      };
+
+      await dualWrite({
+        tableName: "SportsData",
+        dynamoItem: {
+          entityId: `MATCH#${matchId}`,
+          sk: "MATCH#META",
+          id: matchId,
+          ...matchData,
+        },
+        firestoreRef: db.collection("watchAlongMatches").doc(matchId),
+        firestoreData: matchData,
       });
-      resolvedMatchId = matchRef.id;
+
+      resolvedMatchId = matchId;
     }
 
+    const now = Date.now();
     const roomData = {
+      id: roomId,
       name,
       role,
       badge,
@@ -284,18 +270,30 @@ export async function POST(req: NextRequest) {
       engagement,
       active,
       liveMatchId: resolvedMatchId,
-      hostUserId: hostUserId || null,  // Store creator's user ID
-      coHostUserId: coHostUserId || null,  // Optional co-host
+      hostUserId: hostUserId || null,
+      coHostUserId: coHostUserId || null,
       sport,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      isWatchAlong: true,
+      type: "watchalong",
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const docRef = await db.collection("watchAlongRooms").add(roomData);
+    // Primary write to DynamoDB RealTimeChat + dual-write to Firestore
+    await dualWrite({
+      tableName: "RealTimeChat",
+      dynamoItem: {
+        roomId: `ROOM#${roomId}`,
+        sk: "ROOM#META",
+        ...roomData,
+      },
+      firestoreRef: db.collection("watchAlongRooms").doc(roomId),
+      firestoreData: roomData,
+    });
 
     return NextResponse.json({
       success: true,
-      room: { id: docRef.id, ...roomData },
+      room: { ...roomData, id: roomId },
     });
   } catch (error) {
     console.error("[watch-along POST]", error);

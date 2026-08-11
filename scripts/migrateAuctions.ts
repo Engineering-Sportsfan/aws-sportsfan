@@ -131,7 +131,7 @@ async function runMigration() {
           amountPaise,
           type: "manual" as const,
           placedAt,
-          status: "outbid" as const
+          status: "outbid" as "outbid" | "winning" | "won"
         };
       });
 

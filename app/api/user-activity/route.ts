@@ -1,95 +1,88 @@
-//api/user-activity/route.ts
-
+// app/api/user-activity/route.ts — Migrated to AWS DynamoDB (GamificationAndWallet & IdentityAndAccess Tables)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
-// export async function GET(req: NextRequest) {
-//   const userId = req.nextUrl.searchParams.get("userId");
-//   const limit  = parseInt(req.nextUrl.searchParams.get("limit") ?? "20");
-  
-//   if (!userId) {
-//     return NextResponse.json({ success: false, error: "userId required" }, { status: 400 });
-//   }
-
-//   try {
-//     const snap = await db
-//       .collection("users")
-//       .doc(userId)
-//       .collection("activityLog")
-//       .orderBy("createdAt", "desc")
-//       .limit(limit)
-//       .get();
-
-//     const activities = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-//     return NextResponse.json({ success: true, activities });
-//   } catch (err) {
-//     return NextResponse.json({ success: false, error: "Failed to fetch" }, { status: 500 });
-//   }
-// }
-
-
-
-
-// export async function GET(req: NextRequest) {
-//   const userId = req.nextUrl.searchParams.get("userId");
-//   const limit  = parseInt(req.nextUrl.searchParams.get("limit") ?? "20");
-
-//   if (!userId) {
-//     return NextResponse.json({ success: false, error: "userId required" }, { status: 400 });
-//   }
-
-//   try {
-//     const userRef = db.collection("users").doc(userId);
-
-//     const [activitySnap, userSnap] = await Promise.all([
-//       userRef
-//         .collection("activityLog")
-//         .orderBy("createdAt", "desc")
-//         .limit(limit)
-//         .get(),
-//       userRef.get(),
-//     ]);
-
-//     const activities = activitySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-//     const counts = userSnap.exists ? (userSnap.data()?.activityCounts ?? {}) : {};
-
-//     return NextResponse.json({ success: true, activities, counts });
-//   } catch (err) {
-//     return NextResponse.json({ success: false, error: "Failed to fetch" }, { status: 500 });
-//   }
-// }
-
-
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const userId = req.nextUrl.searchParams.get("userId");
-  const limit  = parseInt(req.nextUrl.searchParams.get("limit") ?? "20");
+  const limit = parseInt(req.nextUrl.searchParams.get("limit") ?? "20");
 
   if (!userId) {
     return NextResponse.json({ success: false, error: "userId required" }, { status: 400 });
   }
 
   try {
-    const userRef = db.collection("users").doc(userId);
+    let activities: Array<Record<string, unknown>> = [];
+    let userData: Record<string, unknown> = {};
 
-    const [activitySnap, userSnap] = await Promise.all([
-      userRef
-        .collection("activityLog")
-        .orderBy("createdAt", "desc")
-        .limit(limit)
-        .get(),
-      userRef.get(),
-    ]);
+    // 1. Fetch user activities from DynamoDB GamificationAndWallet
+    try {
+      const actRes = await docClient.send(
+        new QueryCommand({
+          TableName: "GamificationAndWallet",
+          KeyConditionExpression: "userId = :u AND begins_with(sk, :actPrefix)",
+          ExpressionAttributeValues: {
+            ":u": `USER#${userId}`,
+            ":actPrefix": "ACT#",
+          },
+          ScanIndexForward: false,
+          Limit: limit,
+        })
+      );
+      if (actRes.Items && actRes.Items.length > 0) {
+        activities = actRes.Items.map((item) => ({
+          id: (item.sk as string)?.replace(/^ACT#/, "") || item.transactionId,
+          ...item,
+        }));
+      }
+    } catch (err) {
+      console.warn("DynamoDB user activity query notice:", err);
+    }
 
-    const activities = activitySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // 2. Fetch user profile from DynamoDB IdentityAndAccess
+    try {
+      const userRes = await docClient.send(
+        new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `USER#${userId}`, sk: "USER#META" },
+        })
+      );
+      if (userRes.Item) {
+        userData = userRes.Item;
+      }
+    } catch (err) {
+      console.warn("DynamoDB user stats get notice:", err);
+    }
 
-    // activityCounts is legacy/dead (never written by awardUserPoints — see
-    // lib/userPoints.ts). featureStats is the live source; fall back to
-    // activityCounts only for reasons that predate the featureStats fix, so
-    // old counts don't visibly regress to 0.
-    const userData = userSnap.exists ? userSnap.data() ?? {} : {};
-    const liveFeatureStats = userData.featureStats ?? {};
-    const legacyActivityCounts = userData.activityCounts ?? {};
+    // 3. Fallback to Firebase if needed
+    if (activities.length === 0 || Object.keys(userData).length === 0) {
+      try {
+        const userRef = db.collection("users").doc(userId);
+        const [activitySnap, userSnap] = await Promise.all([
+          activities.length === 0
+            ? userRef.collection("activityLog").orderBy("createdAt", "desc").limit(limit).get()
+            : Promise.resolve(null),
+          Object.keys(userData).length === 0
+            ? userRef.get()
+            : Promise.resolve(null),
+        ]);
+
+        if (activitySnap) {
+          activities = activitySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        }
+        if (userSnap && userSnap.exists) {
+          userData = userSnap.data() ?? {};
+        }
+      } catch (fbErr) {
+        console.warn("Firebase user-activity fallback notice:", fbErr);
+      }
+    }
+
+    const liveFeatureStats = (userData.featureStats as Record<string, number>) ?? {};
+    const legacyActivityCounts = (userData.activityCounts as Record<string, number>) ?? {};
 
     const counts: Record<string, number> = {
       ROAR_POST: liveFeatureStats.post ?? legacyActivityCounts.ROAR_POST ?? 0,
@@ -106,8 +99,13 @@ export async function GET(req: NextRequest) {
       ROAR_RAW_REACTIONS: liveFeatureStats.post ?? legacyActivityCounts.ROAR_RAW_REACTIONS ?? 0,
     };
 
-    return NextResponse.json({ success: true, activities, counts });
+    return NextResponse.json({
+      success: true,
+      activities,
+      counts,
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
+    console.error("GET /api/user-activity error:", err);
     return NextResponse.json({ success: false, error: "Failed to fetch" }, { status: 500 });
   }
 }

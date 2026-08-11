@@ -1,89 +1,12 @@
+// app/api/player-profile/route.ts — Migrated to AWS DynamoDB (IdentityAndAccess Table)
 import { NextRequest, NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
-
-// export async function POST(req: NextRequest) {
-//   try {
-//     const formData = await req.formData();
-
-//     const name = formData.get("name") as string;
-//     const team = formData.get("team") as string;
-//     const battingStyle = formData.get("battingStyle") as string;
-//     const bowlingStyle = formData.get("bowlingStyle") as string;
-//     const about = formData.get("about") as string;
-
-//     // Stats
-//     const statsRuns = formData.get("statsRuns") as string;
-//     const statsSr = formData.get("statsSr") as string;
-//     const statsAvg = formData.get("statsAvg") as string;
-
-//     // Player Overview
-//     const iplDebut = formData.get("iplDebut") as string;
-//     const specialization = formData.get("specialization") as string;
-//     const dob = formData.get("dob") as string;
-//     const matches = formData.get("matches") as string;
-
-//     // Files
-//     const avatarFile = formData.get("avatar") as File | null;
-
-//     if (!name || !team) {
-//       return NextResponse.json(
-//         { success: false, message: "name and team are required" },
-//         { status: 400 }
-//       );
-//     }
-
-//     // Upload avatar
-//     let avatarUrl = "";
-//     if (avatarFile) {
-//       const bytes = await avatarFile.arrayBuffer();
-//       const buffer = Buffer.from(bytes);
-//       const base64 = `data:${avatarFile.type};base64,${buffer.toString("base64")}`;
-//       const uploadRes = await cloudinary.uploader.upload(base64, {
-//         folder: "club-profiles/avatars",
-//         public_id: `${Date.now()}-${avatarFile.name.replace(/\s/g, "_")}`,
-//       });
-//       avatarUrl = uploadRes.secure_url;
-//     }
-
-//     const profileData = {
-//       name,
-//       team,
-//       battingStyle: battingStyle || "",
-//       bowlingStyle: bowlingStyle || "",
-//       about: about || "",
-//       avatar: avatarUrl,
-//       stats: {
-//         runs: statsRuns || "0",
-//         sr: statsSr || "0",
-//         avg: statsAvg || "0",
-//       },
-//       overview: {
-//         iplDebut: iplDebut || "",
-//         specialization: specialization || "",
-//         dob: dob || "",
-//         matches: matches || "",
-//       },
-//       createdAt: Date.now(),
-//       updatedAt: Date.now(),
-//     };
-
-//     const docRef = await db.collection("PlayerProfiles").add(profileData);
-
-//     return NextResponse.json({
-//       success: true,
-//       profile: { id: docRef.id, ...profileData },
-//     });
-//   } catch (error) {
-//     console.error("Create Player profile error:", error);
-//     return NextResponse.json(
-//       { success: false, message: "Create failed: " + (error as Error).message },
-//       { status: 500 }
-//     );
-//   }
-// }
-
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
@@ -132,6 +55,8 @@ export async function POST(req: NextRequest) {
       resolvedAvatarUrl = uploadRes.secure_url;
     }
 
+    const docId = `player_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
     const profileData = {
       name,
       team,
@@ -155,37 +80,23 @@ export async function POST(req: NextRequest) {
       nameLower: name.toLowerCase(),
     };
 
-    // Fix: Use set() with explicit document ID instead of add()
-    // This sometimes works better with empty collections
-    const docRef = db.collection("PlayerProfiles").doc(); // Auto-generate ID
-    await docRef.set(profileData);
+    // ── Dual-Write to DynamoDB & Firebase ────────────────────────────────────
+    const dynamoItem = {
+      entityId: `PROFILE_PLAYER#${docId}`,
+      sk: "PROFILE",
+      id: docId,
+      ...profileData,
+    };
+
+    await dualWrite("PlayerProfiles", docId, "IdentityAndAccess", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      profile: { id: docRef.id, ...profileData },
+      profile: { id: docId, ...profileData },
     });
   } catch (error) {
     console.error("Create Player profile error:", error);
-    
-    // More detailed error handling
-    let errorMessage = "Create failed";
-    if (error instanceof Error) {
-      errorMessage = error.message;
-      
-      // If still getting NOT_FOUND, try alternative collection name
-      if (errorMessage.includes("NOT_FOUND")) {
-        return NextResponse.json(
-          { 
-            success: false, 
-            message: "Database connection issue. Please ensure Firebase is properly configured.",
-            details: errorMessage,
-            suggestion: "Try creating the collection manually in Firebase Console first"
-          },
-          { status: 500 }
-        );
-      }
-    }
-    
+    const errorMessage = error instanceof Error ? error.message : "Create failed";
     return NextResponse.json(
       { success: false, message: `Create failed: ${errorMessage}` },
       { status: 500 }
@@ -193,73 +104,61 @@ export async function POST(req: NextRequest) {
   }
 }
 
-
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50); // Cap at 50
+    const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
     const search = searchParams.get("search")?.trim().toLowerCase() || "";
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocValue = searchParams.get("lastDocValue"); // For name or createdAt
 
-    const collectionRef = db.collection("PlayerProfiles");
-    let query: FirebaseFirestore.Query = collectionRef;
+    // 1. Query DynamoDB IdentityAndAccess for player profiles
+    const scanRes = await docClient.send(
+      new ScanCommand({
+        TableName: "IdentityAndAccess",
+        FilterExpression: "begins_with(entityId, :prefix)",
+        ExpressionAttributeValues: {
+          ":prefix": "PROFILE_PLAYER",
+        },
+      })
+    );
 
-    // Build query based on search or normal list
-    if (search) {
-      query = query
-        .orderBy("nameLower")
-        .where("nameLower", ">=", search)
-        .where("nameLower", "<=", search + "\uf8ff");
-      
-      // Apply cursor for search results
-      if (lastDocId && lastDocValue) {
-        const lastDocRef = collectionRef.doc(lastDocId);
-        const lastDoc = await lastDocRef.get();
-        if (lastDoc.exists) {
-          query = query.startAfter(lastDoc);
-        }
+    let profiles: Array<Record<string, unknown>> = [];
+
+    if (scanRes.Items && scanRes.Items.length > 0) {
+      profiles = scanRes.Items.map((item) => ({
+        id: (item.id as string) || (item.entityId as string)?.replace(/^PROFILE_PLAYER(_LEGACY)?#/, ""),
+        ...item,
+      }));
+
+      // In-memory filter for search if specified
+      if (search) {
+        profiles = profiles.filter((p) =>
+          ((p.name as string) || "").toLowerCase().includes(search)
+        );
       }
+
+      // Sort by createdAt descending
+      profiles.sort((a, b) => ((b.createdAt as number) || 0) - ((a.createdAt as number) || 0));
     } else {
-      query = query.orderBy("createdAt", "desc");
-      
-      // Apply cursor for normal list
-      if (lastDocId && lastDocValue) {
-        const lastDocRef = collectionRef.doc(lastDocId);
-        const lastDoc = await lastDocRef.get();
-        if (lastDoc.exists) {
-          query = query.startAfter(lastDoc);
-        }
-      }
+      // Fallback to Firebase
+      const snapshot = await db.collection("PlayerProfiles").orderBy("createdAt", "desc").limit(limit).get();
+      profiles = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
     }
 
-    // Fetch one extra doc to know if there's more
-    const snapshot = await query.limit(limit + 1).get();
-
-    const hasMore = snapshot.docs.length > limit;
-    const docs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-
-    const profiles = docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    // Get last document for next cursor
-    const lastDoc = docs[docs.length - 1];
-    const nextCursor = hasMore ? {
-      lastDocId: lastDoc?.id,
-      lastDocValue: search ? lastDoc?.data()?.nameLower : lastDoc?.data()?.createdAt
-    } : null;
+    const paginatedProfiles = profiles.slice(0, limit);
+    const hasMore = profiles.length > limit;
 
     return NextResponse.json({
       success: true,
-      profiles,
+      profiles: paginatedProfiles,
       pagination: {
         limit,
         hasMore,
-        nextCursor, // Use this for next page
+        total: profiles.length,
       },
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Fetch player profiles error:", error);
     return NextResponse.json(

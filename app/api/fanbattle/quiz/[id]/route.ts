@@ -1,8 +1,14 @@
+// app/api/fanbattle/quiz/[id]/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import type { Level, QuizQuestion } from "../route";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+export const dynamic = "force-dynamic";
+
+type Params = { params: Promise<{ id: string }> };
 
 const VALID_LEVELS: Level[] = ["easy", "medium", "difficult"];
 
@@ -15,8 +21,6 @@ const VALID_CATEGORIES = [
   "Athletics",
   "General",
 ];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function validateQuestions(questions: QuizQuestion[]): string | null {
   if (!Array.isArray(questions) || questions.length === 0)
@@ -40,27 +44,43 @@ function validateQuestions(questions: QuizQuestion[]): string | null {
   return null;
 }
 
-// ─── GET /api/fanbattle/quiz/[id] ─────────────────────────────────────────────
-// Always returns full quiz including correctAnswer (admin single-fetch for edit form)
-
-//  Helper: extract ID from URL 
-function getIdFromUrl(req: NextRequest): string {
-  const url = new URL(req.url);
-  const parts = url.pathname.split("/");
-  return parts[parts.length - 1];
-}
-
-// GET - Fetch single article by ID
-export async function GET(req: NextRequest) {
+// GET - Fetch single quiz by ID
+export async function GET(_req: NextRequest, { params }: Params) {
   try {
-    const id = getIdFromUrl(req);
-
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Quiz ID is required" }, { status: 400 });
     }
-    const doc = await db.collection("fanBattleQuizzes").doc(id).get();
 
-    if (!doc.exists) {
+    let quiz: any = null;
+
+    // 1. Try DynamoDB
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: {
+            entityId: `QUIZ#${id}`,
+            sk: "QUIZ#META",
+          },
+        })
+      );
+      if (getRes.Item) {
+        quiz = { id, ...getRes.Item };
+      }
+    } catch (e) {
+      console.warn("[fanbattle quiz [id] GET] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
+    if (!quiz && db) {
+      const doc = await db.collection("fanBattleQuizzes").doc(id).get();
+      if (doc.exists) {
+        quiz = { id: doc.id, ...doc.data() };
+      }
+    }
+
+    if (!quiz) {
       return NextResponse.json(
         { error: `Quiz "${id}" not found` },
         { status: 404 }
@@ -68,7 +88,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { success: true, data: { id: doc.id, ...doc.data() } },
+      { success: true, data: quiz },
       { status: 200 }
     );
   } catch (error: unknown) {
@@ -78,19 +98,33 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ─── PUT /api/fanbattle/quiz/[id] ─────────────────────────────────────────────
-
-export async function PUT(req: NextRequest) {
+// PUT /api/fanbattle/quiz/[id]
+export async function PUT(req: NextRequest, { params }: Params) {
   try {
-    const id = getIdFromUrl(req);
-
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Quiz ID is required" }, { status: 400 });
     }
-    const docRef = db.collection("fanBattleQuizzes").doc(id);
-    const existing = await docRef.get();
 
-    if (!existing.exists) {
+    let existing: any = null;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: { entityId: `QUIZ#${id}`, sk: "QUIZ#META" },
+        })
+      );
+      if (getRes.Item) existing = getRes.Item;
+    } catch (e) {
+      // fallback
+    }
+
+    if (!existing && db) {
+      const doc = await db.collection("fanBattleQuizzes").doc(id).get();
+      if (doc.exists) existing = doc.data();
+    }
+
+    if (!existing) {
       return NextResponse.json(
         { error: `Quiz "${id}" not found` },
         { status: 404 }
@@ -114,9 +148,8 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    // Build update payload — only include fields that were sent
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updates: Record<string, any> = { updatedAt: Date.now() };
+    const now = Date.now();
+    const updates: Record<string, any> = { ...existing, updatedAt: now };
 
     if (level) updates.level = level;
     if (category) updates.category = category.trim();
@@ -140,12 +173,21 @@ export async function PUT(req: NextRequest) {
       updates.totalPoints = mappedQuestions.reduce((sum, q) => sum + q.points, 0);
     }
 
-    await docRef.update(updates);
-
-    const updated = await docRef.get();
+    // Dual-write update
+    await dualWrite({
+      tableName: "SportsData",
+      dynamoItem: {
+        entityId: `QUIZ#${id}`,
+        sk: "QUIZ#META",
+        ...updates,
+        id,
+      },
+      firestoreRef: db.collection("fanBattleQuizzes").doc(id),
+      firestoreData: updates,
+    });
 
     return NextResponse.json(
-      { success: true, message: "Quiz updated", data: { id: updated.id, ...updated.data() } },
+      { success: true, message: "Quiz updated", data: { id, ...updates } },
       { status: 200 }
     );
   } catch (error: unknown) {
@@ -155,26 +197,32 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-// ─── DELETE /api/fanbattle/quiz/[id] ─────────────────────────────────────────
-
-export async function DELETE(req: NextRequest) {
+// DELETE /api/fanbattle/quiz/[id]
+export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    const id = getIdFromUrl(req);
-
+    const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Quiz ID is required" }, { status: 400 });
     }
-    const docRef = db.collection("fanBattleQuizzes").doc(id);
-    const existing = await docRef.get();
 
-    if (!existing.exists) {
-      return NextResponse.json(
-        { error: `Quiz "${id}" not found` },
-        { status: 404 }
+    try {
+      await docClient.send(
+        new DeleteCommand({
+          TableName: "SportsData",
+          Key: {
+            entityId: `QUIZ#${id}`,
+            sk: "QUIZ#META",
+          },
+        })
       );
+    } catch (e) {
+      console.warn("[fanbattle quiz [id] DELETE] DynamoDB notice:", e);
     }
 
-    await docRef.delete();
+    if (db) {
+      const docRef = db.collection("fanBattleQuizzes").doc(id);
+      await docRef.delete();
+    }
 
     return NextResponse.json(
       { success: true, message: `Quiz "${id}" deleted` },

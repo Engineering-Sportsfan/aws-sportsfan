@@ -1,24 +1,26 @@
-// app/api/sportsfan360card/[id]/route.ts
-
+// app/api/sportsfan360card/[id]/route.ts — Migrated to AWS DynamoDB (IdentityAndAccess Table)
 import { NextRequest, NextResponse } from "next/server";
 import cloudinary from "@/lib/cloudinary";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite, dualDelete } from "@/lib/dualWrite";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
-// Define the Drop type
+export const dynamic = "force-dynamic";
+
 interface Drop {
   id: string;
   title: string;
   url: string;
 }
 
-// Helper: extract ID from URL
 function getIdFromUrl(req: NextRequest): string {
   const url = new URL(req.url);
   const parts = url.pathname.split("/");
   return parts[parts.length - 1];
 }
 
-// GET - Fetch single profile by ID
+// ─── GET: Fetch Single Profile by ID ─────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -30,41 +32,56 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const docRef = db.collection("Sportsfan360Profile").doc(id);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, message: "Profile not found" },
-        { status: 404 }
+    // 1. Try DynamoDB
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: {
+            entityId: `PROFILE_SF360#${id}`,
+            sk: "PROFILE#META",
+          },
+        })
       );
+      if (getRes.Item) {
+        const item = getRes.Item;
+        return NextResponse.json({
+          success: true,
+          profile: {
+            id: item.id || id,
+            ...item,
+          },
+        });
+      }
+    } catch (e) {
+      console.warn("[sportsfan360card [id] GET] DynamoDB notice:", e);
     }
 
-    const profile = {
-      id: doc.id,
-      ...doc.data(),
-    };
+    // 2. Fallback to Firestore
+    if (db) {
+      const doc = await db.collection("Sportsfan360Profile").doc(id).get();
+      if (doc.exists) {
+        return NextResponse.json({
+          success: true,
+          profile: { id: doc.id, ...doc.data() },
+        });
+      }
+    }
 
-    return NextResponse.json({
-      success: true,
-      profile,
-    });
+    return NextResponse.json(
+      { success: false, message: "Profile not found" },
+      { status: 404 }
+    );
   } catch (error) {
     console.error("Fetch profile error:", error);
-    
-    let errorMessage = "Fetch failed";
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    }
-    
     return NextResponse.json(
-      { success: false, message: `Fetch failed: ${errorMessage}` },
+      { success: false, message: `Fetch failed: ${(error as Error).message}` },
       { status: 500 }
     );
   }
 }
 
-// PUT - Update profile by ID
+// ─── PUT: Update Profile by ID ───────────────────────────────────────────────
 export async function PUT(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -77,13 +94,11 @@ export async function PUT(req: NextRequest) {
     }
 
     const formData = await req.formData();
-
     const name = formData.get("name") as string;
     const about = formData.get("about") as string;
     const dropsJson = formData.get("drops") as string;
     const existingAvatar = formData.get("existingAvatar") as string;
 
-    // Parse drops from JSON string
     let drops: Drop[] = [];
     if (dropsJson) {
       try {
@@ -93,7 +108,6 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    // Files
     const avatarFile = formData.get("avatar") as File | null;
 
     if (!name) {
@@ -103,19 +117,33 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    // Check if profile exists
-    const docRef = db.collection("Sportsfan360Profile").doc(id);
-    const doc = await docRef.get();
+    let existingData: Record<string, unknown> = {};
 
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, message: "Profile not found" },
-        { status: 404 }
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: {
+            entityId: `PROFILE_SF360#${id}`,
+            sk: "PROFILE#META",
+          },
+        })
       );
+      if (getRes.Item) {
+        existingData = getRes.Item as Record<string, unknown>;
+      }
+    } catch (e) {
+      console.warn("[sportsfan360card [id] PUT] DynamoDB check:", e);
     }
 
-    // Upload avatar or use existing
-    let avatarUrl = existingAvatar || "";
+    if (Object.keys(existingData).length === 0 && db) {
+      const doc = await db.collection("Sportsfan360Profile").doc(id).get();
+      if (doc.exists) {
+        existingData = doc.data() as Record<string, unknown>;
+      }
+    }
+
+    let avatarUrl = existingAvatar || (existingData.avatar as string) || "";
     if (avatarFile) {
       const bytes = await avatarFile.arrayBuffer();
       const buffer = Buffer.from(bytes);
@@ -125,12 +153,11 @@ export async function PUT(req: NextRequest) {
         public_id: `${Date.now()}-${avatarFile.name.replace(/\s/g, "_")}`,
       });
       avatarUrl = uploadRes.secure_url;
-      
-      // If there's an old avatar and it's not the default, delete it from Cloudinary
-      const oldData = doc.data();
-      if (oldData?.avatar && oldData.avatar !== existingAvatar) {
+
+      const oldAvatar = existingData.avatar as string;
+      if (oldAvatar && oldAvatar !== existingAvatar) {
         try {
-          const publicId = oldData.avatar.split("/").pop()?.split(".")[0];
+          const publicId = oldAvatar.split("/").pop()?.split(".")[0];
           if (publicId) {
             await cloudinary.uploader.destroy(`club-profiles/avatars/${publicId}`);
           }
@@ -141,36 +168,38 @@ export async function PUT(req: NextRequest) {
     }
 
     const updateData = {
+      ...existingData,
+      id,
       name,
-      nameLower: name.toLowerCase(), // For case-insensitive search
+      nameLower: name.toLowerCase(),
       about: about || "",
       avatar: avatarUrl,
       drops: drops || [],
       updatedAt: Date.now(),
     };
 
-    await docRef.update(updateData);
+    const dynamoItem = {
+      entityId: `PROFILE_SF360#${id}`,
+      sk: "PROFILE#META",
+      ...updateData,
+    };
+
+    await dualWrite("Sportsfan360Profile", id, "IdentityAndAccess", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      profile: { id: docRef.id, ...updateData },
+      profile: { ...updateData, id },
     });
   } catch (error) {
     console.error("Update Sportsfan360 profile error:", error);
-    
-    let errorMessage = "Update failed";
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    }
-    
     return NextResponse.json(
-      { success: false, message: `Update failed: ${errorMessage}` },
+      { success: false, message: `Update failed: ${(error as Error).message}` },
       { status: 500 }
     );
   }
 }
 
-// DELETE - Delete profile by ID
+// ─── DELETE: Delete Profile by ID ───────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
     const id = getIdFromUrl(req);
@@ -182,33 +211,10 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    const docRef = db.collection("Sportsfan360Profile").doc(id);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return NextResponse.json(
-        { success: false, message: "Profile not found" },
-        { status: 404 }
-      );
-    }
-
-    // Delete avatar from Cloudinary if it exists
-    const data = doc.data();
-    if (data?.avatar) {
-      try {
-        // Extract public ID from URL
-        const urlParts = data.avatar.split("/");
-        const filename = urlParts[urlParts.length - 1];
-        const publicId = `club-profiles/avatars/${filename.split(".")[0]}`;
-        await cloudinary.uploader.destroy(publicId);
-      } catch (deleteError) {
-        console.error("Failed to delete avatar from Cloudinary:", deleteError);
-        // Continue with profile deletion even if avatar deletion fails
-      }
-    }
-
-    // Delete the profile document
-    await docRef.delete();
+    await dualDelete("Sportsfan360Profile", id, "IdentityAndAccess", {
+      entityId: `PROFILE_SF360#${id}`,
+      sk: "PROFILE#META",
+    });
 
     return NextResponse.json({
       success: true,
@@ -216,14 +222,8 @@ export async function DELETE(req: NextRequest) {
     });
   } catch (error) {
     console.error("Delete Sportsfan360 profile error:", error);
-    
-    let errorMessage = "Delete failed";
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    }
-    
     return NextResponse.json(
-      { success: false, message: `Delete failed: ${errorMessage}` },
+      { success: false, message: `Delete failed: ${(error as Error).message}` },
       { status: 500 }
     );
   }

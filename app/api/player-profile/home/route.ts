@@ -1,309 +1,98 @@
+// app/api/player-profile/home/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
-
-
-
-// export async function GET(req: NextRequest) {
-//   try {
-//     const { searchParams } = new URL(req.url);
-//     const action = searchParams.get("action");
-    
-//     // Handle count request
-//     if (action === "count") {
-//       const collectionRef = db.collection("playershome");
-//       const playerProfilesId = searchParams.get("playerProfilesId");
-//       let query: FirebaseFirestore.Query = collectionRef;
-      
-//       if (playerProfilesId) {
-//         query = query.where("playerProfilesId", "==", playerProfilesId);
-//       }
-      
-//       const snapshot = await query.count().get();
-//       const totalCount = snapshot.data().count;
-      
-//       return NextResponse.json({
-//         success: true,
-//         totalCount,
-//         filtered: !!playerProfilesId,
-//         filter: playerProfilesId || null,
-//       });
-//     }
-    
-//     const playerProfilesId = searchParams.get("playerProfilesId");
-//     const rawSearch = searchParams.get("search")?.trim() || "";
-//     const limit = parseInt(searchParams.get("limit") || "20");
-//     const lastDocId = searchParams.get("lastDocId");
-//     const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
-
-//     // If searching
-//     if (rawSearch) {
-//       const searchLower = rawSearch.toLowerCase();
-      
-//       // FIRST: Try prefix search (starts with) - FAST with index
-//       const prefixSnap = await db
-//         .collection("playershome")
-//         .where("playerNameLower", ">=", searchLower)
-//         .where("playerNameLower", "<=", searchLower + "\uf8ff")
-//         .limit(limit)
-//         .get();
-      
-//       if (!prefixSnap.empty) {
-//         return NextResponse.json({
-//           success: true,
-//           posts: prefixSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-//           pagination: { limit, hasMore: prefixSnap.docs.length === limit, nextCursor: null },
-//         });
-//       }
-      
-//       // SECOND: Try contains search - Get ALL documents for accurate search
-//       console.log("Prefix search found no results, trying contains search for:", searchLower);
-      
-//       // Get ALL documents (no limit) or increase limit significantly
-//       const allDocs = await db.collection("playershome").get(); // Get ALL documents
-//       console.log(`Total documents in collection: ${allDocs.size}`);
-      
-//       const matchedDocs = allDocs.docs.filter(doc => {
-//         const data = doc.data();
-//         const playerNameLower = data.playerNameLower || "";
-//         const playerName = data.playerName || "";
-        
-//         // Check if search term exists in the name
-//         const matches = playerNameLower.includes(searchLower) || 
-//                        playerName.toLowerCase().includes(searchLower);
-        
-//         if (matches) {
-//           console.log(`Found match: ${playerName} (ID: ${doc.id})`);
-//         }
-        
-//         return matches;
-//       }).slice(0, limit);
-      
-//       console.log(`Found ${matchedDocs.length} matches for "${searchLower}"`);
-      
-//       return NextResponse.json({
-//         success: true,
-//         posts: matchedDocs.map(d => ({ id: d.id, ...d.data() })),
-//         pagination: { limit, hasMore: false, nextCursor: null },
-//         searchType: "contains",
-//         debug: {
-//           totalDocsScanned: allDocs.size,
-//           matchesFound: matchedDocs.length,
-//           searchTerm: searchLower
-//         }
-//       });
-//     }
-
-//     // No search - normal paginated response
-//     let query = db.collection("playershome").orderBy("createdAt", "desc");
-
-//     if (playerProfilesId) {
-//       query = query.where("playerProfilesId", "==", playerProfilesId);
-//     }
-
-//     if (lastDocId && lastDocCreatedAt) {
-//       const lastDocRef = db.collection("playershome").doc(lastDocId);
-//       const lastDoc = await lastDocRef.get();
-//       if (lastDoc.exists) {
-//         query = query.startAfter(lastDoc);
-//       }
-//     }
-
-//     query = query.limit(limit);
-//     const snap = await query.get();
-//     const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-//     const lastDoc = snap.docs[snap.docs.length - 1];
-
-//     return NextResponse.json({
-//       success: true,
-//       posts,
-//       pagination: {
-//         limit,
-//         hasMore: posts.length === limit,
-//         nextCursor: posts.length === limit
-//           ? { lastDocId: lastDoc?.id, lastDocCreatedAt: lastDoc?.data()?.createdAt }
-//           : null,
-//       },
-//     });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     console.error("Fetch error:", error);
-//     return NextResponse.json({ success: false, error: msg }, { status: 500 });
-//   }
-// }
-
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action");
-    
-    // Handle count request
-    if (action === "count") {
-      const collectionRef = db.collection("playershome");
-      const playerProfilesId = searchParams.get("playerProfilesId");
-      let query: FirebaseFirestore.Query = collectionRef;
-      
-      if (playerProfilesId) {
-        query = query.where("playerProfilesId", "==", playerProfilesId);
-      }
-      
-      const snapshot = await query.count().get();
-      const totalCount = snapshot.data().count;
-      
-      return NextResponse.json({
-        success: true,
-        totalCount,
-        filtered: !!playerProfilesId,
-        filter: playerProfilesId || null,
-      });
-    }
-    
     const playerProfilesId = searchParams.get("playerProfilesId");
     const rawSearch = searchParams.get("search")?.trim() || "";
     const limit = parseInt(searchParams.get("limit") || "20");
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
 
-    // If searching
+    let posts: any[] = [];
+
+    // 1. Try DynamoDB
+    try {
+      let filterExpr = "begins_with(entityId, :hPrefix)";
+      const exprVals: Record<string, any> = {
+        ":hPrefix": "PLAYER_HOME#",
+      };
+
+      if (playerProfilesId) {
+        filterExpr += " AND playerProfilesId = :ppId";
+        exprVals[":ppId"] = playerProfilesId;
+      }
+
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: filterExpr,
+          ExpressionAttributeValues: exprVals,
+          Limit: 200,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        posts = scanRes.Items.map((item) => ({
+          id: item.id || (item.entityId as string).replace(/^PLAYER_HOME#/, ""),
+          ...item,
+        }));
+      }
+    } catch (e) {
+      console.warn("[player-profile home GET] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
+    if (posts.length === 0 && db) {
+      if (action === "count") {
+        const collectionRef = db.collection("playershome");
+        let query: FirebaseFirestore.Query = collectionRef;
+        if (playerProfilesId) {
+          query = query.where("playerProfilesId", "==", playerProfilesId);
+        }
+        const snapshot = await query.count().get();
+        return NextResponse.json({
+          success: true,
+          totalCount: snapshot.data().count,
+          filtered: !!playerProfilesId,
+          filter: playerProfilesId || null,
+        });
+      }
+
+      let query = db.collection("playershome").orderBy("createdAt", "desc");
+      if (playerProfilesId) {
+        query = query.where("playerProfilesId", "==", playerProfilesId);
+      }
+      query = query.limit(limit);
+      const snap = await query.get();
+      posts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    }
+
     if (rawSearch) {
       const searchLower = rawSearch.toLowerCase();
-      
-      // 🔴 NEW: Check if search term is a number (jersey number)
-      const isJerseyNumber = /^\d+$/.test(rawSearch);
-      
-      if (isJerseyNumber) {
-        console.log(`Searching by jersey number: ${rawSearch}`);
-        
-        // Find playerProfilesId by jersey number from playerSeasons
-        const seasonQuery = await db
-          .collection("playerSeasons")
-          .where("season.jerseyNo", "==", rawSearch)
-          .get();
-        
-        if (!seasonQuery.empty) {
-          // Get unique player IDs
-          const playerIds = [...new Set(seasonQuery.docs.map(doc => doc.data().playerProfilesId))];
-          console.log(`Found player IDs for jersey ${rawSearch}:`, playerIds);
-          
-          // Fetch home posts for these players
-          if (playerIds.length > 0) {
-            // Use 'in' query (max 10 values)
-            const limitedPlayerIds = playerIds.slice(0, 10);
-            const postsQuery = await db
-              .collection("playershome")
-              .where("playerProfilesId", "in", limitedPlayerIds)
-              .orderBy("createdAt", "desc")
-              .limit(limit)
-              .get();
-            
-            const posts = postsQuery.docs.map(d => ({ id: d.id, ...d.data() }));
-            
-            return NextResponse.json({
-              success: true,
-              posts,
-              searchType: "jersey",
-              jerseyNumber: rawSearch,
-              pagination: { limit, hasMore: false, nextCursor: null },
-            });
-          }
-        }
-        
-        // If no player found with that jersey number, return empty
-        return NextResponse.json({
-          success: true,
-          posts: [],
-          searchType: "jersey",
-          jerseyNumber: rawSearch,
-          message: "No player found with this jersey number",
-          pagination: { limit, hasMore: false, nextCursor: null },
-        });
-      }
-      
-      // FIRST: Try prefix search (starts with) - FAST with index
-      const prefixSnap = await db
-        .collection("playershome")
-        .where("playerNameLower", ">=", searchLower)
-        .where("playerNameLower", "<=", searchLower + "\uf8ff")
-        .limit(limit)
-        .get();
-      
-      if (!prefixSnap.empty) {
-        return NextResponse.json({
-          success: true,
-          posts: prefixSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-          searchType: "prefix",
-          pagination: { limit, hasMore: prefixSnap.docs.length === limit, nextCursor: null },
-        });
-      }
-      
-      // SECOND: Try contains search - Get ALL documents for accurate search
-      console.log("Prefix search found no results, trying contains search for:", searchLower);
-      
-      // Get ALL documents (no limit) or increase limit significantly
-      const allDocs = await db.collection("playershome").get(); // Get ALL documents
-      console.log(`Total documents in collection: ${allDocs.size}`);
-      
-      const matchedDocs = allDocs.docs.filter(doc => {
-        const data = doc.data();
-        const playerNameLower = data.playerNameLower || "";
-        const playerName = data.playerName || "";
-        
-        // Check if search term exists in the name
-        const matches = playerNameLower.includes(searchLower) || 
-                       playerName.toLowerCase().includes(searchLower);
-        
-        if (matches) {
-          console.log(`Found match: ${playerName} (ID: ${doc.id})`);
-        }
-        
-        return matches;
-      }).slice(0, limit);
-      
-      console.log(`Found ${matchedDocs.length} matches for "${searchLower}"`);
-      
-      return NextResponse.json({
-        success: true,
-        posts: matchedDocs.map(d => ({ id: d.id, ...d.data() })),
-        pagination: { limit, hasMore: false, nextCursor: null },
-        searchType: "contains",
-        debug: {
-          totalDocsScanned: allDocs.size,
-          matchesFound: matchedDocs.length,
-          searchTerm: searchLower
-        }
+      posts = posts.filter((p) => {
+        const name = (p.playerName || "").toLowerCase();
+        const title = (p.title || "").toLowerCase();
+        return name.includes(searchLower) || title.includes(searchLower);
       });
     }
 
-    // No search - normal paginated response
-    let query = db.collection("playershome").orderBy("createdAt", "desc");
-
-    if (playerProfilesId) {
-      query = query.where("playerProfilesId", "==", playerProfilesId);
-    }
-
-    if (lastDocId && lastDocCreatedAt) {
-      const lastDocRef = db.collection("playershome").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
-      }
-    }
-
-    query = query.limit(limit);
-    const snap = await query.get();
-    const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const lastDoc = snap.docs[snap.docs.length - 1];
+    posts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const paged = posts.slice(0, limit);
 
     return NextResponse.json({
       success: true,
-      posts,
+      posts: paged,
       pagination: {
         limit,
-        hasMore: posts.length === limit,
-        nextCursor: posts.length === limit
-          ? { lastDocId: lastDoc?.id, lastDocCreatedAt: lastDoc?.data()?.createdAt }
-          : null,
+        hasMore: posts.length > limit,
+        nextCursor: null,
       },
     });
   } catch (error: unknown) {
@@ -333,22 +122,14 @@ export async function POST(req: NextRequest) {
       hasVideo,
     } = body;
 
-    // Validation
-    // if (!playerProfilesId || !playerName || !title || !image || !logo) {
-    //   return NextResponse.json(
-    //     {
-    //       success: false,
-    //       error:
-    //         "playerProfilesId, playerName, title, image and logo are required",
-    //     },
-    //     { status: 400 }
-    //   );
-    // }
+    const now = Date.now();
+    const id = `phome_${now}_${Math.random().toString(36).substring(2, 9)}`;
 
     const newPost = {
+      id,
       playerProfilesId,
       playerName,
-       playerNameLower: playerName?.trim().toLowerCase() || "",
+      playerNameLower: playerName?.trim().toLowerCase() || "",
       title,
       category: category ?? [],
       likes: Number(likes) || 0,
@@ -359,17 +140,27 @@ export async function POST(req: NextRequest) {
       logo,
       catlogo: catlogo ?? [],
       hasVideo: hasVideo ?? false,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const docRef = await db.collection("playershome").add(newPost);
+    // Dual-write
+    await dualWrite({
+      tableName: "SportsData",
+      dynamoItem: {
+        entityId: `PLAYER_HOME#${id}`,
+        sk: `HOME#${now}`,
+        ...newPost,
+      },
+      firestoreRef: db.collection("playershome").doc(id),
+      firestoreData: newPost,
+    });
 
     return NextResponse.json(
       {
         success: true,
-        id: docRef.id,
-        post: { id: docRef.id, ...newPost },
+        id,
+        post: newPost,
       },
       { status: 201 }
     );
