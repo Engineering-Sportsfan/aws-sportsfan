@@ -106,7 +106,8 @@ async function migrateCollection(collectionName: string, prefix: string) {
             const item = {
                 contentId: `${prefix}#${doc.id}`, 
                 sk: `${prefix}#${timestamp}`, // Sort key format: TYPE#TIMESTAMP
-                ...data
+                ...data,
+                status: "ACTIVE"
             };
 
             const size = calculateItemSize(item);
