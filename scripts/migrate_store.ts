@@ -102,11 +102,16 @@ async function migrateCollection(collectionName: string, prefix: string) {
 
             const timestamp = data.createdAt || data.timestamp || Date.now();
             
-            // Store data primarily revolves around products and orders.
-            // Some collections use productId, some use orderId, so we use doc.id as entityId.
+            let sk = `${prefix}#${timestamp}`;
+            if (prefix === 'PRODUCT') {
+                sk = `PRODUCT#${doc.id}`;
+            } else if (prefix === 'ORDER') {
+                sk = `ORDER#${doc.id}`;
+            }
+
             const item = {
-                entityId: `${prefix}#${doc.id}`, 
-                sk: `${prefix}#${timestamp}`, 
+                entityId: `${prefix}#${doc.id}`,
+                sk: sk,
                 ...data
             };
 
