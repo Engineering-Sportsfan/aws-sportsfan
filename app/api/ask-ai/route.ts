@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
     const query = (body.query as string | undefined)?.trim();
     const sessionId = (body.sessionId as string | undefined) || crypto.randomUUID();
     const history = Array.isArray(body.history) ? body.history : [];
+    const notify = body.notify === true;
 
     if (!query) {
       return NextResponse.json({ error: "Empty query" }, { status: 400 });
@@ -98,9 +99,11 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
     const userMessageId = `msg_${now}_user_${Math.random().toString(36).slice(2, 7)}`;
     const assistantMessageId = `msg_${now + 1}_asst_${Math.random().toString(36).slice(2, 7)}`;
+    
 
     // --- Dual Write to DynamoDB & Firestore ---
     try {
+      
       // 1. Session Meta in DynamoDB
       await dualWrite({
         tableName: "RealTimeChat",

@@ -6,6 +6,7 @@ import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
 import { QueryCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { createNotification } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
       if (getSession.Item) {
         sessionExists = true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     if (!sessionExists) {
       try {
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
         if (sessionDoc.exists && sessionDoc.data()?.userId === resolved.id) {
           sessionExists = true;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!sessionExists) {
@@ -107,6 +108,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
 
     const body = await req.json();
     const question = (body?.question as string | undefined)?.trim();
+    const notify = body?.notify === true;
     if (!question) return NextResponse.json({ error: "Question required" }, { status: 400 });
     if (question.length > 300) return NextResponse.json({ error: "Question too long" }, { status: 400 });
 
@@ -123,7 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
       if (getSession.Item) {
         sessionExists = true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     if (!sessionExists) {
       try {
@@ -132,7 +134,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
         if (sessionDoc.exists && sessionDoc.data()?.userId === resolved.id) {
           sessionExists = true;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!sessionExists) {
@@ -202,6 +204,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
       return NextResponse.json({ error: "AI service unavailable" }, { status: 502 });
     }
 
+   if (notify && answer) {
+  createNotification({
+    userId: resolved.id,          // ← use the actual user ID, not email
+    notification_type: "dolly.reply_ready",
+    title: "Flip answered your question",
+    body: answer.length > 80 ? answer.slice(0, 77) + "..." : answer,
+    cta_label: "See Dolly's answer",
+    cta_target: `sf360://roar/rooms/${roomId}/dolly/${sessionId}`,
+    priority: "HIGH",
+    channels_sent: ["in_app"],
+    ttlDays: 2, // 48h, matches Section 6.15 of the doc
+  }).catch((err: unknown) => console.warn("[dolly] notify notice:", err));
+}
+
     const now = Date.now();
     const replyId = `rep_${Math.random().toString(36).substring(2, 15)}`;
     const doc = { question, answer, createdAt: now };
@@ -224,7 +240,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
         Key: { roomId: `ROOM#${roomId}`, sk: `DOLLY_SESSION#${resolved.id}#${sessionId}` },
         UpdateExpression: isFirstReply ? "SET updatedAt = :now, title = :title" : "SET updatedAt = :now",
         ExpressionAttributeValues: isFirstReply ? { ":now": now, ":title": question.slice(0, 60) } : { ":now": now }
-      })).catch(() => {});
+      })).catch(() => { });
     } catch (dynErr) {
       console.warn("[Session POST] DynamoDB save reply failed:", dynErr);
     }
