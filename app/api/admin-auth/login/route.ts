@@ -25,8 +25,8 @@ export async function POST(req: NextRequest) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "UserData",
-          Key: { userId: `ADMIN_USER#${email}`, sk: "PROFILE#META" },
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `ADMIN#${email.toLowerCase()}`, sk: "ADMIN#META" },
         })
       );
       if (getRes.Item) adminUser = getRes.Item;

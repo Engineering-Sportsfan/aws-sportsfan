@@ -16,11 +16,11 @@ export async function GET() {
     try {
       const scanRes = await docClient.send(
         new ScanCommand({
-          TableName: "UserData",
-          FilterExpression: "begins_with(userId, :auPrefix) AND sk = :pSk",
+          TableName: "IdentityAndAccess",
+          FilterExpression: "begins_with(entityId, :auPrefix) AND sk = :pSk",
           ExpressionAttributeValues: {
-            ":auPrefix": "ADMIN_USER#",
-            ":pSk": "PROFILE#META",
+            ":auPrefix": "ADMIN#",
+            ":pSk": "ADMIN#META",
           },
           Limit: 50,
         })
@@ -28,7 +28,7 @@ export async function GET() {
 
       if (scanRes.Items && scanRes.Items.length > 0) {
         users = scanRes.Items.map((d) => ({
-          email: d.email || (d.userId as string).replace(/^ADMIN_USER#/, ""),
+          email: d.email || (d.entityId as string).replace(/^ADMIN#/, ""),
           ...d,
         }));
       }
@@ -71,8 +71,8 @@ export async function POST(req: NextRequest) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "UserData",
-          Key: { userId: `ADMIN_USER#${email}`, sk: "PROFILE#META" },
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `ADMIN#${email.toLowerCase()}`, sk: "ADMIN#META" },
         })
       );
       if (getRes.Item) existing = getRes.Item;
@@ -111,10 +111,10 @@ export async function POST(req: NextRequest) {
     };
 
     await dualWrite({
-      tableName: "UserData",
+      tableName: "IdentityAndAccess",
       dynamoItem: {
-        userId: `ADMIN_USER#${email}`,
-        sk: "PROFILE#META",
+        entityId: `ADMIN#${email.toLowerCase()}`,
+        sk: "ADMIN#META",
         ...newAdminData,
       },
       firestoreRef: db.collection("admin_users").doc(email),

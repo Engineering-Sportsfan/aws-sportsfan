@@ -106,12 +106,23 @@ async function migrateCollection(collectionName: string, prefix: string) {
             let data = doc.data();
             data = sanitizeFirebaseData(data);
 
+            const docId = (prefix === 'USER' || prefix === 'ADMIN') ? doc.id.toLowerCase() : doc.id;
             const timestamp = data.createdAt || data.timestamp || Date.now();
-            const item = {
-                entityId: `${prefix}#${doc.id}`,
-                sk: `${prefix}#${timestamp}`,
+            let sk = `${prefix}#${timestamp}`;
+            if (prefix === 'USER') {
+                sk = 'USER#META';
+            } else if (prefix === 'ADMIN') {
+                sk = 'ADMIN#META';
+            }
+
+            const item: any = {
+                entityId: `${prefix}#${docId}`,
+                sk: sk,
                 ...data
             };
+            if (item.email === '') {
+                delete item.email;
+            }
 
             const size = calculateItemSize(item);
             if (size > 400000) {

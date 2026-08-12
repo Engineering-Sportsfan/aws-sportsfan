@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, BatchWriteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
@@ -62,13 +62,13 @@ function sanitizeFirebaseData(obj: any): any {
     return result;
 }
 
-async function writeBatch(batch: any[], maxRetries = 5) {
+async function writeBatch(tableName: string, batch: any[], maxRetries = 5) {
     let attempt = 0;
     while (attempt < maxRetries) {
         try {
             await docClient.send(new BatchWriteCommand({
                 RequestItems: {
-                    "SocialAndContent": batch
+                    [tableName]: batch
                 }
             }));
             process.stdout.write('.'); 
@@ -76,7 +76,7 @@ async function writeBatch(batch: any[], maxRetries = 5) {
         } catch (error: any) {
             attempt++;
             if (attempt >= maxRetries) {
-                console.error(`\n❌ FATAL ERROR: Failed to write batch after ${maxRetries} attempts:`, error);
+                console.error(`\n❌ FATAL ERROR: Failed to write batch to ${tableName} after ${maxRetries} attempts:`, error);
                 throw error;
             }
             const waitTime = Math.pow(2, attempt) * 500;
@@ -86,13 +86,119 @@ async function writeBatch(batch: any[], maxRetries = 5) {
     }
 }
 
+function getDynamoKeyForPath(path: string, docId: string, timestamp: number, prefix: string, data: any) {
+    const parts = path.split('/');
+    let res: any;
+    
+    if (parts.includes('comments')) {
+        if (parts.includes('roarPosts')) {
+            const postId = parts[1];
+            res = {
+                tableName: 'SocialAndContent',
+                item: {
+                    contentId: `POST#${postId}`,
+                    sk: `COMMENT#${docId}`,
+                    commentId: docId,
+                    ...data,
+                    status: data.status || "active"
+                }
+            };
+        } else if (parts.includes('roarRooms')) {
+            const roomId = parts[1];
+            const msgId = parts[3];
+            res = {
+                tableName: 'RealTimeChat',
+                item: {
+                    roomId: `ROOM#${roomId}`,
+                    sk: `COMMENT#${msgId}#${docId}`,
+                    commentId: docId,
+                    ...data,
+                    isActive: data.isActive !== undefined ? (data.isActive ? "true" : "false") : "true"
+                }
+            };
+        } else {
+            // Fallback root comments
+            res = {
+                tableName: 'SocialAndContent',
+                item: {
+                    contentId: `COMMENT#${docId}`,
+                    sk: `COMMENT#${timestamp}`,
+                    commentId: docId,
+                    ...data,
+                    status: data.status || "active"
+                }
+            };
+        }
+    } else if (parts.includes('likes')) {
+        if (parts.includes('roarPosts')) {
+            const postId = parts[1];
+            res = {
+                tableName: 'SocialAndContent',
+                item: {
+                    contentId: `POST#${postId}`,
+                    sk: `LIKE#${docId}`,
+                    ...data
+                }
+            };
+        }
+    } else if (parts.includes('reactions') || parts.includes('emojiReactions')) {
+        if (parts.includes('roarPosts')) {
+            const postId = parts[1];
+            res = {
+                tableName: 'SocialAndContent',
+                item: {
+                    contentId: `POST#${postId}`,
+                    sk: `REACTION#${docId}`,
+                    ...data
+                }
+            };
+        }
+    } else if (parts.includes('votes') || parts.includes('pollVotes') || parts.includes('battleVotes') || parts.includes('roarVotes') || parts.includes('userVotes')) {
+        if (parts.includes('roarPosts')) {
+            const postId = parts[1];
+            res = {
+                tableName: 'SocialAndContent',
+                item: {
+                    contentId: `POST#${postId}`,
+                    sk: `VOTE#${docId}`,
+                    ...data
+                }
+            };
+        }
+    }
+
+    if (!res) {
+        // Default mapping for root collections
+        res = {
+            tableName: 'SocialAndContent',
+            item: {
+                contentId: `${prefix}#${docId}`,
+                sk: `${prefix}#${timestamp}`,
+                ...data,
+                status: data.status || "active"
+            }
+        };
+    }
+
+    // Clean up empty/null parentCommentId to avoid GSI ValidationException
+    if (res.item && (res.item.parentCommentId === null || res.item.parentCommentId === undefined || res.item.parentCommentId === '')) {
+        delete res.item.parentCommentId;
+    }
+
+    return res;
+}
+
 async function migrateCollection(collectionName: string, prefix: string) {
     console.log(`\n📡 Streaming ${collectionName} from Firebase...`);
     
     try {
-        const stream = db.collection(collectionName).stream();
+        const isGroup = ['comments', 'likes', 'reactions', 'emojiReactions', 'votes', 'pollVotes', 'battleVotes', 'roarVotes', 'userVotes'].includes(collectionName);
+        const stream = isGroup ? db.collectionGroup(collectionName).stream() : db.collection(collectionName).stream();
         
-        let batch: any[] = [];
+        let batchMap: Record<string, any[]> = {
+            'SocialAndContent': [],
+            'RealTimeChat': []
+        };
         let totalMigrated = 0;
 
         for await (const chunk of stream) {
@@ -100,15 +206,8 @@ async function migrateCollection(collectionName: string, prefix: string) {
             let data = doc.data();
             data = sanitizeFirebaseData(data);
 
-            // Determine a fallback timestamp for the Sort Key (sk) if createdAt doesn't exist
             const timestamp = data.createdAt || data.timestamp || Date.now();
-
-            const item = {
-                contentId: `${prefix}#${doc.id}`, 
-                sk: `${prefix}#${timestamp}`, // Sort key format: TYPE#TIMESTAMP
-                ...data,
-                status: "ACTIVE"
-            };
+            const { tableName, item } = getDynamoKeyForPath(doc.ref.path, doc.id, timestamp, prefix, data);
 
             const size = calculateItemSize(item);
             if (size > 400000) {
@@ -116,18 +215,39 @@ async function migrateCollection(collectionName: string, prefix: string) {
                 continue;
             }
 
-            batch.push({ PutRequest: { Item: item } });
+            if (!batchMap[tableName]) {
+                batchMap[tableName] = [];
+            }
+            const isDuplicate = batchMap[tableName].some((b: any) => {
+                const bItem = b.PutRequest.Item;
+                return bItem.contentId === item.contentId && bItem.sk === item.sk;
+            });
+            if (isDuplicate) {
+                // Write duplicate immediately and sequentially to prevent BatchWriteCommand error
+                try {
+                    await docClient.send(new PutCommand({
+                        TableName: tableName,
+                        Item: item
+                    }));
+                    totalMigrated++;
+                } catch (putErr) {
+                    console.error(`\n❌ Failed to write duplicate item sequentially:`, putErr);
+                }
+                continue;
+            }
+            batchMap[tableName].push({ PutRequest: { Item: item } });
+            totalMigrated++;
 
-            if (batch.length === 25) {
-                await writeBatch(batch);
-                totalMigrated += 25;
-                batch = [];
+            if (batchMap[tableName].length === 25) {
+                await writeBatch(tableName, batchMap[tableName]);
+                batchMap[tableName] = [];
             }
         }
 
-        if (batch.length > 0) {
-            await writeBatch(batch);
-            totalMigrated += batch.length;
+        for (const [tableName, batch] of Object.entries(batchMap)) {
+            if (batch.length > 0) {
+                await writeBatch(tableName, batch);
+            }
         }
 
         if (totalMigrated === 0) {
