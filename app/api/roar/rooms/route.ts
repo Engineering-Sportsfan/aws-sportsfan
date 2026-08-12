@@ -31,9 +31,13 @@ export async function GET(req: NextRequest) {
           TableName: "RealTimeChat",
           IndexName: "isActive-order-index",
           KeyConditionExpression: "isActive = :act",
-          ExpressionAttributeValues: { ":act": "true" },
+          FilterExpression: "begins_with(sk, :p)",
+          ExpressionAttributeValues: { 
+            ":act": "true",
+            ":p": "META#"
+          },
           ScanIndexForward: false,
-          Limit: limit,
+          Limit: 100,
         })
       );
       if (qRes.Items && qRes.Items.length > 0) {

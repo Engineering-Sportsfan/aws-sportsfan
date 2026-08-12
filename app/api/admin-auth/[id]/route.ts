@@ -19,8 +19,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "UserData",
-          Key: { userId: `ADMIN_USER#${email}`, sk: "PROFILE#META" },
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `ADMIN#${email.toLowerCase()}`, sk: "ADMIN#META" },
         })
       );
       if (getRes.Item) existing = getRes.Item;
@@ -51,10 +51,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     };
 
     await dualWrite({
-      tableName: "UserData",
+      tableName: "IdentityAndAccess",
       dynamoItem: {
-        userId: `ADMIN_USER#${email}`,
-        sk: "PROFILE#META",
+        entityId: `ADMIN#${email.toLowerCase()}`,
+        sk: "ADMIN#META",
         ...updatedDoc,
       },
       firestoreRef: db.collection("admin_users").doc(email),
@@ -78,8 +78,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     try {
       await docClient.send(
         new DeleteCommand({
-          TableName: "UserData",
-          Key: { userId: `ADMIN_USER#${email}`, sk: "PROFILE#META" },
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `ADMIN#${email.toLowerCase()}`, sk: "ADMIN#META" },
         })
       );
     } catch (e) {

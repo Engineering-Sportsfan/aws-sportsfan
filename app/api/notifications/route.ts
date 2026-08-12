@@ -183,6 +183,49 @@ export async function PATCH(req: NextRequest) {
       } catch (fbErr) {
         console.warn("Firebase markRead notice:", fbErr);
       }
+
+      let recipientEmail = email;
+      if (!recipientEmail) {
+        try {
+          const doc = await db.collection("notifications").doc(id).get();
+          if (doc.exists) {
+            recipientEmail = doc.data()?.recipientEmail;
+          }
+        } catch (fsErr) {
+          console.warn("Firestore fetch for email failed:", fsErr);
+        }
+      }
+
+      if (recipientEmail) {
+        try {
+          const qRes = await docClient.send(
+            new QueryCommand({
+              TableName: "IdentityAndAccess",
+              KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+              ExpressionAttributeValues: {
+                ":e": `USER#${recipientEmail}`,
+                ":nPrefix": "NOTIF#",
+              },
+            })
+          );
+          const item = qRes.Items?.find(it => (it.sk as string).endsWith(`#${id}`) || it.id === id);
+          if (item) {
+            await docClient.send(
+              new UpdateCommand({
+                TableName: "IdentityAndAccess",
+                Key: { entityId: item.entityId, sk: item.sk },
+                UpdateExpression: "SET isRead = :true, readAt = :now",
+                ExpressionAttributeValues: {
+                  ":true": true,
+                  ":now": Date.now()
+                }
+              })
+            );
+          }
+        } catch (dynErr) {
+          console.warn("DynamoDB markRead error:", dynErr);
+        }
+      }
       return NextResponse.json({ success: true });
     }
 
@@ -203,6 +246,37 @@ export async function PATCH(req: NextRequest) {
         }
       } catch (fbErr) {
         console.warn("Firebase markAllRead notice:", fbErr);
+      }
+
+      try {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "IdentityAndAccess",
+            KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+            ExpressionAttributeValues: {
+              ":e": `USER#${email}`,
+              ":nPrefix": "NOTIF#",
+            },
+          })
+        );
+        if (qRes.Items) {
+          const unreadItems = qRes.Items.filter(it => !it.isRead);
+          for (const item of unreadItems) {
+            await docClient.send(
+              new UpdateCommand({
+                TableName: "IdentityAndAccess",
+                Key: { entityId: item.entityId, sk: item.sk },
+                UpdateExpression: "SET isRead = :true, readAt = :now",
+                ExpressionAttributeValues: {
+                  ":true": true,
+                  ":now": Date.now()
+                }
+              })
+            );
+          }
+        }
+      } catch (dynErr) {
+        console.warn("DynamoDB markAllRead error:", dynErr);
       }
       return NextResponse.json({ success: true });
     }
@@ -230,6 +304,44 @@ export async function DELETE(req: NextRequest) {
       } catch (fbErr) {
         console.warn("Firebase delete notif notice:", fbErr);
       }
+
+      let recipientEmail = email;
+      if (!recipientEmail) {
+        try {
+          const doc = await db.collection("notifications").doc(id).get();
+          if (doc.exists) {
+            recipientEmail = doc.data()?.recipientEmail;
+          }
+        } catch (fsErr) {
+          console.warn("Firestore fetch for email failed:", fsErr);
+        }
+      }
+
+      if (recipientEmail) {
+        try {
+          const qRes = await docClient.send(
+            new QueryCommand({
+              TableName: "IdentityAndAccess",
+              KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+              ExpressionAttributeValues: {
+                ":e": `USER#${recipientEmail}`,
+                ":nPrefix": "NOTIF#",
+              },
+            })
+          );
+          const item = qRes.Items?.find(it => (it.sk as string).endsWith(`#${id}`) || it.id === id);
+          if (item) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: "IdentityAndAccess",
+                Key: { entityId: item.entityId, sk: item.sk }
+              })
+            );
+          }
+        } catch (dynErr) {
+          console.warn("DynamoDB delete error:", dynErr);
+        }
+      }
       return NextResponse.json({ success: true });
     }
 
@@ -247,6 +359,31 @@ export async function DELETE(req: NextRequest) {
         }
       } catch (fbErr) {
         console.warn("Firebase delete all notifs notice:", fbErr);
+      }
+
+      try {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: "IdentityAndAccess",
+            KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+            ExpressionAttributeValues: {
+              ":e": `USER#${email}`,
+              ":nPrefix": "NOTIF#",
+            },
+          })
+        );
+        if (qRes.Items) {
+          for (const item of qRes.Items) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: "IdentityAndAccess",
+                Key: { entityId: item.entityId, sk: item.sk }
+              })
+            );
+          }
+        }
+      } catch (dynErr) {
+        console.warn("DynamoDB delete all error:", dynErr);
       }
       return NextResponse.json({ success: true });
     }

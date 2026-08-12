@@ -55,10 +55,11 @@ async function resolveUserDoc(userId: string, email: string) {
         IndexName: "email-index",
         KeyConditionExpression: "email = :email",
         ExpressionAttributeValues: { ":email": email },
-        Limit: 1
+        Limit: 5
       }));
       if (emailRes.Items && emailRes.Items.length > 0) {
-        const item = emailRes.Items[0];
+        const metaItem = emailRes.Items.find(item => item.sk === "USER#META");
+        const item = metaItem || emailRes.Items[0];
         const uid = (item.entityId as string).replace(/^USER#/, "");
         return { id: uid, data: item };
       }
@@ -307,7 +308,7 @@ export async function PATCH(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const updates: Record<string, unknown> = { updatedAt: Date.now() };
+    const updates: Record<string, unknown> = { updatedAt: Date.now(), email: user.email };
 
     if (body.username !== undefined) {
       const v = String(body.username).trim().replace(/\s+/g, " ");

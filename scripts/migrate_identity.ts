@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, BatchWriteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
@@ -106,12 +106,23 @@ async function migrateCollection(collectionName: string, prefix: string) {
             let data = doc.data();
             data = sanitizeFirebaseData(data);
 
+            const docId = (prefix === 'USER' || prefix === 'ADMIN') ? doc.id.toLowerCase() : doc.id;
             const timestamp = data.createdAt || data.timestamp || Date.now();
-            const item = {
-                entityId: `${prefix}#${doc.id}`,
-                sk: `${prefix}#${timestamp}`,
+            let sk = `${prefix}#${timestamp}`;
+            if (prefix === 'USER') {
+                sk = 'USER#META';
+            } else if (prefix === 'ADMIN') {
+                sk = 'ADMIN#META';
+            }
+
+            const item: any = {
+                entityId: `${prefix}#${docId}`,
+                sk: sk,
                 ...data
             };
+            if (item.email === '') {
+                delete item.email;
+            }
 
             const size = calculateItemSize(item);
             if (size > 400000) {
@@ -120,6 +131,22 @@ async function migrateCollection(collectionName: string, prefix: string) {
             }
 
             batch.push({ PutRequest: { Item: item } });
+
+            if (collectionName === 'athletesProfile') {
+                const sportsItem = {
+                    entityId: `ATHLETE#${docId}`,
+                    sk: 'PROFILE#META',
+                    ...data
+                };
+                try {
+                    await docClient.send(new PutCommand({
+                        TableName: "SportsData",
+                        Item: sportsItem
+                    }));
+                } catch (dynErr) {
+                    console.error(`❌ Failed to write athlete profile ${docId} to SportsData:`, dynErr);
+                }
+            }
 
             if (batch.length === 25) {
                 await writeBatch(batch);

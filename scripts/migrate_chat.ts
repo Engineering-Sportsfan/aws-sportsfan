@@ -106,12 +106,30 @@ async function migrateCollection(collectionName: string, prefix: string) {
             // If the document doesn't explicitly have a roomId, use doc.id as the root room.
             const roomId = data.roomId || data.channelId || data.sessionId || doc.id;
             
-            const item = {
-                roomId: `ROOM#${roomId}`, 
-                sk: `${prefix}#${doc.id}#${timestamp}`, 
-                ...data,
-                ...(data.isActive !== undefined && { isActive: data.isActive ? "true" : "false" })
-            };
+            let item: any;
+            if (collectionName === 'watchAlongRooms') {
+                item = {
+                    roomId: `ROOM#${doc.id}`,
+                    sk: 'ROOM#META',
+                    ...data,
+                    isActive: data.isLive ? "true" : "false"
+                };
+            } else if (collectionName === 'roarRooms') {
+                item = {
+                    roomId: `ROOM#${doc.id}`,
+                    sk: `META#${doc.id}`,
+                    order: timestamp,
+                    ...data,
+                    isActive: data.isActive !== false ? "true" : "false"
+                };
+            } else {
+                item = {
+                    roomId: `ROOM#${roomId}`, 
+                    sk: `${prefix}#${doc.id}#${timestamp}`, 
+                    ...data,
+                    ...(data.isActive !== undefined && { isActive: data.isActive ? "true" : "false" })
+                };
+            }
 
             const size = calculateItemSize(item);
             if (size > 400000) {

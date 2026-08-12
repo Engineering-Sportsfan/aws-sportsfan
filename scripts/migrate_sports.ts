@@ -104,9 +104,16 @@ async function migrateCollection(collectionName: string, prefix: string) {
             
             // Sports data has varied primary keys (matchId, clubId, playerId). 
             // We use the doc.id as the universal entityId.
+            let entityId = `${prefix}#${doc.id}`;
+            let sk = `${prefix}#${timestamp}`;
+            if (collectionName === 'matches' || collectionName === 'watchAlongMatches') {
+                entityId = `MATCH#${doc.id}`;
+                sk = 'MATCH#META';
+            }
+
             const item = {
-                entityId: `${prefix}#${doc.id}`, 
-                sk: `${prefix}#${timestamp}`, 
+                entityId,
+                sk,
                 ...data
             };
 

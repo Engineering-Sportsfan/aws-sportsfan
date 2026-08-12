@@ -21,13 +21,13 @@ export async function GET(req: NextRequest) {
     try {
       const res = await docClient.send(new ScanCommand({
         TableName: "SportsData",
-        FilterExpression: "begins_with(sk, :m)",
-        ExpressionAttributeValues: { ":m": "MATCH#" }
+        FilterExpression: "sk = :m",
+        ExpressionAttributeValues: { ":m": "MATCH#META" }
       }));
 
       if (res.Items) {
         matches = res.Items.map(item => ({
-          id: (item.sk as string).replace(/^MATCH#/, ""),
+          id: (item.entityId as string).replace(/^MATCH#/, "") || item.id,
           ...item
         }));
         // Sort in memory by kickoff_time asc
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
         TableName: "SportsData",
         Item: {
           entityId: `MATCH#${matchId}`,
-          sk: `MATCH#${matchId}`,
+          sk: "MATCH#META",
           ...matchData
         }
       }));
@@ -161,7 +161,7 @@ export async function PATCH(req: NextRequest) {
 
       await docClient.send(new UpdateCommand({
         TableName: "SportsData",
-        Key: { entityId: `MATCH#${id}`, sk: `MATCH#${id}` },
+        Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
         UpdateExpression: updateExpression,
         ExpressionAttributeNames: expressionAttributeNames,
         ExpressionAttributeValues: expressionAttributeValues
@@ -203,7 +203,7 @@ export async function DELETE(req: NextRequest) {
     try {
       await docClient.send(new DeleteCommand({
         TableName: "SportsData",
-        Key: { entityId: `MATCH#${id}`, sk: `MATCH#${id}` }
+        Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" }
       }));
     } catch (dynErr) {
       console.warn("[Matches DELETE] DynamoDB delete failed:", dynErr);
