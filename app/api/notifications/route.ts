@@ -1,13 +1,425 @@
-// app/api/notifications/route.ts — Migrated to AWS DynamoDB (IdentityAndAccess Table)
+// // app/api/notifications/route.ts — Migrated to AWS DynamoDB (IdentityAndAccess Table)
+// import { NextRequest, NextResponse } from "next/server";
+// import { db } from "@/lib/firebaseAdmin";
+// import { docClient } from "@/lib/dynamodb";
+// import { dualWrite } from "@/lib/dualWrite";
+// import { QueryCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+
+// export const dynamic = "force-dynamic";
+
+// // ─── GET — fetch notifications for a user + total unread count ────────────────
+// export async function GET(req: NextRequest) {
+//   try {
+//     const { searchParams } = new URL(req.url);
+//     const email = searchParams.get("email");
+//     const uid = searchParams.get("uid");
+//     const countOnly = searchParams.get("countOnly") === "true";
+
+//     if (!email && !uid) {
+//       return NextResponse.json({ error: "email or uid is required" }, { status: 400 });
+//     }
+
+//     let notifications: any[] = [];
+
+//     // 1. Try querying DynamoDB IdentityAndAccess table
+//     try {
+//       const entityIds = [];
+//       if (email) entityIds.push(`USER#${email}`, email);
+//       if (uid) entityIds.push(`USER#${uid}`, uid);
+
+//       for (const ent of entityIds) {
+//         const qRes = await docClient.send(
+//           new QueryCommand({
+//             TableName: "IdentityAndAccess",
+//             KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+//             ExpressionAttributeValues: {
+//               ":e": ent,
+//               ":nPrefix": "NOTIF#",
+//             },
+//             ScanIndexForward: false,
+//             Limit: 50,
+//           })
+//         );
+//         if (qRes.Items && qRes.Items.length > 0) {
+//           qRes.Items.forEach((item) => {
+//             notifications.push({
+//               id: (item.sk as string)?.split("#")[2] || item.id,
+//               ...item,
+//             });
+//           });
+//         }
+//       }
+//     } catch (dynErr) {
+//       console.warn("DynamoDB notifications query notice:", dynErr);
+//     }
+
+//     // 2. Fallback to Firebase
+//     if (notifications.length === 0) {
+//       try {
+//         const queries = [];
+//         if (email) {
+//           queries.push(
+//             db.collection("notifications").where("recipientEmail", "==", email).orderBy("createdAt", "desc").limit(50).get()
+//           );
+//         }
+//         if (uid) {
+//           queries.push(
+//             db.collection("notifications").where("recipientUid", "==", uid).orderBy("createdAt", "desc").limit(50).get()
+//           );
+//         }
+
+//         const results = await Promise.all(queries);
+//         const seen = new Set<string>();
+//         results.forEach((snap) =>
+//           snap.docs.forEach((doc) => {
+//             if (!seen.has(doc.id)) {
+//               seen.add(doc.id);
+//               notifications.push({ id: doc.id, ...doc.data() });
+//             }
+//           })
+//         );
+//       } catch (fbErr) {
+//         console.warn("Firebase notifications query fallback notice:", fbErr);
+//       }
+//     }
+
+//     notifications.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+//     const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+//     if (countOnly) {
+//       return NextResponse.json({ success: true, unreadCount }, { headers: { "Cache-Control": "no-store" } });
+//     }
+
+//     return NextResponse.json({ success: true, notifications, unreadCount }, { headers: { "Cache-Control": "no-store" } });
+//   } catch (error) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     console.error("GET /api/notifications error:", error);
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+// // ─── POST — create a single notification manually ────────────────────────────
+// export async function POST(req: NextRequest) {
+//   try {
+//     const body = await req.json();
+//     const {
+//       recipientEmail,
+//       recipientUid,
+//       type,
+//       message,
+//       battleId,
+//       battleName,
+//       battleType,
+//       senderId,
+//       senderName,
+//       audioPublicId,
+//       audioTitle,
+//       audioUrl,
+//       audioDuration,
+//       audioDurationSeconds,
+//       audioFormat,
+//     } = body;
+
+//     if (!recipientEmail || !type || !message) {
+//       return NextResponse.json(
+//         { error: "recipientEmail, type, and message are required" },
+//         { status: 400 }
+//       );
+//     }
+
+//     const now = Date.now();
+//     const notifId = `notif_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
+//     const payload: Record<string, unknown> = {
+//       id: notifId,
+//       recipientEmail,
+//       recipientUid: recipientUid ?? null,
+//       type,
+//       message,
+//       isRead: false,
+//       createdAt: now,
+//       ...(battleId && { battleId, battleName, battleType, senderId, senderName }),
+//       ...(audioPublicId && {
+//         audioPublicId,
+//         audioTitle,
+//         audioUrl,
+//         audioDuration,
+//         audioDurationSeconds,
+//         audioFormat,
+//         audioUploadedAt: now,
+//       }),
+//     };
+
+//     // ── Dual-Write to DynamoDB IdentityAndAccess & Firebase ───────────────────
+//     const dynamoItem = {
+//       entityId: `USER#${recipientEmail}`,
+//       sk: `NOTIF#${now}#${notifId}`,
+//       email: recipientEmail,
+//       ...payload,
+//     };
+
+//     await dualWrite("notifications", notifId, "IdentityAndAccess", dynamoItem);
+
+//     return NextResponse.json({ success: true, id: notifId });
+//   } catch (error) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     console.error("POST /api/notifications error:", error);
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+// // ─── PATCH — mark one or all notifications as read ───────────────────────────
+// export async function PATCH(req: NextRequest) {
+//   try {
+//     const body = await req.json();
+//     const { id, email, action } = body;
+
+//     if (action === "markRead" && id) {
+//       try {
+//         await db.collection("notifications").doc(id).update({
+//           isRead: true,
+//           readAt: Date.now(),
+//         });
+//       } catch (fbErr) {
+//         console.warn("Firebase markRead notice:", fbErr);
+//       }
+
+//       let recipientEmail = email;
+//       if (!recipientEmail) {
+//         try {
+//           const doc = await db.collection("notifications").doc(id).get();
+//           if (doc.exists) {
+//             recipientEmail = doc.data()?.recipientEmail;
+//           }
+//         } catch (fsErr) {
+//           console.warn("Firestore fetch for email failed:", fsErr);
+//         }
+//       }
+
+//       if (recipientEmail) {
+//         try {
+//           const qRes = await docClient.send(
+//             new QueryCommand({
+//               TableName: "IdentityAndAccess",
+//               KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+//               ExpressionAttributeValues: {
+//                 ":e": `USER#${recipientEmail}`,
+//                 ":nPrefix": "NOTIF#",
+//               },
+//             })
+//           );
+//           const item = qRes.Items?.find(it => (it.sk as string).endsWith(`#${id}`) || it.id === id);
+//           if (item) {
+//             await docClient.send(
+//               new UpdateCommand({
+//                 TableName: "IdentityAndAccess",
+//                 Key: { entityId: item.entityId, sk: item.sk },
+//                 UpdateExpression: "SET isRead = :true, readAt = :now",
+//                 ExpressionAttributeValues: {
+//                   ":true": true,
+//                   ":now": Date.now()
+//                 }
+//               })
+//             );
+//           }
+//         } catch (dynErr) {
+//           console.warn("DynamoDB markRead error:", dynErr);
+//         }
+//       }
+//       return NextResponse.json({ success: true });
+//     }
+
+//     if (action === "markAllRead" && email) {
+//       try {
+//         const snapshot = await db
+//           .collection("notifications")
+//           .where("recipientEmail", "==", email)
+//           .where("isRead", "==", false)
+//           .get();
+
+//         if (!snapshot.empty) {
+//           const batch = db.batch();
+//           snapshot.docs.forEach((doc) => {
+//             batch.update(doc.ref, { isRead: true, readAt: Date.now() });
+//           });
+//           await batch.commit();
+//         }
+//       } catch (fbErr) {
+//         console.warn("Firebase markAllRead notice:", fbErr);
+//       }
+
+//       try {
+//         const qRes = await docClient.send(
+//           new QueryCommand({
+//             TableName: "IdentityAndAccess",
+//             KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+//             ExpressionAttributeValues: {
+//               ":e": `USER#${email}`,
+//               ":nPrefix": "NOTIF#",
+//             },
+//           })
+//         );
+//         if (qRes.Items) {
+//           const unreadItems = qRes.Items.filter(it => !it.isRead);
+//           for (const item of unreadItems) {
+//             await docClient.send(
+//               new UpdateCommand({
+//                 TableName: "IdentityAndAccess",
+//                 Key: { entityId: item.entityId, sk: item.sk },
+//                 UpdateExpression: "SET isRead = :true, readAt = :now",
+//                 ExpressionAttributeValues: {
+//                   ":true": true,
+//                   ":now": Date.now()
+//                 }
+//               })
+//             );
+//           }
+//         }
+//       } catch (dynErr) {
+//         console.warn("DynamoDB markAllRead error:", dynErr);
+//       }
+//       return NextResponse.json({ success: true });
+//     }
+
+//     return NextResponse.json(
+//       { error: "Invalid action or missing fields" },
+//       { status: 400 }
+//     );
+//   } catch (error) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     console.error("PATCH /api/notifications error:", error);
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+// // ─── DELETE — clear one notification or all for a user ───────────────────────
+// export async function DELETE(req: NextRequest) {
+//   try {
+//     const body = await req.json();
+//     const { id, email, all } = body;
+
+//     if (id && !all) {
+//       try {
+//         await db.collection("notifications").doc(id).delete();
+//       } catch (fbErr) {
+//         console.warn("Firebase delete notif notice:", fbErr);
+//       }
+
+//       let recipientEmail = email;
+//       if (!recipientEmail) {
+//         try {
+//           const doc = await db.collection("notifications").doc(id).get();
+//           if (doc.exists) {
+//             recipientEmail = doc.data()?.recipientEmail;
+//           }
+//         } catch (fsErr) {
+//           console.warn("Firestore fetch for email failed:", fsErr);
+//         }
+//       }
+
+//       if (recipientEmail) {
+//         try {
+//           const qRes = await docClient.send(
+//             new QueryCommand({
+//               TableName: "IdentityAndAccess",
+//               KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+//               ExpressionAttributeValues: {
+//                 ":e": `USER#${recipientEmail}`,
+//                 ":nPrefix": "NOTIF#",
+//               },
+//             })
+//           );
+//           const item = qRes.Items?.find(it => (it.sk as string).endsWith(`#${id}`) || it.id === id);
+//           if (item) {
+//             await docClient.send(
+//               new DeleteCommand({
+//                 TableName: "IdentityAndAccess",
+//                 Key: { entityId: item.entityId, sk: item.sk }
+//               })
+//             );
+//           }
+//         } catch (dynErr) {
+//           console.warn("DynamoDB delete error:", dynErr);
+//         }
+//       }
+//       return NextResponse.json({ success: true });
+//     }
+
+//     if (email && all) {
+//       try {
+//         const snapshot = await db
+//           .collection("notifications")
+//           .where("recipientEmail", "==", email)
+//           .get();
+
+//         if (!snapshot.empty) {
+//           const batch = db.batch();
+//           snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+//           await batch.commit();
+//         }
+//       } catch (fbErr) {
+//         console.warn("Firebase delete all notifs notice:", fbErr);
+//       }
+
+//       try {
+//         const qRes = await docClient.send(
+//           new QueryCommand({
+//             TableName: "IdentityAndAccess",
+//             KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+//             ExpressionAttributeValues: {
+//               ":e": `USER#${email}`,
+//               ":nPrefix": "NOTIF#",
+//             },
+//           })
+//         );
+//         if (qRes.Items) {
+//           for (const item of qRes.Items) {
+//             await docClient.send(
+//               new DeleteCommand({
+//                 TableName: "IdentityAndAccess",
+//                 Key: { entityId: item.entityId, sk: item.sk }
+//               })
+//             );
+//           }
+//         }
+//       } catch (dynErr) {
+//         console.warn("DynamoDB delete all error:", dynErr);
+//       }
+//       return NextResponse.json({ success: true });
+//     }
+
+//     return NextResponse.json(
+//       { error: "Provide id for single delete, or email + all:true for bulk delete" },
+//       { status: 400 }
+//     );
+//   } catch (error) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     console.error("DELETE /api/notifications error:", error);
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
+
+
+
+
+
+// app/api/notifications/route.ts — sf360-notifications (single-table schema)
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
-import { dualWrite } from "@/lib/dualWrite";
-import { QueryCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  QueryCommand,
+  UpdateCommand,
+  DeleteCommand,
+  BatchWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
-// ─── GET — fetch notifications for a user + total unread count ────────────────
+const TABLE = "sf360-notifications";
+
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -19,78 +431,83 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "email or uid is required" }, { status: 400 });
     }
 
+    // Try every plausible PK value — same "try all identifiers" pattern as before,
+    // since a notification might be keyed by uid, email, or a sanitized variant.
+    const candidates: string[] = [];
+    if (uid) candidates.push(uid);
+    if (email) candidates.push(email);
+
     let notifications: any[] = [];
+    let unreadCount = 0;
 
-    // 1. Try querying DynamoDB IdentityAndAccess table
-    try {
-      const entityIds = [];
-      if (email) entityIds.push(`USER#${email}`, email);
-      if (uid) entityIds.push(`USER#${uid}`, uid);
-
-      for (const ent of entityIds) {
-        const qRes = await docClient.send(
+    for (const identifier of candidates) {
+      // ── Full list via PK, newest first ──
+      try {
+        const res = await docClient.send(
           new QueryCommand({
-            TableName: "IdentityAndAccess",
-            KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+            TableName: TABLE,
+            KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
             ExpressionAttributeValues: {
-              ":e": ent,
-              ":nPrefix": "NOTIF#",
+              ":pk": `USER#${identifier}`,
+              ":prefix": "NOTIF#",
             },
             ScanIndexForward: false,
             Limit: 50,
           })
         );
-        if (qRes.Items && qRes.Items.length > 0) {
-          qRes.Items.forEach((item) => {
+        if (res.Items && res.Items.length > 0) {
+          res.Items.forEach((item) => {
             notifications.push({
-              id: (item.sk as string)?.split("#")[2] || item.id,
+              id: (item.SK as string)?.split("#").pop() || item.id,
               ...item,
             });
           });
         }
+      } catch (dynErr) {
+        console.warn("[notifications GET] Query notice for", identifier, dynErr);
       }
-    } catch (dynErr) {
-      console.warn("DynamoDB notifications query notice:", dynErr);
-    }
 
-    // 2. Fallback to Firebase
-    if (notifications.length === 0) {
+      // ── Unread count via sparse GSI2 ──
       try {
-        const queries = [];
-        if (email) {
-          queries.push(
-            db.collection("notifications").where("recipientEmail", "==", email).orderBy("createdAt", "desc").limit(50).get()
-          );
-        }
-        if (uid) {
-          queries.push(
-            db.collection("notifications").where("recipientUid", "==", uid).orderBy("createdAt", "desc").limit(50).get()
-          );
-        }
-
-        const results = await Promise.all(queries);
-        const seen = new Set<string>();
-        results.forEach((snap) =>
-          snap.docs.forEach((doc) => {
-            if (!seen.has(doc.id)) {
-              seen.add(doc.id);
-              notifications.push({ id: doc.id, ...doc.data() });
-            }
+        const unreadRes = await docClient.send(
+          new QueryCommand({
+            TableName: TABLE,
+            IndexName: "GSI2",
+            KeyConditionExpression: "GSI2PK = :g",
+            ExpressionAttributeValues: { ":g": `USER#${identifier}#UNREAD` },
+            Select: "COUNT",
           })
         );
-      } catch (fbErr) {
-        console.warn("Firebase notifications query fallback notice:", fbErr);
+        unreadCount += unreadRes.Count ?? 0;
+      } catch (e) {
+        console.warn("[notifications GET] GSI2 unread notice for", identifier, e);
       }
     }
 
-    notifications.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-    const unreadCount = notifications.filter((n) => !n.isRead).length;
+    // Dedupe in case both identifiers somehow returned overlapping items
+    const seen = new Set<string>();
+    notifications = notifications.filter((n) => {
+      const key = n.SK ?? n.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    notifications.sort(
+      (a, b) => new Date(b.sent_at ?? 0).getTime() - new Date(a.sent_at ?? 0).getTime()
+    );
 
     if (countOnly) {
-      return NextResponse.json({ success: true, unreadCount }, { headers: { "Cache-Control": "no-store" } });
+      return NextResponse.json(
+        { success: true, unreadCount },
+        { headers: { "Cache-Control": "no-store" } }
+      );
     }
 
-    return NextResponse.json({ success: true, notifications, unreadCount }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(
+      { success: true, notifications, unreadCount },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("GET /api/notifications error:", error);
@@ -98,191 +515,64 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ─── POST — create a single notification manually ────────────────────────────
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const {
-      recipientEmail,
-      recipientUid,
-      type,
-      message,
-      battleId,
-      battleName,
-      battleType,
-      senderId,
-      senderName,
-      audioPublicId,
-      audioTitle,
-      audioUrl,
-      audioDuration,
-      audioDurationSeconds,
-      audioFormat,
-    } = body;
-
-    if (!recipientEmail || !type || !message) {
-      return NextResponse.json(
-        { error: "recipientEmail, type, and message are required" },
-        { status: 400 }
-      );
-    }
-
-    const now = Date.now();
-    const notifId = `notif_${now}_${Math.random().toString(36).substring(2, 9)}`;
-
-    const payload: Record<string, unknown> = {
-      id: notifId,
-      recipientEmail,
-      recipientUid: recipientUid ?? null,
-      type,
-      message,
-      isRead: false,
-      createdAt: now,
-      ...(battleId && { battleId, battleName, battleType, senderId, senderName }),
-      ...(audioPublicId && {
-        audioPublicId,
-        audioTitle,
-        audioUrl,
-        audioDuration,
-        audioDurationSeconds,
-        audioFormat,
-        audioUploadedAt: now,
-      }),
-    };
-
-    // ── Dual-Write to DynamoDB IdentityAndAccess & Firebase ───────────────────
-    const dynamoItem = {
-      entityId: `USER#${recipientEmail}`,
-      sk: `NOTIF#${now}#${notifId}`,
-      email: recipientEmail,
-      ...payload,
-    };
-
-    await dualWrite("notifications", notifId, "IdentityAndAccess", dynamoItem);
-
-    return NextResponse.json({ success: true, id: notifId });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("POST /api/notifications error:", error);
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
-}
-
-// ─── PATCH — mark one or all notifications as read ───────────────────────────
+// ─── PATCH — mark one or all notifications as read ─────────────────────────
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, email, action } = body;
+    const { userId, sk, action } = body;
 
-    if (action === "markRead" && id) {
+    // Mark a single notification read — remove GSI2 keys (sparse index)
+    if (action === "markRead" && userId && sk) {
       try {
-        await db.collection("notifications").doc(id).update({
-          isRead: true,
-          readAt: Date.now(),
-        });
-      } catch (fbErr) {
-        console.warn("Firebase markRead notice:", fbErr);
-      }
-
-      let recipientEmail = email;
-      if (!recipientEmail) {
-        try {
-          const doc = await db.collection("notifications").doc(id).get();
-          if (doc.exists) {
-            recipientEmail = doc.data()?.recipientEmail;
-          }
-        } catch (fsErr) {
-          console.warn("Firestore fetch for email failed:", fsErr);
-        }
-      }
-
-      if (recipientEmail) {
-        try {
-          const qRes = await docClient.send(
-            new QueryCommand({
-              TableName: "IdentityAndAccess",
-              KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
-              ExpressionAttributeValues: {
-                ":e": `USER#${recipientEmail}`,
-                ":nPrefix": "NOTIF#",
-              },
-            })
-          );
-          const item = qRes.Items?.find(it => (it.sk as string).endsWith(`#${id}`) || it.id === id);
-          if (item) {
-            await docClient.send(
-              new UpdateCommand({
-                TableName: "IdentityAndAccess",
-                Key: { entityId: item.entityId, sk: item.sk },
-                UpdateExpression: "SET isRead = :true, readAt = :now",
-                ExpressionAttributeValues: {
-                  ":true": true,
-                  ":now": Date.now()
-                }
-              })
-            );
-          }
-        } catch (dynErr) {
-          console.warn("DynamoDB markRead error:", dynErr);
-        }
+        await docClient.send(
+          new UpdateCommand({
+            TableName: TABLE,
+            Key: { PK: `USER#${userId}`, SK: sk },
+            UpdateExpression: "SET #r = :true REMOVE GSI2PK, GSI2SK",
+            ExpressionAttributeNames: { "#r": "read" },
+            ExpressionAttributeValues: { ":true": true },
+          })
+        );
+      } catch (e) {
+        console.warn("[notifications PATCH] markRead notice:", e);
       }
       return NextResponse.json({ success: true });
     }
 
-    if (action === "markAllRead" && email) {
+    // Mark all read — query unread via GSI2, then batch-update each
+    if (action === "markAllRead" && userId) {
       try {
-        const snapshot = await db
-          .collection("notifications")
-          .where("recipientEmail", "==", email)
-          .where("isRead", "==", false)
-          .get();
-
-        if (!snapshot.empty) {
-          const batch = db.batch();
-          snapshot.docs.forEach((doc) => {
-            batch.update(doc.ref, { isRead: true, readAt: Date.now() });
-          });
-          await batch.commit();
-        }
-      } catch (fbErr) {
-        console.warn("Firebase markAllRead notice:", fbErr);
-      }
-
-      try {
-        const qRes = await docClient.send(
+        const unreadRes = await docClient.send(
           new QueryCommand({
-            TableName: "IdentityAndAccess",
-            KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
-            ExpressionAttributeValues: {
-              ":e": `USER#${email}`,
-              ":nPrefix": "NOTIF#",
-            },
+            TableName: TABLE,
+            IndexName: "GSI2",
+            KeyConditionExpression: "GSI2PK = :g",
+            ExpressionAttributeValues: { ":g": `USER#${userId}#UNREAD` },
           })
         );
-        if (qRes.Items) {
-          const unreadItems = qRes.Items.filter(it => !it.isRead);
-          for (const item of unreadItems) {
-            await docClient.send(
+
+        const items = unreadRes.Items ?? [];
+        await Promise.all(
+          items.map((item) =>
+            docClient.send(
               new UpdateCommand({
-                TableName: "IdentityAndAccess",
-                Key: { entityId: item.entityId, sk: item.sk },
-                UpdateExpression: "SET isRead = :true, readAt = :now",
-                ExpressionAttributeValues: {
-                  ":true": true,
-                  ":now": Date.now()
-                }
+                TableName: TABLE,
+                Key: { PK: item.PK, SK: item.SK },
+                UpdateExpression: "SET #r = :true REMOVE GSI2PK, GSI2SK",
+                ExpressionAttributeNames: { "#r": "read" },
+                ExpressionAttributeValues: { ":true": true },
               })
-            );
-          }
-        }
-      } catch (dynErr) {
-        console.warn("DynamoDB markAllRead error:", dynErr);
+            )
+          )
+        );
+      } catch (e) {
+        console.warn("[notifications PATCH] markAllRead notice:", e);
       }
       return NextResponse.json({ success: true });
     }
 
     return NextResponse.json(
-      { error: "Invalid action or missing fields" },
+      { error: "Invalid action or missing fields (need userId + sk for markRead, userId for markAllRead)" },
       { status: 400 }
     );
   } catch (error) {
@@ -292,104 +582,61 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-// ─── DELETE — clear one notification or all for a user ───────────────────────
+// ─── DELETE — clear one notification or all for a user ─────────────────────
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, email, all } = body;
+    const { userId, sk, all } = body;
 
-    if (id && !all) {
+    if (userId && sk && !all) {
       try {
-        await db.collection("notifications").doc(id).delete();
-      } catch (fbErr) {
-        console.warn("Firebase delete notif notice:", fbErr);
-      }
-
-      let recipientEmail = email;
-      if (!recipientEmail) {
-        try {
-          const doc = await db.collection("notifications").doc(id).get();
-          if (doc.exists) {
-            recipientEmail = doc.data()?.recipientEmail;
-          }
-        } catch (fsErr) {
-          console.warn("Firestore fetch for email failed:", fsErr);
-        }
-      }
-
-      if (recipientEmail) {
-        try {
-          const qRes = await docClient.send(
-            new QueryCommand({
-              TableName: "IdentityAndAccess",
-              KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
-              ExpressionAttributeValues: {
-                ":e": `USER#${recipientEmail}`,
-                ":nPrefix": "NOTIF#",
-              },
-            })
-          );
-          const item = qRes.Items?.find(it => (it.sk as string).endsWith(`#${id}`) || it.id === id);
-          if (item) {
-            await docClient.send(
-              new DeleteCommand({
-                TableName: "IdentityAndAccess",
-                Key: { entityId: item.entityId, sk: item.sk }
-              })
-            );
-          }
-        } catch (dynErr) {
-          console.warn("DynamoDB delete error:", dynErr);
-        }
+        await docClient.send(
+          new DeleteCommand({
+            TableName: TABLE,
+            Key: { PK: `USER#${userId}`, SK: sk },
+          })
+        );
+      } catch (e) {
+        console.warn("[notifications DELETE] single delete notice:", e);
       }
       return NextResponse.json({ success: true });
     }
 
-    if (email && all) {
+    if (userId && all) {
       try {
-        const snapshot = await db
-          .collection("notifications")
-          .where("recipientEmail", "==", email)
-          .get();
-
-        if (!snapshot.empty) {
-          const batch = db.batch();
-          snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-          await batch.commit();
-        }
-      } catch (fbErr) {
-        console.warn("Firebase delete all notifs notice:", fbErr);
-      }
-
-      try {
-        const qRes = await docClient.send(
+        const res = await docClient.send(
           new QueryCommand({
-            TableName: "IdentityAndAccess",
-            KeyConditionExpression: "entityId = :e AND begins_with(sk, :nPrefix)",
+            TableName: TABLE,
+            KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
             ExpressionAttributeValues: {
-              ":e": `USER#${email}`,
-              ":nPrefix": "NOTIF#",
+              ":pk": `USER#${userId}`,
+              ":prefix": "NOTIF#",
             },
           })
         );
-        if (qRes.Items) {
-          for (const item of qRes.Items) {
-            await docClient.send(
-              new DeleteCommand({
-                TableName: "IdentityAndAccess",
-                Key: { entityId: item.entityId, sk: item.sk }
-              })
-            );
-          }
+
+        const items = res.Items ?? [];
+        // BatchWrite in chunks of 25 (DynamoDB limit)
+        for (let i = 0; i < items.length; i += 25) {
+          const chunk = items.slice(i, i + 25);
+          await docClient.send(
+            new BatchWriteCommand({
+              RequestItems: {
+                [TABLE]: chunk.map((item) => ({
+                  DeleteRequest: { Key: { PK: item.PK, SK: item.SK } },
+                })),
+              },
+            })
+          );
         }
-      } catch (dynErr) {
-        console.warn("DynamoDB delete all error:", dynErr);
+      } catch (e) {
+        console.warn("[notifications DELETE] bulk delete notice:", e);
       }
       return NextResponse.json({ success: true });
     }
 
     return NextResponse.json(
-      { error: "Provide id for single delete, or email + all:true for bulk delete" },
+      { error: "Provide userId + sk for single delete, or userId + all:true for bulk delete" },
       { status: 400 }
     );
   } catch (error) {
