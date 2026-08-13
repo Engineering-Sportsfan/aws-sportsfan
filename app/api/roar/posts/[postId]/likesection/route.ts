@@ -5,7 +5,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
-import { notifyPostReaction, notifyRoomMessageReaction } from "@/lib/roarNotifyHelpers";
+import {  notifyRoomMessageReaction } from "@/lib/roarNotifyHelpers";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
 import { docClient } from "@/lib/dynamodb";
 import { QueryCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
@@ -294,7 +294,7 @@ export async function POST(
     if (roomId) {
       notifyRoomMessageReaction(roomId, postId, userId, reaction).catch(() => { });
     } else {
-      notifyPostReaction(postId, userId, reaction).catch(() => { });
+      // notifyPostReaction(postId, userId, reaction).catch(() => { });
     }
 
     return NextResponse.json({
