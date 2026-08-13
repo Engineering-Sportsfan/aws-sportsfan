@@ -134,7 +134,7 @@ async function fetchSoccerTicker(): Promise<TickerItem[]> {
 
   try {
     const res = await fetchWithTimeout(
-      `${SOCCER_URL}/schedules/${today}/schedule.json?api_key=${SR_API_KEY}`,
+      `${SOCCER_URL}/schedules/${today}/schedules.json?api_key=${SR_API_KEY}`,
       { next: { revalidate: 30 } } as any,
       3000
     );
