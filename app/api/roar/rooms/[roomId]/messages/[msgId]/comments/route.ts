@@ -349,6 +349,177 @@
 
 
 
+// // api/roar/rooms/[roomId]/messages/[msgId]/comments/route.ts
+
+// import { NextRequest, NextResponse } from "next/server";
+// import { getUser } from "@/lib/getUser";
+// import { getUserInfo } from "@/lib/userPoints";
+// import { notifyRoomMessageComment, notifyMentions } from "@/lib/roarNotifyHelpers";
+// import { awardRoarPointsByReason } from "@/lib/roarPoints";
+// import { docClient } from "@/lib/dynamodb";
+// import { QueryCommand, PutCommand, UpdateCommand, BatchGetCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+
+// export const dynamic = "force-dynamic";
+
+// async function resolveUserInfo(userId: string, name: string, email: string): Promise<{
+//   username: string; avatarUrl: string | null; badge: string | null;
+// }> {
+//   try {
+//     const res = await docClient.send(new GetCommand({
+//       TableName: "IdentityAndAccess",
+//       Key: { entityId: `USER#${userId}`, sk: "USER#META" }
+//     }));
+//     if (res.Item) {
+//       return {
+//         username: res.Item.username ?? name ?? email.split("@")[0],
+//         avatarUrl: res.Item.avatarUrl ?? null,
+//         badge: res.Item.badge ?? null,
+//       };
+//     }
+//   } catch (e) { console.warn("[RoomComments] resolveUserInfo notice:", e); }
+//   return { username: name || email.split("@")[0], avatarUrl: null, badge: null };
+// }
+
+// export async function GET(
+//   req: NextRequest,
+//   { params }: { params: Promise<{ roomId: string; msgId: string }> }
+// ) {
+//   try {
+//     const { roomId, msgId } = await params;
+//     const { searchParams } = new URL(req.url);
+//     const limit = Math.min(parseInt(searchParams.get("limit") ?? "50"), 100);
+
+//     const res = await docClient.send(new QueryCommand({
+//       TableName: "RealTimeChat",
+//       KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+//       ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": `COMMENT#${msgId}#` },
+//       Limit: limit
+//     }));
+
+//     let comments :any[]  = (res.Items ?? []).map(item => ({
+//       id: (item.sk as string).split("#")[2],
+//       commentId: (item.sk as string).split("#")[2],
+//       ...item
+//     }));
+//     comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+//     const authorMap = new Map<string, { avatarUrl: string | null; badge: string | null }>();
+//     const uniqueAuthorUids = Array.from(new Set(comments.map((c) => c.authorUid).filter(Boolean)));
+
+//     if (uniqueAuthorUids.length > 0) {
+//       try {
+//         const keys = uniqueAuthorUids.map(uid => ({ entityId: `USER#${uid}`, sk: "USER#META" }));
+//         const batchRes = await docClient.send(new BatchGetCommand({
+//           RequestItems: { "IdentityAndAccess": { Keys: keys } }
+//         }));
+//         (batchRes.Responses?.["IdentityAndAccess"] ?? []).forEach(item => {
+//           const uid = (item.entityId as string).replace(/^USER#/, "");
+//           authorMap.set(uid, { avatarUrl: item.avatarUrl ?? null, badge: item.badge ?? null });
+//         });
+//       } catch (dynErr) {
+//         console.warn("[RoomComments GET] batch profile lookup notice:", dynErr);
+//       }
+//     }
+
+//     const commentsWithAuthor = comments.map((c) => {
+//       const author = authorMap.get(c.authorUid);
+//       return {
+//         ...c,
+//         authorAvatarUrl: author?.avatarUrl ?? c.authorAvatarUrl ?? null,
+//         authorBadge: author?.badge ?? c.authorBadge ?? null,
+//       };
+//     });
+
+//     return NextResponse.json({ success: true, comments: commentsWithAuthor });
+//   } catch (err) {
+//     const msg = err instanceof Error ? err.message : "Unexpected error";
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+// export async function POST(
+//   req: NextRequest,
+//   { params }: { params: Promise<{ roomId: string; msgId: string }> }
+// ) {
+//   try {
+//     const user = await getUser(req);
+//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+//     const { roomId, msgId } = await params;
+//     const body = await req.json();
+//     const text: string = (body.text ?? "").trim();
+//     if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
+
+//     const info = await getUserInfo(user.userId, undefined, user.email);
+//     const resolvedAuthorId = info.exists ? info.actualUserId : user.userId;
+//     const { username, avatarUrl, badge } = await resolveUserInfo(resolvedAuthorId, user.name, user.email);
+//     const now = Date.now();
+
+//     // existence check on room message
+//     const qRes = await docClient.send(new QueryCommand({
+//       TableName: "RealTimeChat",
+//       KeyConditionExpression: "roomId = :r AND sk = :s",
+//       ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${msgId}` },
+//       Limit: 1
+//     }));
+//     if (!qRes.Items || qRes.Items.length === 0) {
+//       return NextResponse.json({ error: "Message not found" }, { status: 404 });
+//     }
+
+//     const commentId = `cmt_${now}_${Math.random().toString(36).slice(2, 9)}`;
+
+//     await docClient.send(new PutCommand({
+//       TableName: "RealTimeChat",
+//       Item: {
+//         roomId: `ROOM#${roomId}`,
+//         sk: `COMMENT#${msgId}#${commentId}`,
+//         commentId,
+//         text,
+//         authorUid: resolvedAuthorId,
+//         authorEmail: user.email,
+//         authorUsername: username,
+//         authorAvatarUrl: avatarUrl,
+//         authorBadge: badge,
+//         createdAt: now,
+//       }
+//     }));
+
+//     await docClient.send(new UpdateCommand({
+//       TableName: "RealTimeChat",
+//       Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${msgId}` },
+//       UpdateExpression: "ADD replyCount :one",
+//       ExpressionAttributeValues: { ":one": 1 }
+//     })).catch((e) => console.warn("[RoomComments POST] replyCount update notice:", e));
+
+//     awardRoarPointsByReason({
+//       actualUserId: resolvedAuthorId,
+//       authUserId: user.userId,
+//       userName: username,
+//       userEmail: user.email,
+//       userExists: info.exists,
+//       reason: "ROAR_COMMENT",
+//       points: 8,
+//       transactionId: `comment_${commentId}`,
+//       metadata: { roomId, msgId, commentId },
+//     }).catch(() => { });
+
+//     // Notify post author on reply, then check for @mentions in the comment text
+//     notifyRoomMessageComment(roomId, msgId, resolvedAuthorId, user.email, username, text.slice(0, 80)).catch(() => { });
+//     notifyMentions(text, roomId, msgId, resolvedAuthorId, username).catch(() => { });
+
+//     return NextResponse.json({
+//       success: true,
+//       commentId,
+//       comment: { id: commentId, commentId, text, authorUid: resolvedAuthorId, authorUsername: username, authorAvatarUrl: avatarUrl, authorBadge: badge, roomId, createdAt: now },
+//     });
+//   } catch (err) {
+//     const msg = err instanceof Error ? err.message : "Unexpected error";
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
+
 // api/roar/rooms/[roomId]/messages/[msgId]/comments/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
@@ -392,11 +563,14 @@ export async function GET(
     const res = await docClient.send(new QueryCommand({
       TableName: "RealTimeChat",
       KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
-      ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": `COMMENT#${msgId}#` },
+      ExpressionAttributeValues: { 
+        ":r": `ROOM#${roomId}`, 
+        ":p": `COMMENT#${msgId}#` 
+      },
       Limit: limit
     }));
 
-    let comments :any[]  = (res.Items ?? []).map(item => ({
+    let comments: any[] = (res.Items ?? []).map(item => ({
       id: (item.sk as string).split("#")[2],
       commentId: (item.sk as string).split("#")[2],
       ...item
@@ -455,19 +629,24 @@ export async function POST(
     const { username, avatarUrl, badge } = await resolveUserInfo(resolvedAuthorId, user.name, user.email);
     const now = Date.now();
 
-    // existence check on room message
+    // ✅ FIXED: Use begins_with to find the message with the full SK format
     const qRes = await docClient.send(new QueryCommand({
       TableName: "RealTimeChat",
-      KeyConditionExpression: "roomId = :r AND sk = :s",
-      ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${msgId}` },
+      KeyConditionExpression: "roomId = :r AND begins_with(sk, :skPrefix)",
+      ExpressionAttributeValues: { 
+        ":r": `ROOM#${roomId}`,
+        ":skPrefix": `MSG#${roomId}#${msgId}`  // This matches MSG#roomId#msgId#...
+      },
       Limit: 1
     }));
+    
     if (!qRes.Items || qRes.Items.length === 0) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
 
     const commentId = `cmt_${now}_${Math.random().toString(36).slice(2, 9)}`;
 
+    // Save the comment
     await docClient.send(new PutCommand({
       TableName: "RealTimeChat",
       Item: {
@@ -484,13 +663,22 @@ export async function POST(
       }
     }));
 
+    // ✅ FIXED: Update the replyCount on the message using begins_with
+    // First, get the full SK of the message
+    const messageItem = qRes.Items[0];
+    const fullMessageSk = messageItem.sk;
+    
     await docClient.send(new UpdateCommand({
       TableName: "RealTimeChat",
-      Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${msgId}` },
+      Key: { 
+        roomId: `ROOM#${roomId}`, 
+        sk: fullMessageSk  // Use the full SK from the query result
+      },
       UpdateExpression: "ADD replyCount :one",
       ExpressionAttributeValues: { ":one": 1 }
     })).catch((e) => console.warn("[RoomComments POST] replyCount update notice:", e));
 
+    // Award points
     awardRoarPointsByReason({
       actualUserId: resolvedAuthorId,
       authUserId: user.userId,
@@ -510,7 +698,17 @@ export async function POST(
     return NextResponse.json({
       success: true,
       commentId,
-      comment: { id: commentId, commentId, text, authorUid: resolvedAuthorId, authorUsername: username, authorAvatarUrl: avatarUrl, authorBadge: badge, roomId, createdAt: now },
+      comment: { 
+        id: commentId, 
+        commentId, 
+        text, 
+        authorUid: resolvedAuthorId, 
+        authorUsername: username, 
+        authorAvatarUrl: avatarUrl, 
+        authorBadge: badge, 
+        roomId, 
+        createdAt: now 
+      },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unexpected error";
