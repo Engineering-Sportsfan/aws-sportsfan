@@ -6,6 +6,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { getUserInfo } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
