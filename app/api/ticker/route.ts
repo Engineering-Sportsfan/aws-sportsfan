@@ -86,7 +86,7 @@ async function fetchCricketTicker(): Promise<TickerItem[]> {
     const data = await res.json();
     const events = data.sport_events || [];
 
-    const items: TickerItem[] = events.slice(0, 10).map((e: any, i: number) => {
+    const items: TickerItem[] = events.slice(0, 100).map((e: any, i: number) => {
       const team1 = e.competitors?.[0]?.name || "Team A";
       const team2 = e.competitors?.[1]?.name || "Team B";
       const status = e.status || "not_started";
@@ -142,7 +142,7 @@ async function fetchSoccerTicker(): Promise<TickerItem[]> {
     const data = await res.json();
     const events = data.sport_events || [];
 
-    const items: TickerItem[] = events.slice(0, 10).map((e: any, i: number) => {
+    const items: TickerItem[] = events.slice(0, 100).map((e: any, i: number) => {
       const team1 = e.competitors?.[0]?.name || "Team A";
       const team2 = e.competitors?.[1]?.name || "Team B";
       const status = e.status || "not_started";
@@ -187,23 +187,42 @@ export async function GET(req: NextRequest) {
     const types = searchParams.get("types")?.split(",") || ["live_score", "sports_update", "news", "moments"];
     const limit = parseInt(searchParams.get("limit") || "20");
 
+    const matchId = searchParams.get("matchId");
+    const team = searchParams.get("team");
+
     const [cricketItems, soccerItems] = await Promise.all([
       sports.includes("cricket") ? fetchCricketTicker() : Promise.resolve([]),
       sports.includes("football") ? fetchSoccerTicker() : Promise.resolve([]),
     ]);
 
     // Interleave live updates
-    const apiItems: TickerItem[] = [];
+    let apiItems: TickerItem[] = [];
     const max = Math.max(cricketItems.length, soccerItems.length);
     for (let i = 0; i < max; i++) {
       if (cricketItems[i]) apiItems.push(cricketItems[i]);
       if (soccerItems[i]) apiItems.push(soccerItems[i]);
     }
 
+    // Apply strict filtering if the user is inside a specific Match Room
+    if (matchId) {
+      apiItems = apiItems.filter((item) => item.id.includes(matchId));
+    } else if (team) {
+      const t = team.toLowerCase();
+      apiItems = apiItems.filter((item) => item.text.toLowerCase().includes(t));
+    }
+
     // Merge API results with high-quality mock data so demo is always rich/populated
-    const filteredMock = MOCK_UPDATES.filter(
+    let filteredMock = MOCK_UPDATES.filter(
       item => sports.includes(item.sport) && types.includes(item.type)
     );
+
+    // If a specific match room is requested, strictly filter mock data too to avoid spam
+    if (matchId) {
+      filteredMock = filteredMock.filter((item) => item.id.includes(matchId));
+    } else if (team) {
+      const t = team.toLowerCase();
+      filteredMock = filteredMock.filter((item) => item.text.toLowerCase().includes(t));
+    }
 
     const merged = [...filteredMock, ...apiItems].filter(item => types.includes(item.type));
 
