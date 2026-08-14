@@ -1140,8 +1140,129 @@ export class StoreService {
         }
         transaction.set(this.db.collection('idempotencyKeys').doc(idempotencyKey), { response: { orderId, success: true }, createdAt: FieldValue.serverTimestamp() });
       });
+
     } catch (fsErr) {
       console.warn('[Checkout] Firestore dual-write failed:', fsErr);
+    }
+
+    // Call store notification API only on payment success
+    try {
+      // Resolve notification info based on category
+      let notifType = "store.order_confirmed";
+      let notifTitle = "Order Confirmed!";
+      let mappedCategory = "merch";
+      const variables: Record<string, any> = {};
+
+      const prodName = product.title || product.name || 'Product';
+
+      switch (pCatLower) {
+        case "coaches":
+        case "coach":
+          notifType = "store.expert_session_booked";
+          notifTitle = "Expert Session Booked!";
+          mappedCategory = "coaches";
+          variables.expert_name = prodName;
+          variables.session_date = eventDate || product.date || product.eventStartsAt || "TBD";
+          break;
+        case "experiences":
+        case "experience":
+          notifType = "store.expert_session_booked";
+          notifTitle = "Experience Booked!";
+          mappedCategory = "experiences";
+          variables.expert_name = prodName;
+          variables.session_date = eventDate || product.date || product.eventStartsAt || "TBD";
+          break;
+        case "events":
+        case "event":
+          notifType = "store.order_confirmed";
+          notifTitle = "Event Ticket Confirmed!";
+          mappedCategory = "events";
+          variables.product_name = prodName;
+          variables.reward_coins = product.rewardCoins || 0;
+          break;
+        case "auctions":
+        case "auction":
+          notifType = "store.order_confirmed";
+          notifTitle = "Auction Payment Success!";
+          mappedCategory = "auctions";
+          variables.product_name = prodName;
+          variables.reward_coins = product.rewardCoins || 0;
+          break;
+        case "athletes":
+        case "athlete":
+          if (slotId) {
+            notifType = "store.expert_session_booked";
+            notifTitle = "Expert Session Booked!";
+            variables.expert_name = prodName;
+            variables.session_date = eventDate || product.date || product.eventStartsAt || "TBD";
+          } else {
+            notifType = "store.order_confirmed";
+            notifTitle = "Booking Confirmed!";
+            variables.product_name = prodName;
+            variables.reward_coins = product.rewardCoins || 0;
+          }
+          mappedCategory = "athletes";
+          break;
+        case "memorabilia":
+        case "merch":
+          notifType = "store.order_confirmed";
+          notifTitle = "Order Confirmed!";
+          mappedCategory = "merch";
+          variables.product_name = prodName;
+          variables.reward_coins = product.rewardCoins || 0;
+          break;
+        case "brands":
+        case "brand":
+          notifType = "store.order_confirmed";
+          notifTitle = "Order Confirmed!";
+          mappedCategory = "brands";
+          variables.product_name = prodName;
+          variables.reward_coins = product.rewardCoins || 0;
+          break;
+        case "digital":
+          notifType = "store.digital_product_ready";
+          notifTitle = "Digital Product Ready!";
+          mappedCategory = "digital";
+          variables.product_title = prodName;
+          break;
+        case "memberships":
+        case "members":
+        case "member":
+          notifType = "store.order_confirmed";
+          notifTitle = "Membership Activated!";
+          mappedCategory = "members";
+          variables.product_name = prodName;
+          variables.reward_coins = product.rewardCoins || 0;
+          break;
+        default:
+          mappedCategory = "merch";
+          variables.product_name = prodName;
+          variables.reward_coins = product.rewardCoins || 0;
+          break;
+      }
+
+      // Call store notification API directly using fetch on the backend (port 3001)
+      const host = process.env.NEXTAUTH_URL || 'http://localhost:3001';
+      const targetUrl = `${host.replace(/\/$/, '')}/api/notifications/store`;
+
+      fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: userId,
+          notificationType: notifType,
+          category: mappedCategory,
+          title: notifTitle,
+          variables: variables,
+          rewardCoinsEarned: product.rewardCoins || 0,
+          ctaTarget: "/MainModules/AtheleteStore/StoreMyBookings"
+        })
+      }).catch(err => console.warn('[Checkout] Background store notification fetch failed:', err));
+
+    } catch (notifErr) {
+      console.warn('[Checkout] Failed to trigger store notification:', notifErr);
     }
 
     return { orderId, success: true };
