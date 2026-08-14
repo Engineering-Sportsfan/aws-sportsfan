@@ -968,19 +968,17 @@ async function getRoomMessageMeta(roomId: string, msgId: string): Promise<{
   try {
     const res = await docClient.send(new QueryCommand({
       TableName: "RealTimeChat",
-      KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+      KeyConditionExpression: "roomId = :r AND sk = :s",
       ExpressionAttributeValues: {
         ":r": `ROOM#${roomId}`,
-        ":p": `MSG#${roomId}#`
+        ":s": `MSG#${msgId}`
       }
     }));
-    const match = res.Items?.find(item =>
-      item.chatId === msgId || item.id === msgId || (item.sk as string).endsWith(msgId)
-    );
-    if (!match) {
+    if (!res.Items || res.Items.length === 0) {
       console.warn(`${TAG} getRoomMessageMeta: no match for roomId=${roomId} msgId=${msgId}`);
       return null;
     }
+    const match = res.Items[0];
     const result = {
       authorUid: match.authorUid ?? "",
       text: (match.text ?? "").slice(0, 120),
