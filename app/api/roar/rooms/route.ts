@@ -285,70 +285,152 @@ export async function getRoomName(roomId: string): Promise<string> {
 // ────────────────────────────────────────────────────────────────────────────
 // GET  /api/roar/rooms
 // ────────────────────────────────────────────────────────────────────────────
+// export async function GET(req: NextRequest) {
+//   try {
+//     const user = await getUser(req);
+//     if (!user) {
+//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+//     }
+
+//     const { searchParams } = new URL(req.url);
+//     const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+
+//     let rooms: ChatRoom[] = [];
+
+//     try {
+//       const qRes = await docClient.send(
+//         new QueryCommand({
+//           TableName: "RealTimeChat",
+//           IndexName: "isActive-order-index",
+//           KeyConditionExpression: "isActive = :act",
+//           FilterExpression: "begins_with(sk, :p)",
+//           ExpressionAttributeValues: {
+//             ":act": "true",
+//             ":p": "META#"
+//           },
+//           ScanIndexForward: false,
+//           Limit: 100,
+//         })
+//       );
+//       if (qRes.Items && qRes.Items.length > 0) {
+//         rooms = qRes.Items.map((item) => ({
+//           roomId: (item.roomId as string)?.replace(/^ROOM#/, "") || item.id,
+//           name: item.name as string,
+//           sport: (item.sport as string) || "general",
+//           createdAt: Number(item.createdAt || Date.now()),
+//           isActive: item.isActive === "true" || item.isActive === true,
+//           fanCount: Number(item.fanCount || 0),
+//           icon: item.icon as string | undefined,
+//           description: item.description as string | undefined,
+//           scheduledStartTime: item.scheduledStartTime as number | undefined,
+//           score: item.score as string | undefined,
+//           scoreSubtitle: item.scoreSubtitle as string | undefined,
+//           watchAlongRoomId: item.watchAlongRoomId as string | undefined,
+//           matchId: item.matchId as string | undefined,
+//           botConfig: item.botConfig as any,
+//           isTestingRoom: Boolean(item.isTestingRoom),
+//         }));
+//       }
+//     } catch (dynErr) {
+//       console.warn("DynamoDB roar rooms query notice:", dynErr);
+//     }
+
+//     const lastRoom = rooms[rooms.length - 1];
+
+//     return NextResponse.json({
+//       success: true,
+//       rooms,
+//       pagination: {
+//         limit,
+//         hasMore: rooms.length === limit,
+//         nextCursor:
+//           rooms.length === limit
+//             ? { lastCreatedAt: lastRoom?.createdAt ?? null }
+//             : null,
+//       },
+//     }, { headers: { "Cache-Control": "no-store" } });
+//   } catch (error: unknown) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     console.error("GET /api/roar/rooms error:", error);
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
+// app/api/roar/rooms/route.ts — GET handler
 export async function GET(req: NextRequest) {
   try {
     const user = await getUser(req);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
 
     let rooms: ChatRoom[] = [];
+    let lastEvaluatedKey: Record<string, any> | undefined = undefined;
+    const MAX_PAGES = 5; // hard stop so a pathological partition can't hang the request
+    let pages = 0;
 
     try {
-      const qRes = await docClient.send(
-        new QueryCommand({
-          TableName: "RealTimeChat",
-          IndexName: "isActive-order-index",
-          KeyConditionExpression: "isActive = :act",
-          FilterExpression: "begins_with(sk, :p)",
-          ExpressionAttributeValues: {
-            ":act": "true",
-            ":p": "META#"
-          },
-          ScanIndexForward: false,
-          Limit: 100,
-        })
-      );
-      if (qRes.Items && qRes.Items.length > 0) {
-        rooms = qRes.Items.map((item) => ({
-          roomId: (item.roomId as string)?.replace(/^ROOM#/, "") || item.id,
-          name: item.name as string,
-          sport: (item.sport as string) || "general",
-          createdAt: Number(item.createdAt || Date.now()),
-          isActive: item.isActive === "true" || item.isActive === true,
-          fanCount: Number(item.fanCount || 0),
-          icon: item.icon as string | undefined,
-          description: item.description as string | undefined,
-          scheduledStartTime: item.scheduledStartTime as number | undefined,
-          score: item.score as string | undefined,
-          scoreSubtitle: item.scoreSubtitle as string | undefined,
-          watchAlongRoomId: item.watchAlongRoomId as string | undefined,
-          matchId: item.matchId as string | undefined,
-          botConfig: item.botConfig as any,
-          isTestingRoom: Boolean(item.isTestingRoom),
-        }));
-      }
+      do {
+        const qRes: any = await docClient.send(
+          new QueryCommand({
+            TableName: "RealTimeChat",
+            IndexName: "isActive-order-index",
+            KeyConditionExpression: "isActive = :act",
+            FilterExpression: "begins_with(sk, :p)",
+            ExpressionAttributeValues: { ":act": "true", ":p": "META#" },
+            ScanIndexForward: false,
+            Limit: 100,
+            ExclusiveStartKey: lastEvaluatedKey,
+          })
+        );
+
+        if (qRes.Items?.length) {
+          rooms.push(
+            ...qRes.Items.map((item: any) => ({
+              roomId: (item.roomId as string)?.replace(/^ROOM#/, "") || item.id,
+              name: item.name as string,
+              sport: (item.sport as string) || "general",
+              createdAt: Number(item.createdAt || Date.now()),
+              isActive: item.isActive === "true" || item.isActive === true,
+              fanCount: Number(item.fanCount || 0),
+              icon: item.icon as string | undefined,
+              description: item.description as string | undefined,
+              scheduledStartTime: item.scheduledStartTime as number | undefined,
+              score: item.score as string | undefined,
+              scoreSubtitle: item.scoreSubtitle as string | undefined,
+              watchAlongRoomId: item.watchAlongRoomId as string | undefined,
+              matchId: item.matchId as string | undefined,
+              botConfig: item.botConfig as any,
+              isTestingRoom: Boolean(item.isTestingRoom),
+            }))
+          );
+        }
+
+        lastEvaluatedKey = qRes.LastEvaluatedKey;
+        pages++;
+      } while (lastEvaluatedKey && rooms.length < limit && pages < MAX_PAGES);
     } catch (dynErr) {
       console.warn("DynamoDB roar rooms query notice:", dynErr);
     }
 
+    rooms = rooms.slice(0, limit);
     const lastRoom = rooms[rooms.length - 1];
 
-    return NextResponse.json({
-      success: true,
-      rooms,
-      pagination: {
-        limit,
-        hasMore: rooms.length === limit,
-        nextCursor:
-          rooms.length === limit
-            ? { lastCreatedAt: lastRoom?.createdAt ?? null }
-            : null,
+    return NextResponse.json(
+      {
+        success: true,
+        rooms,
+        pagination: {
+          limit,
+          hasMore: !!lastEvaluatedKey,
+          nextCursor: lastEvaluatedKey ? { lastCreatedAt: lastRoom?.createdAt ?? null } : null,
+        },
       },
-    }, { headers: { "Cache-Control": "no-store" } });
+      // short edge/browser cache instead of no-store — see #2 below
+      { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=30" } }
+    );
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("GET /api/roar/rooms error:", error);

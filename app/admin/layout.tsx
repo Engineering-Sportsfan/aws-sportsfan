@@ -622,6 +622,12 @@ const FULL_NAV: NavGroup[] = [
           { href: "/admin/store-management/membership/list", label: "Memberships" },
         ],
       },
+       {
+        label: "Cricket CDN Management", icon: "◉",
+        children: [
+          { href: "/admin/cricketmedia-management/cricket-media", label: "Cricket Media" },
+        ],
+      },
       {
         label: "Orders Management", icon: "◉",
         children: [
