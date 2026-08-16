@@ -412,7 +412,8 @@ export async function GET(req: NextRequest) {
         pages++;
       } while (lastEvaluatedKey && rooms.length < limit && pages < MAX_PAGES);
     } catch (dynErr) {
-      console.warn("DynamoDB roar rooms query notice:", dynErr);
+      console.error("DynamoDB roar rooms query notice:", dynErr);
+       return NextResponse.json({ success: false, error: String(dynErr) }, { status: 500 });
     }
 
     rooms = rooms.slice(0, limit);
