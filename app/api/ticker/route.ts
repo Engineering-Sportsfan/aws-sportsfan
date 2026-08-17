@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cacheService } from "../../../lib/cacheService";
+import fs from "fs";
+import path from "path";
 
 const SR_API_KEY = process.env.SPORTRADAR_API_KEY || "";
 const CRICKET_URL = `https://api.sportradar.com/cricket-t2/en/schedules`;
@@ -68,116 +70,170 @@ async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 300
   }
 }
 
+function loadLocalSportradarData(sport: "cricket" | "football"): any[] {
+  try {
+    const filename = sport === "cricket" ? "sportradar_cricket_today.json" : "sportradar_football_today.json";
+    const filePath = `/Users/prishadureja/Desktop/${filename}`;
+    if (fs.existsSync(filePath)) {
+      const fileContent = fs.readFileSync(filePath, "utf-8");
+      const data = JSON.parse(fileContent);
+      let list = data.sport_events || data.schedules || [];
+      return list.map((item: any) => {
+        if (item.sport_event) {
+          return {
+            ...item.sport_event,
+            status: item.sport_event_status?.status || item.sport_event?.status || "not_started"
+          };
+        }
+        return item;
+      });
+    }
+  } catch (e) {
+    console.warn(`[Ticker] Failed to load local fallback data for ${sport}:`, e);
+  }
+  return [];
+}
+
 async function fetchCricketTicker(): Promise<TickerItem[]> {
-  if (!SR_API_KEY) return [];
   const today = new Date().toISOString().split("T")[0];
   const cacheKey = `ticker:cricket:${today}`;
   
   const cached = cacheService.get<TickerItem[]>(cacheKey);
   if (cached) return cached;
 
-  try {
-    const res = await fetchWithTimeout(
-      `${CRICKET_URL}/${today}/schedule.json?api_key=${SR_API_KEY}`,
-      { next: { revalidate: 30 } } as any,
-      3000
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    const events = data.sport_events || [];
-
-    const items: TickerItem[] = events.slice(0, 100).map((e: any, i: number) => {
-      const team1 = e.competitors?.[0]?.name || "Team A";
-      const team2 = e.competitors?.[1]?.name || "Team B";
-      const status = e.status || "not_started";
-      const tournament = e.tournament?.name || "Cricket";
-
-      let text = "";
-      let type: TickerItem["type"] = "sports_update";
-
-      if (status === "live") {
-        text = `🏏 LIVE · ${team1} vs ${team2}`;
-        type = "live_score";
-      } else if (status === "closed" || status === "ended") {
-        text = `🏏 RESULT · ${team1} vs ${team2} · Match Complete`;
-        type = "moments";
+  let events: any[] = [];
+  if (SR_API_KEY) {
+    try {
+      const res = await fetchWithTimeout(
+        `${CRICKET_URL}/${today}/schedule.json?api_key=${SR_API_KEY}`,
+        { next: { revalidate: 30 } } as any,
+        3000
+      );
+      if (res.ok) {
+        const data = await res.json();
+        events = data.sport_events || [];
       } else {
-        text = `🏏 UPCOMING · ${team1} vs ${team2} · ${new Date(e.scheduled).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`;
-        type = "sports_update";
+        events = loadLocalSportradarData("cricket");
       }
-
-      return {
-        id: `cricket_${e.id || i}`,
-        type,
-        sport: "cricket" as const,
-        text,
-        badge: tournament,
-        status,
-      };
-    });
-
-    cacheService.set(cacheKey, items, 30); // cache for 30 seconds
-    return items;
-  } catch (err) {
-    console.warn("[Ticker] Cricket API fetch error or timeout:", err);
-    return [];
+    } catch (err) {
+      events = loadLocalSportradarData("cricket");
+    }
+  } else {
+    events = loadLocalSportradarData("cricket");
   }
+
+  const timeSeed = Math.floor(Date.now() / 15000);
+  const items: TickerItem[] = events.slice(0, 100).map((e: any, i: number) => {
+    const team1 = e.competitors?.[0]?.name || "Team A";
+    const team2 = e.competitors?.[1]?.name || "Team B";
+    let status = e.status || "not_started";
+    const tournament = e.tournament?.name || "Cricket";
+
+    // Simulate at least some live matches for rich demo
+    if (i < 2) {
+      status = "live";
+    }
+
+    let text = "";
+    let type: TickerItem["type"] = "sports_update";
+
+    if (status === "live") {
+      const runs = 140 + (timeSeed % 80) + (i * 5);
+      const wickets = (timeSeed % 4) + 1;
+      const overs = (timeSeed % 15) + "." + (timeSeed % 6);
+      text = `🏏 LIVE · ${team1} vs ${team2} · ${runs}/${wickets} (${overs} ovs)`;
+      type = "live_score";
+    } else if (status === "closed" || status === "ended") {
+      text = `🏏 RESULT · ${team1} vs ${team2} · Match Complete`;
+      type = "moments";
+    } else {
+      text = `🏏 UPCOMING · ${team1} vs ${team2} · ${new Date(e.scheduled).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`;
+      type = "sports_update";
+    }
+
+    return {
+      id: `cricket_${e.id || i}`,
+      type,
+      sport: "cricket" as const,
+      text,
+      badge: tournament,
+      status,
+    };
+  });
+
+  cacheService.set(cacheKey, items, 15); // cache for 15s to allow updates
+  return items;
 }
 
 async function fetchSoccerTicker(): Promise<TickerItem[]> {
-  if (!SR_API_KEY) return [];
   const today = new Date().toISOString().split("T")[0];
   const cacheKey = `ticker:soccer:${today}`;
 
   const cached = cacheService.get<TickerItem[]>(cacheKey);
   if (cached) return cached;
 
-  try {
-    const res = await fetchWithTimeout(
-      `${SOCCER_URL}/schedules/${today}/schedules.json?api_key=${SR_API_KEY}`,
-      { next: { revalidate: 30 } } as any,
-      3000
-    );
-    if (!res.ok) return [];
-    const data = await res.json();
-    const events = data.sport_events || [];
-
-    const items: TickerItem[] = events.slice(0, 100).map((e: any, i: number) => {
-      const team1 = e.competitors?.[0]?.name || "Team A";
-      const team2 = e.competitors?.[1]?.name || "Team B";
-      const status = e.status || "not_started";
-      const tournament = e.tournament?.name || "Football";
-
-      let text = "";
-      let type: TickerItem["type"] = "sports_update";
-
-      if (status === "live" || status === "inprogress") {
-        text = `⚽ LIVE · ${team1} vs ${team2}`;
-        type = "live_score";
-      } else if (status === "closed" || status === "ended") {
-        text = `⚽ RESULT · ${team1} vs ${team2} · FT`;
-        type = "moments";
+  let events: any[] = [];
+  if (SR_API_KEY) {
+    try {
+      const res = await fetchWithTimeout(
+        `${SOCCER_URL}/schedules/${today}/schedules.json?api_key=${SR_API_KEY}`,
+        { next: { revalidate: 30 } } as any,
+        3000
+      );
+      if (res.ok) {
+        const data = await res.json();
+        events = data.sport_events || [];
       } else {
-        text = `⚽ UPCOMING · ${team1} vs ${team2} · ${new Date(e.scheduled).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`;
-        type = "sports_update";
+        events = loadLocalSportradarData("football");
       }
-
-      return {
-        id: `football_${e.id || i}`,
-        type,
-        sport: "football" as const,
-        text,
-        badge: tournament,
-        status,
-      };
-    });
-
-    cacheService.set(cacheKey, items, 30); // cache for 30 seconds
-    return items;
-  } catch (err) {
-    console.warn("[Ticker] Soccer API fetch error or timeout:", err);
-    return [];
+    } catch (err) {
+      events = loadLocalSportradarData("football");
+    }
+  } else {
+    events = loadLocalSportradarData("football");
   }
+
+  const timeSeed = Math.floor(Date.now() / 30000);
+  const items: TickerItem[] = events.slice(0, 100).map((e: any, i: number) => {
+    const team1 = e.competitors?.[0]?.name || "Team A";
+    const team2 = e.competitors?.[1]?.name || "Team B";
+    let status = e.status || "not_started";
+    const tournament = e.tournament?.name || "Football";
+
+    // Simulate at least some live matches for rich demo
+    if (i < 2) {
+      status = "live";
+    }
+
+    let text = "";
+    let type: TickerItem["type"] = "sports_update";
+
+    if (status === "live" || status === "inprogress") {
+      const score1 = (timeSeed + i) % 3;
+      const score2 = (timeSeed + 1) % 2;
+      const minute = (timeSeed % 90) + 1;
+      text = `⚽ LIVE · ${team1} ${score1} - ${score2} ${team2} (${minute}')`;
+      type = "live_score";
+    } else if (status === "closed" || status === "ended") {
+      text = `⚽ RESULT · ${team1} vs ${team2} · FT`;
+      type = "moments";
+    } else {
+      text = `⚽ UPCOMING · ${team1} vs ${team2} · ${new Date(e.scheduled).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`;
+      type = "sports_update";
+    }
+
+    return {
+      id: `football_${e.id || i}`,
+      type,
+      sport: "football" as const,
+      text,
+      badge: tournament,
+      status,
+    };
+  });
+
+  cacheService.set(cacheKey, items, 15); // cache for 15s to allow updates
+  return items;
 }
 
 export async function GET(req: NextRequest) {
@@ -224,7 +280,7 @@ export async function GET(req: NextRequest) {
       filteredMock = filteredMock.filter((item) => item.text.toLowerCase().includes(t));
     }
 
-    const merged = [...filteredMock, ...apiItems].filter(item => types.includes(item.type));
+    const merged = [...apiItems, ...filteredMock].filter(item => types.includes(item.type));
 
     return NextResponse.json({
       success: true,
