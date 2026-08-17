@@ -1,10 +1,8 @@
-// api/admin/store/addAuction/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
-import { GetCommand, PutCommand, DeleteCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
-import { Timestamp } from "firebase-admin/firestore";
+import { GetCommand, PutCommand, DeleteCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { v4 as uuidv4 } from "uuid";
 
 export const dynamic = "force-dynamic";
@@ -190,6 +188,8 @@ export async function POST(req: NextRequest) {
     const endsAtEpoch = now + durationMs;
     const paymentDeadlineEpoch = endsAtEpoch + 24 * 60 * 60 * 1000;
 
+    const isApproved = (governance_state || "pending review") === "approved";
+
     const newAuction = {
       category: "Auctions",
       title,
@@ -209,6 +209,8 @@ export async function POST(req: NextRequest) {
       highestBidderId: null,
       winnerId: null,
       winnerPaymentStatus: null,
+      startingSoonNotificationSent: isApproved,
+      endingSoonNotificationSent: false,
     };
 
     // 1. Put in DynamoDB first
@@ -237,6 +239,12 @@ export async function POST(req: NextRequest) {
       });
     } catch (fsErr) {
       console.warn("[AddAuction POST] Firestore sync failed:", fsErr);
+    }
+
+    // Trigger starting soon notification immediately if approved on creation
+    if (isApproved) {
+      await triggerAuctionNotification(req.nextUrl.origin, title, "store.auction_starting_soon");
+      scheduleEndingSoonReminder(id, endsAtEpoch, title);
     }
 
     return NextResponse.json({ success: true, id }, { status: 201 });
@@ -323,6 +331,8 @@ export async function PUT(req: NextRequest) {
       updatedAuction.paymentDeadline = paymentDeadlineEpoch;
     }
 
+    let shouldSendStartingNotification = false;
+
     // 1. Update in DynamoDB first
     try {
       const getRes = await docClient.send(new GetCommand({
@@ -330,6 +340,30 @@ export async function PUT(req: NextRequest) {
         Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` }
       }));
       const existingItem = getRes.Item;
+
+      let startingSoonNotificationSent = false;
+      let endingSoonNotificationSent = false;
+      let finalEndsAtEpoch = endsAtEpoch;
+
+      if (existingItem) {
+        startingSoonNotificationSent = existingItem.startingSoonNotificationSent ?? false;
+        endingSoonNotificationSent = existingItem.endingSoonNotificationSent ?? false;
+        if (!finalEndsAtEpoch) {
+          finalEndsAtEpoch = existingItem.endsAt;
+        }
+
+        const wasApproved = existingItem.governance_state === "approved";
+        const isApprovedNow = updatedAuction.governance_state === "approved";
+
+        if (!wasApproved && isApprovedNow && !startingSoonNotificationSent) {
+          shouldSendStartingNotification = true;
+          startingSoonNotificationSent = true;
+        }
+      }
+
+      updatedAuction.startingSoonNotificationSent = startingSoonNotificationSent;
+      updatedAuction.endingSoonNotificationSent = endingSoonNotificationSent;
+
       await docClient.send(new PutCommand({
         TableName: "StoreAndCommerce",
         Item: {
@@ -339,6 +373,12 @@ export async function PUT(req: NextRequest) {
           sk: `PRODUCT#${id}`
         }
       }));
+
+      // Schedule or reschedule ending soon timer if approved and endsAt is available
+      const isApprovedNow = updatedAuction.governance_state === "approved";
+      if (isApprovedNow && finalEndsAtEpoch) {
+        scheduleEndingSoonReminder(id, finalEndsAtEpoch, title);
+      }
     } catch (dynErr) {
       console.warn("[AddAuction PUT] DynamoDB update failed:", dynErr);
     }
@@ -353,6 +393,11 @@ export async function PUT(req: NextRequest) {
       await db.collection("storeProducts").doc(id).set(fsUpdate, { merge: true });
     } catch (fsErr) {
       console.warn("[AddAuction PUT] Firestore fallback failed:", fsErr);
+    }
+
+    // Trigger starting soon notification if transitioned to approved
+    if (shouldSendStartingNotification) {
+      await triggerAuctionNotification(req.nextUrl.origin, title, "store.auction_starting_soon");
     }
 
     return NextResponse.json({ success: true, id }, { status: 200 });
@@ -386,11 +431,178 @@ export async function DELETE(req: NextRequest) {
     } catch (fsErr) {
       console.warn("[AddAuction DELETE] Firestore fallback delete failed:", fsErr);
     }
+
+    // Clear timer on delete
+    const globalTimers = (globalThis as any).auctionTimers || {};
+    if (globalTimers[id]) {
+      clearTimeout(globalTimers[id]);
+      delete globalTimers[id];
+    }
     
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error: unknown) {
     console.error("Error deleting auction:", error);
     const msg = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
+function scheduleEndingSoonReminder(auctionId: string, endsAtEpoch: number, title: string) {
+  const now = Date.now();
+  const triggerTime = endsAtEpoch - 5 * 60 * 1000;
+  const delayMs = triggerTime - now;
+
+  // Clear existing timer if any
+  const globalTimers = (globalThis as any).auctionTimers || {};
+  if (globalTimers[auctionId]) {
+    clearTimeout(globalTimers[auctionId]);
+    delete globalTimers[auctionId];
+  }
+
+  if (delayMs > 0) {
+    console.log(`[Timer] Scheduling ending-soon reminder for "${title}" in ${delayMs / 1000}s`);
+    
+    globalTimers[auctionId] = setTimeout(async () => {
+      try {
+        console.log(`[Timer] Running ending-soon reminder for "${title}"`);
+        // Fetch current item to ensure it's still approved and active and not yet sent
+        const getRes = await docClient.send(new GetCommand({
+          TableName: "StoreAndCommerce",
+          Key: { entityId: `PRODUCT#${auctionId}`, sk: `PRODUCT#${auctionId}` }
+        }));
+        const item = getRes.Item;
+        if (item && item.status === "active" && item.governance_state === "approved" && !item.endingSoonNotificationSent) {
+          await triggerAuctionNotification("", title, "store.auction_ending_soon");
+          
+          // Mark sent in DynamoDB
+          await docClient.send(new UpdateCommand({
+            TableName: "StoreAndCommerce",
+            Key: { entityId: `PRODUCT#${auctionId}`, sk: `PRODUCT#${auctionId}` },
+            UpdateExpression: "SET endingSoonNotificationSent = :true, updatedAt = :now",
+            ExpressionAttributeValues: { ":true": true, ":now": Date.now() }
+          }));
+          
+          // Sync to Firestore
+          try {
+            await db.collection("storeProducts").doc(auctionId).update({
+              endingSoonNotificationSent: true,
+              updatedAt: FieldValue.serverTimestamp()
+            });
+          } catch (fsErr) {
+            console.warn("[Timer] Firestore sync failed for ending soon:", fsErr);
+          }
+        }
+      } catch (err) {
+        console.error("[Timer] Error sending ending soon notification:", err);
+      } finally {
+        const currentTimers = (globalThis as any).auctionTimers || {};
+        delete currentTimers[auctionId];
+      }
+    }, delayMs);
+  } else {
+    // If remaining time is already <= 5 minutes and not yet ended, trigger immediately!
+    if (now < endsAtEpoch) {
+      console.log(`[Timer] Auction "${title}" is live for <= 5 minutes. Triggering ending-soon reminder immediately.`);
+      triggerAuctionNotification("", title, "store.auction_ending_soon").then(async () => {
+        // Mark sent in DB
+        await docClient.send(new UpdateCommand({
+          TableName: "StoreAndCommerce",
+          Key: { entityId: `PRODUCT#${auctionId}`, sk: `PRODUCT#${auctionId}` },
+          UpdateExpression: "SET endingSoonNotificationSent = :true, updatedAt = :now",
+          ExpressionAttributeValues: { ":true": true, ":now": Date.now() }
+        }));
+        // Sync to Firestore
+        try {
+          await db.collection("storeProducts").doc(auctionId).update({
+            endingSoonNotificationSent: true,
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        } catch (fsErr) {
+          console.warn("[Timer] Firestore sync failed for immediate ending soon:", fsErr);
+        }
+      }).catch(err => {
+        console.error("[Timer] Immediate ending soon notification failed:", err);
+      });
+    }
+  }
+  
+  (globalThis as any).auctionTimers = globalTimers;
+}
+
+async function triggerAuctionNotification(origin: string, auctionTitle: string, notificationType: "store.auction_starting_soon" | "store.auction_ending_soon") {
+  try {
+    const bodyTpl = notificationType === "store.auction_starting_soon"
+      ? `${auctionTitle} is starting in 1 hour! Get ready to place your bids. 🔨`
+      : `${auctionTitle} is ending in 5 minutes! Place your final bid now. ⏱️`;
+
+    const ctaLabel = notificationType === "store.auction_starting_soon" ? "View Auction" : "Bid Now";
+    const title = notificationType === "store.auction_starting_soon" ? "Auction Starting Soon!" : "Auction Ending Soon!";
+    
+    const sentAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    const notificationId = `ntf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const priority = notificationType === "store.auction_ending_soon" ? "HIGH" : "NORMAL";
+    const channels = notificationType === "store.auction_ending_soon" ? ["in_app", "web_push"] : ["in_app", "email"];
+    const ttlHours = notificationType === "store.auction_ending_soon" ? 5 / 60 : 1;
+
+    // 1. Put in DynamoDB first (Crucial instruction!)
+    const item: Record<string, unknown> = {
+      PK: `USER#all_users`,
+      SK: `NOTIF#${sentAt}#${notificationId}`,
+      entity_type: "NOTIFICATION",
+      notification_id: notificationId,
+      user_id: "all_users",
+      notification_type: notificationType,
+      category: "auctions",
+      title,
+      body: bodyTpl,
+      cta_label: ctaLabel,
+      cta_target: "/MainModules/AtheleteStore/StoreAuctions",
+      reward_coins_earned: null,
+      priority,
+      channels_sent: channels,
+      sent_at: sentAt,
+      read: false,
+      isRead: false,
+      dismissed: false,
+      response_given: false,
+      cta_clicked: false,
+      GSI1PK: `TYPE#${notificationType}`,
+      GSI1SK: `SENTAT#${sentAt}#${notificationId}`,
+      GSI2PK: `USER#all_users#UNREAD`,
+      GSI2SK: `SENTAT#${sentAt}#${notificationId}`,
+    };
+
+    if (ttlHours !== null) {
+      item.expires_at = Math.floor(Date.now() / 1000) + ttlHours * 3600;
+    }
+
+    try {
+      await docClient.send(new PutCommand({ TableName: "sf360-notifications", Item: item }));
+    } catch (dbErr) {
+      console.error(`[triggerAuctionNotification] DynamoDB write failed for all_users:`, dbErr);
+    }
+
+    // 2. Sync to Firestore (Dual-write)
+    try {
+      await db.collection("notifications").doc(`${notificationId}_all_users`).set({
+        id: `${notificationId}_all_users`,
+        recipientEmail: "all_users",
+        recipientUid: "all_users",
+        type: notificationType,
+        message: bodyTpl,
+        title,
+        isRead: false,
+        createdAt: Date.now(),
+        category: "store",
+        ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+        ctaLabel,
+      });
+    } catch (fbErr) {
+      console.warn(`[triggerAuctionNotification] Firestore sync failed for all_users:`, fbErr);
+    }
+
+    console.log(`[triggerAuctionNotification] Successfully sent ${notificationType} to all_users (DynamoDB updated first).`);
+  } catch (err) {
+    console.error(`[triggerAuctionNotification] Error executing direct notification trigger:`, err);
   }
 }

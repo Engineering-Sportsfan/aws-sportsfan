@@ -1,10 +1,10 @@
-// app/api/cron/auctions-close/route.ts — Migrated to AWS DynamoDB (GamificationAndWallet Table)
+// app/api/cron/auctions-close/route.ts — Migrated to AWS DynamoDB (StoreAndCommerce Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
 import { StoreService } from "@/app/api/v2/store/store.service";
-import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -26,8 +26,8 @@ export async function GET(req: NextRequest) {
     try {
       const scanRes = await docClient.send(
         new ScanCommand({
-          TableName: "GamificationAndWallet",
-          FilterExpression: "begins_with(userId, :pPrefix) AND (category = :c1 OR category = :c2) AND #st = :status",
+          TableName: "StoreAndCommerce",
+          FilterExpression: "begins_with(entityId, :pPrefix) AND (category = :c1 OR category = :c2) AND #st = :status",
           ExpressionAttributeNames: {
             "#st": "status",
           },
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
           const endsAt = item.endsAt ? new Date(item.endsAt) : null;
           return endsAt && endsAt <= now;
         }).map((item) => ({
-          id: item.id || (item.userId as string).replace(/^PRODUCT#/, ""),
+          id: item.id || (item.entityId as string).replace(/^PRODUCT#/, ""),
           ...item,
         }));
       }
@@ -109,15 +109,81 @@ export async function GET(req: NextRequest) {
         };
 
         const dynamoItem = {
-          userId: `PRODUCT#${productId}`,
-          sk: "PRODUCT#META",
+          entityId: `PRODUCT#${productId}`,
+          sk: `PRODUCT#${productId}`,
           ...updateData,
         };
 
-        await dualWrite("storeProducts", productId, "GamificationAndWallet", dynamoItem);
+        await dualWrite("storeProducts", productId, "StoreAndCommerce", dynamoItem);
 
-        if (winnerId) {
-          console.log(`🏆 Auction [${productId}] won by User [${winnerId}] at ₹${currentBidPaise / 100}.`);
+        // Trigger Won & Lost Notifications
+        try {
+          const origin = req.nextUrl.origin;
+          
+          if (winnerId) {
+            console.log(`🏆 Auction [${productId}] won by User [${winnerId}] at ₹${currentBidPaise / 100}.`);
+            fetch(`${origin}/api/notifications/store`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userId: winnerId,
+                notificationType: "store.auction_won",
+                ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+                variables: {
+                  product_name: product.title || "Auction Item"
+                }
+              })
+            }).catch(err => console.warn("[auctions-close] Failed to trigger won notification:", err));
+          }
+
+          // Fetch all bids to notify users who lost (try DynamoDB first, fallback to Firestore)
+          let bidderIds = new Set<string>();
+          try {
+            const bidsRes = await docClient.send(new QueryCommand({
+              TableName: "StoreAndCommerce",
+              KeyConditionExpression: "entityId = :eid AND begins_with(sk, :bidPrefix)",
+              ExpressionAttributeValues: {
+                ":eid": `PRODUCT#${productId}`,
+                ":bidPrefix": "BID#"
+              }
+            }));
+            if (bidsRes.Items && bidsRes.Items.length > 0) {
+              bidsRes.Items.forEach(item => {
+                if (item.userId && item.userId !== winnerId && item.userId !== "legacy" && item.userId !== "legacy_unclaimed") {
+                  bidderIds.add(item.userId);
+                }
+              });
+            }
+          } catch (dynBidsErr) {
+            console.warn("[auctions-close] DynamoDB bids fetch failed:", dynBidsErr);
+          }
+
+          if (bidderIds.size === 0) {
+            const bidsSnap = await db.collection("storeProducts").doc(productId).collection("bids").get();
+            bidsSnap.docs.forEach(doc => {
+              const bid = doc.data();
+              if (bid.userId && bid.userId !== winnerId && bid.userId !== "legacy" && bid.userId !== "legacy_unclaimed") {
+                bidderIds.add(bid.userId);
+              }
+            });
+          }
+
+          for (const loserId of bidderIds) {
+            fetch(`${origin}/api/notifications/store`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userId: loserId,
+                notificationType: "store.auction_lost",
+                ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+                variables: {
+                  product_name: product.title || "Auction Item"
+                }
+              })
+            }).catch(err => console.warn("[auctions-close] Failed to trigger lost notification for:", loserId, err));
+          }
+        } catch (notifErr) {
+          console.warn("[auctions-close] Notification dispatch failed:", notifErr);
         }
 
         results.push({
