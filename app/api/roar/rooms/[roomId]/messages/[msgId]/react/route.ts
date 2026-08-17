@@ -379,6 +379,169 @@
 
 
 
+// // api/roar/rooms/[roomId]/messages/[msgId]/react/route.ts
+
+// import { NextRequest, NextResponse } from "next/server";
+// import { getUser } from "@/lib/getUser";
+// import { docClient } from "@/lib/dynamodb";
+// import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+// import { notifyRoomMessageReaction } from "@/lib/roarNotifyHelpers";
+// import { getUserInfo } from "@/lib/userPoints";
+
+// export const dynamic = "force-dynamic";
+
+// export async function POST(
+//   req: NextRequest,
+//   { params }: { params: Promise<{ roomId: string; msgId: string }> }
+// ) {
+//   try {
+//     const { roomId, msgId } = await params;
+//     const user = await getUser(req);
+//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+//     const body = await req.json();
+//     const { reaction }: { reaction: "fire" | "noChance" | "heart" } = body;
+//     if (reaction !== "fire" && reaction !== "noChance" && reaction !== "heart") {
+//       return NextResponse.json({ error: "reaction must be 'fire', 'noChance', or 'heart'" }, { status: 400 });
+//     }
+
+//     const info = await getUserInfo(user.userId, undefined, user.email);
+//     const resolvedUserId = info.exists ? info.actualUserId : user.userId;
+//     if (!resolvedUserId) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+
+//     const field = reaction === "noChance" ? "noChanceCount" : reaction === "heart" ? "heartCount" : "fireCount";
+
+//     // ✅ FIXED: Use roomId in the prefix to match the actual SK format
+//     const qRes = await docClient.send(new QueryCommand({
+//       TableName: "RealTimeChat",
+//       KeyConditionExpression: "roomId = :r AND begins_with(sk, :s)",
+//       ExpressionAttributeValues: { 
+//         ":r": `ROOM#${roomId}`, 
+//         ":s": `MSG#${roomId}#${msgId}`  // ✅ Includes roomId
+//       },
+//       Limit: 1
+//     }));
+    
+//     if (!qRes.Items || qRes.Items.length === 0) {
+//       return NextResponse.json({ error: "Message not found" }, { status: 404 });
+//     }
+    
+//     const msgItem = qRes.Items[0];
+//     const currentCount = msgItem[field] ?? 0;
+
+//     // Check if user already reacted
+//     const reactionRes = await docClient.send(new GetCommand({
+//       TableName: "RealTimeChat",
+//       Key: { 
+//         roomId: `ROOM#${roomId}`, 
+//         sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}` 
+//       }
+//     }));
+//     const alreadyReacted = !!reactionRes.Item;
+
+//     // HEART REACTION (toggle on/off)
+//     if (reaction === "heart") {
+//       let liked: boolean;
+//       let finalCount: number;
+
+//       if (alreadyReacted) {
+//         // Remove heart (unlike)
+//         liked = false;
+//         finalCount = Math.max(0, currentCount - 1);
+        
+//         await docClient.send(new DeleteCommand({
+//           TableName: "RealTimeChat",
+//           Key: { 
+//             roomId: `ROOM#${roomId}`, 
+//             sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}` 
+//           }
+//         }));
+        
+//         // ✅ Use the full SK from the query result
+//         await docClient.send(new UpdateCommand({
+//           TableName: "RealTimeChat",
+//           Key: { 
+//             roomId: `ROOM#${roomId}`, 
+//             sk: msgItem.sk  // ✅ Use full SK
+//           },
+//           UpdateExpression: "SET heartCount = :hc",
+//           ExpressionAttributeValues: { ":hc": finalCount }
+//         }));
+//       } else {
+//         // Add heart (like)
+//         liked = true;
+//         finalCount = currentCount + 1;
+        
+//         await docClient.send(new PutCommand({
+//           TableName: "RealTimeChat",
+//           Item: { 
+//             roomId: `ROOM#${roomId}`, 
+//             sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}`, 
+//             reaction, 
+//             reactedAt: Date.now() 
+//           }
+//         }));
+        
+//         await docClient.send(new UpdateCommand({
+//           TableName: "RealTimeChat",
+//           Key: { 
+//             roomId: `ROOM#${roomId}`, 
+//             sk: msgItem.sk  // ✅ Use full SK
+//           },
+//           UpdateExpression: "SET heartCount = :hc",
+//           ExpressionAttributeValues: { ":hc": finalCount }
+//         }));
+        
+//         // Only notify on add, never on unlike
+//         notifyRoomMessageReaction(roomId, msgId, resolvedUserId, reaction).catch(() => { });
+//       }
+
+//       return NextResponse.json({ success: true, liked, heartCount: finalCount });
+//     }
+
+//     // FIRE / NOCHANCE reactions (one-way, cannot undo)
+//     if (alreadyReacted) {
+//       return NextResponse.json({ 
+//         error: "Already reacted", 
+//         message: `You already reacted with ${reaction}` 
+//       }, { status: 400 });
+//     }
+
+//     const finalCount = currentCount + 1;
+    
+//     await docClient.send(new PutCommand({
+//       TableName: "RealTimeChat",
+//       Item: { 
+//         roomId: `ROOM#${roomId}`, 
+//         sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}`, 
+//         reaction, 
+//         reactedAt: Date.now() 
+//       }
+//     }));
+    
+//     await docClient.send(new UpdateCommand({
+//       TableName: "RealTimeChat",
+//       Key: { 
+//         roomId: `ROOM#${roomId}`, 
+//         sk: msgItem.sk  // ✅ Use full SK
+//       },
+//       UpdateExpression: `SET ${field} = :fc`,
+//       ExpressionAttributeValues: { ":fc": finalCount }
+//     }));
+
+//     notifyRoomMessageReaction(roomId, msgId, resolvedUserId, reaction).catch(() => { });
+
+//     return NextResponse.json({ success: true, [field]: finalCount });
+//   } catch (error: unknown) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     if (msg === "Message not found") return NextResponse.json({ error: msg }, { status: 404 });
+//     if (msg === "Already reacted") return NextResponse.json({ error: msg }, { status: 400 });
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
+
 // api/roar/rooms/[roomId]/messages/[msgId]/react/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
@@ -390,6 +553,17 @@ import { getUserInfo } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
+type Reaction = "heart" | "fire" | "laugh" | "sad" | "thumb";
+const VALID_REACTIONS: Reaction[] = ["heart", "fire", "laugh", "sad", "thumb"];
+
+const COUNT_FIELD: Record<Reaction, string> = {
+  heart: "heartCount",
+  fire: "fireCount",
+  laugh: "laughCount",
+  sad: "sadCount",
+  thumb: "thumbCount",
+};
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ roomId: string; msgId: string }> }
@@ -400,142 +574,124 @@ export async function POST(
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const { reaction }: { reaction: "fire" | "noChance" | "heart" } = body;
-    if (reaction !== "fire" && reaction !== "noChance" && reaction !== "heart") {
-      return NextResponse.json({ error: "reaction must be 'fire', 'noChance', or 'heart'" }, { status: 400 });
+    // reaction: the reaction to set. Pass null to remove whatever reaction
+    // the user currently has (no-op if they have none).
+    const { reaction }: { reaction: Reaction | null } = body;
+    if (reaction !== null && !VALID_REACTIONS.includes(reaction)) {
+      return NextResponse.json(
+        { error: `reaction must be one of ${VALID_REACTIONS.join(", ")}, or null` },
+        { status: 400 }
+      );
     }
 
     const info = await getUserInfo(user.userId, undefined, user.email);
     const resolvedUserId = info.exists ? info.actualUserId : user.userId;
     if (!resolvedUserId) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
-    const field = reaction === "noChance" ? "noChanceCount" : reaction === "heart" ? "heartCount" : "fireCount";
-
-    // ✅ FIXED: Use roomId in the prefix to match the actual SK format
+    // Find the message row.
     const qRes = await docClient.send(new QueryCommand({
       TableName: "RealTimeChat",
       KeyConditionExpression: "roomId = :r AND begins_with(sk, :s)",
-      ExpressionAttributeValues: { 
-        ":r": `ROOM#${roomId}`, 
-        ":s": `MSG#${roomId}#${msgId}`  // ✅ Includes roomId
+      ExpressionAttributeValues: {
+        ":r": `ROOM#${roomId}`,
+        ":s": `MSG#${roomId}#${msgId}`
       },
       Limit: 1
     }));
-    
     if (!qRes.Items || qRes.Items.length === 0) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
-    
     const msgItem = qRes.Items[0];
-    const currentCount = msgItem[field] ?? 0;
 
-    // Check if user already reacted
-    const reactionRes = await docClient.send(new GetCommand({
+    // Find the user's current reaction (any type) on this message, since a
+    // user can only have ONE active reaction at a time (switching replaces it).
+    // We store one row per user per message: LIKE#{msgId}#{userId}, with the
+    // reaction type as an attribute — not part of the sk — so we can find and
+    // remove the previous reaction regardless of which type it was.
+    const existingRes = await docClient.send(new GetCommand({
       TableName: "RealTimeChat",
-      Key: { 
-        roomId: `ROOM#${roomId}`, 
-        sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}` 
+      Key: {
+        roomId: `ROOM#${roomId}`,
+        sk: `LIKE#${msgId}#${resolvedUserId}`
       }
     }));
-    const alreadyReacted = !!reactionRes.Item;
+    const existingReaction: Reaction | null = existingRes.Item?.reaction ?? null;
 
-    // HEART REACTION (toggle on/off)
-    if (reaction === "heart") {
-      let liked: boolean;
-      let finalCount: number;
-
-      if (alreadyReacted) {
-        // Remove heart (unlike)
-        liked = false;
-        finalCount = Math.max(0, currentCount - 1);
-        
-        await docClient.send(new DeleteCommand({
-          TableName: "RealTimeChat",
-          Key: { 
-            roomId: `ROOM#${roomId}`, 
-            sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}` 
-          }
-        }));
-        
-        // ✅ Use the full SK from the query result
-        await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
-          Key: { 
-            roomId: `ROOM#${roomId}`, 
-            sk: msgItem.sk  // ✅ Use full SK
-          },
-          UpdateExpression: "SET heartCount = :hc",
-          ExpressionAttributeValues: { ":hc": finalCount }
-        }));
-      } else {
-        // Add heart (like)
-        liked = true;
-        finalCount = currentCount + 1;
-        
-        await docClient.send(new PutCommand({
-          TableName: "RealTimeChat",
-          Item: { 
-            roomId: `ROOM#${roomId}`, 
-            sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}`, 
-            reaction, 
-            reactedAt: Date.now() 
-          }
-        }));
-        
-        await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
-          Key: { 
-            roomId: `ROOM#${roomId}`, 
-            sk: msgItem.sk  // ✅ Use full SK
-          },
-          UpdateExpression: "SET heartCount = :hc",
-          ExpressionAttributeValues: { ":hc": finalCount }
-        }));
-        
-        // Only notify on add, never on unlike
-        notifyRoomMessageReaction(roomId, msgId, resolvedUserId, reaction).catch(() => { });
-      }
-
-      return NextResponse.json({ success: true, liked, heartCount: finalCount });
+    // Nothing to do.
+    if (existingReaction === reaction) {
+      const field = reaction ? COUNT_FIELD[reaction] : null;
+      const currentCount = field ? (msgItem[field] ?? 0) : 0;
+      return NextResponse.json({
+        success: true,
+        reaction: existingReaction,
+        ...(field ? { [field]: currentCount, heartCount: msgItem.heartCount ?? 0 } : {}),
+      });
     }
 
-    // FIRE / NOCHANCE reactions (one-way, cannot undo)
-    if (alreadyReacted) {
-      return NextResponse.json({ 
-        error: "Already reacted", 
-        message: `You already reacted with ${reaction}` 
-      }, { status: 400 });
+    const updates: Record<string, number> = {};
+
+    // Decrement the old reaction's count, if any.
+    if (existingReaction) {
+      const oldField = COUNT_FIELD[existingReaction];
+      updates[oldField] = Math.max(0, (msgItem[oldField] ?? 0) - 1);
     }
 
-    const finalCount = currentCount + 1;
-    
-    await docClient.send(new PutCommand({
-      TableName: "RealTimeChat",
-      Item: { 
-        roomId: `ROOM#${roomId}`, 
-        sk: `LIKE#${msgId}#${resolvedUserId}#${reaction}`, 
-        reaction, 
-        reactedAt: Date.now() 
-      }
-    }));
-    
-    await docClient.send(new UpdateCommand({
-      TableName: "RealTimeChat",
-      Key: { 
-        roomId: `ROOM#${roomId}`, 
-        sk: msgItem.sk  // ✅ Use full SK
-      },
-      UpdateExpression: `SET ${field} = :fc`,
-      ExpressionAttributeValues: { ":fc": finalCount }
-    }));
+    // Increment the new reaction's count, if setting one.
+    if (reaction) {
+      const newField = COUNT_FIELD[reaction];
+      const base = newField in updates ? updates[newField] : (msgItem[newField] ?? 0);
+      updates[newField] = base + 1;
+    }
 
-    notifyRoomMessageReaction(roomId, msgId, resolvedUserId, reaction).catch(() => { });
+    // Write/replace/remove the user's reaction row.
+    if (reaction) {
+      await docClient.send(new PutCommand({
+        TableName: "RealTimeChat",
+        Item: {
+          roomId: `ROOM#${roomId}`,
+          sk: `LIKE#${msgId}#${resolvedUserId}`,
+          reaction,
+          reactedAt: Date.now()
+        }
+      }));
+    } else {
+      await docClient.send(new DeleteCommand({
+        TableName: "RealTimeChat",
+        Key: {
+          roomId: `ROOM#${roomId}`,
+          sk: `LIKE#${msgId}#${resolvedUserId}`
+        }
+      }));
+    }
 
-    return NextResponse.json({ success: true, [field]: finalCount });
+    // Apply count updates to the message row.
+    if (Object.keys(updates).length > 0) {
+      const setExpr = Object.keys(updates).map((f, i) => `${f} = :v${i}`).join(", ");
+      const values = Object.fromEntries(Object.values(updates).map((v, i) => [`:v${i}`, v]));
+      await docClient.send(new UpdateCommand({
+        TableName: "RealTimeChat",
+        Key: { roomId: `ROOM#${roomId}`, sk: msgItem.sk },
+        UpdateExpression: `SET ${setExpr}`,
+        ExpressionAttributeValues: values,
+      }));
+    }
+
+    // Only notify when a NEW reaction is being added (not on removal, not on switch-away).
+    if (reaction) {
+      notifyRoomMessageReaction(roomId, msgId, resolvedUserId, reaction).catch(() => { });
+    }
+
+    const responseCounts: Record<string, number> = {};
+    for (const f of Object.keys(updates)) responseCounts[f] = updates[f];
+    // Always include heartCount in the response since the frontend's optimistic
+    // UI keys off `heartCount` as the generic "total reactions" display count —
+    // if heart wasn't touched, fall back to the message's existing value.
+    if (!("heartCount" in responseCounts)) responseCounts.heartCount = msgItem.heartCount ?? 0;
+
+    return NextResponse.json({ success: true, reaction, ...responseCounts });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     if (msg === "Message not found") return NextResponse.json({ error: msg }, { status: 404 });
-    if (msg === "Already reacted") return NextResponse.json({ error: msg }, { status: 400 });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
