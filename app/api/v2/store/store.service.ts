@@ -215,6 +215,79 @@ export class StoreService {
         console.warn(`[checkAndCloseAuctionInline] Firestore sync failed for ${productId}:`, fsErr);
       }
 
+      // Trigger Won & Lost Notifications
+      try {
+        const appUrl = process.env.NEXTAUTH_URL || "http://localhost:3001";
+        
+        if (winnerId) {
+          fetch(`${appUrl}/api/notifications/store`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: winnerId,
+              notificationType: "store.auction_won",
+              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+              variables: {
+                product_name: freshProduct.title || freshProduct.name || "Auction Item"
+              }
+            })
+          }).catch(err => console.warn("[checkAndCloseAuctionInline] Failed to trigger won notification:", err));
+        }
+
+        // Fetch unique bidders to send lost notifications
+        let bidderIds = new Set<string>();
+        
+        // 1. Try DynamoDB first
+        try {
+          const { QueryCommand } = require("@aws-sdk/lib-dynamodb");
+          const bidsRes = (await docClient.send(new QueryCommand({
+            TableName: "StoreAndCommerce",
+            KeyConditionExpression: "entityId = :eid AND begins_with(sk, :bidPrefix)",
+            ExpressionAttributeValues: {
+              ":eid": `PRODUCT#${productId}`,
+              ":bidPrefix": "BID#"
+            }
+          }))) as any;
+          if (bidsRes.Items && bidsRes.Items.length > 0) {
+            bidsRes.Items.forEach((item: any) => {
+              if (item.userId && item.userId !== winnerId && item.userId !== "legacy" && item.userId !== "legacy_unclaimed") {
+                bidderIds.add(item.userId);
+              }
+            });
+          }
+        } catch (dynBidsErr) {
+          console.warn("[checkAndCloseAuctionInline] DynamoDB bids fetch failed:", dynBidsErr);
+        }
+
+        // 2. Fallback to Firestore if empty
+        if (bidderIds.size === 0) {
+          const bidsSnap = await this.db.collection("storeProducts").doc(productId).collection("bids").get();
+          bidsSnap.docs.forEach(doc => {
+            const bid = doc.data();
+            if (bid.userId && bid.userId !== winnerId && bid.userId !== "legacy" && bid.userId !== "legacy_unclaimed") {
+              bidderIds.add(bid.userId);
+            }
+          });
+        }
+
+        for (const loserId of bidderIds) {
+          fetch(`${appUrl}/api/notifications/store`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: loserId,
+              notificationType: "store.auction_lost",
+              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+              variables: {
+                product_name: freshProduct.title || freshProduct.name || "Auction Item"
+              }
+            })
+          }).catch(err => console.warn("[checkAndCloseAuctionInline] Failed to trigger lost notification for:", loserId, err));
+        }
+      } catch (notifErr) {
+        console.warn("[checkAndCloseAuctionInline] Notification dispatch failed:", notifErr);
+      }
+
       return { ...freshProduct, ...updateData };
     }
     return data;
