@@ -589,20 +589,33 @@ export async function POST(
     if (!resolvedUserId) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
     // Find the message row.
+    // const qRes = await docClient.send(new QueryCommand({
+    //   TableName: "RealTimeChat",
+    //   KeyConditionExpression: "roomId = :r AND begins_with(sk, :s)",
+    //   ExpressionAttributeValues: {
+    //     ":r": `ROOM#${roomId}`,
+    //     ":s": `MSG#${roomId}#${msgId}`
+    //   },
+    //   Limit: 1
+    // }));
+    // if (!qRes.Items || qRes.Items.length === 0) {
+    //   return NextResponse.json({ error: "Message not found" }, { status: 404 });
+    // }
+    // const msgItem = qRes.Items[0];
+
     const qRes = await docClient.send(new QueryCommand({
       TableName: "RealTimeChat",
       KeyConditionExpression: "roomId = :r AND begins_with(sk, :s)",
       ExpressionAttributeValues: {
         ":r": `ROOM#${roomId}`,
-        ":s": `MSG#${roomId}#${msgId}`
+        ":s": `MSG#${roomId}#`
       },
-      Limit: 1
     }));
-    if (!qRes.Items || qRes.Items.length === 0) {
+    const msgItem = qRes.Items?.find((item) => item.msgId === msgId);
+    if (!msgItem) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
-    const msgItem = qRes.Items[0];
-
+    
     // Find the user's current reaction (any type) on this message, since a
     // user can only have ONE active reaction at a time (switching replaces it).
     // We store one row per user per message: LIKE#{msgId}#{userId}, with the
