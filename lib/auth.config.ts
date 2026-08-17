@@ -110,6 +110,8 @@ function generateConsistentUserId(email: string): string {
     return email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
 }
 
+console.log("RUNTIME CHECK - GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID ? "PRESENT" : "MISSING")
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
   providers: [
