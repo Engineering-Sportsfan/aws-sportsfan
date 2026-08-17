@@ -28,8 +28,7 @@ export const dynamic = "force-dynamic";
 //   return { id: info.actualUserId, snap };
 // }
 
-
-async function resolveUser(email: string, userId: string): Promise<{ id: string; username: string; badge: string } | null> {
+async function resolveUser(email: string, userId: string): Promise<{ id: string; username: string; badge: string; avatarUrl?: string } | null> {
   const info = await getUserInfo(userId, undefined, email);
   if (!info.exists) return null;
   try {
@@ -41,6 +40,7 @@ async function resolveUser(email: string, userId: string): Promise<{ id: string;
       id: info.actualUserId,
       username: res.Item?.username ?? email.split("@")[0],
       badge: res.Item?.badge ?? "Fan",
+      avatarUrl: res.Item?.avatarUrl,
     };
   } catch {
     return { id: info.actualUserId, username: email.split("@")[0], badge: "Fan" };
@@ -119,15 +119,42 @@ export async function GET(
         if (qRes.Items && qRes.Items.length > 0) {
           messages = qRes.Items.map((item) => ({
             ...item,
-            msgId: (item.sk as string)?.split("#")[2] || item.id || item.chatId,
+            // msgId: (item.sk as string)?.split("#")[2] || item.id || item.chatId,
+            msgId: item.msgId || (item.sk as string)?.split("#")[3] || item.id || item.chatId,
             agreeCount: item.agreeCount ?? 0,
             disagreeCount: item.disagreeCount ?? 0,
             heartCount: item.likeCount ?? item.heartCount ?? 0,
             replyCount: item.replyCount ?? 0,
           }));
+
+          if (messages.length > 0) {
+            try {
+              const likeChecks = await Promise.all(
+                messages.map((m) =>
+                  docClient.send(new QueryCommand({
+                    TableName: "RealTimeChat",
+                    KeyConditionExpression: "roomId = :r AND sk = :s",
+                    ExpressionAttributeValues: {
+                      ":r": `ROOM#${roomId}`,
+                      ":s": `LIKE#${m.msgId}#${resolvedUserId}`,
+                    },
+                    Limit: 1,
+                  }))
+                )
+              );
+              messages = messages.map((m, i) => ({
+                ...m,
+                userReaction: likeChecks[i].Items?.[0]?.reaction ?? null,
+              }));
+            } catch (likeErr) {
+              console.warn("Failed to hydrate userReaction:", likeErr);
+            }
+          }
           break;
+          
         }
       }
+
     } catch (dynErr) {
       console.warn("DynamoDB query room messages notice:", dynErr);
     }
@@ -348,6 +375,7 @@ export async function POST(
       authorUid: resolvedUserId,
       authorUsername: resolved?.username || user.email?.split("@")[0] || "User",
       authorBadge: resolved?.badge || "Fan",
+      authorAvatarUrl: resolved?.avatarUrl,
       authorEmail: user.email,
       text: text.trim(), type,
       fireCount: 0, noChanceCount: 0, heartCount: 0,
