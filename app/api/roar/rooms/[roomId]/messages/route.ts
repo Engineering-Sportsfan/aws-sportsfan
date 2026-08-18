@@ -74,6 +74,167 @@ const COUNT_FIELD_BY_TYPE: Partial<Record<string, "postCount" | "debateCount" | 
   battle: "battleCount",
 };
 
+// export async function GET(
+//   req: NextRequest,
+//   { params }: { params: Promise<{ roomId: string }> }
+// ) {
+//   try {
+//     const { roomId } = await params;
+//     const user = await getUser(req);
+//     if (!user) {
+//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+//     }
+
+//     const { searchParams } = new URL(req.url);
+//     const limit = Math.min(parseInt(searchParams.get("limit") || "30"), 100);
+//     const lastCreatedAt = searchParams.get("lastCreatedAt");
+//     const lastDocId = searchParams.get("lastDocId");
+//     const channelId = searchParams.get("channelId");
+//     const channelSlug = searchParams.get("channelSlug");
+
+//     const resolved = await resolveUser(user.email, user.userId);
+//     if (!resolved) {
+//       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+//     }
+//     const resolvedUserId = resolved.id;
+
+//     let messages: any[] = [];
+
+//     // 1. Query DynamoDB RealTimeChat table
+//     try {
+//       const candidates = [`ROOM#${roomId}`, roomId];
+//       for (const cand of candidates) {
+//         const qRes = await docClient.send(
+//           new QueryCommand({
+//             TableName: "RealTimeChat",
+//             KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
+//             ExpressionAttributeValues: {
+//               ":r": cand,
+//               ":mPrefix": "MSG#",
+//             },
+//             ScanIndexForward: false,
+//             Limit: limit,
+//           })
+//         );
+//         if (qRes.Items && qRes.Items.length > 0) {
+//           messages = qRes.Items.map((item) => ({
+//             ...item,
+//             // msgId: (item.sk as string)?.split("#")[2] || item.id || item.chatId,
+//             msgId: item.msgId || (item.sk as string)?.split("#")[3] || item.id || item.chatId,
+//             agreeCount: item.agreeCount ?? 0,
+//             disagreeCount: item.disagreeCount ?? 0,
+//             heartCount: item.likeCount ?? item.heartCount ?? 0,
+//             replyCount: item.replyCount ?? 0,
+//           }));
+
+//           if (messages.length > 0) {
+//             try {
+//               const likeChecks = await Promise.all(
+//                 messages.map((m) =>
+//                   docClient.send(new QueryCommand({
+//                     TableName: "RealTimeChat",
+//                     KeyConditionExpression: "roomId = :r AND sk = :s",
+//                     ExpressionAttributeValues: {
+//                       ":r": `ROOM#${roomId}`,
+//                       ":s": `LIKE#${m.msgId}#${resolvedUserId}`,
+//                     },
+//                     Limit: 1,
+//                   }))
+//                 )
+//               );
+//               messages = messages.map((m, i) => ({
+//                 ...m,
+//                 userReaction: likeChecks[i].Items?.[0]?.reaction ?? null,
+//               }));
+//             } catch (likeErr) {
+//               console.warn("Failed to hydrate userReaction:", likeErr);
+//             }
+
+//             if (messages.length > 0) {
+//               try {
+//                 const voteChecks = await Promise.all(
+//                   messages.map((m) =>
+//                     docClient.send(new GetCommand({
+//                       TableName: "RealTimeChat",
+//                       Key: { roomId: `ROOM#${roomId}`, sk: `VOTE#${m.msgId}#${resolvedUserId}` },
+//                     }))
+//                   )
+//                 );
+//                 messages = messages.map((m, i) => ({
+//                   ...m,
+//                   userVote: voteChecks[i].Item?.vote ?? null,
+//                 }));
+//               } catch (voteErr) {
+//                 console.warn("Failed to hydrate userVote:", voteErr);
+//               }
+//             }
+//           }
+//           break;
+
+//         }
+//       }
+
+//     } catch (dynErr) {
+//       console.warn("DynamoDB query room messages notice:", dynErr);
+//     }
+
+//     // 2. Fallback to Firebase
+//     if (messages.length === 0) {
+//       let roomRef = db.collection("roarRooms").doc(roomId);
+//       let roomSnap = await roomRef.get();
+//       if (!roomSnap.exists) {
+//         roomRef = db.collection("watchAlongRooms").doc(roomId);
+//         roomSnap = await roomRef.get();
+//       }
+
+//       if (roomSnap.exists) {
+//         const messagesRef = roomRef.collection("messages");
+//         let query = messagesRef.orderBy("createdAt", "desc").limit(limit);
+
+//         if (channelId) {
+//           query = messagesRef.where("channelId", "==", channelId).orderBy("createdAt", "desc").limit(limit);
+//         } else if (channelSlug) {
+//           query = messagesRef.where("channelSlug", "==", channelSlug).orderBy("createdAt", "desc").limit(limit);
+//         }
+
+//         const snapshot = await query.get();
+//         messages = snapshot.docs.map((doc) => ({
+//           ...doc.data(),
+//           msgId: doc.id,
+//           agreeCount: doc.data().agreeCount ?? 0,
+//           disagreeCount: doc.data().disagreeCount ?? 0,
+//           heartCount: doc.data().likeCount ?? 0,
+//           replyCount: doc.data().replyCount ?? 0,
+//         }));
+//       }
+//     }
+
+//     return NextResponse.json({
+//       success: true,
+//       messages,
+//       pagination: {
+//         limit,
+//         hasMore: messages.length === limit,
+//         nextCursor: null,
+//       },
+//       counts: {
+//         post: messages.length,
+//         debate: 0,
+//         prediction: 0,
+//         trivia: 0,
+//         battle: 0,
+//       },
+//     }, { headers: { "Cache-Control": "no-store" } });
+//   } catch (error: unknown) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     console.error("GET /api/roar/rooms/messages error:", error);
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
+
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ roomId: string }> }
@@ -119,7 +280,6 @@ export async function GET(
         if (qRes.Items && qRes.Items.length > 0) {
           messages = qRes.Items.map((item) => ({
             ...item,
-            // msgId: (item.sk as string)?.split("#")[2] || item.id || item.chatId,
             msgId: item.msgId || (item.sk as string)?.split("#")[3] || item.id || item.chatId,
             agreeCount: item.agreeCount ?? 0,
             disagreeCount: item.disagreeCount ?? 0,
@@ -170,10 +330,8 @@ export async function GET(
             }
           }
           break;
-
         }
       }
-
     } catch (dynErr) {
       console.warn("DynamoDB query room messages notice:", dynErr);
     }
@@ -209,6 +367,22 @@ export async function GET(
       }
     }
 
+    // 3. Room-wide type counts — read from the room-meta row rather than
+    // counting whatever page of messages we happen to have fetched, since
+    // rooms can hold far more than the max `limit` (100) messages.
+    let counts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
+    try {
+      const metaRes = await docClient.send(new GetCommand({
+        TableName: "RealTimeChat",
+        Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+      }));
+      if (metaRes.Item?.typeCounts) {
+        counts = { ...counts, ...metaRes.Item.typeCounts };
+      }
+    } catch (metaErr) {
+      console.warn("Failed to fetch room type counts:", metaErr);
+    }
+
     return NextResponse.json({
       success: true,
       messages,
@@ -217,13 +391,7 @@ export async function GET(
         hasMore: messages.length === limit,
         nextCursor: null,
       },
-      counts: {
-        post: messages.length,
-        debate: 0,
-        prediction: 0,
-        trivia: 0,
-        battle: 0,
-      },
+      counts,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
@@ -231,6 +399,7 @@ export async function GET(
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
 
 
 
