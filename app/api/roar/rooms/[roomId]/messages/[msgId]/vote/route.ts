@@ -181,7 +181,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
-import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, UpdateCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 export async function POST(
   req: NextRequest,
@@ -204,15 +204,33 @@ export async function POST(
     const resolvedUserId = info.exists ? info.actualUserId : user.userId;
 
     // 1. Fetch parent message from DynamoDB first
+    // let msgItem: any = null;
+    // let fetchedMsgFromDynamo = false;
+    // try {
+    //   const getRes = await docClient.send(new GetCommand({
+    //     TableName: "RealTimeChat",
+    //     Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${msgId}` }
+    //   }));
+    //   if (getRes.Item) {
+    //     msgItem = getRes.Item;
+    //     fetchedMsgFromDynamo = true;
+    //   }
+    // } catch (dynErr) {
+    //   console.warn("[RoomVote POST] DynamoDB message fetch failed:", dynErr);
+    // }
+
+    // 1. Fetch parent message from DynamoDB first
     let msgItem: any = null;
     let fetchedMsgFromDynamo = false;
     try {
-      const getRes = await docClient.send(new GetCommand({
+      const qRes = await docClient.send(new QueryCommand({
         TableName: "RealTimeChat",
-        Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${msgId}` }
+        KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": `MSG#${roomId}#` },
       }));
-      if (getRes.Item) {
-        msgItem = getRes.Item;
+      const found = qRes.Items?.find((item) => item.msgId === msgId);
+      if (found) {
+        msgItem = found;
         fetchedMsgFromDynamo = true;
       }
     } catch (dynErr) {
@@ -383,7 +401,8 @@ export async function POST(
       if (msgItem) {
         await docClient.send(new UpdateCommand({
           TableName: "RealTimeChat",
-          Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${msgId}` },
+          // Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${msgId}` },
+          Key: { roomId: `ROOM#${roomId}`, sk: msgItem.sk },
           UpdateExpression: "SET agreeCount = :ac, disagreeCount = :dc, predictionOptionCounts = :poc, battleVoteCounts = :bvc, updatedAt = :u",
           ExpressionAttributeValues: {
             ":ac": agreeCount,
