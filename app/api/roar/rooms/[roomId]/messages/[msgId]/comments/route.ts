@@ -629,18 +629,32 @@ export async function POST(
     const { username, avatarUrl, badge } = await resolveUserInfo(resolvedAuthorId, user.name, user.email);
     const now = Date.now();
 
-    // ✅ FIXED: Use begins_with to find the message with the full SK format
+    //  FIXED: Use begins_with to find the message with the full SK format
+    // const qRes = await docClient.send(new QueryCommand({
+    //   TableName: "RealTimeChat",
+    //   KeyConditionExpression: "roomId = :r AND begins_with(sk, :skPrefix)",
+    //   ExpressionAttributeValues: { 
+    //     ":r": `ROOM#${roomId}`,
+    //     ":skPrefix": `MSG#${roomId}#${msgId}`  // This matches MSG#roomId#msgId#...
+    //   },
+    //   Limit: 1
+    // }));
+    
+    // if (!qRes.Items || qRes.Items.length === 0) {
+    //   return NextResponse.json({ error: "Message not found" }, { status: 404 });
+    // }
+
     const qRes = await docClient.send(new QueryCommand({
       TableName: "RealTimeChat",
       KeyConditionExpression: "roomId = :r AND begins_with(sk, :skPrefix)",
       ExpressionAttributeValues: { 
         ":r": `ROOM#${roomId}`,
-        ":skPrefix": `MSG#${roomId}#${msgId}`  // This matches MSG#roomId#msgId#...
+        ":skPrefix": `MSG#${roomId}#`
       },
-      Limit: 1
     }));
-    
-    if (!qRes.Items || qRes.Items.length === 0) {
+    const messageItem = qRes.Items?.find((item) => item.msgId === msgId);
+
+    if (!messageItem) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
 
@@ -665,7 +679,7 @@ export async function POST(
 
     // ✅ FIXED: Update the replyCount on the message using begins_with
     // First, get the full SK of the message
-    const messageItem = qRes.Items[0];
+    // const messageItem = qRes.Items[0];
     const fullMessageSk = messageItem.sk;
     
     await docClient.send(new UpdateCommand({
