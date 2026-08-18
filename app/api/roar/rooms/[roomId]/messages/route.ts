@@ -149,9 +149,28 @@ export async function GET(
             } catch (likeErr) {
               console.warn("Failed to hydrate userReaction:", likeErr);
             }
+
+            if (messages.length > 0) {
+              try {
+                const voteChecks = await Promise.all(
+                  messages.map((m) =>
+                    docClient.send(new GetCommand({
+                      TableName: "RealTimeChat",
+                      Key: { roomId: `ROOM#${roomId}`, sk: `VOTE#${m.msgId}#${resolvedUserId}` },
+                    }))
+                  )
+                );
+                messages = messages.map((m, i) => ({
+                  ...m,
+                  userVote: voteChecks[i].Item?.vote ?? null,
+                }));
+              } catch (voteErr) {
+                console.warn("Failed to hydrate userVote:", voteErr);
+              }
+            }
           }
           break;
-          
+
         }
       }
 
