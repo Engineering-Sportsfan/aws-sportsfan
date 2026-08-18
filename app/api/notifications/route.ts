@@ -64,6 +64,11 @@ export async function GET(req: NextRequest) {
       candidates.push(sanitizedFallback);
     }
 
+    // Always include system-wide global/system notification keys
+    candidates.push("all_users");
+    candidates.push("all");
+    candidates.push("system");
+
     let notifications: any[] = [];
     let unreadCount = 0;
 
@@ -146,7 +151,7 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, email, sk, action } = body;
+    const { userId, email, sk, action, pk } = body;
 
     // Resolve the canonical actualUserId as a fallback in case the caller
     // passed a raw uid/email instead of the actualUserId notifications are
@@ -157,8 +162,9 @@ export async function PATCH(req: NextRequest) {
 
     // Mark a single notification read — remove GSI2 keys (sparse index)
     if (action === "markRead" && sk) {
+      const resolvedPk = pk && pk.startsWith("USER#") ? pk.replace(/^USER#/, "") : pk;
       const candidates = Array.from(
-        new Set([userId, resolvedUserId, sanitizedFallback].filter(Boolean))
+        new Set([resolvedPk, userId, resolvedUserId, sanitizedFallback].filter(Boolean))
       );
 
       if (candidates.length === 0) {
@@ -252,13 +258,14 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, email, sk, all } = body;
+    const { userId, email, sk, all, pk } = body;
 
     const resolvedUserId =
       userId ?? (await resolveActualUserId(undefined, email)) ?? userId;
     const sanitizedFallback = sanitizeEmailFallback(email);
+    const resolvedPk = pk && pk.startsWith("USER#") ? pk.replace(/^USER#/, "") : pk;
     const candidates = Array.from(
-      new Set([userId, resolvedUserId, sanitizedFallback].filter(Boolean))
+      new Set([resolvedPk, userId, resolvedUserId, sanitizedFallback].filter(Boolean))
     );
 
     if (candidates.length === 0) {

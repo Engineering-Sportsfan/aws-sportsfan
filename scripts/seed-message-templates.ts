@@ -102,6 +102,41 @@ const templates: { notificationType: string; messageId: string; tone: "cheeky" |
     tone: "warm",
     bodyTemplate: "Heads up — your session with {expert_name} is coming up on {session_date}. Get ready. ⏱",
     ctaLabelTemplate: "View Session"
+  },
+  {
+    notificationType: "store.auction_starting_soon",
+    messageId: "msg_auction_starting_soon_hype_01",
+    tone: "hype",
+    bodyTemplate: "{product_name} is starting in 1 hour! Get ready to place your bids. 🔨",
+    ctaLabelTemplate: "View Auction"
+  },
+  {
+    notificationType: "store.auction_ending_soon",
+    messageId: "msg_auction_ending_soon_hype_01",
+    tone: "hype",
+    bodyTemplate: "{product_name} is ending in 5 minutes! Place your final bid now. ⏱️",
+    ctaLabelTemplate: "Bid Now"
+  },
+  {
+    notificationType: "store.auction_outbid",
+    messageId: "msg_auction_outbid_hype_01",
+    tone: "hype",
+    bodyTemplate: "You've been outbid on {product_name}! Place a higher bid now to stay in the game. 🔨",
+    ctaLabelTemplate: "Rebid Now"
+  },
+  {
+    notificationType: "store.auction_won",
+    messageId: "msg_auction_won_hype_01",
+    tone: "hype",
+    bodyTemplate: "Congratulations! You won the auction for {product_name}. Click below to complete your checkout. 🏆",
+    ctaLabelTemplate: "Checkout"
+  },
+  {
+    notificationType: "store.auction_lost",
+    messageId: "msg_auction_lost_hype_01",
+    tone: "hype",
+    bodyTemplate: "The auction for {product_name} has ended. You didn't win this time, but click below to see similar items.",
+    ctaLabelTemplate: "See Similar Items"
   }
 ];
 

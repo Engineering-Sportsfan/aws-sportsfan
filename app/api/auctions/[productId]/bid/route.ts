@@ -1,4 +1,4 @@
-// app/api/auctions/[productId]/bid/route.ts — Migrated to AWS DynamoDB (EcommerceAndOrders Table)
+// app/api/auctions/[productId]/bid/route.ts — Migrated to AWS DynamoDB (StoreAndCommerce Table)
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/firebaseAdmin';
 import { randomUUID } from 'crypto';
@@ -31,8 +31,8 @@ export async function POST(
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: 'EcommerceAndOrders',
-          Key: { orderOrItemId: `PRODUCT#${productId}`, sk: 'PRODUCT#META' },
+          TableName: 'StoreAndCommerce',
+          Key: { entityId: `PRODUCT#${productId}`, sk: `PRODUCT#${productId}` },
         })
       );
       if (getRes.Item) productData = getRes.Item;
@@ -137,12 +137,16 @@ export async function POST(
           isFirstTimeAutoBidder = autoBidderBidsSnapshot.empty;
         }
 
+        const outbidUserIds: string[] = [];
         const winningBidsQuery = productRef.collection('bids').where('status', '==', 'winning');
         const winningBidsSnapshot = await transaction.get(winningBidsQuery);
 
         winningBidsSnapshot.docs.forEach((doc) => {
           const bidData = doc.data();
           transaction.update(doc.ref, { status: 'outbid' });
+          if (bidData.userId && bidData.userId !== userId && bidData.userId !== 'legacy' && bidData.userId !== 'legacy_unclaimed') {
+            outbidUserIds.push(bidData.userId);
+          }
           if (bidData.userId && bidData.userId !== 'legacy' && bidData.userId !== 'legacy_unclaimed') {
             const outbidActivityRef = db.collection('userBidActivity').doc(bidData.userId).collection('items').doc(productId);
             transaction.set(outbidActivityRef, { isCurrentlyWinning: false }, { merge: true });
@@ -239,10 +243,10 @@ export async function POST(
         try {
           docClient.send(
             new PutCommand({
-              TableName: 'EcommerceAndOrders',
+              TableName: 'StoreAndCommerce',
               Item: {
-                orderOrItemId: `PRODUCT#${productId}#BID#${bidId}`,
-                sk: `BID#${Date.now()}`,
+                entityId: `PRODUCT#${productId}`,
+                sk: `BID#${bidId}`,
                 bidId,
                 productId,
                 userId,
@@ -255,10 +259,42 @@ export async function POST(
             })
           ).catch((e) => console.warn('[bid DynamoDB sync bid item]:', e));
 
+          if (winnerAutoBid) {
+            const autoBidId = finalWinnerBidId;
+            const autoBidderId = winnerAutoBid.id;
+            const abDisplayName = abUserData ? `${abUserData.firstName || ''} ${abUserData.lastName || ''}`.trim() || abUserData.username || 'Bidder' : 'Bidder';
+            let abMaskedName = 'Anonymous';
+            if (abDisplayName) {
+              if (abDisplayName.length > 2) {
+                abMaskedName = abDisplayName[0] + '*'.repeat(Math.min(abDisplayName.length - 2, 4)) + abDisplayName[abDisplayName.length - 1];
+              } else {
+                abMaskedName = abDisplayName + '*';
+              }
+            }
+
+            docClient.send(
+              new PutCommand({
+                TableName: 'StoreAndCommerce',
+                Item: {
+                  entityId: `PRODUCT#${productId}`,
+                  sk: `BID#${autoBidId}`,
+                  bidId: autoBidId,
+                  productId,
+                  userId: autoBidderId,
+                  displayName: abMaskedName,
+                  amountPaise: counterBidAmount,
+                  type: 'auto',
+                  status: 'winning',
+                  placedAt: Date.now(),
+                },
+              })
+            ).catch((e) => console.warn('[bid DynamoDB sync auto bid item]:', e));
+          }
+
           docClient.send(
             new UpdateCommand({
-              TableName: 'EcommerceAndOrders',
-              Key: { orderOrItemId: `PRODUCT#${productId}`, sk: 'PRODUCT#META' },
+              TableName: 'StoreAndCommerce',
+              Key: { entityId: `PRODUCT#${productId}`, sk: `PRODUCT#${productId}` },
               UpdateExpression: 'SET currentBidPaise = :cb, pricePaise = :cb, highestBidderId = :hb, updatedAt = :now',
               ExpressionAttributeValues: {
                 ':cb': finalCurrentBidPaise,
@@ -271,17 +307,52 @@ export async function POST(
           console.warn('[bid async DynamoDB]:', e);
         }
 
+        if (winnerAutoBid && userId !== 'legacy' && userId !== 'legacy_unclaimed') {
+          outbidUserIds.push(userId);
+        }
+
         return {
           success: true,
           currentBidPaise: finalCurrentBidPaise,
           highestBidderId: finalHighestBidderId,
           bidId: finalWinnerBidId,
-          outbid: !!winnerAutoBid
+          outbid: !!winnerAutoBid,
+          outbidUserIds
         };
       });
 
       if (result.error) {
         return NextResponse.json({ error: result.error }, { status: 400 });
+      }
+
+      // Trigger outbid notifications for any users who were outbid
+      if (result.success && result.outbidUserIds && result.outbidUserIds.length > 0) {
+        const origin = request.nextUrl.origin;
+        // Fetch product title for template variables
+        let productTitle = "Auction Item";
+        try {
+          const doc = await db.collection("storeProducts").doc(productId).get();
+          if (doc.exists) {
+            productTitle = doc.data()?.title || "Auction Item";
+          }
+        } catch (e) {
+          console.warn("[bid outbid notify] failed to fetch product details:", e);
+        }
+
+        for (const outbidUserId of result.outbidUserIds) {
+          fetch(`${origin}/api/notifications/store`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: outbidUserId,
+              notificationType: "store.auction_outbid",
+              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+              variables: {
+                product_name: productTitle
+              }
+            })
+          }).catch((err) => console.warn("[bid outbid notify] fetch error:", err));
+        }
       }
 
       return NextResponse.json(result);
