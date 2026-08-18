@@ -551,6 +551,67 @@ async function resolveUserInfo(userId: string, name: string, email: string): Pro
   return { username: name || email.split("@")[0], avatarUrl: null, badge: null };
 }
 
+// export async function GET(
+//   req: NextRequest,
+//   { params }: { params: Promise<{ roomId: string; msgId: string }> }
+// ) {
+//   try {
+//     const { roomId, msgId } = await params;
+//     const { searchParams } = new URL(req.url);
+//     const limit = Math.min(parseInt(searchParams.get("limit") ?? "50"), 100);
+
+//     const res = await docClient.send(new QueryCommand({
+//       TableName: "RealTimeChat",
+//       KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+//       ExpressionAttributeValues: { 
+//         ":r": `ROOM#${roomId}`, 
+//         ":p": `COMMENT#${msgId}#` 
+//       },
+//       Limit: limit
+//     }));
+
+//     let comments: any[] = (res.Items ?? []).map(item => ({
+//       id: (item.sk as string).split("#")[2],
+//       commentId: (item.sk as string).split("#")[2],
+//       ...item
+//     }));
+//     comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+//     const authorMap = new Map<string, { avatarUrl: string | null; badge: string | null }>();
+//     const uniqueAuthorUids = Array.from(new Set(comments.map((c) => c.authorUid).filter(Boolean)));
+
+//     if (uniqueAuthorUids.length > 0) {
+//       try {
+//         const keys = uniqueAuthorUids.map(uid => ({ entityId: `USER#${uid}`, sk: "USER#META" }));
+//         const batchRes = await docClient.send(new BatchGetCommand({
+//           RequestItems: { "IdentityAndAccess": { Keys: keys } }
+//         }));
+//         (batchRes.Responses?.["IdentityAndAccess"] ?? []).forEach(item => {
+//           const uid = (item.entityId as string).replace(/^USER#/, "");
+//           authorMap.set(uid, { avatarUrl: item.avatarUrl ?? null, badge: item.badge ?? null });
+//         });
+//       } catch (dynErr) {
+//         console.warn("[RoomComments GET] batch profile lookup notice:", dynErr);
+//       }
+//     }
+
+//     const commentsWithAuthor = comments.map((c) => {
+//       const author = authorMap.get(c.authorUid);
+//       return {
+//         ...c,
+//         authorAvatarUrl: author?.avatarUrl ?? c.authorAvatarUrl ?? null,
+//         authorBadge: author?.badge ?? c.authorBadge ?? null,
+//       };
+//     });
+
+//     return NextResponse.json({ success: true, comments: commentsWithAuthor });
+//   } catch (err) {
+//     const msg = err instanceof Error ? err.message : "Unexpected error";
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ roomId: string; msgId: string }> }
@@ -577,34 +638,9 @@ export async function GET(
     }));
     comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    const authorMap = new Map<string, { avatarUrl: string | null; badge: string | null }>();
-    const uniqueAuthorUids = Array.from(new Set(comments.map((c) => c.authorUid).filter(Boolean)));
-
-    if (uniqueAuthorUids.length > 0) {
-      try {
-        const keys = uniqueAuthorUids.map(uid => ({ entityId: `USER#${uid}`, sk: "USER#META" }));
-        const batchRes = await docClient.send(new BatchGetCommand({
-          RequestItems: { "IdentityAndAccess": { Keys: keys } }
-        }));
-        (batchRes.Responses?.["IdentityAndAccess"] ?? []).forEach(item => {
-          const uid = (item.entityId as string).replace(/^USER#/, "");
-          authorMap.set(uid, { avatarUrl: item.avatarUrl ?? null, badge: item.badge ?? null });
-        });
-      } catch (dynErr) {
-        console.warn("[RoomComments GET] batch profile lookup notice:", dynErr);
-      }
-    }
-
-    const commentsWithAuthor = comments.map((c) => {
-      const author = authorMap.get(c.authorUid);
-      return {
-        ...c,
-        authorAvatarUrl: author?.avatarUrl ?? c.authorAvatarUrl ?? null,
-        authorBadge: author?.badge ?? c.authorBadge ?? null,
-      };
-    });
-
-    return NextResponse.json({ success: true, comments: commentsWithAuthor });
+    // authorAvatarUrl / authorBadge are already stored on each comment row
+    // by POST — no need to re-fetch profiles on every read.
+    return NextResponse.json({ success: true, comments });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: msg }, { status: 500 });
