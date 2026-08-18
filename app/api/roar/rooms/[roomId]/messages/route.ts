@@ -11,7 +11,7 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { RoomMessage, MessageType } from "@/app/models/RoomMessage";
 import type { PostType } from "@/app/models/Post";
 import { notifyMentions, notifyFollowedRoomNewPost, notifyRoomContentAnnounced } from "@/lib/roarNotifyHelpers";
-import { GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -585,6 +585,31 @@ export async function POST(
     };
 
     await docClient.send(new PutCommand({ TableName: "RealTimeChat", Item: dynamoMessage }));
+
+    // ── Bump room-level per-type counter (drives the header category counts) ──
+    const countKey =
+      type === "debate" ? "debate" :
+      type === "prediction" || type === "predictions_live" ? "prediction" :
+      type === "trivia" ? "trivia" :
+      type === "battle" ? "battle" : "post";
+
+    try {
+      await docClient.send(new UpdateCommand({
+        TableName: "RealTimeChat",
+        Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+        UpdateExpression: "SET typeCounts = if_not_exists(typeCounts, :emptyMap)",
+        ExpressionAttributeValues: { ":emptyMap": { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 } },
+      }));
+      await docClient.send(new UpdateCommand({
+        TableName: "RealTimeChat",
+        Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+        UpdateExpression: "ADD typeCounts.#k :one",
+        ExpressionAttributeNames: { "#k": countKey },
+        ExpressionAttributeValues: { ":one": 1 },
+      }));
+    } catch (countErr) {
+      console.warn("Failed to bump room type count:", countErr);
+    }
 
     const roarPostType = ROOM_TYPE_TO_POST_TYPE[type] ?? "post";
     awardRoarPoints({
