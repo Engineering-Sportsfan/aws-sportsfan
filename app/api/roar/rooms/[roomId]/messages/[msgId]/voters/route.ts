@@ -32,28 +32,50 @@ export async function GET(
     }
 
     // 1. Fetch parent message from DynamoDB first
+    // let msgItem: any = null;
+    // let fetchedMsgFromDynamo = false;
+    // try {
+    //   const qRes = await docClient.send(new QueryCommand({
+    //     TableName: "RealTimeChat",
+    //     KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
+    //     FilterExpression: "chatId = :m",
+    //     ExpressionAttributeValues: {
+    //       ":r": `ROOM#${roomId}`,
+    //       ":p": `MSG#${roomId}#`,
+    //       ":m": msgId
+    //     },
+    //     Limit: 1
+    //   }));
+    //   if (qRes.Items && qRes.Items.length > 0) {
+    //     msgItem = qRes.Items[0];
+    //     fetchedMsgFromDynamo = true;
+    //   }
+    // } catch (dynErr) {
+    //   console.warn("[RoomVoters GET] DynamoDB message fetch failed:", dynErr);
+    // }
+
     let msgItem: any = null;
     let fetchedMsgFromDynamo = false;
     try {
       const qRes = await docClient.send(new QueryCommand({
         TableName: "RealTimeChat",
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
-        FilterExpression: "chatId = :m",
         ExpressionAttributeValues: {
           ":r": `ROOM#${roomId}`,
           ":p": `MSG#${roomId}#`,
-          ":m": msgId
         },
-        Limit: 1
       }));
-      if (qRes.Items && qRes.Items.length > 0) {
-        msgItem = qRes.Items[0];
+      const found = qRes.Items?.find(
+        (item) => item.msgId === msgId || item.chatId === msgId
+      );
+      if (found) {
+        msgItem = found;
         fetchedMsgFromDynamo = true;
       }
     } catch (dynErr) {
       console.warn("[RoomVoters GET] DynamoDB message fetch failed:", dynErr);
     }
-
+    
     let roomRef = db.collection("roarRooms").doc(roomId);
     let msgExists = fetchedMsgFromDynamo;
     let fallbackMsgData: any = null;
