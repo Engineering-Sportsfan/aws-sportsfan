@@ -187,6 +187,12 @@ export async function POST(req: NextRequest) {
       console.warn("[AddEvent POST] Firestore sync failed:", fsErr);
     }
 
+    // Trigger notification immediately if approved on creation
+    const isApproved = (governance_state || "pending review") === "approved";
+    if (isApproved) {
+      await triggerEventNotification(title);
+    }
+
     return NextResponse.json({ success: true, id }, { status: 201 });
   } catch (error: unknown) {
     console.error("Error adding event:", error);
@@ -276,6 +282,8 @@ export async function PUT(req: NextRequest) {
       updatedAt: now,
     };
 
+    let shouldSendNotification = false;
+
     // 1. Update in DynamoDB first
     try {
       const getRes = await docClient.send(new GetCommand({
@@ -283,6 +291,10 @@ export async function PUT(req: NextRequest) {
         Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` }
       }));
       const existingItem = getRes.Item;
+      const wasApprovedBefore = existingItem?.governance_state === "approved";
+      const isApprovedNow = (governance_state || "pending review") === "approved";
+      shouldSendNotification = isApprovedNow && !wasApprovedBefore;
+
       await docClient.send(new PutCommand({
         TableName: "StoreAndCommerce",
         Item: {
@@ -301,6 +313,11 @@ export async function PUT(req: NextRequest) {
       await db.collection("storeProducts").doc(id).set(updatedEvent, { merge: true });
     } catch (fsErr) {
       console.warn("[AddEvent PUT] Firestore fallback failed:", fsErr);
+    }
+
+    // Trigger notification if transitioned to approved
+    if (shouldSendNotification) {
+      await triggerEventNotification(title);
     }
 
     return NextResponse.json({ success: true, id }, { status: 200 });
@@ -340,5 +357,74 @@ export async function DELETE(req: NextRequest) {
     console.error("Error deleting event:", error);
     const msg = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
+async function triggerEventNotification(eventTitle: string) {
+  try {
+    const notificationType = "store.new_drop";
+    const body = `New Event Alert! "${eventTitle}" is now available. Reserve your spot today! 🎟️`;
+    const ctaLabel = "Book Now";
+    const title = "New Event Listing!";
+    
+    const sentAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    const notificationId = `ntf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    
+    const item: Record<string, unknown> = {
+      PK: `USER#all_users`,
+      SK: `NOTIF#${sentAt}#${notificationId}`,
+      entity_type: "NOTIFICATION",
+      notification_id: notificationId,
+      user_id: "all_users",
+      notification_type: notificationType,
+      category: "events",
+      title,
+      body,
+      cta_label: ctaLabel,
+      cta_target: "/MainModules/AtheleteStore/StoreTicketedEvents",
+      reward_coins_earned: null,
+      priority: "NORMAL",
+      channels_sent: ["in_app", "email"],
+      sent_at: sentAt,
+      read: false,
+      isRead: false,
+      dismissed: false,
+      response_given: false,
+      cta_clicked: false,
+      GSI1PK: `TYPE#${notificationType}`,
+      GSI1SK: `SENTAT#${sentAt}#${notificationId}`,
+      GSI2PK: `USER#all_users#UNREAD`,
+      GSI2SK: `SENTAT#${sentAt}#${notificationId}`,
+    };
+
+    // 1. Put in DynamoDB first
+    try {
+      await docClient.send(new PutCommand({ TableName: "sf360-notifications", Item: item }));
+    } catch (dbErr) {
+      console.error(`[triggerEventNotification] DynamoDB write failed for all_users:`, dbErr);
+    }
+
+    // 2. Sync to Firestore (Dual-write)
+    try {
+      await db.collection("notifications").doc(`${notificationId}_all_users`).set({
+        id: `${notificationId}_all_users`,
+        recipientEmail: "all_users",
+        recipientUid: "all_users",
+        type: notificationType,
+        message: body,
+        title,
+        isRead: false,
+        createdAt: Date.now(),
+        category: "store",
+        ctaTarget: "/MainModules/AtheleteStore/StoreTicketedEvents",
+        ctaLabel,
+      });
+    } catch (fbErr) {
+      console.warn(`[triggerEventNotification] Firestore sync failed for all_users:`, fbErr);
+    }
+
+    console.log(`[triggerEventNotification] Successfully sent store.new_drop event notif to all_users.`);
+  } catch (err) {
+    console.error(`[triggerEventNotification] Error executing direct notification trigger:`, err);
   }
 }
