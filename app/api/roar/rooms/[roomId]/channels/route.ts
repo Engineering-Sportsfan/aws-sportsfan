@@ -29,26 +29,46 @@ export async function GET(
         ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": "CHANNEL#" }
       }));
 
-      if (res.Items) {
-        channels = res.Items
-          .filter(item => item.isActive === true)
-          .map(item => ({
-            channelId: (item.sk as string).replace(/^CHANNEL#/, ""),
-            roomId: item.roomId.replace(/^ROOM#/, ""),
-            name: item.name,
-            slug: item.slug,
-            icon: item.icon ?? "",
-            isActive: item.isActive,
-            order: item.order ?? 0,
-            createdAt: item.createdAt ?? 0
-          }));
-        // Sort in memory by order
-        channels.sort((a, b) => a.order - b.order);
-        fetchedFromDynamo = true;
-      }
-    } catch (dynErr) {
+    //   if (res.Items) {
+    //     channels = res.Items
+    //       .filter(item => item.isActive === true)
+    //       .map(item => ({
+    //         channelId: (item.sk as string).replace(/^CHANNEL#/, ""),
+    //         roomId: item.roomId.replace(/^ROOM#/, ""),
+    //         name: item.name,
+    //         slug: item.slug,
+    //         icon: item.icon ?? "",
+    //         isActive: item.isActive,
+    //         order: item.order ?? 0,
+    //         createdAt: item.createdAt ?? 0
+    //       }));
+    //     // Sort in memory by order
+    //     channels.sort((a, b) => a.order - b.order);
+    //     fetchedFromDynamo = true;
+    //   }
+    // } catch (dynErr) {
+    //   console.warn("[Channels GET] DynamoDB fetch failed:", dynErr);
+    // }
+
+    
+    if (res.Items && res.Items.length > 0) {
+  channels = res.Items
+    .filter(item => item.isActive === true)
+    .map(item => ({
+      channelId: (item.sk as string).replace(/^CHANNEL#/, ""),
+      roomId: item.roomId.replace(/^ROOM#/, ""),
+      name: item.name,
+      slug: item.slug,
+      icon: item.icon ?? "",
+      isActive: item.isActive,
+      order: item.order ?? 0,
+      createdAt: item.createdAt ?? 0
+    }));
+  channels.sort((a, b) => a.order - b.order);
+  fetchedFromDynamo = true;
+} }catch (dynErr) {
       console.warn("[Channels GET] DynamoDB fetch failed:", dynErr);
-    }
+     }
 
     // 2. Fallback to Firestore
     if (!fetchedFromDynamo) {
