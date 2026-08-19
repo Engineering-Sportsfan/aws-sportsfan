@@ -1,0 +1,1167 @@
+{
+  "100m": {
+    "gapData": [
+      {
+        "year": "2016",
+        "gap": 0.68,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "gap": 0.67,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2023",
+        "gap": 0.65,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2025",
+        "gap": 0.6,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2026",
+        "gap": 0.51,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2026",
+        "title": "2026 - National Record Broken",
+        "description": "Gurindervir Singh runs 10.09s at Federation Cup, Ranchi — new all-time national best",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2016",
+        "title": "2016 - Previous Benchmark",
+        "description": "Amiya Mallick's 10.26s stood as the national record for years",
+        "color": "#C0C0C0"
+      },
+      {
+        "year": "2016",
+        "title": "25% Gap Reduction Since 2016",
+        "description": "Gap down from 0.68s to 0.51s — India closing in on the global elite",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "1500m": {
+    "gapData": [
+      {
+        "year": "2019",
+        "gap": 9.24,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 9.24,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2019",
+        "title": "2019 - Jinson Johnson Record",
+        "description": "Men's 1500m record: 3:35.24 (unchanged since 2019)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2019",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 9.24s with no improvement",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "200m": {
+    "gapData": [
+      {
+        "year": "2018",
+        "gap": 1.44,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2022",
+        "gap": 1.33,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2025",
+        "gap": 1.13,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2026",
+        "gap": 1.13,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2025",
+        "title": "2025 - National Record Broken",
+        "description": "Animesh Kujur runs 20.32s at Asian Athletics Championships 2025",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2018",
+        "title": "21.5% Gap Reduction Since 2018",
+        "description": "Gap down from 1.44s to 1.13s — India ranked #37 globally by World Athletics",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "3000m": {
+    "gapData": [
+      {
+        "year": "2008",
+        "gap": 32.76,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2025",
+        "gap": 16.94,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2025",
+        "title": "2025 - Gulveer Singh Record",
+        "description": "Men's 3000m record: 7:34.49 (454.49 seconds) — sharp gap reduction",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2008",
+        "title": "48% Gap Reduction Since 2008",
+        "description": "Gap down from 32.76s to 16.94s — Gulveer era transforms Indian middle distance",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "400m": {
+    "gapData": [
+      {
+        "year": "2016",
+        "gap": 2.37,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2019",
+        "gap": 2.18,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2025",
+        "gap": 2.09,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2026",
+        "gap": 1.95,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2026",
+        "title": "2026 - First Sub-45 Indian",
+        "description": "Vishal Thennarasu Kayalvizhi runs 44.98s at Federation Cup, Ranchi — historic first sub-45s",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2016",
+        "title": "17.7% Gap Reduction Since 2016",
+        "description": "Gap down from 2.37s to 1.95s — narrowing steadily",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "400mH": {
+    "gapData": [
+      {
+        "year": "2018",
+        "gap": 2.18,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2019",
+        "gap": 2.02,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2021",
+        "gap": 2.86,
+        "color": "#C0C0C0"
+      },
+      {
+        "year": "2026",
+        "gap": 2.86,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2021",
+        "title": "2021 - World Record Slashed",
+        "description": "Karsten Warholm ran 45.94s at Tokyo — India's gap widened as the WR improved faster",
+        "color": "#C0C0C0"
+      },
+      {
+        "year": "2019",
+        "title": "2019 - India NR: 48.80s",
+        "description": "Ayyasamy Dharun's 48.80s at Federation Cup, Patiala — India's national record",
+        "color": "#C9115F"
+      }
+    ]
+  },
+  "4x100m": {
+    "gapData": [
+      {
+        "year": "2010",
+        "gap": 2.05,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2025",
+        "gap": 1.85,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2025",
+        "title": "2025 - Relay Record Improved",
+        "description": "Men's 4x100m record: 38.69s at National Relay Carnival, Chandigarh",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2010",
+        "title": "9.8% Gap Reduction Since 2010",
+        "description": "Gap down from 2.05s to 1.85s",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "4x400m": {
+    "gapData": [
+      {
+        "year": "2023",
+        "gap": 4.76,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 4.76,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2023",
+        "title": "2023 - Budapest World Championships",
+        "description": "Men's 4x400m record: 2:59.05 (also Asian record)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2023",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 4.76s with no change",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "5000m": {
+    "gapData": [
+      {
+        "year": "2023",
+        "gap": 43.94,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 28.57,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2026",
+        "title": "2026 - National Record: 13:03.93",
+        "description": "Gulveer Singh runs 13:03.93 at Sound Running Track Fest, LA — outdoor NR",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2023",
+        "title": "35% Gap Reduction Since 2023",
+        "description": "Gap reduced from 43.94s to 28.57s — Gulveer era transforms Indian distance running",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "800m": {
+    "gapData": [
+      {
+        "year": "2018",
+        "gap": 4.74,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2025",
+        "gap": 4.02,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2025",
+        "title": "2025 - Mohammed Afsal Record",
+        "description": "Men's 800m record: 1:44.93",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2018",
+        "title": "15% Gap Reduction Since 2018",
+        "description": "Gap down from 4.74s to 4.02s",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "DiscusThrow": {
+    "gapData": [
+      {
+        "year": "2012",
+        "gap": 7.8,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 7.8,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2012",
+        "title": "2012 - Vikas Gowda Record",
+        "description": "Men's discus record: 66.28m (unchanged through 2026)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2012",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 7.80m — no improvement since 2012",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "HammerThrow": {
+    "gapData": [
+      {
+        "year": "2015",
+        "gap": 13.88,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 13.88,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2015",
+        "title": "2015 - Kamalpreet Singh Record",
+        "description": "Men's hammer throw record: 72.86m (unchanged through 2026)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2015",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 13.88m — no improvement since 2015",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "HighJump": {
+    "gapData": [
+      {
+        "year": "2018",
+        "gap": 0.16,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 0.16,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2018",
+        "title": "2018 - Tejaswin Shankar Record",
+        "description": "Men's high jump record: 2.29m (unchanged through 2026)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2018",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 0.16m — no improvement since 2018",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "JavelinThrow": {
+    "gapData": [
+      {
+        "year": "2016",
+        "gap": 16.25,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2018",
+        "gap": 10.42,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2021",
+        "gap": 10.41,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "gap": 8.54,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2025",
+        "gap": 8.25,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2025",
+        "title": "2025 - National Record: 90.23m",
+        "description": "Neeraj Chopra throws 90.23m at Doha Diamond League — India's current national best",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "title": "2022 - Olympic Champion record",
+        "description": "Neeraj's 89.94m in Stockholm Diamond League was the previous NR",
+        "color": "#C0C0C0"
+      },
+      {
+        "year": "2016",
+        "title": "49% Gap Reduction Since 2016",
+        "description": "Gap halved from 16.25m to 8.25m — India ranked top 5 globally in Javelin",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "LongJump": {
+    "gapData": [
+      {
+        "year": "2004",
+        "gap": 0.87,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2022",
+        "gap": 0.59,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2023",
+        "gap": 0.53,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2023",
+        "title": "2023 - Jeswin Aldrin Record",
+        "description": "Men's long jump record: 8.42m",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2004",
+        "title": "39% Gap Reduction Since 2004",
+        "description": "Gap down from 0.87m to 0.53m — strong progress",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "PoleVault": {
+    "gapData": [
+      {
+        "year": "2022",
+        "gap": 0.9,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 0.85,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2026",
+        "title": "2026 - Joint National Record",
+        "description": "Dev Meena & Kuldeep Kumar both reach 5.45m at Federation Cup, Ranchi",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "title": "5.5% Gap Reduction Since 2022",
+        "description": "Gap down from 0.90m to 0.85m",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "ShotPut": {
+    "gapData": [
+      {
+        "year": "2018",
+        "gap": 2.81,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2019",
+        "gap": 2.64,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2021",
+        "gap": 2.07,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2023",
+        "gap": 1.79,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2023",
+        "title": "2023 - National Record: 21.77m",
+        "description": "Tajinderpal Singh Toor throws 21.77m",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2018",
+        "title": "36% Gap Reduction Since 2018",
+        "description": "Gap down from 2.81m to 1.79m — narrowing steadily",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "TripleJump": {
+    "gapData": [
+      {
+        "year": "2023",
+        "gap": 0.92,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2025",
+        "gap": 0.92,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2023",
+        "title": "2023 - Praveen Chithravel Record",
+        "description": "Men's triple jump record: 17.37m",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2023",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 0.92m — only data point in window",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women 100m": {
+    "gapData": [
+      {
+        "year": "2015",
+        "gap": 0.77,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2016",
+        "gap": 0.75,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2021",
+        "gap": 0.68,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2026",
+        "gap": 0.68,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2021",
+        "title": "2021 - National Record: 11.17s",
+        "description": "Dutee Chand sets women 100m record",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2015",
+        "title": "11% Gap Reduction Since 2015",
+        "description": "Gap down from 0.77s to 0.68s",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "Women 1500m": {
+    "gapData": [
+      {
+        "year": "2021",
+        "gap": 16.28,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2024",
+        "gap": 16.1,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2024",
+        "title": "2024 - K.M. Deeksha Record",
+        "description": "Women's 1500m record: 4:04.78",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2021",
+        "title": "1% Gap Reduction Since 2021",
+        "description": "Gap down from 16.28s to 16.10s",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "Women 200m": {
+    "gapData": [
+      {
+        "year": "2015",
+        "gap": 1.48,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2018",
+        "gap": 1.48,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "gap": 1.48,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2026",
+        "gap": 1.48,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2002",
+        "title": "2002 - Saraswati Saha Record",
+        "description": "Women 200m record: 22.82s (unchanged through 2026)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2015",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 1.48s with no improvement",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women 3000m": {
+    "gapData": [
+      {
+        "year": "2022",
+        "gap": 51.08,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 51.08,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2022",
+        "title": "2022 - Parul Chaudhary Record",
+        "description": "Women's 3000m record: 8:57.19 (only data point in window)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 51.08s with no change",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women 400m": {
+    "gapData": [
+      {
+        "year": "2018",
+        "gap": 3.19,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2024",
+        "gap": 3.19,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2026",
+        "gap": 3.19,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2018",
+        "title": "2018 - Hima Das Record",
+        "description": "Women 400m record: 50.79s (unchanged since 2018)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2018",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 3.19s with no improvement",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women 400mH": {
+    "gapData": [
+      {
+        "year": "2015",
+        "gap": 3.08,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2019",
+        "gap": 3.26,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2021",
+        "gap": 3.96,
+        "color": "#C0C0C0"
+      },
+      {
+        "year": "2022",
+        "gap": 4.74,
+        "color": "#C0C0C0"
+      },
+      {
+        "year": "2024",
+        "gap": 5.05,
+        "color": "#C0C0C0"
+      },
+      {
+        "year": "2026",
+        "gap": 5.05,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "1984",
+        "title": "1984 - P.T. Usha Record",
+        "description": "Women 400mH record: 55.42s (longest standing Indian record)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2015",
+        "title": "Widening Gap",
+        "description": "Gap increased from 3.08s to 5.05s as world record improved faster",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women 4x100m": {
+    "gapData": [
+      {
+        "year": "2021",
+        "gap": 2.55,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 2.55,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2021",
+        "title": "2021 - National Record: 43.37s",
+        "description": "Women's 4x100m relay record set",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2021",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 2.55s with no change",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women 4x400m": {
+    "gapData": [
+      {
+        "year": "2004",
+        "gap": 11.72,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 11.72,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2004",
+        "title": "2004 - Athens Olympics Record",
+        "description": "Women's 4x400m relay record: 3:26.89 (unchanged for 22 years)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2004",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 11.72s — one of longest standing records",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women 5000m": {
+    "gapData": [
+      {
+        "year": "2023",
+        "gap": 70.14,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 66.2,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2026",
+        "title": "2026 - Parul Chaudhary Record",
+        "description": "Women's 5000m record: 15:04.26",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2023",
+        "title": "5.6% Gap Reduction Since 2023",
+        "description": "Gap down from 70.14s to 66.20s",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "Women 800m": {
+    "gapData": [
+      {
+        "year": "2015",
+        "gap": 5.89,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 5.89,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2010",
+        "title": "2010 - Tintu Luka Record",
+        "description": "Women's 800m record: 1:59.17 (unchanged for 16 years)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2015",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 5.89s with no change since 2015",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women DiscusThrow": {
+    "gapData": [
+      {
+        "year": "2017",
+        "gap": 15.58,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2021",
+        "gap": 10.21,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2026",
+        "gap": 10.21,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2021",
+        "title": "2021 - Kamalpreet Kaur Record",
+        "description": "Women's Discus record: 66.59m",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2017",
+        "title": "34% Gap Reduction Since 2017",
+        "description": "Gap down from 15.58m to 10.21m — strong narrowing",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "Women HammerThrow": {
+    "gapData": [
+      {
+        "year": "2017",
+        "gap": 17.73,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 15.96,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2026",
+        "title": "2026 - Anushka Yadav Record",
+        "description": "Women's Hammer record: 67.02m (broke 2017 record)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2017",
+        "title": "10% Gap Reduction Since 2017",
+        "description": "Gap down from 17.73m to 15.96m — recent improvement",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "Women HighJump": {
+    "gapData": [
+      {
+        "year": "2012",
+        "gap": 0.17,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 0.17,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2026",
+        "title": "2026 - Pooja Singh Record",
+        "description": "Women's High Jump record: 1.93m (U20 Asian Championships, Hong Kong)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2012",
+        "title": "Minimal Gap Change Since 2012",
+        "description": "Gap remains 0.17m — 1cm improvement in 14 years",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women JavelinThrow": {
+    "gapData": [
+      {
+        "year": "2015",
+        "gap": 13.45,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2016",
+        "gap": 12.27,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2019",
+        "gap": 9.94,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2021",
+        "gap": 9.04,
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "gap": 8.46,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2022",
+        "title": "2022 - Annu Rani Record",
+        "description": "Women's Javelin record: 63.82m",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2015",
+        "title": "37% Gap Reduction Since 2015",
+        "description": "Gap down from 13.45m to 8.46m — strong progress",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "Women LongJump": {
+    "gapData": [
+      {
+        "year": "2004",
+        "gap": 0.69,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 0.69,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2004",
+        "title": "2004 - Anju Bobby George Record",
+        "description": "Women's long jump record: 6.83m (unchanged for 22 years)",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2004",
+        "title": "Flat / Stagnant",
+        "description": "Gap remains 0.69m — longest standing women record",
+        "color": "#C0C0C0"
+      }
+    ]
+  },
+  "Women PoleVault": {
+    "gapData": [
+      {
+        "year": "2022",
+        "gap": 0.85,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2026",
+        "gap": 0.83,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2026",
+        "title": "2026 - Baranica Elangovan Record",
+        "description": "Women's Pole Vault record: 4.23m",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "title": "2.4% Gap Reduction Since 2022",
+        "description": "Gap down from 0.85m to 0.83m",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "Women ShotPut": {
+    "gapData": [
+      {
+        "year": "2022",
+        "gap": 4.57,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2024",
+        "gap": 4.22,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2024",
+        "title": "2024 - Abha Khatua Record",
+        "description": "Women's Shot Put record: 18.41m",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2022",
+        "title": "8% Gap Reduction Since 2022",
+        "description": "Gap down from 4.57m to 4.22m",
+        "color": "#CD620E"
+      }
+    ]
+  },
+  "Women TripleJump": {
+    "gapData": [
+      {
+        "year": "2015",
+        "gap": 1.39,
+        "color": "#CD620E"
+      },
+      {
+        "year": "2021",
+        "gap": 1.56,
+        "color": "#C0C0C0"
+      },
+      {
+        "year": "2026",
+        "gap": 1.56,
+        "color": "#C9115F"
+      }
+    ],
+    "milestones": [
+      {
+        "year": "2011",
+        "title": "2011 - Mayookha Johny Record",
+        "description": "Women's triple jump record: 14.11m",
+        "color": "#C9115F"
+      },
+      {
+        "year": "2015",
+        "title": "Widening Gap",
+        "description": "Gap increased from 1.39m to 1.56m as world record improved faster",
+        "color": "#C0C0C0"
+      }
+    ]
+  }
+}

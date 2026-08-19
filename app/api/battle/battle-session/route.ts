@@ -1,21 +1,13 @@
+// app/api/battle/battle-session/route.ts — Migrated to AWS DynamoDB (GamificationAndWallet Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { QueryCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
-interface BattleSession {
-  id: string;
-  battleId: string;
-  userId: string;
-  userName: string;
-  userEmail: string;
-  status: "in_progress" | "completed";
-  totalVotes: number;
-  totalPointsEarned: number;
-  startedAt: number;
-  completedAt: number | null;
-  updatedAt: number;
-}
+export const dynamic = "force-dynamic";
 
-// ─── GET /api/fanbattle/battle-session 
+// ─── GET /api/battle/battle-session ───────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -23,61 +15,111 @@ export async function GET(req: NextRequest) {
     const userId = searchParams.get("userId");
 
     if (!userId) {
-      return NextResponse.json(
-        { error: "userId is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "userId is required" }, { status: 400 });
     }
 
-    const sessionsRef = db.collection("battleSessions");
-    
-    // If battleId is provided, fetch specific battle session
+    // 1. If battleId is provided, fetch single session from DynamoDB
     if (battleId) {
-      const query = sessionsRef
-        .where("battleId", "==", battleId)
-        .where("userId", "==", userId)
-        .limit(1);
-
-      const snapshot = await query.get();
-
-      if (snapshot.empty) {
-        return NextResponse.json(
-          { success: true, data: null, message: "No session found" },
-          { status: 200 }
+      let sessionData: Record<string, unknown> | null = null;
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: "GamificationAndWallet",
+            Key: {
+              userId: `USER#${userId}`,
+              sk: `BATTLE_SESSION#${battleId}`,
+            },
+          })
         );
+        if (getRes.Item) {
+          sessionData = getRes.Item;
+        }
+      } catch (err) {
+        console.warn("DynamoDB get battle session notice:", err);
       }
 
-      const sessionDoc = snapshot.docs[0];
+      if (!sessionData) {
+        try {
+          const snapshot = await db
+            .collection("battleSessions")
+            .where("battleId", "==", battleId)
+            .where("userId", "==", userId)
+            .limit(1)
+            .get();
+
+          if (!snapshot.empty) {
+            const doc = snapshot.docs[0];
+            sessionData = { id: doc.id, ...doc.data() };
+          }
+        } catch (fbErr) {
+          console.warn("Firebase battle session fallback notice:", fbErr);
+        }
+      }
+
+      if (!sessionData) {
+        return NextResponse.json({ success: true, data: null, message: "No session found" });
+      }
+
       return NextResponse.json({
         success: true,
-        data: { id: sessionDoc.id, ...sessionDoc.data() },
+        data: {
+          id: (sessionData.sk as string)?.replace(/^BATTLE_SESSION#/, "") || sessionData.id,
+          ...sessionData,
+        },
       });
     }
-    
-    // If only userId is provided, fetch all sessions for the user
-    const query = sessionsRef
-      .where("userId", "==", userId)
-      .orderBy("completedAt", "desc");
 
-    const snapshot = await query.get();
-    const sessions = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    // 2. Fetch all sessions for user
+    let sessions: Array<Record<string, unknown>> = [];
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "GamificationAndWallet",
+          KeyConditionExpression: "userId = :u AND begins_with(sk, :bsPrefix)",
+          ExpressionAttributeValues: {
+            ":u": `USER#${userId}`,
+            ":bsPrefix": "BATTLE_SESSION#",
+          },
+          Limit: 50,
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) {
+        sessions = qRes.Items.map((item) => ({
+          id: (item.sk as string)?.replace(/^BATTLE_SESSION#/, "") || item.id,
+          ...item,
+        }));
+      }
+    } catch (err) {
+      console.warn("DynamoDB query battle sessions notice:", err);
+    }
+
+    if (sessions.length === 0) {
+      try {
+        const snapshot = await db
+          .collection("battleSessions")
+          .where("userId", "==", userId)
+          .orderBy("completedAt", "desc")
+          .get();
+
+        sessions = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      } catch (fbErr) {
+        console.warn("Firebase battle sessions query fallback notice:", fbErr);
+      }
+    }
 
     return NextResponse.json({
       success: true,
       data: sessions,
       total: sessions.length,
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("Error fetching battle session:", error);
+    console.error("GET /api/battle/battle-session error:", error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 
-// ─── POST /api/fanbattle/battle-session ──────────────────────────────────────
+// ─── POST /api/battle/battle-session ──────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -90,32 +132,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check if session already exists
-    const existingQuery = await db
-      .collection("battleSessions")
-      .where("battleId", "==", battleId)
-      .where("userId", "==", userId)
-      .limit(1)
-      .get();
+    const now = Date.now();
+    const sessionId = `bs_${now}_${Math.random().toString(36).substring(2, 9)}`;
 
-    if (!existingQuery.empty) {
-      // Update existing session to completed
-      const existingSession = existingQuery.docs[0];
-      await existingSession.ref.update({
-        status: "completed",
-        completedAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      
-      const updatedData = (await existingSession.ref.get()).data() as Omit<BattleSession, 'id'>;
-      return NextResponse.json({
-        success: true,
-        data: { id: existingSession.id, ...updatedData },
-      });
-    }
-
-    // Create new session
-    const newSession: Omit<BattleSession, 'id'> = {
+    const sessionPayload = {
+      sessionId,
       battleId,
       userId,
       userName: userName || "",
@@ -123,20 +144,27 @@ export async function POST(req: NextRequest) {
       status: "completed",
       totalVotes: 0,
       totalPointsEarned: 0,
-      startedAt: Date.now(),
-      completedAt: Date.now(),
-      updatedAt: Date.now(),
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
     };
 
-    const sessionRef = await db.collection("battleSessions").add(newSession);
+    // ── Dual-Write to DynamoDB & Firebase ────────────────────────────────────
+    const dynamoItem = {
+      ...sessionPayload,
+      userId: `USER#${userId}`,
+      sk: `BATTLE_SESSION#${battleId}`,
+    };
+
+    await dualWrite("battleSessions", sessionId, "GamificationAndWallet", dynamoItem);
 
     return NextResponse.json({
       success: true,
-      data: { id: sessionRef.id, ...newSession },
+      data: { id: sessionId, ...sessionPayload },
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("Error creating battle session:", error);
+    console.error("POST /api/battle/battle-session error:", error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

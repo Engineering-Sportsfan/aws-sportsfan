@@ -44,11 +44,20 @@ let auth: admin.auth.Auth;
 if (!admin.apps.length) {
   console.log("Initializing Firebase Admin...");
 
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY || "";
+  privateKey = privateKey.replace(/\\n/g, "\n").replace(/"/g, "");
+  
+  if (privateKey.startsWith("-----BEGIN PRIVATE KEY-----") && !privateKey.includes("\n")) {
+    let body = privateKey.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").trim();
+    body = body.replace(/ /g, "\n");
+    privateKey = `-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----\n`;
+  }
+
   const app = admin.initializeApp({
     credential: admin.credential.cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+      privateKey: privateKey,
     }),
   });
 

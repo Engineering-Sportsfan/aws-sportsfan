@@ -1,6 +1,12 @@
+// api/v2/records/[[...params]]/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/firebaseAdmin';
+import { docClient } from '@/lib/dynamodb';
+import { QueryCommand, GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { GAP_ANALYSIS } from '../gapAnalysis';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(
   request: NextRequest,
@@ -13,10 +19,37 @@ export async function GET(
 
     const getRecords = async (event: string, category: string) => {
       const key = `${event}_${category}`;
-      const doc = await db.collection('records').doc(key).get();
-      if (!doc.exists) return [];
-      const data = doc.data();
-      return data?.records ?? [];
+      let records: any[] = [];
+      let fetchedFromDynamo = false;
+
+      // 1. Try DynamoDB Query
+      try {
+        const queryRes = await docClient.send(new QueryCommand({
+          TableName: 'SocialAndContent',
+          KeyConditionExpression: 'contentId = :pk',
+          ExpressionAttributeValues: { ':pk': `RECORD#${key}` }
+        }));
+        if (queryRes.Items && queryRes.Items.length > 0) {
+          records = queryRes.Items[0].records || [];
+          fetchedFromDynamo = true;
+        }
+      } catch (dynErr) {
+        console.warn(`[V2 Records getRecords] DynamoDB query failed for ${key}:`, dynErr);
+      }
+
+      // 2. Fallback to Firestore
+      if (!fetchedFromDynamo) {
+        try {
+          const doc = await db.collection('records').doc(key).get();
+          if (doc.exists) {
+            records = doc.data()?.records ?? [];
+          }
+        } catch (fsErr) {
+          console.error(`[V2 Records getRecords] Firestore fallback failed for ${key}:`, fsErr);
+        }
+      }
+
+      return records;
     };
 
     if (pathParams.length === 0) {
@@ -91,27 +124,113 @@ export async function GET(
         case 'trends': {
           // GET /api/v2/records/trends?event=100m
           const event = searchParams.get('event') || '';
-          const doc = await db.collection('recordTrends').doc(event).get();
-          const trends = doc.exists ? (doc.data()?.trends || []) : [];
+          let trends: any[] = [];
+          let fetchedFromDynamo = false;
+
+          // 1. Try DynamoDB Query
+          try {
+            const queryRes = await docClient.send(new QueryCommand({
+              TableName: 'SocialAndContent',
+              KeyConditionExpression: 'contentId = :pk',
+              ExpressionAttributeValues: { ':pk': `RECORD_TREND#${event}` }
+            }));
+            if (queryRes.Items && queryRes.Items.length > 0) {
+              trends = queryRes.Items[0].trends || [];
+              fetchedFromDynamo = true;
+            }
+          } catch (dynErr) {
+            console.warn(`[V2 Records trends] DynamoDB query failed for ${event}:`, dynErr);
+          }
+
+          // 2. Fallback to Firestore
+          if (!fetchedFromDynamo) {
+            try {
+              const doc = await db.collection('recordTrends').doc(event).get();
+              trends = doc.exists ? (doc.data()?.trends || []) : [];
+            } catch (fsErr) {
+              console.error(`[V2 Records trends] Firestore fallback failed for ${event}:`, fsErr);
+            }
+          }
+
           return NextResponse.json(trends);
         }
         case 'progress': {
           // GET /api/v2/records/progress?event=100m
           const event = searchParams.get('event') || '';
-          const doc = await db.collection('recordProgress').doc(event).get();
-          if (!doc.exists) {
-            return NextResponse.json({ gapData: [], milestones: [] });
+          let progressData: any = null;
+          let fetchedFromDynamo = false;
+
+          // 1. Try DynamoDB (try PK = "UNKNOWN" first, fallback to PK = "USER#UNKNOWN")
+          try {
+            let getRes = await docClient.send(new GetCommand({
+              TableName: 'GamificationAndWallet',
+              Key: { userId: 'UNKNOWN', sk: `PROGRESS_RECORD#${event}` }
+            }));
+            if (!getRes.Item) {
+              getRes = await docClient.send(new GetCommand({
+                TableName: 'GamificationAndWallet',
+                Key: { userId: 'USER#UNKNOWN', sk: `PROGRESS_RECORD#${event}` }
+              }));
+            }
+            if (getRes.Item) {
+              progressData = {
+                gapData: getRes.Item.gapData ?? [],
+                milestones: getRes.Item.milestones ?? []
+              };
+              fetchedFromDynamo = true;
+            }
+          } catch (dynErr) {
+            console.warn(`[V2 Records progress] DynamoDB get failed for ${event}:`, dynErr);
           }
-          const data = doc.data();
-          return NextResponse.json({
-            gapData: data?.gapData ?? [],
-            milestones: data?.milestones ?? [],
-          });
+
+          // 2. Fallback to Firestore
+          if (!fetchedFromDynamo) {
+            try {
+              const doc = await db.collection('recordProgress').doc(event).get();
+              if (doc.exists) {
+                const data = doc.data();
+                progressData = {
+                  gapData: data?.gapData ?? [],
+                  milestones: data?.milestones ?? [],
+                };
+              }
+            } catch (fsErr) {
+              console.error(`[V2 Records progress] Firestore fallback failed for ${event}:`, fsErr);
+            }
+          }
+
+          return NextResponse.json(progressData || { gapData: [], milestones: [] });
         }
         case 'stories': {
           // GET /api/v2/records/stories
-          const snapshot = await db.collection('recordStories').get();
-          const stories = snapshot.docs.map((doc) => doc.data());
+          let stories: any[] = [];
+          let fetchedFromDynamo = false;
+
+          // 1. Try DynamoDB Scan
+          try {
+            const scanRes = await docClient.send(new ScanCommand({
+              TableName: 'SocialAndContent',
+              FilterExpression: 'begins_with(contentId, :p)',
+              ExpressionAttributeValues: { ':p': 'RECORD_STORY#' }
+            }));
+            if (scanRes.Items && scanRes.Items.length > 0) {
+              stories = scanRes.Items;
+              fetchedFromDynamo = true;
+            }
+          } catch (dynErr) {
+            console.warn('[V2 Records stories] DynamoDB scan failed:', dynErr);
+          }
+
+          // 2. Fallback to Firestore
+          if (!fetchedFromDynamo || stories.length === 0) {
+            try {
+              const snapshot = await db.collection('recordStories').get();
+              stories = snapshot.docs.map((doc) => doc.data());
+            } catch (fsErr) {
+              console.error('[V2 Records stories] Firestore fallback failed:', fsErr);
+            }
+          }
+
           return NextResponse.json(stories);
         }
         default:

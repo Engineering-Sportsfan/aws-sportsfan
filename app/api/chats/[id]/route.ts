@@ -1,29 +1,40 @@
-
-
-
-// app/api/chats/[chatId]/route.ts  — BACKEND
+// app/api/chats/[id]/route.ts — BACKEND
+// Single chat room details, updates and deletion (DynamoDB-First + Firestore Fallback)
 
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import {
+  GetCommand,
+  PutCommand,
+  DeleteCommand,
+} from "@aws-sdk/lib-dynamodb";
 
-// ─── Auth helper ──────────────────────────────────────────────────────────────
-// Path A — Email/password: httpOnly "token" cookie set by /api/auth/login
-// Path B — Google users:   "Authorization: Bearer <token>" sent by chatApi.ts
-// ─────────────────────────────────────────────────────────────────────────────
-const normalizeId = (id: string) => id.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
+const normalizeId = (id: string) =>
+  id.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
 
 async function getUser(req: NextRequest) {
   const cookieToken = req.cookies.get("token")?.value;
   if (cookieToken) {
     try {
       const payload = jwt.verify(cookieToken, process.env.JWT_SECRET!) as {
-        email?: string; userId?: string; uid?: string; id?: string;
-        name?: string; role?: string;
+        email?: string;
+        userId?: string;
+        uid?: string;
+        id?: string;
+        name?: string;
+        role?: string;
       };
-      const userId = payload.userId ?? payload.uid ?? payload.id ?? payload.email;
+      const userId =
+        payload.userId ?? payload.uid ?? payload.id ?? payload.email;
       if (userId && payload.email) {
-        return { userId: normalizeId(userId), email: payload.email, name: payload.name ?? "", role: payload.role ?? "user" };
+        return {
+          userId: normalizeId(userId),
+          email: payload.email,
+          name: payload.name ?? "",
+          role: payload.role ?? "user",
+        };
       }
     } catch {}
   }
@@ -33,12 +44,22 @@ async function getUser(req: NextRequest) {
     const bearerToken = authHeader.slice(7).trim();
     try {
       const payload = jwt.verify(bearerToken, process.env.JWT_SECRET!) as {
-        email?: string; userId?: string; uid?: string; id?: string;
-        name?: string; role?: string;
+        email?: string;
+        userId?: string;
+        uid?: string;
+        id?: string;
+        name?: string;
+        role?: string;
       };
-      const userId = payload.userId ?? payload.uid ?? payload.id ?? payload.email;
+      const userId =
+        payload.userId ?? payload.uid ?? payload.id ?? payload.email;
       if (userId && payload.email) {
-        return { userId: normalizeId(userId), email: payload.email, name: payload.name ?? "", role: payload.role ?? "user" };
+        return {
+          userId: normalizeId(userId),
+          email: payload.email,
+          name: payload.name ?? "",
+          role: payload.role ?? "user",
+        };
       }
     } catch {}
   }
@@ -57,7 +78,9 @@ function getIdFromUrl(req: NextRequest): string {
 export async function GET(req: NextRequest) {
   try {
     const user = await getUser(req);
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const CURRENT_USER_ID = user.userId;
     const isSameUser = (id1: string, id2: string) => {
       const n1 = normalizeId(id1);
@@ -67,16 +90,41 @@ export async function GET(req: NextRequest) {
     };
 
     const id = getIdFromUrl(req);
-    if (!id) return NextResponse.json({ error: "Chat ID is required" }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: "Chat ID is required" }, { status: 400 });
+    }
 
-    const docRef = db.collection("chats").doc(id);
-    const doc    = await docRef.get();
+    let data: any = null;
+    let fetchedFromDynamo = false;
 
-    if (!doc.exists) return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+    // 1. Try DynamoDB First
+    try {
+      const res = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
+        }),
+      );
+      if (res.Item) {
+        data = { id, ...res.Item };
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[chats/[id] GET] DynamoDB notice:", dynErr);
+    }
 
-    const data = doc.data()!;
-    const pids = (data.participantIds as string[]).map(normalizeId);
-    if (!pids.some(pid => isSameUser(pid, CURRENT_USER_ID))) {
+    // 2. Firestore Fallback
+    if (!fetchedFromDynamo || !data) {
+      const docRef = db.collection("chats").doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      }
+      data = { id: docSnap.id, ...docSnap.data() };
+    }
+
+    const pids = (data.participantIds as string[] || []).map(normalizeId);
+    if (!pids.some((pid) => isSameUser(pid, CURRENT_USER_ID))) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
@@ -84,26 +132,70 @@ export async function GET(req: NextRequest) {
     let avatarUrl = data.avatarUrl || "";
 
     if (data.type === "dm" && Array.isArray(data.participantIds)) {
-      const otherId = data.participantIds.find(uid => !isSameUser(uid, CURRENT_USER_ID));
+      const otherId = data.participantIds.find(
+        (uid: string) => !isSameUser(uid, CURRENT_USER_ID),
+      );
       if (otherId) {
         const normOtherId = normalizeId(otherId);
-        let userDoc = await db.collection("users").doc(normOtherId).get();
-        if (!userDoc.exists) {
-          const querySnap = await db.collection("users").where("userId", "==", normOtherId).limit(1).get();
-          if (!querySnap.empty) {
-            userDoc = querySnap.docs[0];
-          }
-        }
 
-        if (userDoc && userDoc.exists) {
-          const udata = userDoc.data()!;
-          chatName = udata.name || udata.username || [udata.firstName, udata.lastName].filter(Boolean).join(" ").trim() || chatName;
-          avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+        // Try DynamoDB IdentityAndAccess
+        try {
+          const uRes = await docClient.send(
+            new GetCommand({
+              TableName: "IdentityAndAccess",
+              Key: { entityId: `USER#${normOtherId}`, sk: "USER#META" },
+            }),
+          );
+          if (uRes.Item) {
+            const udata = uRes.Item;
+            chatName =
+              udata.name ||
+              udata.username ||
+              [udata.firstName, udata.lastName]
+                .filter(Boolean)
+                .join(" ")
+                .trim() ||
+              chatName;
+            avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+          }
+        } catch {}
+
+        if (!chatName) {
+          let userDoc = await db
+            .collection("users")
+            .doc(normOtherId)
+            .get();
+          if (!userDoc.exists) {
+            const querySnap = await db
+              .collection("users")
+              .where("userId", "==", normOtherId)
+              .limit(1)
+              .get();
+            if (!querySnap.empty) {
+              userDoc = querySnap.docs[0];
+            }
+          }
+
+          if (userDoc && userDoc.exists) {
+            const udata = userDoc.data()!;
+            chatName =
+              udata.name ||
+              udata.username ||
+              [udata.firstName, udata.lastName]
+                .filter(Boolean)
+                .join(" ")
+                .trim() ||
+              chatName;
+            avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+          }
         }
       }
     }
 
-    return NextResponse.json({ success: true, chat: { id: doc.id, ...data, name: chatName, avatarUrl } });
+    return NextResponse.json({
+      success: true,
+      chat: { ...data, name: chatName, avatarUrl },
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("GET /api/chats/[chatId] error:", error);
@@ -117,7 +209,9 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const user = await getUser(req);
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const CURRENT_USER_ID = user.userId;
     const isSameUser = (id1: string, id2: string) => {
       const n1 = normalizeId(id1);
@@ -127,64 +221,155 @@ export async function PATCH(req: NextRequest) {
     };
 
     const id = getIdFromUrl(req);
-    if (!id) return NextResponse.json({ error: "Chat ID is required" }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: "Chat ID is required" }, { status: 400 });
+    }
 
-    const body   = await req.json();
-    const docRef = db.collection("chats").doc(id);
-    const doc    = await docRef.get();
+    let data: any = null;
+    let fetchedFromDynamo = false;
 
-    if (!doc.exists) return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+    // 1. Try DynamoDB First
+    try {
+      const res = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
+        }),
+      );
+      if (res.Item) {
+        data = { id, ...res.Item };
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[chats/[id] PATCH] DynamoDB notice:", dynErr);
+    }
 
-    const data = doc.data()!;
-    if (!(data.participantIds as string[]).some(pid => isSameUser(pid, CURRENT_USER_ID))) {
+    if (!fetchedFromDynamo || !data) {
+      const docRef = db.collection("chats").doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      }
+      data = { id: docSnap.id, ...docSnap.data() };
+    }
+
+    if (
+      !(data.participantIds as string[] || []).some((pid) =>
+        isSameUser(pid, CURRENT_USER_ID),
+      )
+    ) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
+    const body = await req.json();
+
     if (body.name !== undefined && data.type !== "group") {
-      return NextResponse.json({ error: "Cannot rename a DM conversation" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Cannot rename a DM conversation" },
+        { status: 400 },
+      );
     }
     if (body.isMuted !== undefined && typeof body.isMuted !== "boolean") {
-      return NextResponse.json({ error: "isMuted must be a boolean" }, { status: 400 });
+      return NextResponse.json(
+        { error: "isMuted must be a boolean" },
+        { status: 400 },
+      );
     }
     if (body.isPinned !== undefined && typeof body.isPinned !== "boolean") {
-      return NextResponse.json({ error: "isPinned must be a boolean" }, { status: 400 });
+      return NextResponse.json(
+        { error: "isPinned must be a boolean" },
+        { status: 400 },
+      );
     }
 
-    const allowedFields                    = ["name", "isMuted", "isPinned", "avatarUrl"];
+    const allowedFields = ["name", "isMuted", "isPinned", "avatarUrl"];
     const updates: Record<string, unknown> = { updatedAt: Date.now() };
     allowedFields.forEach((field) => {
       if (body[field] !== undefined) updates[field] = body[field];
     });
 
-    await docRef.update(updates);
-    const updated = await docRef.get();
-    const updatedData = updated.data()!;
+    const updatedData = { ...data, ...updates };
+
+    // 1. Update DynamoDB (Primary)
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: "RealTimeChat",
+          Item: {
+            roomId: `ROOM#${id}`,
+            sk: "ROOM#META",
+            ...updatedData,
+          },
+        }),
+      );
+    } catch (dynErr) {
+      console.error("[chats/[id] PATCH] DynamoDB write error:", dynErr);
+    }
+
+    // 2. Update Firestore (Dual-Write)
+    try {
+      await db.collection("chats").doc(id).update(updates);
+    } catch (fsErr) {
+      console.error("[chats/[id] PATCH] Firestore write error:", fsErr);
+    }
 
     let chatName = "";
     let avatarUrl = updatedData.avatarUrl || "";
 
     if (updatedData.type === "dm" && Array.isArray(updatedData.participantIds)) {
-      const otherId = updatedData.participantIds.find(uid => !isSameUser(uid, CURRENT_USER_ID));
+      const otherId = updatedData.participantIds.find(
+        (uid: string) => !isSameUser(uid, CURRENT_USER_ID),
+      );
       if (otherId) {
-        let userDoc = await db.collection("users").doc(otherId).get();
-        if (!userDoc.exists) {
-          const querySnap = await db.collection("users").where("userId", "==", otherId).limit(1).get();
-          if (!querySnap.empty) {
-            userDoc = querySnap.docs[0];
+        const normOtherId = normalizeId(otherId);
+        try {
+          const uRes = await docClient.send(
+            new GetCommand({
+              TableName: "IdentityAndAccess",
+              Key: { entityId: `USER#${normOtherId}`, sk: "USER#META" },
+            }),
+          );
+          if (uRes.Item) {
+            const udata = uRes.Item;
+            chatName =
+              udata.name ||
+              [udata.firstName, udata.lastName].filter(Boolean).join(" ").trim() ||
+              "";
+            avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
           }
-        }
+        } catch {}
 
-        if (userDoc && userDoc.exists) {
-          const udata = userDoc.data()!;
-          chatName = udata.name || [udata.firstName, udata.lastName].filter(Boolean).join(" ").trim() || "";
-          avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+        if (!chatName) {
+          let userDoc = await db.collection("users").doc(normOtherId).get();
+          if (!userDoc.exists) {
+            const querySnap = await db
+              .collection("users")
+              .where("userId", "==", normOtherId)
+              .limit(1)
+              .get();
+            if (!querySnap.empty) {
+              userDoc = querySnap.docs[0];
+            }
+          }
+
+          if (userDoc && userDoc.exists) {
+            const udata = userDoc.data()!;
+            chatName =
+              udata.name ||
+              [udata.firstName, udata.lastName].filter(Boolean).join(" ").trim() ||
+              "";
+            avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+          }
         }
       }
     } else {
       chatName = updatedData.name;
     }
 
-    return NextResponse.json({ success: true, chat: { id: updated.id, ...updatedData, name: chatName, avatarUrl } });
+    return NextResponse.json({
+      success: true,
+      chat: { ...updatedData, name: chatName, avatarUrl },
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("PATCH /api/chats/[chatId] error:", error);
@@ -200,7 +385,9 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const user = await getUser(req);
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const CURRENT_USER_ID = user.userId;
     const isSameUser = (id1: string, id2: string) => {
       const n1 = normalizeId(id1);
@@ -210,29 +397,112 @@ export async function DELETE(req: NextRequest) {
     };
 
     const id = getIdFromUrl(req);
-    if (!id) return NextResponse.json({ error: "Chat ID is required" }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: "Chat ID is required" }, { status: 400 });
+    }
 
-    const docRef = db.collection("chats").doc(id);
-    const doc    = await docRef.get();
+    let data: any = null;
+    let fetchedFromDynamo = false;
 
-    if (!doc.exists) return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+    // 1. Try DynamoDB First
+    try {
+      const res = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
+        }),
+      );
+      if (res.Item) {
+        data = { id, ...res.Item };
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[chats/[id] DELETE] DynamoDB notice:", dynErr);
+    }
 
-    const data = doc.data()!;
-    if (!(data.participantIds as string[]).some(pid => isSameUser(pid, CURRENT_USER_ID))) {
+    if (!fetchedFromDynamo || !data) {
+      const docRef = db.collection("chats").doc(id);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      }
+      data = { id: docSnap.id, ...docSnap.data() };
+    }
+
+    if (
+      !(data.participantIds as string[] || []).some((pid) =>
+        isSameUser(pid, CURRENT_USER_ID),
+      )
+    ) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
     if (data.type === "dm" || isSameUser(data.createdBy, CURRENT_USER_ID)) {
-      await docRef.delete();
-      return NextResponse.json({ success: true, message: `Chat ${id} deleted successfully` });
+      // 1. Delete from DynamoDB
+      try {
+        await docClient.send(
+          new DeleteCommand({
+            TableName: "RealTimeChat",
+            Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
+          }),
+        );
+      } catch (dynErr) {
+        console.error("[chats/[id] DELETE] DynamoDB delete error:", dynErr);
+      }
+
+      // 2. Delete from Firestore
+      try {
+        await db.collection("chats").doc(id).delete();
+      } catch (fsErr) {
+        console.error("[chats/[id] DELETE] Firestore delete error:", fsErr);
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: `Chat ${id} deleted successfully`,
+      });
     }
 
-    await docRef.update({
-      participantIds: (data.participantIds as string[]).filter((uid) => !isSameUser(uid, CURRENT_USER_ID)),
+    // Leaving group chat
+    const updatedParticipants = (data.participantIds as string[]).filter(
+      (uid) => !isSameUser(uid, CURRENT_USER_ID),
+    );
+    const updatedChat = {
+      ...data,
+      participantIds: updatedParticipants,
       updatedAt: Date.now(),
-    });
+    };
 
-    return NextResponse.json({ success: true, message: "Left the group chat" });
+    // 1. Update DynamoDB
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: "RealTimeChat",
+          Item: {
+            roomId: `ROOM#${id}`,
+            sk: "ROOM#META",
+            ...updatedChat,
+          },
+        }),
+      );
+    } catch (dynErr) {
+      console.error("[chats/[id] DELETE leave] DynamoDB update error:", dynErr);
+    }
+
+    // 2. Update Firestore
+    try {
+      await db.collection("chats").doc(id).update({
+        participantIds: updatedParticipants,
+        updatedAt: Date.now(),
+      });
+    } catch (fsErr) {
+      console.error("[chats/[id] DELETE leave] Firestore update error:", fsErr);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Left the group chat",
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("DELETE /api/chats/[chatId] error:", error);

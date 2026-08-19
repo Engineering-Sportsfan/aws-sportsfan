@@ -1,245 +1,10 @@
-// // app/api/roar/profile/route.ts
-// import { NextRequest, NextResponse } from "next/server";
-// import { db } from "@/lib/firebaseAdmin";
-// import { getUser } from "@/lib/getUser";
-// import { getUserInfo } from "@/lib/userPoints";
-// import type { User } from "@/app/models/RoarUser";
-// import type { BadgeProgress } from "@/app/models/BadgeProgress";
-// import type { Post } from "@/app/models/Post";
-// import {
-//   getGlobalTier,
-//   getGlobalTierProgress,
-//   getAllFeatureBadges,
-//   getSpecialBadges,
-//   FEATURE_ICONS,
-//   FeatureKey,
-// } from "@/lib/roarBadges";
-
-// // ── Canonical doc resolution ───────────────────────────────────────────────
-// async function resolveUserDoc(userId: string, email: string) {
-//   let docRef = db.collection("users").doc(userId);
-//   let snap = await docRef.get();
-//   if (!snap.exists) {
-//     docRef = db.collection("users").doc(email);
-//     snap = await docRef.get();
-//     if (!snap.exists) return null;
-//   }
-//   return { docRef, snap };
-// }
-
-// // GET: Inquire profile stats (Service 2 - fully merged with legacy predictions, hot takes and accuracy data)
-// export async function GET(req: NextRequest) {
-//   try {
-//     const user = await getUser(req);
-//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-//     const { searchParams } = new URL(req.url);
-//     const targetUserId = searchParams.get("userId");
-
-//     let docRef, snap;
-
-//     if (targetUserId) {
-//       // ── Other user's profile — resolve through getUserInfo's fallback
-//       // chain instead of a bare doc-ID lookup.
-//       //
-//       // targetUserId typically arrives here as whatever ID some other part
-//       // of the app attached to a post/message/reaction (authorUid, reactor
-//       // userId, etc). Not every write path resolves that ID through
-//       // getUserInfo before storing it, so targetUserId is not guaranteed to
-//       // be the literal users/{id} doc ID. Resolving here means:
-//       //   1. It's still correct for write paths that already resolve properly.
-//       //   2. It's now also correct for write paths that don't (yet).
-//       //   3. It self-heals old/legacy docs written before those paths were fixed.
-//       const info = await getUserInfo(targetUserId);
-//       if (!info.exists) {
-//         return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-//       }
-//       docRef = db.collection("users").doc(info.actualUserId);
-//       snap = await docRef.get();
-//       if (!snap.exists) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-//     } else {
-//       // Self
-//       const resolved = await resolveUserDoc(user.userId, user.email);
-//       if (!resolved) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-//       ({ docRef, snap } = resolved);
-//     }
-
-//     const resolvedUserId = docRef.id;
-//     const userData = snap.data() as any;
-
-//     const [postsSnap, rivalSnap] = await Promise.all([
-//       db.collection("roarPosts").where("authorUid", "==", resolvedUserId).get(),
-//       db.collection("rivals").doc(resolvedUserId).get(),
-//     ]);
-
-//     const predictionStats = userData.predictionStats ?? {};
-//     const resolvedPredictionCount = predictionStats.participated ?? 0;
-//     const correctPredictionCount = predictionStats.correct ?? 0;
-//     const accuracy = resolvedPredictionCount > 0
-//       ? Math.round((correctPredictionCount / resolvedPredictionCount) * 100) : 0;
-
-//     const allPosts = postsSnap.docs.map((d) => ({ ...(d.data() as Post), postId: d.id }));
-//     const sortedPosts = allPosts.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
-
-//     const actCounts = userData.activityCounts ?? {};
-
-//     const featureCounts: Partial<Record<FeatureKey, number>> = {
-//       post:        actCounts.ROAR_POST ?? 0,
-//       debate:      actCounts.ROAR_DEBATE_PARTICIPATE ?? 0,
-//       prediction:  actCounts.ROAR_PREDICTION_PARTICIPATE ?? 0,
-//       trivia:      actCounts.ROAR_TRIVIA_CORRECT ?? 0,       
-//       fanBattle:   actCounts.ROAR_BATTLE_PARTICIPATE ?? 0,    
-//       community:   actCounts.likesReceived ?? 0,              
-//       shares:      actCounts.ROAR_SHARE ?? 0,                 
-//       comments:    actCounts.ROAR_COMMENT ?? 0,               
-//       media:       actCounts.ROAR_MEDIA_UPLOAD ?? 0,          
-//     };
-
-//     const featureBadges = getAllFeatureBadges(featureCounts);
-
-//     // Attach the full per-level icon set (L1..L5) to each feature badge so
-//     // the UI can render one icon per level in a row, not just the icon for
-//     // the currently-achieved level. FEATURE_ICONS[feature] is a fixed
-//     // 5-element tuple defined in lib/roarBadges.ts — this doesn't change
-//     // any derivation logic, it just carries the extra icons array alongside
-//     // the already-computed level/progress/label fields.
-//     const featureBadgesWithIcons = featureBadges.map((fb) => ({
-//       ...fb,
-//       icons: FEATURE_ICONS[fb.feature], // [l1Icon, l2Icon, l3Icon, l4Icon, l5Icon]
-//     }));
-
-//     const globalXp = userData.totalPoints ?? userData.reputationScore ?? 0;
-//     const legacyGlobalTier = getGlobalTier(globalXp);
-//     const globalTierProgress = getGlobalTierProgress(globalXp);
-
-//     const specialBadges = getSpecialBadges(
-//       {
-//         longestStreak: userData.longestStreak ?? userData.currentStreak ?? 0,
-//         hasViralPost: userData.hasViralPost ?? false,      
-//         hasSeasonTop100: userData.hasSeasonTop100 ?? false, 
-//         hasSeasonTop3: userData.hasSeasonTop3 ?? false,
-//       },
-//       featureBadges
-//     );
-
-//     // Merge and return the legacy format plus our new optimized gamification fields
-//     return NextResponse.json({
-//       success: true,
-//       user: {
-//         ...userData,
-//         accuracy,
-//         predictionStats,
-//         predictionCount: resolvedPredictionCount,
-//         correctPredictions: correctPredictionCount,
-//         actualUserId: resolvedUserId,
-//         badge: userData.badge ?? null,
-//         favPlayer: userData.favPlayer ?? null,
-//         about: userData.about ?? null,
-//         avatarUrl: userData.avatarUrl ?? null,
-
-//         // New Gamification Fields (Service 2 - dynamic lookup parameters)
-//         totalXP: userData.totalXP ?? globalXp,
-//         totalPoints: userData.totalPoints ?? globalXp,
-//         reputationScore: userData.reputationScore ?? globalXp,
-//         globalTier: userData.globalTier ?? legacyGlobalTier.tier,
-//         subRank: userData.subRank ?? legacyGlobalTier.subRank,
-//         currentLoginStreak: userData.currentLoginStreak ?? 0,
-//         loginStreakMultiplier: userData.loginStreakMultiplier ?? 1.0,
-//         streakFreezeCount: userData.streakFreezeCount ?? 0,
-//         featureStats: userData.featureStats ?? {},
-//         featureLevels: userData.featureLevels ?? {},
-//         isCompletionist: userData.isCompletionist ?? false
-//       },
-//       globalTier: legacyGlobalTier,            
-//       globalTierProgress,    
-//       featureBadges: featureBadgesWithIcons,   // includes icons[] per feature
-//       specialBadges,
-//       predictions: sortedPosts.filter((p: any) => p.type === "prediction").slice(0, 20),
-//       hotTakes: sortedPosts.filter((p: any) => p.type === "hot_take").slice(0, 10),
-//       rival: rivalSnap.exists ? rivalSnap.data() : null,
-//     });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     console.error("GET /api/roar/profile error:", error);
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-// // PATCH: Update user profile settings (unchanged to prevent breakages)
-// export async function PATCH(req: NextRequest) {
-//   try {
-//     const user = await getUser(req);
-//     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-//     const body = await req.json();
-//     const updates: Record<string, unknown> = { updatedAt: Date.now() };
-
-//     if (body.username !== undefined) {
-//       const v = String(body.username).trim().replace(/\s+/g, " ");
-//       if (v.length >= 2 && v.length <= 30 && /^[A-Za-z0-9_ -]+$/.test(v)) {
-//         updates.username = v;
-//       } else {
-//         return NextResponse.json({ error: "Invalid username." }, { status: 422 });
-//       }
-//     }
-
-//     if (body.favPlayer !== undefined) {
-//       updates.favPlayer = String(body.favPlayer).trim().slice(0, 60);
-//     }
-
-//     if (body.about !== undefined) {
-//       updates.about = String(body.about).trim().slice(0, 300);
-//     }
-
-//     if (body.avatarUrl !== undefined) {
-//       const v = String(body.avatarUrl).trim();
-//       if (v.startsWith("data:image/") || v.startsWith("https://") || v.startsWith("http://")) {
-//         updates.avatarUrl = v;
-//       } else {
-//         return NextResponse.json({ error: "Invalid avatarUrl." }, { status: 422 });
-//       }
-//     }
-
-//     if (body.showPredHistory !== undefined) {
-//       updates.showPredHistory = Boolean(body.showPredHistory);
-//     }
-
-//     if (body.showActivity !== undefined) {
-//       updates.showActivity = Boolean(body.showActivity);
-//     }
-
-//     for (const field of ["fcmToken", "settings", "teams", "sports"]) {
-//       if (body[field] !== undefined) updates[field] = body[field];
-//     }
-
-//     const meaningfulKeys = Object.keys(updates).filter((k) => k !== "updatedAt");
-//     if (meaningfulKeys.length === 0) {
-//       return NextResponse.json({ error: "No fields to update." }, { status: 400 });
-//     }
-
-//     const resolved = await resolveUserDoc(user.userId, user.email);
-//     if (!resolved) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-
-//     await resolved.docRef.set(updates, { merge: true });
-
-//     return NextResponse.json({ success: true, updatedFields: meaningfulKeys });
-//   } catch (error: unknown) {
-//     const msg = error instanceof Error ? error.message : "Unexpected error";
-//     console.error("PATCH /api/roar/profile error:", error);
-//     return NextResponse.json({ error: msg }, { status: 500 });
-//   }
-// }
-
-
-
-
 // app/api/roar/profile/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
-import type { User } from "@/app/models/RoarUser";
-import type { BadgeProgress } from "@/app/models/BadgeProgress";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post } from "@/app/models/Post";
 import {
   getGlobalTier,
@@ -250,8 +15,60 @@ import {
   FeatureKey,
 } from "@/lib/roarBadges";
 
-// ── Canonical doc resolution ───────────────────────────────────────────────
+export const dynamic = "force-dynamic";
+
+// ── Canonical doc resolution ──
 async function resolveUserDoc(userId: string, email: string) {
+  // Try direct lookup from DynamoDB first
+  try {
+    const getRes = await docClient.send(new GetCommand({
+      TableName: "IdentityAndAccess",
+      Key: { entityId: `USER#${userId}`, sk: "USER#META" }
+    }));
+    if (getRes.Item) {
+      return { id: userId, data: getRes.Item };
+    }
+  } catch (dynErr) {
+    console.warn("[profile resolveUserDoc] DynamoDB direct get failed:", dynErr);
+  }
+
+  // Try direct lookup with email as partition key next
+  if (email && email !== userId) {
+    try {
+      const getRes = await docClient.send(new GetCommand({
+        TableName: "IdentityAndAccess",
+        Key: { entityId: `USER#${email}`, sk: "USER#META" }
+      }));
+      if (getRes.Item) {
+        return { id: email, data: getRes.Item };
+      }
+    } catch (dynErr) {
+      console.warn("[profile resolveUserDoc] DynamoDB direct get by email failed:", dynErr);
+    }
+  }
+
+  // Check by email in DynamoDB GSI
+  if (email) {
+    try {
+      const emailRes = await docClient.send(new QueryCommand({
+        TableName: "IdentityAndAccess",
+        IndexName: "email-index",
+        KeyConditionExpression: "email = :email",
+        ExpressionAttributeValues: { ":email": email },
+        Limit: 5
+      }));
+      if (emailRes.Items && emailRes.Items.length > 0) {
+        const metaItem = emailRes.Items.find(item => item.sk === "USER#META");
+        const item = metaItem || emailRes.Items[0];
+        const uid = (item.entityId as string).replace(/^USER#/, "");
+        return { id: uid, data: item };
+      }
+    } catch (dynErr) {
+      console.warn("[profile resolveUserDoc] DynamoDB email GSI check failed:", dynErr);
+    }
+  }
+
+  // Fallback to Firestore
   let docRef = db.collection("users").doc(userId);
   let snap = await docRef.get();
   if (!snap.exists) {
@@ -259,10 +76,10 @@ async function resolveUserDoc(userId: string, email: string) {
     snap = await docRef.get();
     if (!snap.exists) return null;
   }
-  return { docRef, snap };
+  return { id: docRef.id, data: snap.data() };
 }
 
-// GET: Inquire profile stats (Service 2 - fully merged with legacy predictions, hot takes and accuracy data)
+// GET: Inquire profile stats
 export async function GET(req: NextRequest) {
   try {
     const user = await getUser(req);
@@ -271,41 +88,118 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const targetUserId = searchParams.get("userId");
 
-    let docRef, snap;
+    let resolvedUserId = "";
+    let userData: any = null;
 
     if (targetUserId) {
-      // ── Other user's profile — resolve through getUserInfo's fallback
-      // chain instead of a bare doc-ID lookup.
-      //
-      // targetUserId typically arrives here as whatever ID some other part
-      // of the app attached to a post/message/reaction (authorUid, reactor
-      // userId, etc). Not every write path resolves that ID through
-      // getUserInfo before storing it, so targetUserId is not guaranteed to
-      // be the literal users/{id} doc ID. Resolving here means:
-      //   1. It's still correct for write paths that already resolve properly.
-      //   2. It's now also correct for write paths that don't (yet).
-      //   3. It self-heals old/legacy docs written before those paths were fixed.
       const info = await getUserInfo(targetUserId);
       if (!info.exists) {
         return NextResponse.json({ error: "Profile not found" }, { status: 404 });
       }
-      docRef = db.collection("users").doc(info.actualUserId);
-      snap = await docRef.get();
-      if (!snap.exists) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+      resolvedUserId = info.actualUserId;
+
+      // Load profile details from DynamoDB first
+      try {
+        const getRes = await docClient.send(new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" }
+        }));
+        if (getRes.Item) {
+          userData = getRes.Item;
+        } else {
+          const resolved = await resolveUserDoc(resolvedUserId, resolvedUserId.includes("@") ? resolvedUserId : "");
+          if (resolved) {
+            userData = resolved.data;
+          }
+        }
+      } catch (dynErr) {
+        console.warn("[profile GET] DynamoDB target user get failed:", dynErr);
+      }
+
+      if (!userData) {
+        const snap = await db.collection("users").doc(resolvedUserId).get();
+        if (snap.exists) {
+          userData = snap.data();
+        }
+      }
     } else {
       // Self
       const resolved = await resolveUserDoc(user.userId, user.email);
       if (!resolved) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-      ({ docRef, snap } = resolved);
+      resolvedUserId = resolved.id;
+      userData = resolved.data;
     }
 
-    const resolvedUserId = docRef.id;
-    const userData = snap.data() as any;
+    if (!userData) {
+      return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+    }
 
-    const [postsSnap, rivalSnap] = await Promise.all([
-      db.collection("roarPosts").where("authorUid", "==", resolvedUserId).get(),
-      db.collection("rivals").doc(resolvedUserId).get(),
-    ]);
+    let posts: any[] = [];
+    let rivalData: any = null;
+    let fetchedPostsFromDynamo = false;
+    let fetchedRivalsFromDynamo = false;
+
+    // 1. Try fetching posts and rivals from DynamoDB first
+    try {
+      const keys = [`USER#${resolvedUserId}`, resolvedUserId];
+      const postsPromises = keys.map(k => docClient.send(new QueryCommand({
+        TableName: "SocialAndContent",
+        IndexName: "authorId-createdAt-index",
+        KeyConditionExpression: "authorId = :a",
+        ExpressionAttributeValues: { ":a": k }
+      })));
+
+      const results = await Promise.all(postsPromises);
+      const allDynamoPosts = results.flatMap(r => r.Items || []);
+      if (allDynamoPosts.length > 0) {
+        const seen = new Set();
+        posts = allDynamoPosts
+          .map(item => ({
+            ...item,
+            postId: (item.contentId as string).replace(/^POST#/, "")
+          }))
+          .filter(p => {
+            if (seen.has(p.postId)) return false;
+            seen.add(p.postId);
+            return true;
+          });
+        fetchedPostsFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[profile GET] DynamoDB posts fetch failed:", dynErr);
+    }
+
+    try {
+      const getRival = await docClient.send(new GetCommand({
+        TableName: "SportsData",
+        Key: { entityId: `RIVAL#${resolvedUserId}`, sk: `RIVAL#${resolvedUserId}` }
+      }));
+      if (getRival.Item) {
+        rivalData = getRival.Item;
+        fetchedRivalsFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[profile GET] DynamoDB rivals fetch failed:", dynErr);
+    }
+
+    // 2. Fallbacks
+    if (!fetchedPostsFromDynamo) {
+      try {
+        const postsSnap = await db.collection("roarPosts").where("authorUid", "==", resolvedUserId).get();
+        posts = postsSnap.docs.map((d) => ({ ...(d.data() as Post), postId: d.id }));
+      } catch (fsErr) {
+        console.error("[profile GET] Firestore posts fallback failed:", fsErr);
+      }
+    }
+
+    if (!fetchedRivalsFromDynamo) {
+      try {
+        const rivalSnap = await db.collection("rivals").doc(resolvedUserId).get();
+        rivalData = rivalSnap.exists ? rivalSnap.data() : null;
+      } catch (fsErr) {
+        console.error("[profile GET] Firestore rivals fallback failed:", fsErr);
+      }
+    }
 
     const predictionStats = userData.predictionStats ?? {};
     const resolvedPredictionCount = predictionStats.participated ?? 0;
@@ -313,10 +207,7 @@ export async function GET(req: NextRequest) {
     const accuracy = resolvedPredictionCount > 0
       ? Math.round((correctPredictionCount / resolvedPredictionCount) * 100) : 0;
 
-    const allPosts = postsSnap.docs.map((d) => ({ ...(d.data() as Post), postId: d.id }));
-    const sortedPosts = allPosts.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
-
-    // const actCounts = userData.activityCounts ?? {};
+    const sortedPosts = posts.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
     const liveFeatureStats = userData.featureStats ?? {};
     const actCounts = {
       ROAR_POST: liveFeatureStats.post ?? userData.activityCounts?.ROAR_POST ?? 0,
@@ -347,16 +238,9 @@ export async function GET(req: NextRequest) {
     };
 
     const featureBadges = getAllFeatureBadges(featureCounts);
-
-    // Attach the full per-level icon set (L1..L5) to each feature badge so
-    // the UI can render one icon per level in a row, not just the icon for
-    // the currently-achieved level. FEATURE_ICONS[feature] is a fixed
-    // 5-element tuple defined in lib/roarBadges.ts — this doesn't change
-    // any derivation logic, it just carries the extra icons array alongside
-    // the already-computed level/progress/label fields.
     const featureBadgesWithIcons = featureBadges.map((fb) => ({
       ...fb,
-      icons: FEATURE_ICONS[fb.feature], // [l1Icon, l2Icon, l3Icon, l4Icon, l5Icon]
+      icons: FEATURE_ICONS[fb.feature],
     }));
 
     const globalXp = userData.totalPoints ?? userData.reputationScore ?? 0;
@@ -373,7 +257,6 @@ export async function GET(req: NextRequest) {
       featureBadges
     );
 
-    // Merge and return the legacy format plus our new optimized gamification fields
     return NextResponse.json({
       success: true,
       user: {
@@ -387,10 +270,9 @@ export async function GET(req: NextRequest) {
         favPlayer: userData.favPlayer ?? null,
         about: userData.about ?? null,
         avatarUrl: userData.avatarUrl ?? null,
-        // LinkedIn-style optional cover/banner photo shown behind the avatar.
         coverPhotoUrl: userData.coverPhotoUrl ?? null,
 
-        // New Gamification Fields (Service 2 - dynamic lookup parameters)
+        // New Gamification Fields
         totalXP: userData.totalXP ?? globalXp,
         totalPoints: userData.totalPoints ?? globalXp,
         reputationScore: userData.reputationScore ?? globalXp,
@@ -402,15 +284,15 @@ export async function GET(req: NextRequest) {
         featureStats: userData.featureStats ?? {},
         featureLevels: userData.featureLevels ?? {},
         isCompletionist: userData.isCompletionist ?? false,
-         activityCounts: actCounts,
+        activityCounts: actCounts,
       },
       globalTier: legacyGlobalTier,
       globalTierProgress,
-      featureBadges: featureBadgesWithIcons,   // includes icons[] per feature
+      featureBadges: featureBadgesWithIcons,
       specialBadges,
       predictions: sortedPosts.filter((p: any) => p.type === "prediction").slice(0, 20),
       hotTakes: sortedPosts.filter((p: any) => p.type === "hot_take").slice(0, 10),
-      rival: rivalSnap.exists ? rivalSnap.data() : null,
+      rival: rivalData,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
@@ -419,14 +301,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// PATCH: Update user profile settings (unchanged to prevent breakages)
+// PATCH: Update user profile settings
 export async function PATCH(req: NextRequest) {
   try {
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const updates: Record<string, unknown> = { updatedAt: Date.now() };
+    const updates: Record<string, unknown> = { updatedAt: Date.now(), email: user.email };
 
     if (body.username !== undefined) {
       const v = String(body.username).trim().replace(/\s+/g, " ");
@@ -454,10 +336,6 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
-    // Optional LinkedIn-style cover/banner photo. An empty string is treated
-    // as an explicit "clear the cover photo" signal from the client (see
-    // Profile.tsx's SAVE handler) rather than a validation failure — leaving
-    // the field out entirely, by contrast, means "don't touch it".
     if (body.coverPhotoUrl !== undefined) {
       const v = String(body.coverPhotoUrl).trim();
       if (v === "") {
@@ -489,7 +367,41 @@ export async function PATCH(req: NextRequest) {
     const resolved = await resolveUserDoc(user.userId, user.email);
     if (!resolved) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
 
-    await resolved.docRef.set(updates, { merge: true });
+    const resolvedUserId = resolved.id;
+
+    // 1. Update in DynamoDB first
+    try {
+      let updateExpression = "SET";
+      const expressionAttributeNames: Record<string, string> = {};
+      const expressionAttributeValues: Record<string, any> = {};
+
+      Object.keys(updates).forEach((key, index) => {
+        const valKey = `:val${index}`;
+        const nameKey = `#name${index}`;
+        updateExpression += ` ${nameKey} = ${valKey},`;
+        expressionAttributeNames[nameKey] = key;
+        expressionAttributeValues[valKey] = updates[key];
+      });
+
+      updateExpression = updateExpression.slice(0, -1);
+
+      await docClient.send(new UpdateCommand({
+        TableName: "IdentityAndAccess",
+        Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
+        UpdateExpression: updateExpression,
+        ExpressionAttributeNames: expressionAttributeNames,
+        ExpressionAttributeValues: expressionAttributeValues
+      }));
+    } catch (dynErr) {
+      console.warn("[profile PATCH] DynamoDB update profile failed:", dynErr);
+    }
+
+    // 2. Sync to Firestore
+    try {
+      await db.collection("users").doc(resolvedUserId).set(updates, { merge: true });
+    } catch (fsErr) {
+      console.warn("[profile PATCH] Firestore fallback update profile failed:", fsErr);
+    }
 
     return NextResponse.json({ success: true, updatedFields: meaningfulKeys });
   } catch (error: unknown) {

@@ -1,24 +1,27 @@
-//api/createpost/route.ts
+// app/api/createpost/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
 import { v4 as uuidv4 } from "uuid";
 import { awardUserPoints } from "@/lib/userPoints";
 import cloudinary from "@/lib/cloudinary";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post, Poll, PollOption, CreatePostPayload, MediaItem } from "@/types/createposts";
+
+export const dynamic = "force-dynamic";
 
 const POST_POINTS_REWARD = 12;
 
-// Type for the poll data coming from frontend
 interface PollInput {
   options: string[];
 }
 
-// ─── POST  /api/createpost  — Create a new post ───────────────────────────────
+// ─── POST /api/createpost — Create a new post ────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    // Check if request is multipart/form-data (has files) or JSON
     const contentType = req.headers.get("content-type") || "";
-    
+
     let userName: string | undefined;
     let userHandle: string | undefined;
     let userAvatar: string | undefined;
@@ -26,20 +29,18 @@ export async function POST(req: NextRequest) {
     let pollInput: PollInput | null = null;
     let userId: string | undefined;
     let userEmail: string | undefined;
-    let mediaItems: MediaItem[] = [];
-    
+    const mediaItems: MediaItem[] = [];
+
     if (contentType.includes("multipart/form-data")) {
-      // Handle form-data with file uploads
       const formData = await req.formData();
-      
+
       userName = formData.get("userName") as string;
       userHandle = formData.get("userHandle") as string;
       userAvatar = formData.get("userAvatar") as string;
       content = formData.get("content") as string;
       userId = formData.get("userId") as string;
       userEmail = formData.get("userEmail") as string;
-      
-      // Parse poll if exists
+
       const pollStr = formData.get("poll") as string;
       if (pollStr) {
         try {
@@ -48,59 +49,50 @@ export async function POST(req: NextRequest) {
           console.error("Failed to parse poll:", e);
         }
       }
-      
-      // Handle media files
+
       const mediaFiles = formData.getAll("media") as File[];
       if (mediaFiles && mediaFiles.length > 0) {
-        // Upload each file to Cloudinary
         for (const file of mediaFiles) {
           const bytes = await file.arrayBuffer();
           const buffer = Buffer.from(bytes);
           const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
-          
+
           const uploadRes = await cloudinary.uploader.upload(base64, {
             folder: `social-posts/${userId || "anonymous"}`,
             resource_type: "auto",
-            transformation: [
-              { quality: "auto", fetch_format: "auto" }
-            ]
+            transformation: [{ quality: "auto", fetch_format: "auto" }],
           });
-          
-          // Store as MediaItem type
+
           mediaItems.push({
             url: uploadRes.secure_url,
             type: file.type.startsWith("video") ? "video" : "image",
-            name: file.name
+            name: file.name,
           });
         }
       }
     } else {
-      // Handle JSON request (legacy support without file uploads)
       const body: CreatePostPayload & {
         userId?: string;
         userEmail?: string;
       } = await req.json();
-      
+
       userName = body.userName;
       userHandle = body.userHandle;
       userAvatar = body.userAvatar;
       content = body.content;
-      
-      // Handle poll from JSON body
-      if (body.poll && typeof body.poll === 'object' && Array.isArray(body.poll.options)) {
+
+      if (body.poll && typeof body.poll === "object" && Array.isArray(body.poll.options)) {
         pollInput = { options: body.poll.options };
       }
-      
+
       userId = body.userId;
       userEmail = body.userEmail;
-      
-      // For JSON requests, media should already be MediaItem[]
+
       if (body.media && body.media.length > 0) {
-        mediaItems = body.media;
+        mediaItems.push(...body.media);
       }
     }
 
-    // ── Validation ────────────────────────────────────────────────────────────
     if (!userName || !userHandle) {
       return NextResponse.json(
         { success: false, error: "userName and userHandle are required" },
@@ -115,36 +107,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Build poll ────────────────────────────────────────────────────────────
     let builtPoll: Poll | null = null;
     if (pollInput && Array.isArray(pollInput.options) && pollInput.options.length >= 2) {
       const options: PollOption[] = pollInput.options
         .filter((option: string) => option.trim() !== "")
-        .map((optionText: string) => ({ 
-          id: uuidv4(), 
-          text: optionText.trim(), 
-          votes: 0 
+        .map((optionText: string) => ({
+          id: uuidv4(),
+          text: optionText.trim(),
+          votes: 0,
         }));
 
-      if (options.length < 2) {
-        return NextResponse.json(
-          { success: false, error: "Poll must have at least 2 non-empty options" },
-          { status: 400 }
-        );
+      if (options.length >= 2) {
+        builtPoll = {
+          options,
+          totalVotes: 0,
+          endsAt: Date.now() + 24 * 60 * 60 * 1000,
+          createdAt: Date.now(),
+          votedBy: [],
+        };
       }
-
-      builtPoll = {
-        options,
-        totalVotes: 0,
-        endsAt: Date.now() + 24 * 60 * 60 * 1000,
-        createdAt: Date.now(),
-        votedBy: [],
-      };
     }
 
-    // ── Save post with Cloudinary URLs ────────────────────────────────────────
     const now = Date.now();
-    const newPost: Omit<Post, "id"> = {
+    const docId = uuidv4();
+
+    const newPostData = {
+      id: docId,
       userName,
       userHandle,
       userAvatar: userAvatar || "",
@@ -156,58 +144,35 @@ export async function POST(req: NextRequest) {
       likedBy: [],
       createdAt: now,
       updatedAt: now,
+      status: "active",
+      cardType: "post",
     };
 
-    const docRef = await db.collection("socialPosts").add(newPost);
+    // ── Dual-Write to DynamoDB & Firebase ────────────────────────────────────
+    const dynamoItem = {
+      contentId: `POST#${docId}`,
+      sk: `POST#${now}`,
+      postId: docId,
+      ...newPostData,
+    };
 
-    // ── Award +12 points ──────────────────────────────────────────────────────
+    await dualWrite("socialPosts", docId, "SocialAndContent", dynamoItem);
+
+    // ── Award Points ─────────────────────────────────────────────────────────
     let pointsAwarded = 0;
-
     if (userId) {
       try {
-        const userSnap = await db.collection("users").doc(userId).get();
-        const userExists = userSnap.exists;
-
-        let resolvedName: string = userName;
-        let resolvedEmail: string = userEmail || "";
-
-        if (userExists) {
-          const data = userSnap.data();
-          if (data) {
-            resolvedName = data.firstName
-              ? [data.firstName, data.lastName].filter(Boolean).join(" ")
-              : data.name || userName;
-            resolvedEmail = resolvedEmail || data.email || "";
-          }
-        } else {
-          await db.collection("users").doc(userId).set({
-            userId,
-            email: resolvedEmail,
-            name: resolvedName,
-            firstName: resolvedName.split(" ")[0] || "",
-            lastName: resolvedName.split(" ")[1] || "",
-            totalPoints: 0,
-            pointsBreakdown: {},
-            createdAt: now,
-            lastUpdated: now,
-            status: "active",
-            role: "user",
-          });
-        }
-
         await awardUserPoints({
           actualUserId: userId,
-          userName: resolvedName,
-          userEmail: resolvedEmail,
+          userName: userName,
+          userEmail: userEmail || "",
           userExists: true,
           points: POST_POINTS_REWARD,
           reason: "CREATE_POST",
-          transactionId: `${userId}_${docRef.id}_CREATE_POST`,
-          metadata: { postId: docRef.id },
+          transactionId: `${userId}_${docId}_CREATE_POST`,
+          metadata: { postId: docId },
         });
-
         pointsAwarded = POST_POINTS_REWARD;
-        console.log(` Post created: ${docRef.id} | +${POST_POINTS_REWARD} pts awarded to ${userId}`);
       } catch (pointsErr) {
         console.error("[createpost] Failed to award points:", pointsErr);
       }
@@ -216,7 +181,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        data: { id: docRef.id, ...newPost },
+        data: { ...newPostData, id: docId },
         pointsAwarded,
         message: pointsAwarded
           ? `Post created! +${pointsAwarded} points awarded!`
@@ -231,52 +196,88 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// ─── GET  /api/createpost  — Fetch posts (paginated) 
+// ─── GET /api/createpost — Fetch posts (paginated) ───────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "10"), 50);
-    const lastDocId = searchParams.get("lastDocId");
-    const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
 
-    let query = db
-      .collection("socialPosts")
-      .orderBy("createdAt", "desc")
-      .limit(limit);
+    // 1. Scan DynamoDB SocialAndContent table for posts
+    let posts: Post[] = [];
 
-    if (lastDocId && lastDocCreatedAt) {
-      const lastDocRef = db.collection("socialPosts").doc(lastDocId);
-      const lastDoc = await lastDocRef.get();
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
+    try {
+      const scanRes = await docClient.send(
+        new ScanCommand({
+          TableName: "SocialAndContent",
+          FilterExpression: "begins_with(contentId, :postPrefix) OR begins_with(sk, :postPrefix)",
+          ExpressionAttributeValues: {
+            ":postPrefix": "POST",
+          },
+          Limit: 100,
+        })
+      );
+
+      if (scanRes.Items && scanRes.Items.length > 0) {
+        posts = scanRes.Items.map((item) => ({
+          id: (item.postId as string) || (item.id as string) || (item.contentId as string)?.replace(/^POST#/, ""),
+          userName: (item.userName as string) || (item.authorUsername as string) || "Fan",
+          userHandle: (item.userHandle as string) || (item.authorUid as string) || "@sportsfan",
+          userAvatar: (item.userAvatar as string) || (item.avatar as string) || "",
+          content: (item.content as string) || (item.text as string) || "",
+          media: (item.media as MediaItem[]) || [],
+          userEmail: (item.userEmail as string) || "",
+          poll: (item.poll as Poll) || null,
+          likes: (item.likes as number) || (item.likeCount as number) || 0,
+          likedBy: (item.likedBy as string[]) || [],
+          createdAt: (item.createdAt as number) || Date.now(),
+          updatedAt: (item.updatedAt as number) || Date.now(),
+          ...item,
+        })) as Post[];
+
+        posts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      }
+    } catch (err) {
+      console.warn("DynamoDB social posts scan notice:", err);
+    }
+
+    // Fallback to Firebase
+    if (posts.length === 0) {
+      try {
+        const snapshot = await db
+          .collection("socialPosts")
+          .orderBy("createdAt", "desc")
+          .limit(limit)
+          .get();
+
+        posts = snapshot.docs
+          .map((doc) => ({
+            id: doc.id,
+            ...(doc.data() as Omit<Post, "id">),
+          }))
+          .filter((post) => (post as Record<string, unknown>).removed !== true);
+      } catch (fbErr) {
+        console.warn("Firebase socialPosts fallback notice:", fbErr);
       }
     }
 
-    const snapshot = await query.get();
-   const posts: Post[] = snapshot.docs
-  .map((doc) => ({
-    id: doc.id,
-    ...(doc.data() as Omit<Post, "id">),
-  }))
-  .filter((post) => post.removed !== true);
-
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    const paginated = posts.slice(0, limit);
+    const lastDoc = paginated[paginated.length - 1];
 
     return NextResponse.json({
       success: true,
-      posts,
+      posts: paginated,
       pagination: {
         limit,
-       hasMore: snapshot.docs.length === limit,
+        hasMore: posts.length > limit,
         nextCursor:
-          posts.length === limit
+          posts.length > limit
             ? {
                 lastDocId: lastDoc?.id,
-                lastDocCreatedAt: lastDoc?.data()?.createdAt,
+                lastDocCreatedAt: lastDoc?.createdAt,
               }
             : null,
       },
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("GET /api/createpost error:", error);

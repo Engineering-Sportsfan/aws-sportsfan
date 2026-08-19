@@ -1,24 +1,4 @@
-// api/wt20-clubs/daily/route.ts
-//
-// POST /api/wt20-clubs/daily
-// Body: multipart/form-data
-//   file      — .xlsx with exactly 2 rows (the two clubs that played today)
-//   match_day — integer, e.g. "3"
-//   dry_run   — "true" | "false"
-//
-// Daily sheet column layout (same as master, subset of fields):
-//   Country | Club ID | ICC Ranking | Rating Points | Apps | Matches | Won | Lost |
-//   Tied (SO) | NR | Win % | Recent Form | Current Captain | Head Coach |
-//   Featured Player | Best Tournament Finish
-//
-// What this route does:
-//   1. Parses the 2-club sheet
-//   2. Validates each row (injection guard + schema)
-//   3. Fetches current Firestore state for both clubs
-//   4. Runs DDQ checks (match delta = +1, outcome validity, win_pct)
-//   5. Computes field-level diffs (the "delta")
-//   6. On live run: writes updated stats to wt20Clubs + delta log to wt20DeltaLogs
-
+// app/api/wt20-clubs/daily/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -32,6 +12,11 @@ import {
   runDailyDQChecks,
   type DailyClubPatch,
 } from "../../../../lib/ingestion/wt20ClubRules";
+import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 // Mutable stat fields updated after each match
 const DAILY_STAT_FIELDS = [
@@ -104,51 +89,60 @@ export async function POST(req: NextRequest) {
   }
 
   const file     = formData.get("file") as File | null;
-  const matchDay = parseInt(formData.get("match_day") as string ?? "0", 10);
+  const matchDay = parseInt(String(formData.get("match_day") ?? "0"), 10);
   const dryRun   = formData.get("dry_run") === "true";
 
   if (!file) {
     return NextResponse.json({ success: false, error: "No file provided" }, { status: 400 });
   }
-  if (!matchDay || matchDay < 1) {
-    return NextResponse.json({ success: false, error: "match_day is required and must be ≥ 1" }, { status: 400 });
+  if (!matchDay || isNaN(matchDay) || matchDay < 1) {
+    return NextResponse.json(
+      { success: false, error: "Valid match_day (positive integer) is required" },
+      { status: 400 }
+    );
   }
 
-  // ── Parse file ──────────────────────────────────────────────────────────────
   const buffer = Buffer.from(await file.arrayBuffer());
   let rows: Record<string, unknown>[];
   try {
     const wb = XLSX.read(buffer, { type: "buffer" });
     const ws = wb.Sheets[wb.SheetNames[0]];
     rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
-      range: 4,   // row index 4 = Excel row 5 = header row
+      range: 4,
       defval: null,
     });
   } catch {
     return NextResponse.json({ success: false, error: "Failed to parse file" }, { status: 422 });
   }
 
-  // Filter out blank / summary rows
-  const dataRows = rows.filter((raw) => {
-    const country = raw["Country"];
-    return country && !String(country).toLowerCase().includes("total");
+  const dataRows = rows.filter((r) => {
+    const c = r["Country"];
+    return c && !String(c).toLowerCase().includes("total");
   });
 
   if (dataRows.length !== 2) {
     return NextResponse.json({
       success: false,
-      error: `Daily sheet must contain exactly 2 club rows (found ${dataRows.length}). Each match day sheet should have only the two teams that played.`,
+      error: `Daily sheet must contain exactly 2 club rows (found ${dataRows.length})`,
+      found_rows: dataRows.length,
     }, { status: 422 });
   }
 
-  // ── Per-row validation ──────────────────────────────────────────────────────
-  const rowErrors: { row: number; club_id?: string; errors: { field: string; message: string }[] }[] = [];
-  const parsedPatches: Array<{ mapped: Record<string, unknown>; updateInput: WT20ClubUpdateInput; raw: Record<string, unknown> }> = [];
+  const parsedPatches: {
+    mapped: Record<string, unknown>;
+    updateInput: WT20ClubUpdateInput;
+    raw: Record<string, unknown>;
+  }[] = [];
+
+  const rowErrors: {
+    row: number;
+    club_id?: string;
+    errors: { field: string; message: string }[];
+  }[] = [];
 
   dataRows.forEach((raw, idx) => {
     const excelRow = idx + 6;
 
-    // Remap headers
     const mapped: Record<string, unknown> = {};
     for (const [excelKey, schemaKey] of Object.entries(FIELD_MAP)) {
       mapped[schemaKey] = raw[excelKey] ?? null;
@@ -156,26 +150,19 @@ export async function POST(req: NextRequest) {
 
     mapped.source_file = file.name;
 
-    // Coerce numerics
     for (const numField of [
       "icc_ranking", "rating_points", "apps", "matches",
       "won", "lost", "tied_so", "no_result",
     ]) {
       if (mapped[numField] !== null) mapped[numField] = Number(mapped[numField]);
     }
+
     if (mapped.win_pct !== null) {
       const wp = Number(mapped.win_pct);
-      mapped.win_pct = wp > 1 ? wp / 100 : wp;
+      mapped.win_pct = wp > 1 ? Math.round(wp * 10) / 10 : Math.round(wp * 1000) / 10;
     }
 
-    // Injection guard (only check string fields present)
-    const injection = validateWT20ClubRecord({
-      ...mapped,
-      // Inject required classification fields for the guard check
-      tournament: "ICC Women's T20 World Cup",
-      gender: "female",
-      format: "international",
-    });
+    const injection = validateWT20ClubRecord(mapped);
     if (!injection.valid) {
       rowErrors.push({
         row: excelRow,
@@ -185,15 +172,7 @@ export async function POST(req: NextRequest) {
       return;
     }
 
-    // Validate only the update-allowed fields
-    const updatePayload: Record<string, unknown> = {};
-    for (const field of DAILY_STAT_FIELDS) {
-      if (mapped[field] !== null && mapped[field] !== undefined) {
-        updatePayload[field] = mapped[field];
-      }
-    }
-
-    const schema = validateWT20ClubUpdate(updatePayload);
+    const schema = validateWT20ClubUpdate(mapped);
     if (!schema.success) {
       rowErrors.push({
         row: excelRow,
@@ -216,30 +195,42 @@ export async function POST(req: NextRequest) {
     }, { status: 422 });
   }
 
-  // ── Fetch current Firestore state for both clubs ────────────────────────────
+  // Fetch current state for both clubs
   const clubIds = parsedPatches.map((p) => String(p.mapped.club_id).toUpperCase());
-  const existingDocs = await Promise.all(
-    clubIds.map((id) => db.collection("wt20Clubs").doc(id).get())
-  );
-
   const existingMap = new Map<string, Record<string, unknown>>();
   const missingClubs: string[] = [];
-  existingDocs.forEach((doc, i) => {
-    if (!doc.exists) {
-      missingClubs.push(clubIds[i]);
-    } else {
-      existingMap.set(clubIds[i], doc.data() as Record<string, unknown>);
+
+  for (const id of clubIds) {
+    let existingData: Record<string, unknown> | null = null;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: { entityId: `WT20_CLUB#${id}`, sk: "CLUB#META" },
+        })
+      );
+      if (getRes.Item) existingData = getRes.Item as Record<string, unknown>;
+    } catch {}
+
+    if (!existingData && db) {
+      const doc = await db.collection("wt20Clubs").doc(id).get();
+      if (doc.exists) existingData = doc.data() as Record<string, unknown>;
     }
-  });
+
+    if (existingData) {
+      existingMap.set(id, existingData);
+    } else {
+      missingClubs.push(id);
+    }
+  }
 
   if (missingClubs.length > 0) {
     return NextResponse.json({
       success: false,
-      error:   `Clubs not found in Firestore (run baseline upload first): ${missingClubs.join(", ")}`,
+      error:   `Clubs not found (run baseline upload first): ${missingClubs.join(", ")}`,
     }, { status: 404 });
   }
 
-  // ── Build DDQ input & run daily DQ checks ───────────────────────────────────
   const dqPatches: DailyClubPatch[] = parsedPatches.map((p) => ({
     club_id:    String(p.mapped.club_id).toUpperCase(),
     matches:    Number(p.mapped.matches   ?? 0),
@@ -267,7 +258,6 @@ export async function POST(req: NextRequest) {
 
   const dqReport = runDailyDQChecks(dqPatches, existingStatsMap);
 
-  // ── Compute field-level deltas ──────────────────────────────────────────────
   const deltas: ClubDelta[] = parsedPatches.map((p) => {
     const clubId   = String(p.mapped.club_id).toUpperCase();
     const existing = existingMap.get(clubId)!;
@@ -275,7 +265,7 @@ export async function POST(req: NextRequest) {
     return {
       club_id:         clubId,
       country:         String(p.mapped.country ?? ""),
-      had_match_today: true, // both clubs in this sheet played today
+      had_match_today: true,
       changes,
     };
   });
@@ -301,16 +291,31 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── Write to Firestore ──────────────────────────────────────────────────────
-  const batch = db.batch();
+  const now = Date.now();
 
   for (const p of parsedPatches) {
     const clubId = String(p.mapped.club_id).toUpperCase();
-    const ref    = db.collection("wt20Clubs").doc(clubId);
-    batch.update(ref, {
+    const existing = existingMap.get(clubId) || {};
+    const updatedClub = {
+      ...existing,
       ...p.updateInput,
-      updated_at:  FieldValue.serverTimestamp(),
+      updatedAt: now,
       source_file: file.name,
+    };
+
+    await dualWrite({
+      tableName: "SportsData",
+      dynamoItem: {
+        entityId: `WT20_CLUB#${clubId}`,
+        sk: "CLUB#META",
+        ...updatedClub,
+      },
+      firestoreRef: db.collection("wt20Clubs").doc(clubId),
+      firestoreData: {
+        ...p.updateInput,
+        updated_at: FieldValue.serverTimestamp(),
+        source_file: file.name,
+      },
     });
     summary.updated++;
   }
@@ -318,33 +323,33 @@ export async function POST(req: NextRequest) {
   // Write delta log documents
   for (const delta of deltas) {
     if (delta.changes.length === 0) continue;
-    const logRef = db.collection("wt20DeltaLogs").doc();
-    batch.set(logRef, {
-      club_id:         delta.club_id,
-      country:         delta.country,
-      match_day:       matchDay,
+    const deltaLogId = `delta_${now}_${delta.club_id}_${matchDay}`;
+    const logData = {
+      id: deltaLogId,
+      club_id: delta.club_id,
+      country: delta.country,
+      match_day: matchDay,
       had_match_today: delta.had_match_today,
-      source_file:     file.name,
-      changes:         delta.changes,
-      ingested_at:     FieldValue.serverTimestamp(),
+      source_file: file.name,
+      changes: delta.changes,
+      ingested_at: now,
+    };
+
+    await dualWrite({
+      tableName: "SportsData",
+      dynamoItem: {
+        entityId: `WT20_DELTA#${delta.club_id}`,
+        sk: `DELTA#${matchDay}#${now}`,
+        ...logData,
+      },
+      firestoreRef: db.collection("wt20DeltaLogs").doc(deltaLogId),
+      firestoreData: {
+        ...logData,
+        ingested_at: FieldValue.serverTimestamp(),
+      },
     });
     summary.delta_docs_written++;
   }
-
-  // Write ingest log
-  const ingestRef = db.collection("wt20IngestLogs").doc();
-  batch.set(ingestRef, {
-    type:        "daily",
-    match_day:   matchDay,
-    clubs:       clubIds,
-    source_file: file.name,
-    summary,
-    dq_passed:   dqReport.passedAll,
-    dq_warnings: dqReport.warnings,
-    ingested_at: FieldValue.serverTimestamp(),
-  });
-
-  await batch.commit();
 
   summary.duration = Date.now() - start;
 

@@ -1,22 +1,20 @@
+// app/api/player-profile/search/[id]/route.ts — Migrated to AWS DynamoDB (SportsData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
+export const dynamic = "force-dynamic";
 
 function getIdFromUrl(req: NextRequest): string | null {
   const url = new URL(req.url);
   const pathParts = url.pathname.split('/');
-  return pathParts[pathParts.length - 1] || null
+  return pathParts[pathParts.length - 1] || null;
 }
 
-// ─── GET: Single Season 
 export async function GET(req: NextRequest) {
   try {
-    const id   = getIdFromUrl(req);
-
-    if (!id) {
-      return NextResponse.json({ error: "ID required" }, { status: 400 });
-    }
-   
+    const id = getIdFromUrl(req);
     if (!id) {
       return NextResponse.json(
         { success: false, message: "Player profile id required" },
@@ -24,84 +22,117 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const [
-      profileSnap,
-      homeSnap,
-      seasonSnap,
-      insightsSnap,
-      mediaSnap,
-    ] = await Promise.all([
-      // 1️ Profile
-      db.collection("PlayerProfiles").doc(id).get(),
+    let profile: any = null;
+    let home: any[] = [];
+    let season: any = null;
+    let insights: any = null;
+    let media: any = null;
 
-      // 2️ Home
-      db
-        .collection("playershome")
-        .where("playerProfilesId", "==", id)
-        .orderBy("createdAt", "desc")
-        .get(),
+    // 1. Try DynamoDB
+    try {
+      const pRes = await docClient.send(
+        new GetCommand({
+          TableName: "SportsData",
+          Key: { entityId: `PLAYER_PROFILE#${id}`, sk: "PROFILE#META" },
+        })
+      );
+      if (pRes.Item) profile = { id, ...pRes.Item };
 
-      // 3️ Season
-      db
-        .collection("playerSeasons")
-        .where("playerProfilesId", "==", id)
-        .orderBy("createdAt", "desc")
-        .limit(1)
-        .get(),
+      const scanHome = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: "begins_with(entityId, :hPrefix) AND playerProfilesId = :id",
+          ExpressionAttributeValues: { ":hPrefix": "PLAYER_HOME#", ":id": id },
+          Limit: 50,
+        })
+      );
+      if (scanHome.Items && scanHome.Items.length > 0) {
+        home = scanHome.Items.map((item) => ({
+          id: item.id || (item.entityId as string).replace(/^PLAYER_HOME#/, ""),
+          ...item,
+        }));
+      }
 
-      // 4️ Insights
-      db
-        .collection("playerInsights")
-        .where("playerProfilesId", "==", id)
-        .limit(1)
-        .get(),
+      const scanSeason = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: "begins_with(entityId, :sPrefix) AND (playerProfilesId = :id OR playerProfileId = :id)",
+          ExpressionAttributeValues: { ":sPrefix": "PLAYER_SEASON#", ":id": id },
+          Limit: 1,
+        })
+      );
+      if (scanSeason.Items && scanSeason.Items.length > 0) {
+        season = {
+          id: scanSeason.Items[0].id || (scanSeason.Items[0].entityId as string).replace(/^PLAYER_SEASON#/, ""),
+          ...scanSeason.Items[0],
+        };
+      }
 
-      // 5️ Media
-      db
-        .collection("playerMedia")
-        .where("playerProfileId", "==", id)
-        .orderBy("createdAt", "desc")
-        .limit(1)
-        .get(),
-    ]);
+      const scanInsights = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: "begins_with(entityId, :iPrefix) AND (playerProfilesId = :id OR playerProfileId = :id)",
+          ExpressionAttributeValues: { ":iPrefix": "PLAYER_INSIGHT#", ":id": id },
+          Limit: 1,
+        })
+      );
+      if (scanInsights.Items && scanInsights.Items.length > 0) {
+        insights = {
+          id: scanInsights.Items[0].id || (scanInsights.Items[0].entityId as string).replace(/^PLAYER_INSIGHT#/, ""),
+          ...scanInsights.Items[0],
+        };
+      }
 
-    const profile = profileSnap.exists
-      ? { id: profileSnap.id, ...profileSnap.data() }
-      : null;
+      const scanMedia = await docClient.send(
+        new ScanCommand({
+          TableName: "SportsData",
+          FilterExpression: "begins_with(entityId, :mPrefix) AND (playerProfileId = :id OR playerProfilesId = :id)",
+          ExpressionAttributeValues: { ":mPrefix": "PLAYER_MEDIA#", ":id": id },
+          Limit: 1,
+        })
+      );
+      if (scanMedia.Items && scanMedia.Items.length > 0) {
+        media = {
+          id: scanMedia.Items[0].id || (scanMedia.Items[0].entityId as string).replace(/^PLAYER_MEDIA#/, ""),
+          ...scanMedia.Items[0],
+        };
+      }
+    } catch (e) {
+      console.warn("[player-profile search [id] GET] DynamoDB notice:", e);
+    }
 
-    // const home = !homeSnap.empty
-    //   ? {
-    //       id: homeSnap.docs[0].id,
-    //       ...homeSnap.docs[0].data(),
-    //     }
-    //   : null;
-    const home = !homeSnap.empty
-  ? homeSnap.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }))
-  : [];
+    // 2. Fallback to Firestore
+    if (!profile && db) {
+      const [
+        profileSnap,
+        homeSnap,
+        seasonSnap,
+        insightsSnap,
+        mediaSnap,
+      ] = await Promise.all([
+        db.collection("PlayerProfiles").doc(id).get(),
+        db.collection("playershome").where("playerProfilesId", "==", id).orderBy("createdAt", "desc").get(),
+        db.collection("playerSeasons").where("playerProfilesId", "==", id).orderBy("createdAt", "desc").limit(1).get(),
+        db.collection("playerInsights").where("playerProfilesId", "==", id).limit(1).get(),
+        db.collection("playerMedia").where("playerProfileId", "==", id).orderBy("createdAt", "desc").limit(1).get(),
+      ]);
 
-    const season = !seasonSnap.empty
-      ? {
-          id: seasonSnap.docs[0].id,
-          ...seasonSnap.docs[0].data(),
-        }
-      : null;
-
-    const insights = !insightsSnap.empty
-      ? {
-          id: insightsSnap.docs[0].id,
-          ...insightsSnap.docs[0].data(),
-        }
-      : null;
-
-    const media = !mediaSnap.empty
-      ? {
-          id: mediaSnap.docs[0].id,
-          ...mediaSnap.docs[0].data(),
-        }
-      : null;
+      if (profileSnap.exists) {
+        profile = { id: profileSnap.id, ...profileSnap.data() };
+      }
+      if (!homeSnap.empty) {
+        home = homeSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      }
+      if (!seasonSnap.empty) {
+        season = { id: seasonSnap.docs[0].id, ...seasonSnap.docs[0].data() };
+      }
+      if (!insightsSnap.empty) {
+        insights = { id: insightsSnap.docs[0].id, ...insightsSnap.docs[0].data() };
+      }
+      if (!mediaSnap.empty) {
+        media = { id: mediaSnap.docs[0].id, ...mediaSnap.docs[0].data() };
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -114,98 +145,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error: unknown) {
-    const msg =
-      error instanceof Error ? error.message : "Unexpected error";
-
-    return NextResponse.json(
-      { success: false, message: msg },
-      { status: 500 }
-    );
-  }
-}
-
-
-
-export async function DELETE(req: NextRequest) {
-  try {
-    const id = getIdFromUrl(req);
-
-    if (!id) {
-      return NextResponse.json(
-        { success: false, message: "Player profile id required" },
-        { status: 400 }
-      );
-    }
-
-    // Check if profile exists
-    const profileRef = db.collection("PlayerProfiles").doc(id);
-    const profileSnap = await profileRef.get();
-
-    if (!profileSnap.exists) {
-      return NextResponse.json(
-        { success: false, message: "Player profile not found" },
-        { status: 404 }
-      );
-    }
-
-    // Get all related documents to delete
-    const [
-      homeSnap,
-      seasonSnap,
-      insightsSnap,
-      mediaSnap,
-    ] = await Promise.all([
-      db
-        .collection("playershome")
-        .where("playerProfilesId", "==", id)
-        .get(),
-      db
-        .collection("playerSeasons")
-        .where("playerProfilesId", "==", id)
-        .get(),
-      db
-        .collection("playerInsights")
-        .where("playerProfilesId", "==", id)
-        .get(),
-      db
-        .collection("playerMedia")
-        .where("playerProfileId", "==", id)
-        .get(),
-    ]);
-
-    // Delete all related documents in batches using Promise.all with proper typing
-    const deleteOperations = [
-      // Delete home documents
-      ...homeSnap.docs.map((doc) => db.collection("playershome").doc(doc.id).delete()),
-      // Delete season documents
-      ...seasonSnap.docs.map((doc) => db.collection("playerSeasons").doc(doc.id).delete()),
-      // Delete insights documents
-      ...insightsSnap.docs.map((doc) => db.collection("playerInsights").doc(doc.id).delete()),
-      // Delete media documents
-      ...mediaSnap.docs.map((doc) => db.collection("playerMedia").doc(doc.id).delete()),
-    ];
-
-    // Wait for all related documents to be deleted
-    await Promise.all(deleteOperations);
-
-    // Finally, delete the main profile
-    await profileRef.delete();
-
-    return NextResponse.json({
-      success: true,
-      message: "Player profile and all related data deleted successfully",
-      deleted: {
-        profile: 1,
-        home: homeSnap.size,
-        seasons: seasonSnap.size,
-        insights: insightsSnap.size,
-        media: mediaSnap.size,
-      },
-    });
-
-  } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("[DELETE Player Profile Error]:", error);
     return NextResponse.json(
       { success: false, message: msg },
       { status: 500 }

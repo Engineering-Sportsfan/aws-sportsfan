@@ -1,0 +1,154 @@
+{
+  "fastest": {
+    "id": "fastest",
+    "title": "India's Fastest 100m",
+    "description": "Journey behind the national record",
+    "gradient": "linear-gradient(137.15deg, rgba(201, 17, 95, 0.2) 0%, rgba(201, 17, 95, 0.05) 100%)",
+    "publishedDate": "2026-05-23",
+    "author": "Athletics Federation",
+    "location": "New Delhi",
+    "content": [
+      "On May 23, 2026, Gurindervir Singh shattered the men's 100m national record with a stunning 10.09s at the Federation Cup in Ranchi — slicing off the previous mark in one of the most electric moments in Indian sprint history.",
+      "The run places India just 0.51s (5.32%) behind Usain Bolt's 9.58s world record — the closest the nation has ever been. Over the past decade the gap has closed by more than 25%, a transformation driven by world-class coaching, superior sports science, and a new generation of fearless sprinters.",
+      "Singh's performance, backed by his World Athletics ranking of #245 in the 100m, underscores that Indian sprinting is no longer a fringe pursuit but a genuine force on the world stage."
+    ],
+    "keyStats": [
+      {
+        "value": "10.09s",
+        "label": "National Record",
+        "color": "#C9115F"
+      },
+      {
+        "value": "0.51s",
+        "label": "Gap to World Record",
+        "color": "#C0C0C0"
+      },
+      {
+        "value": "#245",
+        "label": "World Athletics Rank",
+        "color": "#CD620E"
+      },
+      {
+        "value": "5.32%",
+        "label": "Gap to WR (%)",
+        "color": "#ffffff"
+      }
+    ],
+    "quote": "Every record broken is a testament to the relentless spirit of Indian athletes who refuse to give up on their dreams.",
+    "quoteAuthor": "Athletics Federation of India"
+  },
+  "gulveer": {
+    "id": "gulveer",
+    "title": "Gulveer Singh: Distance Running Revolution",
+    "description": "India finds its champion in the long run",
+    "gradient": "linear-gradient(137.15deg, rgba(201, 17, 95, 0.2) 0%, rgba(201, 17, 95, 0.05) 100%)",
+    "publishedDate": "2026-05-24",
+    "author": "Sports Authority of India",
+    "location": "Los Angeles",
+    "content": [
+      "On May 24, 2026, Gulveer Singh ran 13:03.93 at the Sound Running Track Fest in Los Angeles — his outdoor national record in the 5000m — reducing the gap to the world record by over 15 seconds since 2023.",
+      "Gulveer has been India's biggest mover in distance running, breaking national records in 3000m, 5000m and 10,000m within 2024-2026, sharply narrowing India's gap to the world elite across all distance events.",
+      "With his indoor 12:59.77 (Boston, Feb 2025) and outdoor 13:03.93, Gulveer has established himself as one of the brightest distance runners in Asia and a genuine contender for global competition."
+    ],
+    "keyStats": [
+      {
+        "value": "13:03.93",
+        "label": "5000m Outdoor NR",
+        "color": "#C9115F"
+      },
+      {
+        "value": "28.57s",
+        "label": "Gap to World Record",
+        "color": "#C0C0C0"
+      },
+      {
+        "value": "35%",
+        "label": "Gap Reduction Since 2023",
+        "color": "#CD620E"
+      },
+      {
+        "value": "3 NRs",
+        "label": "Records Broken 2024-26",
+        "color": "#ffffff"
+      }
+    ],
+    "quote": "The youth of today are the champions of tomorrow. We invest in them with all we have.",
+    "quoteAuthor": "Sports Authority of India"
+  },
+  "neeraj": {
+    "id": "neeraj",
+    "title": "Neeraj Chopra's Javelin Revolution",
+    "description": "How one athlete transformed Indian athletics",
+    "gradient": "linear-gradient(137.15deg, rgba(192, 192, 192, 0.2) 0%, rgba(192, 192, 192, 0.05) 100%)",
+    "publishedDate": "2025-05-16",
+    "author": "Athletics Federation",
+    "location": "Doha",
+    "content": [
+      "Neeraj Chopra reclaimed the World No. 1 ranking in men's javelin throw in June 2025 with 1445 ranking points, cementing his status as the defining figure in Indian athletics history.",
+      "His national record of 90.23m at the Doha Diamond League 2025 — combined with his Olympic gold in Tokyo 2021 and historic first-ever athletics Olympic medal for India — has halved the gap to the world record from 16.25m (2016) to just 8.25m (2025).",
+      "Arshad Nadeem's incredible 92.97m at Paris 2024 now stands as the Olympic record, but Neeraj's consistency and dominance over a decade remain unparalleled in Indian track and field."
+    ],
+    "keyStats": [
+      {
+        "value": "90.23m",
+        "label": "National Record",
+        "color": "#C0C0C0"
+      },
+      {
+        "value": "8.25m",
+        "label": "Gap to World Record",
+        "color": "#CD620E"
+      },
+      {
+        "value": "WR #1",
+        "label": "World Ranking 2025",
+        "color": "#C9115F"
+      },
+      {
+        "value": "49%",
+        "label": "Gap Reduction Since 2016",
+        "color": "#ffffff"
+      }
+    ],
+    "quote": "The javelin throw is India's flag event now. Neeraj has put us on the global map forever.",
+    "quoteAuthor": "Athletics Federation of India"
+  },
+  "sub45": {
+    "id": "sub45",
+    "title": "India's First Sub-45s in 400m",
+    "description": "Historic milestone in Indian quarter-mile",
+    "gradient": "linear-gradient(137.15deg, rgba(205, 98, 14, 0.2) 0%, rgba(205, 98, 14, 0.05) 100%)",
+    "publishedDate": "2026-05-01",
+    "author": "Athletics Federation",
+    "location": "Ranchi",
+    "content": [
+      "In May 2026, Vishal Thennarasu Kayalvizhi became the first Indian to break the 45-second barrier in the 400m, clocking 44.98s at the Federation Cup in Ranchi — a watershed moment for Indian quarter-miling.",
+      "The achievement closes the gap to Wayde van Niekerk's world record (43.03s) to just 1.95s (4.53%), down from 2.37s (5.51%) in 2016 — a 17.7% reduction in the gap over a decade of continuous improvement.",
+      "Vishal is currently ranked #65 in the world by World Athletics — the highest any Indian 400m runner has been ranked in recent memory."
+    ],
+    "keyStats": [
+      {
+        "value": "44.98s",
+        "label": "National Record",
+        "color": "#CD620E"
+      },
+      {
+        "value": "1.95s",
+        "label": "Gap to World Record",
+        "color": "#C0C0C0"
+      },
+      {
+        "value": "#65",
+        "label": "World Athletics Rank",
+        "color": "#C9115F"
+      },
+      {
+        "value": "Sub-45",
+        "label": "Historic Milestone",
+        "color": "#ffffff"
+      }
+    ],
+    "quote": "Breaking 45 seconds was the barrier every Indian 400m runner dreamed of. Today that dream became reality.",
+    "quoteAuthor": "Athletics Federation of India"
+  }
+}

@@ -1,9 +1,17 @@
-// app/api/chats/[chatId]/messages/route.ts  — BACKEND
+// app/api/chats/[chatId]/messages/route.ts — BACKEND
+// Chat messages retrieval and sending (DynamoDB-First + Firestore Fallback)
 
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
+import { docClient } from "@/lib/dynamodb";
+import {
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { randomUUID } from "crypto";
 
 const normalizeId = (id: string) =>
   id.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
@@ -74,8 +82,9 @@ const VALID_TYPES = ["text", "image", "video", "audio", "file"] as const;
 export async function GET(req: NextRequest) {
   try {
     const user = await getUser(req);
-    if (!user)
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const CURRENT_USER_ID = user.userId;
     const isSameUser = (id1: string, id2: string) => {
       const n1 = normalizeId(id1);
@@ -90,60 +99,121 @@ export async function GET(req: NextRequest) {
     const lastDocId = searchParams.get("lastDocId");
     const lastDocCreatedAt = searchParams.get("lastDocCreatedAt");
 
-    const chatRef = db.collection("chats").doc(chatId);
-    const chatDoc = await chatRef.get();
+    // 1. Verify chat exists and user is participant
+    let chatData: any = null;
+    try {
+      const cRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${chatId}`, sk: "ROOM#META" },
+        }),
+      );
+      if (cRes.Item) chatData = cRes.Item;
+    } catch {}
 
-    if (!chatDoc.exists)
-      return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+    if (!chatData) {
+      const chatDoc = await db.collection("chats").doc(chatId).get();
+      if (!chatDoc.exists) {
+        return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      }
+      chatData = chatDoc.data()!;
+    }
+
     if (
-      !(chatDoc.data()?.participantIds as string[]).some((pid) =>
+      !(chatData?.participantIds as string[] || []).some((pid) =>
         isSameUser(pid, CURRENT_USER_ID),
       )
     ) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    let query = db
-      .collection("messages")
-      .where("chatId", "==", chatId)
-      .orderBy("createdAt", "desc")
-      .limit(limit);
+    let messages: any[] = [];
+    let fetchedFromDynamo = false;
+    let lastDoc: any = null;
 
-    if (lastDocId && lastDocCreatedAt) {
-      const lastRef = db.collection("messages").doc(lastDocId);
-      const lastDoc = await lastRef.get();
-      if (lastDoc.exists) query = query.startAfter(lastDoc);
+    // 2. Try DynamoDB First for messages
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: "RealTimeChat",
+          KeyConditionExpression: "roomId = :r AND begins_with(sk, :msg)",
+          ExpressionAttributeValues: {
+            ":r": `ROOM#${chatId}`,
+            ":msg": "MSG#",
+          },
+          ScanIndexForward: false, // newest first
+          Limit: limit,
+        }),
+      );
+
+      if (qRes.Items && qRes.Items.length > 0) {
+        let items: any[] = qRes.Items.map((item: any) => ({
+          id: item.id || (item.sk as string).split("#")[2] || (item.sk as string).replace(/^MSG#/, ""),
+          ...item,
+        }));
+
+        items = items.filter(
+          (msg: any) => !msg.deletedForUsers?.includes(CURRENT_USER_ID),
+        );
+
+        messages = items.reverse(); // oldest first for UI
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[messages GET] DynamoDB notice:", dynErr);
     }
 
-    const snapshot = await query.get();
-    const messages = snapshot.docs
-      .map((doc) => ({ id: doc.id, ...(doc.data() as any) }))
-      .filter((msg) => !msg.deletedForUsers?.includes(CURRENT_USER_ID))
-      .reverse();
-    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    // 3. Fallback to Firestore if not found in DynamoDB
+    if (!fetchedFromDynamo) {
+      let query = db
+        .collection("messages")
+        .where("chatId", "==", chatId)
+        .orderBy("createdAt", "desc")
+        .limit(limit);
 
-    const unreadDocs = snapshot.docs.filter(
-      (doc) =>
-        !doc.data().isRead && !isSameUser(doc.data().senderId, CURRENT_USER_ID),
-    );
-    if (unreadDocs.length > 0) {
-      const batch = db.batch();
-      unreadDocs.forEach((doc) => batch.update(doc.ref, { isRead: true }));
-      batch.update(chatRef, { [`unreadCount.${normalizeId(CURRENT_USER_ID)}`]: 0 });
-      await batch.commit();
+      if (lastDocId && lastDocCreatedAt) {
+        const lastRef = db.collection("messages").doc(lastDocId);
+        const lastDocSnap = await lastRef.get();
+        if (lastDocSnap.exists) query = query.startAfter(lastDocSnap);
+      }
+
+      const snapshot = await query.get();
+      messages = snapshot.docs
+        .map((doc) => ({ id: doc.id, ...(doc.data() as any) }))
+        .filter((msg) => !msg.deletedForUsers?.includes(CURRENT_USER_ID))
+        .reverse();
+      lastDoc = snapshot.docs[snapshot.docs.length - 1];
+
+      const unreadDocs = snapshot.docs.filter(
+        (doc) =>
+          !doc.data().isRead &&
+          !isSameUser(doc.data().senderId, CURRENT_USER_ID),
+      );
+      if (unreadDocs.length > 0) {
+        const batch = db.batch();
+        unreadDocs.forEach((doc) => batch.update(doc.ref, { isRead: true }));
+        batch.update(db.collection("chats").doc(chatId), {
+          [`unreadCount.${normalizeId(CURRENT_USER_ID)}`]: 0,
+        });
+        await batch.commit();
+      }
     }
+
+    const nextLastDoc =
+      lastDoc ?? (messages.length > 0 ? messages[messages.length - 1] : null);
 
     return NextResponse.json({
       success: true,
       messages,
       pagination: {
         limit,
-        hasMore: snapshot.docs.length === limit,
+        hasMore: messages.length === limit,
         nextCursor:
-          snapshot.docs.length === limit
+          messages.length === limit
             ? {
-                lastDocId: lastDoc?.id,
-                lastDocCreatedAt: lastDoc?.data()?.createdAt,
+                lastDocId: nextLastDoc?.id,
+                lastDocCreatedAt:
+                  nextLastDoc?.createdAt ?? nextLastDoc?.data?.()?.createdAt,
               }
             : null,
       },
@@ -161,8 +231,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const user = await getUser(req);
-    if (!user)
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const CURRENT_USER_ID = user.userId;
     const isSameUser = (id1: string, id2: string) => {
       const n1 = normalizeId(id1);
@@ -188,13 +259,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const chatRef = db.collection("chats").doc(chatId);
-    const chatDoc = await chatRef.get();
+    // 1. Verify chat exists & user is participant
+    let chatData: any = null;
+    try {
+      const cRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${chatId}`, sk: "ROOM#META" },
+        }),
+      );
+      if (cRes.Item) chatData = cRes.Item;
+    } catch {}
 
-    if (!chatDoc.exists)
-      return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+    if (!chatData) {
+      const chatDoc = await db.collection("chats").doc(chatId).get();
+      if (!chatDoc.exists) {
+        return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      }
+      chatData = chatDoc.data()!;
+    }
+
     if (
-      !(chatDoc.data()?.participantIds as string[]).some((pid) =>
+      !(chatData?.participantIds as string[] || []).some((pid) =>
         isSameUser(pid, CURRENT_USER_ID),
       )
     ) {
@@ -202,17 +288,43 @@ export async function POST(req: NextRequest) {
     }
 
     if (replyToId) {
-      const replyDoc = await db.collection("messages").doc(replyToId).get();
-      if (!replyDoc.exists || replyDoc.data()?.chatId !== chatId) {
-        return NextResponse.json(
-          { error: "Replied-to message not found in this chat" },
-          { status: 404 },
+      let replyExists = false;
+      try {
+        const rRes = await docClient.send(
+          new QueryCommand({
+            TableName: "RealTimeChat",
+            KeyConditionExpression: "roomId = :r AND begins_with(sk, :msg)",
+            ExpressionAttributeValues: {
+              ":r": `ROOM#${chatId}`,
+              ":msg": `MSG#`,
+            },
+          }),
         );
+        if (
+          rRes.Items &&
+          rRes.Items.some(
+            (item) => item.id === replyToId || (item.sk as string).endsWith(replyToId),
+          )
+        ) {
+          replyExists = true;
+        }
+      } catch {}
+
+      if (!replyExists) {
+        const replyDoc = await db.collection("messages").doc(replyToId).get();
+        if (!replyDoc.exists || replyDoc.data()?.chatId !== chatId) {
+          return NextResponse.json(
+            { error: "Replied-to message not found in this chat" },
+            { status: 404 },
+          );
+        }
       }
     }
 
     const now = Date.now();
+    const msgId = randomUUID();
     const newMessage: Record<string, unknown> = {
+      id: msgId,
       chatId,
       senderId: CURRENT_USER_ID,
       type,
@@ -224,29 +336,78 @@ export async function POST(req: NextRequest) {
     if (replyToId) newMessage.replyToId = replyToId;
     if (mediaUrl) newMessage.mediaUrl = mediaUrl;
 
-    const msgRef = await db.collection("messages").add(newMessage);
-
-    const participantIds = chatDoc.data()?.participantIds as string[] || [];
-    const updateData: Record<string, any> = {
-      lastMessageContent: content.trim(),
-      lastMessageAt: now,
-      updatedAt: now,
-    };
-
+    const participantIds = (chatData?.participantIds as string[]) || [];
+    const updatedUnread = { ...(chatData?.unreadCount || {}) };
     participantIds.forEach((pid) => {
       if (!isSameUser(pid, CURRENT_USER_ID)) {
         const normalizedPid = normalizeId(pid);
-        updateData[`unreadCount.${normalizedPid}`] = FieldValue.increment(1);
+        updatedUnread[normalizedPid] = (updatedUnread[normalizedPid] || 0) + 1;
       }
     });
 
-    await chatRef.update(updateData);
+    const updateChatFields = {
+      lastMessageContent: content.trim(),
+      lastMessageAt: now,
+      updatedAt: now,
+      unreadCount: updatedUnread,
+    };
+
+    // 1. Write to DynamoDB (Primary)
+    try {
+      // Put message
+      await docClient.send(
+        new PutCommand({
+          TableName: "RealTimeChat",
+          Item: {
+            roomId: `ROOM#${chatId}`,
+            sk: `MSG#${now}#${msgId}`,
+            ...newMessage,
+          },
+        }),
+      );
+
+      // Update room meta
+      await docClient.send(
+        new PutCommand({
+          TableName: "RealTimeChat",
+          Item: {
+            roomId: `ROOM#${chatId}`,
+            sk: "ROOM#META",
+            ...chatData,
+            ...updateChatFields,
+          },
+        }),
+      );
+    } catch (dynErr) {
+      console.error("[messages POST] DynamoDB write error:", dynErr);
+    }
+
+    // 2. Write to Firestore (Dual-Write)
+    try {
+      await db.collection("messages").doc(msgId).set(newMessage);
+
+      const firestoreUpdate: Record<string, any> = {
+        lastMessageContent: content.trim(),
+        lastMessageAt: now,
+        updatedAt: now,
+      };
+      participantIds.forEach((pid) => {
+        if (!isSameUser(pid, CURRENT_USER_ID)) {
+          const normalizedPid = normalizeId(pid);
+          firestoreUpdate[`unreadCount.${normalizedPid}`] =
+            FieldValue.increment(1);
+        }
+      });
+      await db.collection("chats").doc(chatId).update(firestoreUpdate);
+    } catch (fsErr) {
+      console.error("[messages POST] Firestore write error:", fsErr);
+    }
 
     return NextResponse.json(
       {
         success: true,
-        id: msgRef.id,
-        message: { id: msgRef.id, ...newMessage },
+        id: msgId,
+        message: { id: msgId, ...newMessage },
       },
       { status: 201 },
     );

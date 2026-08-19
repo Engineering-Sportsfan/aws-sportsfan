@@ -1,0 +1,2 @@
+email,firstName,lastName,phone,employeeId,departmentId,password,isFirstLogin,roles,status,createdAt,updatedAt
+testadmin@sf360.com,Test,Admin,,,,$2b$12$mEMfUnyDaxZ7I7jWCkY1w.1oF3C4UQRAPKfr5Jb31HjNKZRbyEf8i,true,admin,active,1778840726711,1778840726711

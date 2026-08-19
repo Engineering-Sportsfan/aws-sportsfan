@@ -1,5 +1,7 @@
 // lib/userPoints.ts
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { PutCommand, UpdateCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 
 // Simple in-memory cache for user profiles to reduce Firestore reads
@@ -240,97 +242,112 @@ async function loadConfigTables() {
     };
   }
 
+  let mults: Record<string, any> = {};
+  let levels: any[] = [];
+  let thresholds: any[] = [];
+  let loadedFromDynamo = false;
+
+  // 1. Try DynamoDB first
   try {
-    const [multSnap, levelsSnap, threshSnap] = await Promise.all([
-      db.collection("multipliers").get(),
-      db.collection("globalLevels").get(),
-      db.collection("featureThresholds").get()
+    const [multRes, levelsRes, threshRes] = await Promise.all([
+      docClient.send(new QueryCommand({
+        TableName: "GamificationAndWallet",
+        KeyConditionExpression: "userId = :u AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":u": "CONFIG#MULTIPLIERS", ":p": "MULTIPLIER#" }
+      })),
+      docClient.send(new QueryCommand({
+        TableName: "GamificationAndWallet",
+        KeyConditionExpression: "userId = :u AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":u": "CONFIG#LEVELS", ":p": "LEVEL#" }
+      })),
+      docClient.send(new QueryCommand({
+        TableName: "GamificationAndWallet",
+        KeyConditionExpression: "userId = :u AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":u": "CONFIG#THRESHOLDS", ":p": "THRESHOLD#" }
+      }))
     ]);
 
-    const mults: Record<string, any> = {};
-    multSnap.docs.forEach(doc => {
-      mults[doc.id] = doc.data();
-    });
-
-    const streakCurve = mults.streakCurve?.curve || [
-      { minDay: 1, multiplier: 1.0 },
-      { minDay: 3, multiplier: 1.1 },
-      { minDay: 7, multiplier: 1.25 },
-      { minDay: 14, multiplier: 1.5 },
-      { minDay: 30, multiplier: 1.75 },
-      { minDay: 60, multiplier: 2.0 }
-    ];
-    const matchDayVal = mults.matchDay?.value ?? 1.2;
-    const comboVal = mults.powerFanCombo?.value ?? 25;
-    const viralCurve = mults.viralCascade?.curve || [
-      { minShares: 0, bonus: 0 },
-      { minShares: 50, bonus: 50 },
-      { minShares: 200, bonus: 150 },
-      { minShares: 1000, bonus: 500 }
-    ];
-    const streakSettings = mults.streakSettings || { minSessionSeconds: 60 };
-
-    cachedMultipliers = {
-      streakCurve,
-      matchDay: matchDayVal,
-      powerFanCombo: comboVal,
-      viralCascade: viralCurve,
-      streakSettings
-    };
-
-    cachedGlobalLevels = levelsSnap.docs.map(doc => {
-      const d = doc.data();
-      return {
-        id: doc.id,
-        minXP: d.minXP ?? 0,
-        maxXP: d.maxXP ?? 0
-      };
-    });
-    if (cachedGlobalLevels.length === 0) {
-      cachedGlobalLevels = [
-        { id: "Spark", minXP: 0, maxXP: 999 },
-        { id: "Chant", minXP: 1000, maxXP: 3999 },
-        { id: "Roar", minXP: 4000, maxXP: 11999 },
-        { id: "Storm", minXP: 12000, maxXP: 29999 },
-        { id: "Legend", minXP: 30000, maxXP: 74999 },
-        { id: "Icon", minXP: 75000, maxXP: 149999 },
-        { id: "GOAT", minXP: 150000, maxXP: 999999999 }
-      ];
-    }
-    cachedGlobalLevels.sort((a, b) => a.minXP - b.minXP);
-
-    const thresholdsMap = new Map<string, FeatureThreshold>();
-    threshSnap.docs.forEach(doc => {
-      const d = doc.data();
-      thresholdsMap.set(doc.id, {
-        id: doc.id,
-        thresholds: d.thresholds || []
+    if (multRes.Items && multRes.Items.length > 0) {
+      multRes.Items.forEach(item => {
+        const docId = (item.sk as string).split("#")[1];
+        mults[docId] = item;
       });
-    });
-    cachedFeatureThresholds = thresholdsMap;
-    configCachedAt = now;
+      levels = (levelsRes.Items || []).map(item => ({
+        id: (item.sk as string).split("#")[1],
+        minXP: item.minXP ?? 0,
+        maxXP: item.maxXP ?? 0
+      }));
+      thresholds = (threshRes.Items || []).map(item => ({
+        id: (item.sk as string).split("#")[1],
+        thresholds: item.thresholds || []
+      }));
+      loadedFromDynamo = true;
+    }
+  } catch (dynErr) {
+    console.warn("[PointsEngine] DynamoDB config load failed, trying fallback:", dynErr);
+  }
 
-  } catch (error) {
-    console.error("[PointsEngine] Failed to load Firestore config collections, using defaults:", error);
-    cachedMultipliers = {
-      streakCurve: [
-        { minDay: 1, multiplier: 1.0 },
-        { minDay: 3, multiplier: 1.1 },
-        { minDay: 7, multiplier: 1.25 },
-        { minDay: 14, multiplier: 1.5 },
-        { minDay: 30, multiplier: 1.75 },
-        { minDay: 60, multiplier: 2.0 }
-      ],
-      matchDay: 1.2,
-      powerFanCombo: 25,
-      viralCascade: [
-        { minShares: 0, bonus: 0 },
-        { minShares: 50, bonus: 50 },
-        { minShares: 200, bonus: 150 },
-        { minShares: 1000, bonus: 500 }
-      ],
-      streakSettings: { minSessionSeconds: 60 }
-    };
+  // 2. Fallback to Firestore
+  if (!loadedFromDynamo) {
+    try {
+      const [multSnap, levelsSnap, threshSnap] = await Promise.all([
+        db.collection("multipliers").get(),
+        db.collection("globalLevels").get(),
+        db.collection("featureThresholds").get()
+      ]);
+
+      multSnap.docs.forEach(doc => {
+        mults[doc.id] = doc.data();
+      });
+      levels = levelsSnap.docs.map(doc => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          minXP: d.minXP ?? 0,
+          maxXP: d.maxXP ?? 0
+        };
+      });
+      thresholds = threshSnap.docs.map(doc => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          thresholds: d.thresholds || []
+        };
+      });
+    } catch (fsErr) {
+      console.error("[PointsEngine] Failed to load Firestore config collections, using defaults:", fsErr);
+    }
+  }
+
+  // Process multipliers
+  const streakCurve = mults.streakCurve?.curve || [
+    { minDay: 1, multiplier: 1.0 },
+    { minDay: 3, multiplier: 1.1 },
+    { minDay: 7, multiplier: 1.25 },
+    { minDay: 14, multiplier: 1.5 },
+    { minDay: 30, multiplier: 1.75 },
+    { minDay: 60, multiplier: 2.0 }
+  ];
+  const matchDayVal = mults.matchDay?.value ?? 1.2;
+  const comboVal = mults.powerFanCombo?.value ?? 25;
+  const viralCurve = mults.viralCascade?.curve || [
+    { minShares: 0, bonus: 0 },
+    { minShares: 50, bonus: 50 },
+    { minShares: 200, bonus: 150 },
+    { minShares: 1000, bonus: 500 }
+  ];
+  const streakSettings = mults.streakSettings || { minSessionSeconds: 60 };
+
+  cachedMultipliers = {
+    streakCurve,
+    matchDay: matchDayVal,
+    powerFanCombo: comboVal,
+    viralCascade: viralCurve,
+    streakSettings
+  };
+
+  cachedGlobalLevels = levels;
+  if (cachedGlobalLevels.length === 0) {
     cachedGlobalLevels = [
       { id: "Spark", minXP: 0, maxXP: 999 },
       { id: "Chant", minXP: 1000, maxXP: 3999 },
@@ -340,8 +357,15 @@ async function loadConfigTables() {
       { id: "Icon", minXP: 75000, maxXP: 149999 },
       { id: "GOAT", minXP: 150000, maxXP: 999999999 }
     ];
-    cachedFeatureThresholds = new Map();
   }
+  cachedGlobalLevels.sort((a, b) => a.minXP - b.minXP);
+
+  const thresholdsMap = new Map<string, FeatureThreshold>();
+  thresholds.forEach(t => {
+    thresholdsMap.set(t.id, t);
+  });
+  cachedFeatureThresholds = thresholdsMap;
+  configCachedAt = now;
 
   return {
     multipliers: cachedMultipliers,
@@ -495,20 +519,46 @@ export async function awardUserPoints({
       }
 
       // 3. Dynamic points weight configuration lookup
-      const ruleRef = db.collection("pointRules").doc(reason);
-      const ruleSnap = await transaction.get(ruleRef);
-
       const fallback = DEFAULT_RULES_FALLBACKS[reason] || { points: argPoints, dailyLimit: 9999 };
       let basePoints = fallback.points;
       let dailyLimit = fallback.dailyLimit;
       let isRuleActive = true;
+      let ruleFound = false;
 
-      if (ruleSnap.exists) {
-        const rData = ruleSnap.data()!;
-        basePoints = rData.points ?? basePoints;
-        dailyLimit = rData.dailyLimit ?? dailyLimit;
-        if (rData.status === "inactive" || rData.status === "suspended") {
-          isRuleActive = false;
+      // Try DynamoDB first
+      try {
+        const ruleRes = await docClient.send(new GetCommand({
+          TableName: "GamificationAndWallet",
+          Key: { userId: "CONFIG#RULES", sk: `RULE#${reason}` }
+        }));
+        if (ruleRes.Item) {
+          const rData = ruleRes.Item;
+          basePoints = rData.points ?? basePoints;
+          dailyLimit = rData.dailyLimit ?? dailyLimit;
+          if (rData.status === "inactive" || rData.status === "suspended") {
+            isRuleActive = false;
+          }
+          ruleFound = true;
+        }
+      } catch (dynErr) {
+        console.warn("[PointsEngine] DynamoDB rule lookup failed, trying fallback:", dynErr);
+      }
+
+      // Fallback to Firestore
+      if (!ruleFound) {
+        try {
+          const ruleRef = db.collection("pointRules").doc(reason);
+          const ruleSnap = await transaction.get(ruleRef);
+          if (ruleSnap.exists) {
+            const rData = ruleSnap.data()!;
+            basePoints = rData.points ?? basePoints;
+            dailyLimit = rData.dailyLimit ?? dailyLimit;
+            if (rData.status === "inactive" || rData.status === "suspended") {
+              isRuleActive = false;
+            }
+          }
+        } catch (fsErr) {
+          console.warn("[PointsEngine] Firestore rule lookup failed:", fsErr);
         }
       }
 
@@ -829,6 +879,82 @@ export async function awardUserPoints({
             }).catch(err => console.error("[PointsEngine] Referral commission payout failed:", err));
           }
         }
+      }
+
+      // ── Synchronize to DynamoDB GamificationAndWallet & IdentityAndAccess ──
+      try {
+        // 1. Transaction audit item
+        docClient.send(
+          new PutCommand({
+            TableName: "GamificationAndWallet",
+            Item: {
+              userId: `USER#${leaderboardUserId}`,
+              sk: `TX#${transactionId}`,
+              transactionId,
+              userEmail,
+              userName,
+              points: finalTotalXPGained,
+              basePoints,
+              reason,
+              appliedMultiplier: isStreakEligible ? activeMultiplier : 1.0,
+              isMatchDay,
+              createdAt: now,
+            },
+          })
+        ).catch((dErr) => console.warn("DynamoDB tx sync notice:", dErr));
+
+        // 2. Activity log item
+        docClient.send(
+          new PutCommand({
+            TableName: "GamificationAndWallet",
+            Item: {
+              userId: `USER#${leaderboardUserId}`,
+              sk: `ACT#${transactionId}`,
+              transactionId,
+              type: reason,
+              label: metadata?.statement ?? metadata?.label ?? reason,
+              points: finalTotalXPGained,
+              metadata: metadata ?? {},
+              createdAt: now,
+            },
+          })
+        ).catch((dErr) => console.warn("DynamoDB activity sync notice:", dErr));
+
+        // 3. Global leaderboard item with GSI
+        docClient.send(
+          new PutCommand({
+            TableName: "GamificationAndWallet",
+            Item: {
+              userId: `USER#${leaderboardUserId}`,
+              sk: "LEADERBOARD#GLOBAL",
+              leaderboardType: "GLOBAL",
+              points: totalXP,
+              userName,
+              userEmail,
+              totalPoints: totalXP,
+              lastUpdated: now,
+            },
+          })
+        ).catch((dErr) => console.warn("DynamoDB leaderboard sync notice:", dErr));
+
+        // 4. Update user points & rank in IdentityAndAccess
+        docClient.send(
+          new UpdateCommand({
+            TableName: "IdentityAndAccess",
+            Key: { entityId: `USER#${actualUserId}`, sk: "USER#META" },
+            UpdateExpression: "SET totalPoints = :tp, totalXP = :tx, globalTier = :gt, subRank = :sr, lastActiveTimestamp = :la, updatedAt = :u",
+            ExpressionAttributeValues: {
+              ":tp": totalXP,
+              ":tx": totalXP,
+              ":gt": rankState.globalTier,
+              ":sr": rankState.subRank,
+              ":la": now,
+              ":u": now,
+            },
+          })
+        ).catch((dErr) => console.warn("DynamoDB user points sync notice:", dErr));
+      } catch (dynamoSyncErr) {
+        console.warn("[PointsEngine] DynamoDB async sync notice:", dynamoSyncErr);
       }
 
       return true;

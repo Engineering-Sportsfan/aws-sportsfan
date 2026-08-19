@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-export const FifaPlayerStatsSchema = z.object({
+export const FifaPlayerStatsBaseSchema = z.object({
   player: z.string().min(1, "Player name is required"),
   team: z.string().min(1, "Team name is required"),
   position: z.string().min(1, "Position is required"),
@@ -19,7 +19,9 @@ export const FifaPlayerStatsSchema = z.object({
   keyPasses: z.number().int().min(0).max(50),
   chancesCreated: z.number().int().min(0).max(50),
   bigChancesCreated: z.number().int().min(0).max(20),
-}).refine(
+});
+
+export const FifaPlayerStatsSchema = FifaPlayerStatsBaseSchema.refine(
   (data) => {
     // Shots on target cannot exceed total shots
     return data.shotsOnTarget <= data.shots;
@@ -39,8 +41,8 @@ export const FifaPlayerStatsSchema = z.object({
   { message: "Assists cannot exceed chances created" }
 );
 
-export const FifaPlayerStatsCreateSchema = FifaPlayerStatsSchema.omit({});
-export const FifaPlayerStatsUpdateSchema = FifaPlayerStatsCreateSchema.partial();
+export const FifaPlayerStatsCreateSchema = FifaPlayerStatsSchema;
+export const FifaPlayerStatsUpdateSchema = FifaPlayerStatsBaseSchema.partial();
 
 export type FifaPlayerStatsValidationResult<T> = {
   success: boolean;

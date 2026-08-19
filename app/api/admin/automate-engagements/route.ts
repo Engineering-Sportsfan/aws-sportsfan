@@ -1,7 +1,14 @@
+// api/admin/automate-engagements/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { Timestamp } from "firebase-admin/firestore";
 import axios from "axios";
+import { docClient } from "@/lib/dynamodb";
+import { ScanCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { v4 as uuidv4 } from "uuid";
+
+export const dynamic = "force-dynamic";
 
 // ─── Static Fallbacks ─────────────────────────────────────────────────────────
 
@@ -28,7 +35,7 @@ const POLL_TEMPLATES = [
   },
 ];
 
-const QUIZ_BANK = {
+const QUIZ_BANK: Record<string, Record<string, Array<{ question: string; options: string[]; correctAnswer: string; points: number }>>> = {
   Cricket: {
     easy: [
       { question: "How many players are there on a cricket field from one team?", options: ["9", "10", "11", "12"], correctAnswer: "11", points: 10 },
@@ -43,7 +50,7 @@ const QUIZ_BANK = {
   },
 };
 
-const DEFAULT_QUIZ_BANK = {
+const DEFAULT_QUIZ_BANK: Record<string, Array<{ question: string; options: string[]; correctAnswer: string; points: number }>> = {
   easy: [
     { question: "Which sport uses a shuttlecock?", options: ["Tennis", "Badminton", "Squash", "Table Tennis"], correctAnswer: "Badminton", points: 10 },
   ],
@@ -93,6 +100,25 @@ async function generateWithGemini(prompt: string, responseSchema: any = null) {
 // ─── Helper to Fetch Real IDs ─────────────────────────────────────────────────
 
 async function getRealPlayerIds() {
+  // Try DynamoDB SportsData first
+  try {
+    const scanRes = await docClient.send(new ScanCommand({
+      TableName: "IdentityAndAccess",
+      FilterExpression: "begins_with(entityId, :p)",
+      ExpressionAttributeValues: { ":p": "PROFILE_PLAYER#" },
+      Limit: 10
+    }));
+    if (scanRes.Items && scanRes.Items.length > 0) {
+      return scanRes.Items.map(item => ({
+        id: (item.entityId as string).replace(/^PROFILE_PLAYER#/, ""),
+        name: item.name || item.playerName || "Unknown Player"
+      }));
+    }
+  } catch (e) {
+    console.warn("DynamoDB getRealPlayerIds notice:", e);
+  }
+
+  // Fallback to Firestore
   try {
     const snapshot = await db.collection("PlayerProfiles").limit(10).get();
     return snapshot.docs.map((doc) => ({
@@ -106,6 +132,25 @@ async function getRealPlayerIds() {
 }
 
 async function getRealClubIds() {
+  // Try DynamoDB SportsData first
+  try {
+    const scanRes = await docClient.send(new ScanCommand({
+      TableName: "IdentityAndAccess",
+      FilterExpression: "begins_with(entityId, :p)",
+      ExpressionAttributeValues: { ":p": "PROFILE_CLUB#" },
+      Limit: 10
+    }));
+    if (scanRes.Items && scanRes.Items.length > 0) {
+      return scanRes.Items.map(item => ({
+        id: (item.entityId as string).replace(/^PROFILE_CLUB#/, ""),
+        name: item.name || item.clubName || "Unknown Club"
+      }));
+    }
+  } catch (e) {
+    console.warn("DynamoDB getRealClubIds notice:", e);
+  }
+
+  // Fallback to Firestore
   try {
     const snapshot = await db.collection("clubProfiles").limit(10).get();
     return snapshot.docs.map((doc) => ({
@@ -118,7 +163,7 @@ async function getRealClubIds() {
   }
 }
 
-// ─── Route Handler ────────────────────────────────────────────────────────────
+// ─── Route Handlers ───────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
   return handleAutomation();
@@ -136,6 +181,8 @@ async function handleAutomation() {
       battlesCreated: 0,
       matchesPredicted: 0,
     };
+
+    const nowEpoch = Date.now();
 
     // 1. Generate Poll / Quiz
     let pollData: any = null;
@@ -178,12 +225,36 @@ async function handleAutomation() {
       pollData = POLL_TEMPLATES[Math.floor(Math.random() * POLL_TEMPLATES.length)];
     }
 
-    const existingPoll = await db
-      .collection("polls")
-      .where("title", "==", pollData.title)
-      .get();
+    // Check existing poll in DynamoDB
+    let pollExists = false;
+    try {
+      const scanPolls = await docClient.send(new ScanCommand({
+        TableName: "SocialAndContent",
+        FilterExpression: "begins_with(contentId, :p) AND title = :title",
+        ExpressionAttributeValues: {
+          ":p": "POLL#",
+          ":title": pollData.title
+        }
+      }));
+      if (scanPolls.Items && scanPolls.Items.length > 0) {
+        pollExists = true;
+      }
+    } catch (e) {
+      console.warn("DynamoDB poll exists scan notice:", e);
+    }
 
-    if (existingPoll.empty) {
+    if (!pollExists) {
+      const existingPollFS = await db
+        .collection("polls")
+        .where("title", "==", pollData.title)
+        .get();
+      if (!existingPollFS.empty) {
+        pollExists = true;
+      }
+    }
+
+    if (!pollExists) {
+      const pollId = uuidv4();
       const options = pollData.options.map((o: any, i: number) => ({
         id: `opt_${i + 1}`,
         label: o.label,
@@ -191,17 +262,45 @@ async function handleAutomation() {
         ...(pollData.type === "quiz" ? { isCorrect: !!o.isCorrect } : {}),
       }));
 
-      const now = Timestamp.now();
-      const endsAt = Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
+      const endsAtEpoch = nowEpoch + 24 * 60 * 60 * 1000;
 
-      await db.collection("polls").add({
-        title: pollData.title,
-        type: pollData.type,
-        options,
-        active: true,
-        endsAt,
-        createdAt: now,
-      });
+      // Put to DynamoDB
+      try {
+        await docClient.send(new PutCommand({
+          TableName: "SocialAndContent",
+          Item: {
+            contentId: `POLL#${pollId}`,
+            sk: "POLL#META",
+            id: pollId,
+            title: pollData.title,
+            type: pollData.type,
+            options,
+            active: true,
+            endsAt: endsAtEpoch,
+            createdAt: nowEpoch,
+            updatedAt: nowEpoch
+          }
+        }));
+      } catch (dynErr) {
+        console.warn("DynamoDB write poll failed:", dynErr);
+      }
+
+      // Sync to Firestore
+      try {
+        const fsEndsAt = Timestamp.fromDate(new Date(endsAtEpoch));
+        const fsCreatedAt = Timestamp.fromDate(new Date(nowEpoch));
+        await db.collection("polls").doc(pollId).set({
+          title: pollData.title,
+          type: pollData.type,
+          options,
+          active: true,
+          endsAt: fsEndsAt,
+          createdAt: fsCreatedAt,
+        });
+      } catch (fsErr) {
+        console.warn("Firestore sync poll failed:", fsErr);
+      }
+
       results.pollCreated = true;
     }
 
@@ -277,15 +376,45 @@ async function handleAutomation() {
       }
 
       if (quizQuestions.length > 0) {
-        await db.collection("fanBattleQuizzes").add({
-          level,
-          category,
-          questions: quizQuestions,
-          totalQuestions: quizQuestions.length,
-          totalPoints: quizQuestions.reduce((sum: number, q: any) => sum + q.points, 0),
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
+        const quizId = uuidv4();
+        const totalPoints = quizQuestions.reduce((sum: number, q: any) => sum + q.points, 0);
+
+        // Put in DynamoDB GamificationAndWallet
+        try {
+          await docClient.send(new PutCommand({
+            TableName: "GamificationAndWallet",
+            Item: {
+              userId: `USER#${quizId}`,
+              sk: `BATTLE_QUIZ#${quizId}#${nowEpoch}`,
+              id: quizId,
+              level,
+              category,
+              questions: quizQuestions,
+              totalQuestions: quizQuestions.length,
+              totalPoints,
+              createdAt: nowEpoch,
+              updatedAt: nowEpoch
+            }
+          }));
+        } catch (dynErr) {
+          console.warn("DynamoDB write fanBattleQuiz failed:", dynErr);
+        }
+
+        // Sync to Firestore
+        try {
+          await db.collection("fanBattleQuizzes").doc(quizId).set({
+            level,
+            category,
+            questions: quizQuestions,
+            totalQuestions: quizQuestions.length,
+            totalPoints,
+            createdAt: nowEpoch,
+            updatedAt: nowEpoch,
+          });
+        } catch (fsErr) {
+          console.warn("Firestore sync fanBattleQuiz failed:", fsErr);
+        }
+
         results.quizzesCreated++;
       }
     }
@@ -312,38 +441,156 @@ async function handleAutomation() {
         selectedClubs = [shuffled[0].id, shuffled[1].id];
       }
 
-      const existingBattle = await db
-        .collection("fanBattles")
-        .where("battleName", "==", battleName)
-        .get();
+      // Check existing in DynamoDB
+      let battleExists = false;
+      try {
+        const scanBattles = await docClient.send(new ScanCommand({
+          TableName: "GamificationAndWallet",
+          FilterExpression: "begins_with(sk, :p) AND battleName = :name",
+          ExpressionAttributeValues: {
+            ":p": "BATTLE_FAN#",
+            ":name": battleName
+          }
+        }));
+        if (scanBattles.Items && scanBattles.Items.length > 0) {
+          battleExists = true;
+        }
+      } catch (e) {
+        console.warn("DynamoDB scan battles notice:", e);
+      }
 
-      if (existingBattle.empty) {
-        await db.collection("fanBattles").add({
-          battleName,
-          battleType: type,
-          selectedPlayers,
-          selectedClubs,
-          invitedFriends: [],
-          userId: "admin",
-          userName: "Admin User",
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
+      if (!battleExists) {
+        const existingBattleFS = await db
+          .collection("fanBattles")
+          .where("battleName", "==", battleName)
+          .get();
+        if (!existingBattleFS.empty) {
+          battleExists = true;
+        }
+      }
+
+      if (!battleExists) {
+        const battleId = uuidv4();
+
+        // Put to DynamoDB
+        try {
+          await docClient.send(new PutCommand({
+            TableName: "GamificationAndWallet",
+            Item: {
+              userId: "USER#admin",
+              sk: `BATTLE_FAN#${battleId}#${nowEpoch}`,
+              id: battleId,
+              battleName,
+              battleType: type,
+              selectedPlayers,
+              selectedClubs,
+              invitedFriends: [],
+              userIdAdmin: "admin",
+              userName: "Admin User",
+              createdAt: nowEpoch,
+              updatedAt: nowEpoch
+            }
+          }));
+        } catch (dynErr) {
+          console.warn("DynamoDB write fanBattle failed:", dynErr);
+        }
+
+        // Sync to Firestore
+        try {
+          await db.collection("fanBattles").doc(battleId).set({
+            battleName,
+            battleType: type,
+            selectedPlayers,
+            selectedClubs,
+            invitedFriends: [],
+            userId: "admin",
+            userName: "Admin User",
+            createdAt: nowEpoch,
+            updatedAt: nowEpoch,
+          });
+        } catch (fsErr) {
+          console.warn("Firestore sync fanBattle failed:", fsErr);
+        }
+
         results.battlesCreated++;
       }
     }
 
     // 4. Generate Predictions for Active Matches
-    const matchesSnapshot = await db.collection("watchAlongMatches").get();
-    for (const matchDoc of matchesSnapshot.docs) {
-      const matchId = matchDoc.id;
-      const matchData = matchDoc.data() || {};
-      const predictionsSnap = await matchDoc.ref.collection("predictions").limit(1).get();
+    let matchesList: any[] = [];
+    let fetchedMatches = false;
 
-      if (predictionsSnap.empty) {
+    // Try DynamoDB SportsData first
+    try {
+      const scanMatches = await docClient.send(new ScanCommand({
+        TableName: "SportsData",
+        FilterExpression: "sk = :skMeta AND (begins_with(entityId, :matchPrefix) OR begins_with(entityId, :watchPrefix))",
+        ExpressionAttributeValues: {
+          ":skMeta": "MATCH#META",
+          ":matchPrefix": "MATCH#",
+          ":watchPrefix": "WATCHALONG_MATCH#"
+        }
+      }));
+      if (scanMatches.Items && scanMatches.Items.length > 0) {
+        matchesList = scanMatches.Items.map(item => ({
+          id: (item.entityId as string).replace(/^(MATCH#|WATCHALONG_MATCH#)/, ""),
+          ...item
+        }));
+        fetchedMatches = true;
+      }
+    } catch (e) {
+      console.warn("DynamoDB watchAlongMatches scan notice:", e);
+    }
+
+    // Fallback to Firestore
+    if (!fetchedMatches || matchesList.length === 0) {
+      try {
+        const matchesSnapshot = await db.collection("watchAlongMatches").get();
+        matchesList = matchesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+      } catch (e) {
+        console.error("Firestore get matches list failed:", e);
+      }
+    }
+
+    for (const match of matchesList) {
+      const matchId = match.id;
+      const home = match.homeTeam || "Home Team";
+      const away = match.awayTeam || "Away Team";
+
+      // Check if predictions already exist in DynamoDB
+      let predictionExists = false;
+      try {
+        const qPreds = await docClient.send(new QueryCommand({
+          TableName: "GamificationAndWallet",
+          KeyConditionExpression: "userId = :uid AND begins_with(sk, :pfx)",
+          ExpressionAttributeValues: {
+            ":uid": `MATCH#${matchId}`,
+            ":pfx": "PREDICTION#"
+          },
+          Limit: 1
+        }));
+        if (qPreds.Items && qPreds.Items.length > 0) {
+          predictionExists = true;
+        }
+      } catch (e) {
+        console.warn("DynamoDB match predictions query notice:", e);
+      }
+
+      if (!predictionExists) {
+        // Fallback check in Firestore
+        try {
+          const predsSnap = await db.collection("watchAlongMatches").doc(matchId).collection("predictions").limit(1).get();
+          if (!predsSnap.empty) {
+            predictionExists = true;
+          }
+        } catch (e) {}
+      }
+
+      if (!predictionExists) {
         let predictionsList: any = null;
-        const home = matchData.homeTeam || "Home Team";
-        const away = matchData.awayTeam || "Away Team";
 
         if (GEMINI_API_KEY) {
           const prompt = `For a live sports match between "${home}" and "${away}", generate 3 highly engaging match prediction questions as JSON. Use this exact schema:
@@ -394,21 +641,51 @@ async function handleAutomation() {
         }
 
         for (const t of predictionsList) {
+          const predictionId = uuidv4();
           const votes: Record<string, number> = {};
           t.options.forEach((opt: string) => {
             votes[opt] = 0;
           });
 
-          await matchDoc.ref.collection("predictions").add({
-            question: t.question,
-            options: t.options,
-            votes,
-            totalVotes: 0,
-            closesAt: Date.now() + 12 * 60 * 60 * 1000,
-            isOpen: true,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          });
+          const closesAtEpoch = nowEpoch + 12 * 60 * 60 * 1000;
+
+          // Put to DynamoDB
+          try {
+            await docClient.send(new PutCommand({
+              TableName: "GamificationAndWallet",
+              Item: {
+                userId: `MATCH#${matchId}`,
+                sk: `PREDICTION#${predictionId}`,
+                id: predictionId,
+                question: t.question,
+                options: t.options,
+                votes,
+                totalVotes: 0,
+                closesAt: closesAtEpoch,
+                isOpen: true,
+                createdAt: nowEpoch,
+                updatedAt: nowEpoch
+              }
+            }));
+          } catch (dynErr) {
+            console.warn("DynamoDB write prediction failed:", dynErr);
+          }
+
+          // Sync to Firestore
+          try {
+            await db.collection("watchAlongMatches").doc(matchId).collection("predictions").doc(predictionId).set({
+              question: t.question,
+              options: t.options,
+              votes,
+              totalVotes: 0,
+              closesAt: closesAtEpoch,
+              isOpen: true,
+              createdAt: nowEpoch,
+              updatedAt: nowEpoch,
+            });
+          } catch (fsErr) {
+            console.warn("Firestore sync prediction failed:", fsErr);
+          }
         }
         results.matchesPredicted++;
       }

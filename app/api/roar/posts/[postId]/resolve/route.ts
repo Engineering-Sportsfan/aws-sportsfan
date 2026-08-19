@@ -1,9 +1,15 @@
+// api/roar/posts/[postId]/resolve/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+
+export const dynamic = "force-dynamic";
 
 const ACCURACY_POINTS = 5;
 
@@ -37,10 +43,11 @@ async function createNotification(userId: string, data: Record<string, unknown>)
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ postId: string }> },
+  { params }: { params: Promise<{ postId: string }> }
 ) {
   try {
-    const { postId } = await params;
+    const resolvedParams = await params;
+    const { postId } = resolvedParams;
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -51,11 +58,44 @@ export async function POST(
     }
 
     const info = await getUserInfo(user.userId, user.name, user.email);
-    const postRef = db.collection("roarPosts").doc(postId);
-    const postSnap = await postRef.get();
-    if (!postSnap.exists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
 
-    const post = postSnap.data() as ResolvablePredictionPost;
+    // 1. Fetch parent post from DynamoDB first
+    let postItem: any = null;
+    let fetchedPostFromDynamo = false;
+    try {
+      const qRes = await docClient.send(new QueryCommand({
+        TableName: "SocialAndContent",
+        KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
+        Limit: 1
+      }));
+      if (qRes.Items && qRes.Items.length > 0) {
+        postItem = qRes.Items[0];
+        fetchedPostFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[Resolve POST] DynamoDB post fetch failed:", dynErr);
+    }
+
+    const postRef = db.collection("roarPosts").doc(postId);
+    let postExists = fetchedPostFromDynamo;
+    let fallbackPostData: any = null;
+
+    if (!postExists) {
+      try {
+        const snap = await postRef.get();
+        if (snap.exists) {
+          postExists = true;
+          fallbackPostData = snap.data();
+        }
+      } catch (fsErr) {
+        console.warn("[Resolve POST] Firestore post fetch failed:", fsErr);
+      }
+    }
+
+    if (!postExists) return NextResponse.json({ error: "Post not found" }, { status: 404 });
+
+    const post = postItem || fallbackPostData || {};
     if (post.type !== "prediction") {
       return NextResponse.json({ error: "Only prediction posts can be resolved" }, { status: 400 });
     }
@@ -77,55 +117,174 @@ export async function POST(
       return NextResponse.json({ error: "Prediction poll is still open" }, { status: 409 });
     }
 
+    // 2. Fetch all votes from DynamoDB first
+    let votesData: any[] = [];
+    let fetchedVotesFromDynamo = false;
+    try {
+      const res = await docClient.send(new QueryCommand({
+        TableName: "SocialAndContent",
+        KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "VOTE#" }
+      }));
+      if (res.Items) {
+        votesData = res.Items.map(item => ({
+          id: (item.sk as string).replace(/^VOTE#/, ""),
+          ...item
+        }));
+        fetchedVotesFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[Resolve POST] DynamoDB votes fetch failed:", dynErr);
+    }
+
     const votesSnap = await postRef.collection("roarVotes").get();
-    const batch = db.batch();
-    batch.update(postRef, {
-      closedAt: post.closedAt ?? now,
-      resolvedAt: now,
-      correctVote,
-      accuracyAwarded: true,
-      status: "active",
-      updatedAt: now,
-    });
+
+    // Fallback: Check Firestore for votes
+    if (!fetchedVotesFromDynamo) {
+      votesData = votesSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+    }
 
     let correctCount = 0;
     let wrongCount = 0;
 
-    for (const voteDoc of votesSnap.docs) {
-      const voterId = voteDoc.id;
-      const vote = (voteDoc.data() as PredictionVote).vote;
-      if (!vote) continue;
-      const isCorrect = vote === correctVote;
-      if (isCorrect) correctCount += 1;
-      else wrongCount += 1;
+    // 3. Update parent post and vote records in DynamoDB
+    try {
+      // A. Update parent post item
+      if (postItem) {
+        await docClient.send(new UpdateCommand({
+          TableName: "SocialAndContent",
+          Key: { contentId: `POST#${postId}`, sk: postItem.sk },
+          UpdateExpression: "SET closedAt = :c, resolvedAt = :r, correctVote = :cv, accuracyAwarded = :a, #s = :sVal, updatedAt = :u",
+          ExpressionAttributeNames: { "#s": "status" },
+          ExpressionAttributeValues: {
+            ":c": post.closedAt ?? now,
+            ":r": now,
+            ":cv": correctVote,
+            ":a": true,
+            ":sVal": "active",
+            ":u": now
+          }
+        }));
+      }
 
-      batch.set(voteDoc.ref, {
-        resolvedAt: now,
-        correctVote,
-        isCorrect,
-        accuracyPointsAwarded: isCorrect ? ACCURACY_POINTS : 0,
-      }, { merge: true });
+      // B. Update each vote record and user accuracy stats in DynamoDB
+      for (const voteItem of votesData) {
+        const voterId = voteItem.id;
+        const vote = voteItem.vote;
+        if (!vote) continue;
+        const isCorrect = vote === correctVote;
 
-      batch.set(db.collection("users").doc(voterId), {
-        predictionStats: {
-          participated: FieldValue.increment(1),
-          correct: FieldValue.increment(isCorrect ? 1 : 0),
-          wrong: FieldValue.increment(isCorrect ? 0 : 1),
-        },
-        predictionAccuracyUpdatedAt: now,
-        updatedAt: now,
-      }, { merge: true });
+        if (isCorrect) correctCount += 1;
+        else wrongCount += 1;
+
+        // Update vote record
+        await docClient.send(new UpdateCommand({
+          TableName: "SocialAndContent",
+          Key: { contentId: `POST#${postId}`, sk: `VOTE#${voterId}` },
+          UpdateExpression: "SET resolvedAt = :r, correctVote = :cv, isCorrect = :ic, accuracyPointsAwarded = :ap",
+          ExpressionAttributeValues: {
+            ":r": now,
+            ":cv": correctVote,
+            ":ic": isCorrect,
+            ":ap": isCorrect ? ACCURACY_POINTS : 0
+          }
+        })).catch(() => {});
+
+        // Fetch user item to edit predictionStats map safely in memory
+        let voterItem: any = null;
+        try {
+          const voterRes = await docClient.send(new GetCommand({
+            TableName: "IdentityAndAccess",
+            Key: { entityId: `USER#${voterId}`, sk: "USER#META" }
+          }));
+          voterItem = voterRes.Item;
+        } catch (e) {}
+
+        const predictionStats = voterItem?.predictionStats || {};
+        predictionStats.participated = (predictionStats.participated || 0) + 1;
+        predictionStats.correct = (predictionStats.correct || 0) + (isCorrect ? 1 : 0);
+        predictionStats.wrong = (predictionStats.wrong || 0) + (isCorrect ? 0 : 1);
+
+        await docClient.send(new UpdateCommand({
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `USER#${voterId}`, sk: "USER#META" },
+          UpdateExpression: "SET predictionStats = :ps, predictionAccuracyUpdatedAt = :u",
+          ExpressionAttributeValues: { ":ps": predictionStats, ":u": now }
+        })).catch(() => {});
+      }
+    } catch (dynErr) {
+      console.warn("[Resolve POST] DynamoDB resolving writes failed:", dynErr);
     }
 
-    await batch.commit();
+    // 4. Sync resolving to Firestore
+    try {
+      const batch = db.batch();
+      batch.update(postRef, {
+        closedAt: post.closedAt ?? now,
+        resolvedAt: now,
+        correctVote,
+        accuracyAwarded: true,
+        status: "active",
+        updatedAt: now,
+      });
 
-    await Promise.all(votesSnap.docs.map(async (voteDoc) => {
-      const voterId = voteDoc.id;
-      const vote = (voteDoc.data() as PredictionVote).vote;
+      for (const voteDoc of votesSnap.docs) {
+        const voterId = voteDoc.id;
+        const vote = (voteDoc.data() as PredictionVote).vote;
+        if (!vote) continue;
+        const isCorrect = vote === correctVote;
+
+        if (fetchedVotesFromDynamo) {
+          // If we resolved via DynamoDB, we still need correctCount for response
+          if (isCorrect) correctCount += 1;
+          else wrongCount += 1;
+        }
+
+        batch.set(voteDoc.ref, {
+          resolvedAt: now,
+          correctVote,
+          isCorrect,
+          accuracyPointsAwarded: isCorrect ? ACCURACY_POINTS : 0,
+        }, { merge: true });
+
+        batch.set(db.collection("users").doc(voterId), {
+          predictionStats: {
+            participated: FieldValue.increment(1),
+            correct: FieldValue.increment(isCorrect ? 1 : 0),
+            wrong: FieldValue.increment(isCorrect ? 0 : 1),
+          },
+          predictionAccuracyUpdatedAt: now,
+          updatedAt: now,
+        }, { merge: true });
+      }
+
+      await batch.commit();
+    } catch (fsErr) {
+      console.warn("[Resolve POST] Firestore resolving sync failed:", fsErr);
+    }
+
+    // 5. Award points & send notifications
+    await Promise.all(votesData.map(async (voteItem) => {
+      const voterId = voteItem.id;
+      const vote = voteItem.vote;
       if (!vote) return;
       const isCorrect = vote === correctVote;
-      const userSnap = await db.collection("users").doc(voterId).get();
-      const userData = userSnap.exists ? (userSnap.data() as { username?: string; email?: string }) : {};
+
+      let userData: any = {};
+      let userSnapExists = false;
+      try {
+        const userSnap = await db.collection("users").doc(voterId).get();
+        userSnapExists = userSnap.exists;
+        if (userSnapExists) {
+          userData = userSnap.data() || {};
+        }
+      } catch (fsErr) {
+        console.warn("[Resolve POST] Fetch user profile failed:", fsErr);
+      }
+
       const userName = userData.username || voterId;
       const userEmail = userData.email || "";
 
@@ -135,7 +294,7 @@ export async function POST(
           authUserId: voterId,
           userName,
           userEmail,
-          userExists: userSnap.exists,
+          userExists: userSnapExists,
           reason: "ROAR_PREDICTION_CORRECT",
           points: ACCURACY_POINTS,
           transactionId: `roar_prediction_correct_${postId}_${voterId}`,
@@ -157,7 +316,7 @@ export async function POST(
       success: true,
       postId,
       correctVote,
-      participantCount: votesSnap.size,
+      participantCount: votesData.length,
       correctCount,
       wrongCount,
       accuracyPoints: ACCURACY_POINTS,

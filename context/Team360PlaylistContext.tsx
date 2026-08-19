@@ -91,7 +91,7 @@ export const Team360PlaylistProvider = ({
   const [error, setError] = useState<string | null>(null);
 
   // Base API URL - should come from environment variable
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
   /* ================= GET ALL ================= */
 

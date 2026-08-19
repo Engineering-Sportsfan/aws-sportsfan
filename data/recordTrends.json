@@ -1,0 +1,380 @@
+{
+  "100m": {
+    "trends": [
+      {
+        "year": "2016",
+        "national": 10.26,
+        "world": 9.58,
+        "olympic": 9.63
+      },
+      {
+        "year": "2022",
+        "national": 10.25,
+        "world": 9.58,
+        "olympic": 9.63
+      },
+      {
+        "year": "2023",
+        "national": 10.23,
+        "world": 9.58,
+        "olympic": 9.63
+      },
+      {
+        "year": "2025",
+        "national": 10.18,
+        "world": 9.58,
+        "olympic": 9.63
+      },
+      {
+        "year": "2026",
+        "national": 10.09,
+        "world": 9.58,
+        "olympic": 9.63
+      }
+    ]
+  },
+  "1500m": {
+    "trends": [
+      {
+        "year": "2019",
+        "national": 215.24,
+        "world": 206,
+        "olympic": 212.07
+      },
+      {
+        "year": "2026",
+        "national": 215.24,
+        "world": 206,
+        "olympic": 207.65
+      }
+    ]
+  },
+  "200m": {
+    "trends": [
+      {
+        "year": "2018",
+        "national": 20.63,
+        "world": 19.19,
+        "olympic": 19.3
+      },
+      {
+        "year": "2022",
+        "national": 20.52,
+        "world": 19.19,
+        "olympic": 19.3
+      },
+      {
+        "year": "2025",
+        "national": 20.32,
+        "world": 19.19,
+        "olympic": 19.3
+      },
+      {
+        "year": "2026",
+        "national": 20.32,
+        "world": 19.19,
+        "olympic": 19.3
+      }
+    ]
+  },
+  "3000m": {
+    "trends": [
+      {
+        "year": "2008",
+        "national": 470.31,
+        "world": 437.55,
+        "olympic": 437.55
+      },
+      {
+        "year": "2025",
+        "national": 454.49,
+        "world": 437.55,
+        "olympic": 437.55
+      }
+    ]
+  },
+  "400m": {
+    "trends": [
+      {
+        "year": "2016",
+        "national": 45.4,
+        "world": 43.03,
+        "olympic": 43.03
+      },
+      {
+        "year": "2019",
+        "national": 45.21,
+        "world": 43.03,
+        "olympic": 43.03
+      },
+      {
+        "year": "2025",
+        "national": 45.12,
+        "world": 43.03,
+        "olympic": 43.03
+      },
+      {
+        "year": "2026",
+        "national": 44.98,
+        "world": 43.03,
+        "olympic": 43.03
+      }
+    ]
+  },
+  "400mH": {
+    "trends": [
+      {
+        "year": "2018",
+        "national": 48.96,
+        "world": 46.78,
+        "olympic": 46.78
+      },
+      {
+        "year": "2019",
+        "national": 48.8,
+        "world": 46.78,
+        "olympic": 46.78
+      },
+      {
+        "year": "2021",
+        "national": 48.8,
+        "world": 45.94,
+        "olympic": 45.94
+      },
+      {
+        "year": "2026",
+        "national": 48.8,
+        "world": 45.94,
+        "olympic": 45.94
+      }
+    ]
+  },
+  "4x100m": {
+    "trends": [
+      {
+        "year": "2010",
+        "national": 38.89,
+        "world": 36.84,
+        "olympic": 36.84
+      },
+      {
+        "year": "2025",
+        "national": 38.69,
+        "world": 36.84,
+        "olympic": 36.84
+      }
+    ]
+  },
+  "4x400m": {
+    "trends": [
+      {
+        "year": "2023",
+        "national": 179.05,
+        "world": 174.29,
+        "olympic": 174.43
+      },
+      {
+        "year": "2026",
+        "national": 179.05,
+        "world": 174.29,
+        "olympic": 174.43
+      }
+    ]
+  },
+  "5000m": {
+    "trends": [
+      {
+        "year": "2023",
+        "national": 799.3,
+        "world": 755.36,
+        "olympic": 777.82
+      },
+      {
+        "year": "2026",
+        "national": 783.93,
+        "world": 755.36,
+        "olympic": 777.82
+      }
+    ]
+  },
+  "800m": {
+    "trends": [
+      {
+        "year": "2018",
+        "national": 105.65,
+        "world": 100.91,
+        "olympic": 100.91
+      },
+      {
+        "year": "2025",
+        "national": 104.93,
+        "world": 100.91,
+        "olympic": 100.91
+      }
+    ]
+  },
+  "DiscusThrow": {
+    "trends": [
+      {
+        "year": "2012",
+        "national": 66.28,
+        "world": 74.08,
+        "olympic": 69.89
+      },
+      {
+        "year": "2026",
+        "national": 66.28,
+        "world": 74.08,
+        "olympic": 70
+      }
+    ]
+  },
+  "HammerThrow": {
+    "trends": [
+      {
+        "year": "2015",
+        "national": 72.86,
+        "world": 86.74,
+        "olympic": 84.8
+      },
+      {
+        "year": "2026",
+        "national": 72.86,
+        "world": 86.74,
+        "olympic": 84.8
+      }
+    ]
+  },
+  "HighJump": {
+    "trends": [
+      {
+        "year": "2018",
+        "national": 2.29,
+        "world": 2.45,
+        "olympic": 2.39
+      },
+      {
+        "year": "2026",
+        "national": 2.29,
+        "world": 2.45,
+        "olympic": 2.39
+      }
+    ]
+  },
+  "JavelinThrow": {
+    "trends": [
+      {
+        "year": "2016",
+        "national": 82.23,
+        "world": 98.48,
+        "olympic": 90.57
+      },
+      {
+        "year": "2018",
+        "national": 88.06,
+        "world": 98.48,
+        "olympic": 90.57
+      },
+      {
+        "year": "2021",
+        "national": 88.07,
+        "world": 98.48,
+        "olympic": 90.57
+      },
+      {
+        "year": "2022",
+        "national": 89.94,
+        "world": 98.48,
+        "olympic": 90.57
+      },
+      {
+        "year": "2025",
+        "national": 90.23,
+        "world": 98.48,
+        "olympic": 92.97
+      }
+    ]
+  },
+  "LongJump": {
+    "trends": [
+      {
+        "year": "2004",
+        "national": 8.08,
+        "world": 8.95,
+        "olympic": 8.9
+      },
+      {
+        "year": "2022",
+        "national": 8.36,
+        "world": 8.95,
+        "olympic": 8.9
+      },
+      {
+        "year": "2023",
+        "national": 8.42,
+        "world": 8.95,
+        "olympic": 8.9
+      }
+    ]
+  },
+  "PoleVault": {
+    "trends": [
+      {
+        "year": "2022",
+        "national": 5.31,
+        "world": 6.21,
+        "olympic": 6.19
+      },
+      {
+        "year": "2026",
+        "national": 5.45,
+        "world": 6.3,
+        "olympic": 6.25
+      }
+    ]
+  },
+  "ShotPut": {
+    "trends": [
+      {
+        "year": "2018",
+        "national": 20.75,
+        "world": 23.56,
+        "olympic": 23.3
+      },
+      {
+        "year": "2019",
+        "national": 20.92,
+        "world": 23.56,
+        "olympic": 23.3
+      },
+      {
+        "year": "2021",
+        "national": 21.49,
+        "world": 23.56,
+        "olympic": 23.3
+      },
+      {
+        "year": "2023",
+        "national": 21.77,
+        "world": 23.56,
+        "olympic": 23.3
+      }
+    ]
+  },
+  "TripleJump": {
+    "trends": [
+      {
+        "year": "2023",
+        "national": 17.37,
+        "world": 18.29,
+        "olympic": 17.99
+      },
+      {
+        "year": "2025",
+        "national": 17.37,
+        "world": 18.29,
+        "olympic": 17.99
+      }
+    ]
+  }
+}

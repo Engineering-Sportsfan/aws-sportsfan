@@ -1,19 +1,40 @@
-// app/api/communities/[communityId]/route.ts
+// app/api/communities/[communityId]/route.ts — BACKEND
+// Single community retrieval & updates (DynamoDB-First + Firestore Fallback)
+
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import {
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
+
+const normalizeId = (id: string) =>
+  id.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
 
 async function getUser(req: NextRequest) {
   const cookieToken = req.cookies.get("token")?.value;
   if (cookieToken) {
     try {
       const payload = jwt.verify(cookieToken, process.env.JWT_SECRET!) as {
-        email?: string; userId?: string; uid?: string; id?: string;
-        name?: string; role?: string;
+        email?: string;
+        userId?: string;
+        uid?: string;
+        id?: string;
+        name?: string;
+        role?: string;
       };
-      const userId = payload.userId ?? payload.uid ?? payload.id ?? payload.email;
+      const userId =
+        payload.userId ?? payload.uid ?? payload.id ?? payload.email;
       if (userId && payload.email) {
-        return { userId, email: payload.email, name: payload.name ?? "", role: payload.role ?? "user" };
+        return {
+          userId: normalizeId(userId),
+          email: payload.email,
+          name: payload.name ?? "",
+          role: payload.role ?? "user",
+        };
       }
     } catch {}
   }
@@ -23,12 +44,22 @@ async function getUser(req: NextRequest) {
     const bearerToken = authHeader.slice(7).trim();
     try {
       const payload = jwt.verify(bearerToken, process.env.JWT_SECRET!) as {
-        email?: string; userId?: string; uid?: string; id?: string;
-        name?: string; role?: string;
+        email?: string;
+        userId?: string;
+        uid?: string;
+        id?: string;
+        name?: string;
+        role?: string;
       };
-      const userId = payload.userId ?? payload.uid ?? payload.id ?? payload.email;
+      const userId =
+        payload.userId ?? payload.uid ?? payload.id ?? payload.email;
       if (userId && payload.email) {
-        return { userId, email: payload.email, name: payload.name ?? "", role: payload.role ?? "user" };
+        return {
+          userId: normalizeId(userId),
+          email: payload.email,
+          name: payload.name ?? "",
+          role: payload.role ?? "user",
+        };
       }
     } catch {}
   }
@@ -53,28 +84,82 @@ export async function GET(req: NextRequest) {
 
     const communityId = getCommunityIdFromUrl(req);
     if (!communityId) {
-      return NextResponse.json({ error: "Community ID is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Community ID is required" },
+        { status: 400 },
+      );
     }
 
-    const docRef = db.collection("communities").doc(communityId);
-    const doc = await docRef.get();
+    let communityData: any = null;
+    let fetchedFromDynamo = false;
 
-    if (!doc.exists) {
-      return NextResponse.json({ error: "Community not found" }, { status: 404 });
+    // 1. Try DynamoDB First
+    try {
+      const cRes = await docClient.send(
+        new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: {
+            entityId: `COMMUNITY#${communityId}`,
+            sk: "COMMUNITY#META",
+          },
+        }),
+      );
+      if (cRes.Item) {
+        communityData = { id: communityId, ...cRes.Item };
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[communities/[id] GET] DynamoDB notice:", dynErr);
+    }
+
+    // 2. Fallback to Firestore
+    if (!fetchedFromDynamo || !communityData) {
+      const docRef = db.collection("communities").doc(communityId);
+      const doc = await docRef.get();
+      if (!doc.exists) {
+        return NextResponse.json(
+          { error: "Community not found" },
+          { status: 404 },
+        );
+      }
+      communityData = { id: doc.id, ...doc.data() };
     }
 
     // Get groups in this community
-    const groupsSnap = await db
-      .collection("groups")
-      .where("communityId", "==", communityId)
-      .limit(20)
-      .get();
+    let groups: any[] = [];
+    try {
+      const gRes = await docClient.send(
+        new QueryCommand({
+          TableName: "IdentityAndAccess",
+          KeyConditionExpression:
+            "entityId = :comm AND begins_with(sk, :grp)",
+          ExpressionAttributeValues: {
+            ":comm": `COMMUNITY#${communityId}`,
+            ":grp": "GROUP#",
+          },
+          Limit: 20,
+        }),
+      );
+      if (gRes.Items && gRes.Items.length > 0) {
+        groups = gRes.Items.map((item) => ({
+          id: item.id || (item.sk as string).replace(/^GROUP#/, ""),
+          ...item,
+        }));
+      }
+    } catch {}
 
-    const groups = groupsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    if (groups.length === 0) {
+      const groupsSnap = await db
+        .collection("groups")
+        .where("communityId", "==", communityId)
+        .limit(20)
+        .get();
+      groups = groupsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    }
 
     return NextResponse.json({
       success: true,
-      community: { id: doc.id, ...doc.data() },
+      community: communityData,
       groups,
     });
   } catch (error: unknown) {
@@ -98,20 +183,48 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
 
     if (!communityId) {
-      return NextResponse.json({ error: "Community ID is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Community ID is required" },
+        { status: 400 },
+      );
     }
 
-    const docRef = db.collection("communities").doc(communityId);
-    const doc = await docRef.get();
+    let communityData: any = null;
+    let fetchedFromDynamo = false;
 
-    if (!doc.exists) {
-      return NextResponse.json({ error: "Community not found" }, { status: 404 });
+    try {
+      const cRes = await docClient.send(
+        new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: {
+            entityId: `COMMUNITY#${communityId}`,
+            sk: "COMMUNITY#META",
+          },
+        }),
+      );
+      if (cRes.Item) {
+        communityData = { id: communityId, ...cRes.Item };
+        fetchedFromDynamo = true;
+      }
+    } catch {}
+
+    if (!fetchedFromDynamo || !communityData) {
+      const docRef = db.collection("communities").doc(communityId);
+      const doc = await docRef.get();
+      if (!doc.exists) {
+        return NextResponse.json(
+          { error: "Community not found" },
+          { status: 404 },
+        );
+      }
+      communityData = { id: doc.id, ...doc.data() };
     }
 
-    const data = doc.data()!;
-    // Only owner or admin can update
-    if (data.createdBy !== user.userId) {
-      return NextResponse.json({ error: "Only community owner can update" }, { status: 403 });
+    if (communityData.createdBy !== user.userId) {
+      return NextResponse.json(
+        { error: "Only community owner can update" },
+        { status: 403 },
+      );
     }
 
     const allowedFields = ["name", "description", "avatarUrl"];
@@ -121,12 +234,34 @@ export async function PATCH(req: NextRequest) {
       if (body[field] !== undefined) updates[field] = body[field];
     });
 
-    await docRef.update(updates);
-    const updated = await docRef.get();
+    const updatedData = { ...communityData, ...updates };
+
+    // 1. Update DynamoDB
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: "IdentityAndAccess",
+          Item: {
+            entityId: `COMMUNITY#${communityId}`,
+            sk: "COMMUNITY#META",
+            ...updatedData,
+          },
+        }),
+      );
+    } catch (dynErr) {
+      console.error("[communities/[id] PATCH] DynamoDB error:", dynErr);
+    }
+
+    // 2. Update Firestore
+    try {
+      await db.collection("communities").doc(communityId).update(updates);
+    } catch (fsErr) {
+      console.error("[communities/[id] PATCH] Firestore error:", fsErr);
+    }
 
     return NextResponse.json({
       success: true,
-      community: { id: updated.id, ...updated.data() },
+      community: updatedData,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";

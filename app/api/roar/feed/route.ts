@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
+import { getUserInfo } from "@/lib/userPoints";
+import { docClient } from "@/lib/dynamodb";
+import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post } from "@/app/models/Post";
+
+export const dynamic = "force-dynamic";
 
 // GET  /api/roar/feed?filter=For+You&limit=20&lastDocId=xxx
 export async function GET(req: NextRequest) {
@@ -16,19 +21,51 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
     const lastDocId = searchParams.get("lastDocId");
 
-    // Fetch the recent active posts to filter in-memory.
-    // This avoids needing complex Firestore composite indexes that would crash the query at runtime.
-    const query = db
-      .collection("roarPosts")
-      .where("status", "==", "active")
-      .orderBy("createdAt", "desc")
-      .limit(500);
+    let posts: Post[] = [];
+    let fetchedFromDynamo = false;
 
-    const snapshot = await query.get();
-    let posts: Post[] = snapshot.docs.map((doc) => ({
-      ...(doc.data() as Post),
-      postId: doc.id,
-    }));
+    // 1. Try querying DynamoDB first using status-createdAt-index
+    try {
+      const res = await docClient.send(new QueryCommand({
+        TableName: "SocialAndContent",
+        IndexName: "status-createdAt-index",
+        KeyConditionExpression: "#s = :active",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":active": "active" },
+        ScanIndexForward: false, // newest first
+        Limit: 500
+      }));
+
+      if (res.Items) {
+        posts = res.Items.map((item) => ({
+          ...(item as any),
+          postId: (item.contentId as string).replace(/^POST#/, "")
+        }));
+        fetchedFromDynamo = true;
+      }
+    } catch (dynErr) {
+      console.warn("[Feed GET] DynamoDB GSI lookup failed:", dynErr);
+    }
+
+    // 2. Fallback to Firestore
+    if (!fetchedFromDynamo) {
+      try {
+        const query = db
+          .collection("roarPosts")
+          .where("status", "==", "active")
+          .orderBy("createdAt", "desc")
+          .limit(500);
+
+        const snapshot = await query.get();
+        posts = snapshot.docs.map((doc) => ({
+          ...(doc.data() as Post),
+          postId: doc.id,
+        }));
+      } catch (fsErr) {
+        console.error("[Feed GET] Firestore fallback failed:", fsErr);
+        return NextResponse.json({ error: "Failed to load feed" }, { status: 500 });
+      }
+    }
 
     // Apply filters in-memory
     if (filter === "Cricket") {
@@ -54,20 +91,57 @@ export async function GET(req: NextRequest) {
     const hasMore = startIndex + limit < posts.length;
     const lastDoc = paginatedPosts[paginatedPosts.length - 1];
 
-    let userSnap = await db.collection("users").doc(user.email).get();
-    let resolvedUserId = user.email;
-    if (!userSnap.exists) {
-      userSnap = await db.collection("users").doc(user.userId).get();
-      if (userSnap.exists) {
-        resolvedUserId = user.userId;
-      }
-    }
+    const userInfo = await getUserInfo(user.userId, undefined, user.email);
+    const resolvedUserId = userInfo.actualUserId;
 
     const postsWithVote = await Promise.all(
       paginatedPosts.map(async (p) => {
-        const docRef = db.collection("roarPosts").doc(p.postId);
-        const voteSnap = await docRef.collection("votes").doc(resolvedUserId).get();
-        const userVote = voteSnap.exists ? (voteSnap.data() as any).vote : null;
+        let userVote = null;
+        let fetchedVoteFromDynamo = false;
+
+        // Try DynamoDB vote lookup
+        try {
+          const voteRes = await docClient.send(new GetCommand({
+            TableName: "SocialAndContent",
+            Key: {
+              contentId: `POST#${p.postId}`,
+              sk: `VOTE#${resolvedUserId}`
+            }
+          }));
+          if (voteRes.Item) {
+            userVote = voteRes.Item.vote;
+            fetchedVoteFromDynamo = true;
+          } else {
+            // Check legacy vote lookup
+            const voteLegacyRes = await docClient.send(new GetCommand({
+              TableName: "SocialAndContent",
+              Key: {
+                contentId: `POST#${p.postId}`,
+                sk: `VOTE#${user.userId}`
+              }
+            }));
+            if (voteLegacyRes.Item) {
+              userVote = voteLegacyRes.Item.vote;
+              fetchedVoteFromDynamo = true;
+            }
+          }
+        } catch (dynErr) {
+          console.warn("[Feed GET] DynamoDB vote check failed for post:", p.postId, dynErr);
+        }
+
+        // Fallback: Check Firestore
+        if (!fetchedVoteFromDynamo) {
+          try {
+            const docRef = db.collection("roarPosts").doc(p.postId);
+            const voteSnap = await docRef.collection("votes").doc(resolvedUserId).get();
+            if (voteSnap.exists) {
+              userVote = (voteSnap.data() as any).vote;
+            }
+          } catch (fsErr) {
+            console.warn("[Feed GET] Firestore fallback vote check failed:", fsErr);
+          }
+        }
+
         return {
           ...p,
           userVote,

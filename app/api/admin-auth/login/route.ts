@@ -1,7 +1,12 @@
+// app/api/admin-auth/login/route.ts — Migrated to AWS DynamoDB (UserData Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { docClient } from "@/lib/dynamodb";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,17 +19,36 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const adminRef = db.collection("admin_users").doc(email);
-    const adminDoc = await adminRef.get();
+    let adminUser: any = null;
 
-    if (!adminDoc.exists) {
+    // 1. Try DynamoDB
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `ADMIN#${email.toLowerCase()}`, sk: "ADMIN#META" },
+        })
+      );
+      if (getRes.Item) adminUser = getRes.Item;
+    } catch (e) {
+      console.warn("[admin-auth login] DynamoDB notice:", e);
+    }
+
+    // 2. Fallback to Firestore
+    if (!adminUser && db) {
+      const adminRef = db.collection("admin_users").doc(email);
+      const adminDoc = await adminRef.get();
+      if (adminDoc.exists) {
+        adminUser = adminDoc.data();
+      }
+    }
+
+    if (!adminUser) {
       return NextResponse.json(
         { error: "Admin user not found" },
         { status: 404 }
       );
     }
-
-    const adminUser = adminDoc.data()!;
 
     if (adminUser.status === "disabled" || adminUser.status === "inactive") {
       return NextResponse.json(
@@ -53,7 +77,7 @@ export async function POST(req: NextRequest) {
         isFirstLogin: adminUser.isFirstLogin ?? false,
       },
       process.env.JWT_SECRET as string,
-      { expiresIn: "8h" } // Strictly 8 hours for admin as per v7.0
+      { expiresIn: "8h" }
     );
 
     const response = NextResponse.json({
