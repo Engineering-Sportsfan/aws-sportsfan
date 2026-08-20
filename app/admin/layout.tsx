@@ -635,6 +635,12 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Admins Management", icon: "◉",
+        children: [
+          { href: "/admin/fliplineAdminManagement/list", label: "FlipLine Admins" },
+        ],
+      },
+      {
         label: "Athletes Management", icon: "◉",
         children: [
           { href: "/admin/athlete-management/list", label: "Athlete Profiles" },
