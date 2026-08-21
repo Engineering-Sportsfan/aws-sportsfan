@@ -240,7 +240,28 @@ export async function GET() {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
   }
 }
+const uploadToCloudinary = (
+  buffer: Buffer,
+  resourceType: "image" | "video"
+): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "flipline",
+        resource_type: resourceType,
+      },
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      }
+    );
 
+    stream.end(buffer);
+  });
+};
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -257,28 +278,61 @@ export async function POST(req: NextRequest) {
     const fomoCount = parseInt((formData.get("fomoCount") as string) || "0");
     const ctaType = (formData.get("ctaType") as string) || "room";
     const flipResponse = (formData.get("flipResponse") as string) || "";
+    const userId = (formData.get("userId") as string) || undefined;
+    const email = (formData.get("email") as string) || undefined;
 
     const mediaFiles = formData.getAll("media") as File[];
-
+    console.log(
+      "MEDIA FILES:",
+      mediaFiles.map((file) => ({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        sizeMB: (file.size / 1024 / 1024).toFixed(2),
+      }))
+    );
     let imageUrl = "";
     let videoUrl = "";
 
     for (const file of mediaFiles) {
-      if (file && file.size > 0) {
-        const bytes = await file.arrayBuffer();
-        const buffer = Buffer.from(bytes);
-        const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
+      if (!file || file.size === 0) continue;
 
-        const uploadRes = await cloudinary.uploader.upload(base64, {
-          folder: "flipline",
-          resource_type: "auto",
-        });
+      const isVideo = file.type.startsWith("video/");
 
-        if (file.type.startsWith("video/")) {
-          videoUrl = uploadRes.secure_url;
-        } else {
-          imageUrl = uploadRes.secure_url;
-        }
+      console.log("Uploading media:", {
+        name: file.name,
+        type: file.type,
+        sizeMB: (file.size / 1024 / 1024).toFixed(2),
+        isVideo,
+      });
+
+      if (isVideo && file.size > 100 * 1024 * 1024) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Video must be smaller than 100 MB",
+          },
+          { status: 400 }
+        );
+      }
+
+      const bytes = await file.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+
+      const uploadRes = await uploadToCloudinary(
+        buffer,
+        isVideo ? "video" : "image"
+      );
+
+      console.log("Cloudinary upload successful:", {
+        url: uploadRes.secure_url,
+        resourceType: uploadRes.resource_type,
+      });
+
+      if (isVideo) {
+        videoUrl = uploadRes.secure_url;
+      } else {
+        imageUrl = uploadRes.secure_url;
       }
     }
 
@@ -297,15 +351,14 @@ export async function POST(req: NextRequest) {
     };
 
     const tags = content.match(/#[a-zA-Z0-9_]+/g) || [];
-
     const newCard = {
       roomId: "FLIPLINE#ALL",
       sk: `CARD#${timeMs}#${id}`,
       id,
       type,
       sport,
-      sportEmoji: sportMeta[sport]?.emoji || '🏆',
-      sportLabel: sportMeta[sport]?.label || 'General',
+      sportEmoji: sportMeta[sport]?.emoji || "🏆",
+      sportLabel: sportMeta[sport]?.label || "General",
       day: "Just Now",
       time: timeStr,
       timeMs,
@@ -317,18 +370,36 @@ export async function POST(req: NextRequest) {
       likes,
       isKey,
       tags,
-      scoreChip: sport === 'cricket' ? { score: 'Live Match', status: 'Live', statusType: 'live' } : undefined,
+
+      scoreChip:
+        sport === "cricket"
+          ? {
+            score: "Live Match",
+            status: "Live",
+            statusType: "live",
+          }
+          : undefined,
+
       fomoMsg: fomoMsg || "",
       fomoCount,
       ctaType,
       flipResponse,
       isUserPost: true,
+      userId,
+      email,
+
       hasAttachedImage: !!imageUrl,
       hasAttachedVideo: !!videoUrl,
-      image: imageUrl || undefined,
-      mediaType: videoUrl ? "video" : undefined,
-    };
 
+      image: imageUrl || undefined,
+      videoUrl: videoUrl || undefined,
+
+      mediaType: videoUrl
+        ? "video"
+        : imageUrl
+          ? "image"
+          : undefined,
+    };
     await docClient.send(
       new PutCommand({
         TableName: "RealTimeChat",
