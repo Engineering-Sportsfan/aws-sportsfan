@@ -12,7 +12,7 @@ frontend:
         - env | grep -e GOOGLE_ >> .env.production
         - env | grep -e FIREBASE_ >> .env.production
         - env | grep -e CLOUDINARY_ >> .env.production
-        - env | grep -e SPORTRADAR_ >> .env.production
+        - env | grep -e ROANUZ_ >> .env.production
         - env | grep -e NEXT_PUBLIC_ >> .env.production
     build:
       commands:
