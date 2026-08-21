@@ -8,11 +8,11 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   env: {
-    ROANUZ_PROJECT_KEY: process.env.ROANUZ_PROJECT_KEY,
-    ROANUZ_API_KEY: process.env.ROANUZ_API_KEY,
-    ROANUZ_FOOTBALL_ACCESS_KEY: process.env.ROANUZ_FOOTBALL_ACCESS_KEY,
-    ROANUZ_FOOTBALL_SECRET_KEY: process.env.ROANUZ_FOOTBALL_SECRET_KEY,
-    ROANUZ_FOOTBALL_APP_ID: process.env.ROANUZ_FOOTBALL_APP_ID,
+    ROANUZ_PROJECT_KEY: process.env.ROANUZ_PROJECT_KEY || "",
+    ROANUZ_API_KEY: process.env.ROANUZ_API_KEY || "",
+    ROANUZ_FOOTBALL_ACCESS_KEY: process.env.ROANUZ_FOOTBALL_ACCESS_KEY || "",
+    ROANUZ_FOOTBALL_SECRET_KEY: process.env.ROANUZ_FOOTBALL_SECRET_KEY || "",
+    ROANUZ_FOOTBALL_APP_ID: process.env.ROANUZ_FOOTBALL_APP_ID || "",
   },
   serverExternalPackages: ["firebase-admin"],
   async headers() {
