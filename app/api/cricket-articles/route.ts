@@ -171,22 +171,36 @@ type BadgeType = "FEATURE" | "ANALYSIS" | "OPINION" | "NEWS";
 const VIDEO_FOLDER = "IndvsSl";
 const IMAGE_FOLDER = "Images";
 
+// Turn an article title into a safe Cloudinary public_id / display name.
+function slugifyTitle(title: string): string {
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80) || "article";
+}
+
 // ─── Cloudinary upload helper ─────────────────────────────────────────────────
-async function uploadMediaFile(file: File): Promise<string> {
+// For videos, the uploaded file is named after the article title (so the
+// cricket media library shows it as e.g. "india_vs_sri_lanka_recap" instead
+// of the original device filename). Images keep the default filename logic.
+async function uploadMediaFile(file: File, articleTitle?: string): Promise<string> {
   const isVideo = file.type.startsWith("video/");
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
 
-  const uploadResult = await cloudinary.uploader.upload(base64, {
-    resource_type: isVideo ? "video" : "image",
-    asset_folder: isVideo ? VIDEO_FOLDER : IMAGE_FOLDER,
-    use_filename: true,
-    unique_filename: true,
-    overwrite: false,
-  });
-
   if (isVideo) {
+    const baseName = articleTitle ? slugifyTitle(articleTitle) : "article";
+    const uploadResult = await cloudinary.uploader.upload(base64, {
+      resource_type: "video",
+      asset_folder: VIDEO_FOLDER,
+      public_id: `${baseName}_${Date.now()}`,
+      display_name: articleTitle || baseName,
+      overwrite: false,
+    });
+
     // Force a browser-playable mp4 delivery URL for video.
     return cloudinary.url(uploadResult.public_id, {
       resource_type: "video",
@@ -194,6 +208,14 @@ async function uploadMediaFile(file: File): Promise<string> {
       transformation: [{ quality: "auto" }],
     });
   }
+
+  const uploadResult = await cloudinary.uploader.upload(base64, {
+    resource_type: "image",
+    asset_folder: IMAGE_FOLDER,
+    use_filename: true,
+    unique_filename: true,
+    overwrite: false,
+  });
 
   return uploadResult.secure_url;
 }
@@ -244,7 +266,7 @@ export async function POST(req: NextRequest) {
       const existingImage = formData.get("existingImage") as string | null;
 
       if (file && file.size > 0) {
-        imageUrl = await uploadMediaFile(file);
+        imageUrl = await uploadMediaFile(file, title);
       } else if (existingImage) {
         imageUrl = existingImage;
       }
