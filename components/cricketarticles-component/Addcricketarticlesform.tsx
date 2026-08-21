@@ -1,19 +1,22 @@
+
 // "use client";
 
 // import axios from "axios";
 // import { useRouter } from "next/navigation";
 // import { useEffect, useState } from "react";
 // import { Plus, Trash2, GripVertical } from "lucide-react";
+// import { RichTextEditor } from "./Richtexteditor"; 
 
 // type BadgeType = "FEATURE" | "ANALYSIS" | "OPINION" | "NEWS";
-'.'
+
 // type FormState = {
 //     badge: BadgeType;
 //     title: string;
-//     author: string,
+//     author: string;
 //     description: string[];
 //     readTime: string;
 //     views: string;
+//     tags: string[];
 // };
 
 // export default function CricketArticleForm({
@@ -25,15 +28,38 @@
 //         badge: "NEWS",
 //         title: "",
 //         author: "",
-//         description: [""], // Start with one empty paragraph
+//         description: [""],
 //         readTime: "5 min read",
 //         views: "0 views",
+//         tags: [],
 //     });
 
+//     const [tagInput, setTagInput] = useState("");
 //     const [image, setImage] = useState<File | null>(null);
 //     const [existingImage, setExistingImage] = useState("");
 //     const [loading, setLoading] = useState(false);
 //     const router = useRouter();
+
+//     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+//         if (e.key === "Enter") {
+//             e.preventDefault();
+//             const newTag = tagInput.trim();
+//             if (newTag && !form.tags.includes(newTag)) {
+//                 setForm((prev) => ({
+//                     ...prev,
+//                     tags: [...prev.tags, newTag],
+//                 }));
+//                 setTagInput("");
+//             }
+//         }
+//     };
+
+//     const removeTag = (indexToRemove: number) => {
+//         setForm((prev) => ({
+//             ...prev,
+//             tags: prev.tags.filter((_, index) => index !== indexToRemove),
+//         }));
+//     };
 
 //     /*  FETCH SINGLE ARTICLE  */
 //     useEffect(() => {
@@ -41,10 +67,7 @@
 
 //         const fetchArticle = async () => {
 //             try {
-//                 const res = await axios.get(
-//                     `/api/cricket-articles/${articleIdToEdit}`
-//                 );
-
+//                 const res = await axios.get(`/api/cricket-articles/${articleIdToEdit}`);
 //                 const article = res.data.article;
 
 //                 setForm({
@@ -54,6 +77,7 @@
 //                     description: article.description || [""],
 //                     readTime: article.readTime || "5 min read",
 //                     views: article.views || "0 views",
+//                     tags: article.tags || [],
 //                 });
 
 //                 setExistingImage(article.image || "");
@@ -73,36 +97,27 @@
 //             description: [""],
 //             readTime: "5 min read",
 //             views: "0 views",
+//             tags: [],
 //         });
 //         setImage(null);
 //         setExistingImage("");
 //     };
 
-//     /*  INPUT CHANGE  */
 //     const handleChange = (
 //         e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
 //     ) => {
-//         setForm((prev) => ({
-//             ...prev,
-//             [e.target.name]: e.target.value,
-//         }));
+//         setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 //     };
 
 //     /*  DESCRIPTION PARAGRAPH HANDLERS  */
 //     const handleDescriptionChange = (index: number, value: string) => {
-//         const updatedDescriptions = [...form.description];
-//         updatedDescriptions[index] = value;
-//         setForm((prev) => ({
-//             ...prev,
-//             description: updatedDescriptions,
-//         }));
+//         const updated = [...form.description];
+//         updated[index] = value;
+//         setForm((prev) => ({ ...prev, description: updated }));
 //     };
 
 //     const addDescriptionParagraph = () => {
-//         setForm((prev) => ({
-//             ...prev,
-//             description: [...prev.description, ""],
-//         }));
+//         setForm((prev) => ({ ...prev, description: [...prev.description, ""] }));
 //     };
 
 //     const removeDescriptionParagraph = (index: number) => {
@@ -110,11 +125,9 @@
 //             alert("At least one paragraph is required");
 //             return;
 //         }
-
-//         const updatedDescriptions = form.description.filter((_, i) => i !== index);
 //         setForm((prev) => ({
 //             ...prev,
-//             description: updatedDescriptions,
+//             description: prev.description.filter((_, i) => i !== index),
 //         }));
 //     };
 
@@ -137,7 +150,6 @@
 //         const formData = new FormData();
 //         formData.append("file", file);
 //         formData.append("folder", "Images");
-
 //         const res = await axios.post("/api/upload", formData);
 //         return res.data.url;
 //     };
@@ -149,8 +161,13 @@
 //             return;
 //         }
 
-//         // Filter out empty paragraphs
-//         const nonEmptyDescriptions = form.description.filter(p => p.trim() !== "");
+//         // Strip HTML tags to check if paragraph is truly empty
+//         const stripHtml = (html: string) =>
+//             html.replace(/<[^>]*>/g, "").trim();
+
+//         const nonEmptyDescriptions = form.description.filter(
+//             (p) => stripHtml(p) !== ""
+//         );
 
 //         if (nonEmptyDescriptions.length === 0) {
 //             alert("At least one description paragraph is required");
@@ -161,10 +178,7 @@
 
 //         try {
 //             let imageUrl = existingImage;
-
-//             if (image) {
-//                 imageUrl = await uploadFile(image);
-//             }
+//             if (image) imageUrl = await uploadFile(image);
 
 //             const payload = {
 //                 ...form,
@@ -173,12 +187,8 @@
 //             };
 
 //             let res;
-
 //             if (articleIdToEdit) {
-//                 res = await axios.put(
-//                     `/api/cricket-articles/${articleIdToEdit}`,
-//                     payload
-//                 );
+//                 res = await axios.put(`/api/cricket-articles/${articleIdToEdit}`, payload);
 //             } else {
 //                 res = await axios.post("/api/cricket-articles", payload);
 //             }
@@ -189,7 +199,9 @@
 //                         ? "Article updated successfully"
 //                         : "Article created successfully"
 //                 );
-//                 router.push("/admin/cricketarticles-management/cricketarticles-list");
+//                 router.push(
+//                     "/admin/cricketarticles-management/cricketarticles-list"
+//                 );
 
 //                 if (!articleIdToEdit) {
 //                     setForm({
@@ -199,6 +211,7 @@
 //                         description: [""],
 //                         readTime: "5 min read",
 //                         views: "0 views",
+//                         tags: [],
 //                     });
 //                     setImage(null);
 //                     setExistingImage("");
@@ -213,6 +226,11 @@
 //     };
 
 //     const preview = image ? URL.createObjectURL(image) : existingImage;
+
+//     // Count non-empty paragraphs (strip HTML before checking)
+//     const nonEmptyCount = form.description.filter(
+//         (p) => p.replace(/<[^>]*>/g, "").trim() !== ""
+//     ).length;
 
 //     return (
 //         <div className="max-w-[1440px] mx-auto p-6 text-white">
@@ -245,7 +263,6 @@
 //                         onChange={handleChange}
 //                         placeholder="Enter article title"
 //                     />
-
 //                     <Input
 //                         label="Author"
 //                         name="author"
@@ -253,7 +270,6 @@
 //                         onChange={handleChange}
 //                         placeholder="Enter Author"
 //                     />
-
 //                     <Input
 //                         label="Read Time"
 //                         name="readTime"
@@ -261,7 +277,6 @@
 //                         onChange={handleChange}
 //                         placeholder="e.g., 5 min read"
 //                     />
-
 //                     <Input
 //                         label="Views"
 //                         name="views"
@@ -269,12 +284,43 @@
 //                         onChange={handleChange}
 //                         placeholder="e.g., 0 views"
 //                     />
+//                     <div>
+//                         <label className="text-xs text-gray-400 block mb-1">Article Tags</label>
+//                         <div className="w-full bg-[#0d1117] border border-gray-700 rounded px-3 py-2 focus-within:border-blue-500 focus-within:outline-none">
+//                             <div className="flex flex-wrap gap-2 mb-2">
+//                                 {form.tags.map((tag, index) => (
+//                                     <span 
+//                                         key={index} 
+//                                         className="flex items-center gap-1 bg-blue-500/20 text-blue-500 px-2 py-1 rounded text-xs"
+//                                     >
+//                                         {tag}
+//                                         <button 
+//                                             type="button" 
+//                                             onClick={() => removeTag(index)}
+//                                             className="hover:text-white transition"
+//                                         >
+//                                             &times;
+//                                         </button>
+//                                     </span>
+//                                 ))}
+//                             </div>
+//                             <input
+//                                 type="text"
+//                                 value={tagInput}
+//                                 onChange={(e) => setTagInput(e.target.value)}
+//                                 onKeyDown={handleKeyDown}
+//                                 placeholder="Type tag and press Enter..."
+//                                 className="w-full bg-transparent border-none text-white text-sm focus:outline-none"
+//                             />
+//                         </div>
+//                         <p className="text-[10px] text-gray-500 mt-1">Press Enter to add multiple tags</p>
+//                     </div>
 //                 </div>
 
-//                 {/* DESCRIPTION SECTION - Dynamic Paragraphs */}
+//                 {/* DESCRIPTION SECTION */}
 //                 <div>
 //                     <div className="flex items-center justify-between mb-3">
-//                         <label className="text-xs text-gray-400 block">
+//                         <label className="text-xs text-gray-400">
 //                             Description Paragraphs
 //                         </label>
 //                         <button
@@ -293,9 +339,13 @@
 //                                 key={index}
 //                                 className="border border-gray-700 rounded-lg p-4 bg-[#0d1117]/50"
 //                             >
+//                                 {/* Paragraph header */}
 //                                 <div className="flex items-center justify-between mb-2">
 //                                     <div className="flex items-center gap-2">
-//                                         <GripVertical size={16} className="text-gray-500 cursor-move" />
+//                                         <GripVertical
+//                                             size={16}
+//                                             className="text-gray-500 cursor-move"
+//                                         />
 //                                         <span className="text-xs text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded">
 //                                             Paragraph {index + 1}
 //                                         </span>
@@ -331,32 +381,34 @@
 //                                         </button>
 //                                     </div>
 //                                 </div>
-//                                 <textarea
+
+//                                 {/* ✅ Rich Text Editor replaces plain textarea */}
+//                                 <RichTextEditor
 //                                     value={paragraph}
-//                                     onChange={(e) => handleDescriptionChange(index, e.target.value)}
+//                                     onChange={(val) => handleDescriptionChange(index, val)}
 //                                     placeholder={`Write paragraph ${index + 1}...`}
-//                                     rows={4}
-//                                     className="w-full bg-[#0d1117] border border-gray-700 rounded-lg px-3 py-2 text-white placeholder:text-gray-500 focus:outline-none focus:border-blue-500 resize-y"
+//                                     minHeight={140}
 //                                 />
 //                             </div>
 //                         ))}
 //                     </div>
 
 //                     <p className="text-xs text-gray-500 mt-2">
-//                         {form.description.filter(p => p.trim() !== "").length} non-empty paragraph(s)
+//                         {nonEmptyCount} non-empty paragraph(s)
 //                     </p>
 //                 </div>
 
 //                 {/* IMAGE */}
 //                 <div>
-//                     <label className="text-xs text-gray-400 mb-1 block">Article Image</label>
+//                     <label className="text-xs text-gray-400 mb-1 block">
+//                         Article Image
+//                     </label>
 //                     <input
 //                         type="file"
 //                         accept="image/*"
 //                         onChange={(e) => setImage(e.target.files?.[0] ?? null)}
 //                         className="w-full bg-[#0d1117] border border-gray-700 rounded px-3 py-2 text-white file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-500 file:text-white hover:file:bg-blue-600"
 //                     />
-
 //                     {preview && (
 //                         <img
 //                             src={preview}
@@ -378,8 +430,8 @@
 //                                 ? "Updating..."
 //                                 : "Creating..."
 //                             : articleIdToEdit
-//                                 ? "Update Article"
-//                                 : "Create Article"}
+//                             ? "Update Article"
+//                             : "Create Article"}
 //                     </button>
 
 //                     <button
@@ -398,9 +450,7 @@
 // function Input({
 //     label,
 //     ...props
-// }: React.InputHTMLAttributes<HTMLInputElement> & {
-//     label: string;
-// }) {
+// }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) {
 //     return (
 //         <div>
 //             <label className="text-xs text-gray-400 mb-1 block">{label}</label>
@@ -415,14 +465,12 @@
 
 
 
-
 "use client";
 
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Plus, Trash2, GripVertical } from "lucide-react";
-import { RichTextEditor } from "./Richtexteditor"; 
 
 type BadgeType = "FEATURE" | "ANALYSIS" | "OPINION" | "NEWS";
 
@@ -562,15 +610,6 @@ export default function CricketArticleForm({
         setForm((prev) => ({ ...prev, description: updated }));
     };
 
-    /*  FILE UPLOAD  */
-    const uploadFile = async (file: File) => {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("folder", "Images");
-        const res = await axios.post("/api/upload", formData);
-        return res.data.url;
-    };
-
     /*  SUBMIT  */
     const handleSubmit = async () => {
         if (!form.title) {
@@ -578,12 +617,8 @@ export default function CricketArticleForm({
             return;
         }
 
-        // Strip HTML tags to check if paragraph is truly empty
-        const stripHtml = (html: string) =>
-            html.replace(/<[^>]*>/g, "").trim();
-
         const nonEmptyDescriptions = form.description.filter(
-            (p) => stripHtml(p) !== ""
+            (p) => p.trim() !== ""
         );
 
         if (nonEmptyDescriptions.length === 0) {
@@ -591,23 +626,47 @@ export default function CricketArticleForm({
             return;
         }
 
+        if (!image && !existingImage) {
+            alert("An image or video is required");
+            return;
+        }
+
         setLoading(true);
 
         try {
-            let imageUrl = existingImage;
-            if (image) imageUrl = await uploadFile(image);
-
-            const payload = {
-                ...form,
-                description: nonEmptyDescriptions,
-                image: imageUrl,
-            };
-
             let res;
-            if (articleIdToEdit) {
-                res = await axios.put(`/api/cricket-articles/${articleIdToEdit}`, payload);
+
+            if (image) {
+                // A new file was picked — send it to the article route as
+                // FormData; the backend uploads it to Cloudinary itself.
+                const formData = new FormData();
+                formData.append("badge", form.badge);
+                formData.append("title", form.title);
+                formData.append("author", form.author);
+                formData.append("readTime", form.readTime);
+                formData.append("views", form.views);
+                formData.append("description", JSON.stringify(nonEmptyDescriptions));
+                formData.append("tags", JSON.stringify(form.tags));
+                formData.append("file", image);
+
+                if (articleIdToEdit) {
+                    res = await axios.put(`/api/cricket-articles/${articleIdToEdit}`, formData);
+                } else {
+                    res = await axios.post("/api/cricket-articles", formData);
+                }
             } else {
-                res = await axios.post("/api/cricket-articles", payload);
+                // Editing without changing the file — keep the existing URL.
+                const payload = {
+                    ...form,
+                    description: nonEmptyDescriptions,
+                    image: existingImage,
+                };
+
+                if (articleIdToEdit) {
+                    res = await axios.put(`/api/cricket-articles/${articleIdToEdit}`, payload);
+                } else {
+                    res = await axios.post("/api/cricket-articles", payload);
+                }
             }
 
             if (res.data.success) {
@@ -644,9 +703,9 @@ export default function CricketArticleForm({
 
     const preview = image ? URL.createObjectURL(image) : existingImage;
 
-    // Count non-empty paragraphs (strip HTML before checking)
+    // Count non-empty paragraphs
     const nonEmptyCount = form.description.filter(
-        (p) => p.replace(/<[^>]*>/g, "").trim() !== ""
+        (p) => p.trim() !== ""
     ).length;
 
     return (
@@ -799,12 +858,15 @@ export default function CricketArticleForm({
                                     </div>
                                 </div>
 
-                                {/* ✅ Rich Text Editor replaces plain textarea */}
-                                <RichTextEditor
+                                {/* Simple textarea instead of the rich text editor */}
+                                <textarea
                                     value={paragraph}
-                                    onChange={(val) => handleDescriptionChange(index, val)}
+                                    onChange={(e) =>
+                                        handleDescriptionChange(index, e.target.value)
+                                    }
                                     placeholder={`Write paragraph ${index + 1}...`}
-                                    minHeight={140}
+                                    rows={5}
+                                    className="w-full bg-[#0d1117] border border-gray-700 rounded px-3 py-2 text-white placeholder:text-gray-500 text-sm focus:outline-none focus:border-blue-500 resize-y"
                                 />
                             </div>
                         ))}
@@ -815,23 +877,34 @@ export default function CricketArticleForm({
                     </p>
                 </div>
 
-                {/* IMAGE */}
+                {/* IMAGE / VIDEO */}
                 <div>
                     <label className="text-xs text-gray-400 mb-1 block">
-                        Article Image
+                        Article Image / Video
                     </label>
                     <input
                         type="file"
-                        accept="image/*"
+                        accept="image/*,video/*"
                         onChange={(e) => setImage(e.target.files?.[0] ?? null)}
                         className="w-full bg-[#0d1117] border border-gray-700 rounded px-3 py-2 text-white file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-blue-500 file:text-white hover:file:bg-blue-600"
                     />
+                    <p className="text-[10px] text-gray-500 mt-1">
+                        Videos are uploaded to the cricket media (Cloudinary) folder.
+                    </p>
                     {preview && (
-                        <img
-                            src={preview}
-                            alt="preview"
-                            className="w-32 h-32 object-cover rounded mt-3 border border-gray-700"
-                        />
+                        image?.type.startsWith("video/") ? (
+                            <video
+                                src={preview}
+                                controls
+                                className="w-40 h-28 object-cover rounded mt-3 border border-gray-700"
+                            />
+                        ) : (
+                            <img
+                                src={preview}
+                                alt="preview"
+                                className="w-32 h-32 object-cover rounded mt-3 border border-gray-700"
+                            />
+                        )
                     )}
                 </div>
 
