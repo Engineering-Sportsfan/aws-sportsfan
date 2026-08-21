@@ -33,7 +33,7 @@ async function getRoanuzToken(): Promise<string | null> {
     const res = await axios.post(ROANUZ_AUTH_URL, { api_key: ROANUZ_API_KEY }, { headers: { "Content-Type": "application/json" } });
     const data = res.data;
     const token = data?.data?.token || data?.token || null;
-    if (token) cacheService.set("roanuz:token", token, 23 * 60 * 60);
+    if (token) cacheService.set("roanuz:token", token, 15 * 60); // 15 mins
     return token;
   } catch (e: any) { 
     console.warn("[Roanuz] Auth error with axios:", e.message); 
