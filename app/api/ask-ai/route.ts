@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
     const assistantMessageId = `msg_${now + 1}_asst_${Math.random().toString(36).slice(2, 7)}`;
     
 
-    // --- Dual Write to DynamoDB & Firestore ---
+    // --- Dual Write to DynamoDB & Firestore 
     try {
       
       // 1. Session Meta in DynamoDB
