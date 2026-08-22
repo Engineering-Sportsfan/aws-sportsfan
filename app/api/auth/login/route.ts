@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
           IndexName: "email-index",
           KeyConditionExpression: "email = :e",
           ExpressionAttributeValues: { ":e": cleanEmail },
-          Limit: 1,
+          // Limit: 1,
         })
       );
       if (emailQuery.Items && emailQuery.Items.length > 0) {
