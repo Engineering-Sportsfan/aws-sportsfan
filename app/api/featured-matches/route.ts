@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import axios from "axios";
-import { getRoanuzToken } from "../ticker/route"; // Need to export getRoanuzToken or duplicate it
 
 const ROANUZ_BASE_URL = "https://api.sports.roanuz.com/v5/cricket";
 const PROJECT_KEY = process.env.ROANUZ_PROJECT_KEY || "";
@@ -29,14 +28,31 @@ export async function GET() {
     const token = await fetchToken();
     if (!token) return NextResponse.json({ success: false, items: [] });
 
-    // For featured matches, we'll hit featured-matches-2/ as it's the fastest way to get recent top matches
-    const featuredRes = await axios.get(`${ROANUZ_BASE_URL}/${PROJECT_KEY}/featured-matches-2/`, { headers: { "rs-token": token } });
-    const rawMatches = featuredRes.data?.data?.matches || [];
+    // 1. Fetch global fixtures to guarantee we catch live matches (Free trial workaround)
+    let globalLive: any[] = [];
+    let globalCompleted: any[] = [];
+    
+    try {
+      const res = await axios.get(`${ROANUZ_BASE_URL}/${PROJECT_KEY}/fixtures/`, { headers: { "rs-token": token } });
+      const days = res.data?.data?.month?.days || [];
+      for (const day of days) {
+        for (const m of (day.matches || [])) {
+          if (m.status === "started") globalLive.push(m);
+          else if (m.status === "completed") globalCompleted.push(m);
+        }
+      }
+      globalCompleted.sort((a, b) => b.start_at - a.start_at);
+    } catch (e: any) { 
+      console.warn("[Roanuz Carousel] Global fixtures error:", e.message); 
+    }
+
+    // 2. Select top matches (Live first, then recent completed)
+    const selectedMatches = [...globalLive, ...globalCompleted].slice(0, 3);
     
     const items = [];
-    for (let i = 0; i < Math.min(rawMatches.length, 3); i++) {
-      const match = rawMatches[i];
+    for (const match of selectedMatches) {
       let details = match;
+      // Fetch full score for live/completed
       if (match.status === "started" || match.status === "completed") {
          const score = await fetchRoanuzMatchScore(token, match.key);
          if (score) details = score;
@@ -68,10 +84,10 @@ export async function GET() {
         competition: details.tournament?.name || details.competition?.name || "Cricket Tournament",
         matchLabel: `Cricket · ${details.sub_title || details.format || "Match"}`,
         teamAName: teamA?.name || "Team A",
-        teamAShort: teamA?.code || "TMA",
+        teamAShort: teamA?.code || teamA?.sname || "TMA",
         teamAScore: scoreA || "-",
         teamBName: teamB?.name || "Team B",
-        teamBShort: teamB?.code || "TMB",
+        teamBShort: teamB?.code || teamB?.sname || "TMB",
         teamBScore: scoreB || "-",
         oversLabel: overs,
         overSummary: [],
@@ -79,7 +95,7 @@ export async function GET() {
         manOfMatch: "",
         bgImageUrl: "/images/cricketground.avif",
         fanCount: Math.floor(Math.random() * 5000),
-        ctaLabel: details.status === "started" ? "Match Center" : "View Highlights",
+        ctaLabel: details.status === "started" ? "Watch Along" : "View Highlights",
       });
     }
 
