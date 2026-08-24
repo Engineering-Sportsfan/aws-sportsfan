@@ -18,6 +18,7 @@ export default function CreateRoomFlow({ editId }: { editId?: string }) {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [roomId, setRoomId] = useState<string | null>(editId || null);
+  const [roomFile, setRoomFile] = useState<File | null>(null);
   // const [isEditMode, setIsEditMode] = useState(!!editId);
 
   // If in edit mode, fetch and populate data
@@ -35,12 +36,19 @@ export default function CreateRoomFlow({ editId }: { editId?: string }) {
     return "dummy-token";
   };
 
+  const appendRoomFile = (formData: FormData) => {
+    if (roomFile) {
+      formData.append("roomFile", roomFile);
+    }
+  };
+
   const handleStep1Next = async (data: Step1Data) => {
     try {
       const formData = new FormData();
       formData.append("eventId", data.eventId || `evt-${Date.now()}`);
       formData.append("eventName", data.eventName);
       formData.append("roomType", data.roomType);
+      appendRoomFile(formData);
 
       const token = await getToken();
       
@@ -74,6 +82,7 @@ export default function CreateRoomFlow({ editId }: { editId?: string }) {
       if (!roomId) throw new Error("No room ID");
       
       const token = await getToken();
+      appendRoomFile(formData);
       const response = await fetch(`/api/hostrooms/${roomId}`, {
         method: "PATCH",
         headers: {
@@ -99,6 +108,7 @@ export default function CreateRoomFlow({ editId }: { editId?: string }) {
       if (!roomId) throw new Error("No room ID");
       
       const token = await getToken();
+      appendRoomFile(formData);
       const response = await fetch(`/api/hostrooms/${roomId}`, {
         method: "PATCH",
         headers: {
@@ -124,6 +134,7 @@ export default function CreateRoomFlow({ editId }: { editId?: string }) {
       if (!roomId) throw new Error("No room ID");
       
       const token = await getToken();
+      appendRoomFile(formData);
       const response = await fetch(`/api/hostrooms/${roomId}`, {
         method: "PATCH",
         headers: {
@@ -146,6 +157,22 @@ export default function CreateRoomFlow({ editId }: { editId?: string }) {
 
   return (
     <>
+      <div className="mx-auto mb-4 w-full max-w-6xl rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+        <label className="mb-2 block text-sm font-medium text-white">
+          Host Room File Upload
+        </label>
+        <input
+          type="file"
+          onChange={(e) => setRoomFile(e.target.files?.[0] ?? null)}
+          className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-3 text-white file:mr-3 file:rounded file:border-0 file:bg-orange-500 file:px-3 file:py-1 file:text-white"
+        />
+        {roomFile && (
+          <p className="mt-2 text-xs text-neutral-400">
+            Selected: {roomFile.name}
+          </p>
+        )}
+      </div>
+
       {step === 1 && (
         <CreateRoomStep1 
           editId={editId}

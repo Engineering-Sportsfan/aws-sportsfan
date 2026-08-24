@@ -280,6 +280,9 @@ export async function POST(req: NextRequest) {
     const flipResponse = (formData.get("flipResponse") as string) || "";
     const userId = (formData.get("userId") as string) || undefined;
     const email = (formData.get("email") as string) || undefined;
+    const day = (formData.get("day") as string) || undefined;
+    const isVerified = formData.get("isVerified") === "true";
+    const adminPhoto = (formData.get("adminPhoto") as string) || undefined;
 
     const mediaFiles = formData.getAll("media") as File[];
     console.log(
@@ -359,7 +362,9 @@ export async function POST(req: NextRequest) {
       sport,
       sportEmoji: sportMeta[sport]?.emoji || "🏆",
       sportLabel: sportMeta[sport]?.label || "General",
-      day: "Just Now",
+      day: day || "Just Now",
+      isVerified,
+      adminPhoto,
       time: timeStr,
       timeMs,
       author,
