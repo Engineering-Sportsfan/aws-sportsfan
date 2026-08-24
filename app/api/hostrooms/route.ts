@@ -10,6 +10,25 @@ import { v4 as uuidv4 } from "uuid";
 
 export const dynamic = "force-dynamic";
 
+async function uploadHostRoomFile(file: File) {
+  const bytes = await file.arrayBuffer();
+  const buffer = Buffer.from(bytes);
+  const base64 = `data:${file.type || "application/octet-stream"};base64,${buffer.toString("base64")}`;
+
+  const uploadRes = await cloudinary.uploader.upload(base64, {
+    folder: "hostrooms/files",
+    resource_type: "auto",
+    public_id: `${Date.now()}-${file.name.replace(/\s/g, "_")}`,
+  });
+
+  return {
+    url: uploadRes.secure_url,
+    name: file.name,
+    size: file.size,
+    type: file.type || "application/octet-stream",
+  };
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -163,6 +182,7 @@ export async function POST(req: NextRequest) {
     const schedule = formData.get("schedule") as string;
     
     const thumbnailFile = formData.get("thumbnail") as File | null;
+    const roomFile = formData.get("roomFile") as File | null;
     const assetFiles = formData.getAll("assets") as File[];
     const pricePerFan = parseInt(formData.get("pricePerFan") as string);
     const currency = formData.get("currency") as string || "INR";
@@ -206,6 +226,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const uploadedRoomFile = roomFile && roomFile.size > 0
+      ? await uploadHostRoomFile(roomFile)
+      : null;
+
     const roomId = uuidv4();
     const now = Date.now();
     const newRoom = {
@@ -231,6 +255,7 @@ export async function POST(req: NextRequest) {
       },
       content: {
         assets,
+        roomFile: uploadedRoomFile,
       },
       pricing: {
         pricePerFan: pricePerFan || 0,

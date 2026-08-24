@@ -9,6 +9,25 @@ import { GetCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
+async function uploadHostRoomFile(file: File) {
+  const bytes = await file.arrayBuffer();
+  const buffer = Buffer.from(bytes);
+  const base64 = `data:${file.type || "application/octet-stream"};base64,${buffer.toString("base64")}`;
+
+  const uploadRes = await cloudinary.uploader.upload(base64, {
+    folder: "hostrooms/files",
+    resource_type: "auto",
+    public_id: `${Date.now()}-${file.name.replace(/\s/g, "_")}`,
+  });
+
+  return {
+    url: uploadRes.secure_url,
+    name: file.name,
+    size: file.size,
+    type: file.type || "application/octet-stream",
+  };
+}
+
 interface RoomData {
   userId: string;
   status: "draft" | "published";
@@ -37,6 +56,12 @@ interface RoomData {
       name: string;
       size?: number;
     }>;
+    roomFile?: {
+      url: string;
+      name: string;
+      size: number;
+      type: string;
+    } | null;
   };
   pricing: {
     pricePerFan: number;
@@ -110,6 +135,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const status = formData.get("status") as string;
 
     const thumbnailFile = formData.get("thumbnail") as File | null;
+    const roomFile = formData.get("roomFile") as File | null;
     const assetFiles = formData.getAll("assets") as File[];
 
     let existingData: any = null;
@@ -173,6 +199,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       assets = [...assets, ...newAssets];
     }
 
+    const uploadedRoomFile = roomFile && roomFile.size > 0
+      ? await uploadHostRoomFile(roomFile)
+      : existingData?.content?.roomFile || null;
+
     const updateData: any = {
       updatedAt: Date.now(),
     };
@@ -193,7 +223,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     if (pricePerFan) updateData.pricing = { ...existingData?.pricing, pricePerFan };
     if (currency) updateData.pricing = { ...existingData?.pricing, currency };
-    if (assets.length) updateData.content = { assets };
+    if (assets.length || uploadedRoomFile) {
+      updateData.content = {
+        ...existingData?.content,
+        assets,
+        roomFile: uploadedRoomFile,
+      };
+    }
     
     if (status) {
       updateData.status = status;
@@ -390,6 +426,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           break;
         }
       }
+    }
+
+    const roomFile = formData.get("roomFile") as File | null;
+    if (roomFile && roomFile.size > 0) {
+      updatePayload.content = {
+        ...existingData?.content,
+        ...(updatePayload.content || {}),
+        roomFile: await uploadHostRoomFile(roomFile),
+      };
     }
 
     if (status) {
