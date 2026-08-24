@@ -16,7 +16,7 @@
 //   const [scoreSubtitle, setScoreSubtitle] = useState('');
 //   const [createWatchAlong, setCreateWatchAlong] = useState(true);
 //   const [saving, setSaving] = useState(false);
-  
+
 //   const [matches, setMatches] = useState<{ id: string; team_a: string; team_b: string; sport: string }[]>([]);
 //   const [selectedMatchId, setSelectedMatchId] = useState('');
 
@@ -288,8 +288,9 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Plus, X, ChevronDown, ChevronRight } from 'lucide-react';
+
 
 interface Channel {
   id: string;
@@ -302,6 +303,9 @@ interface Channel {
 
 export default function AddRoarForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const roomIdToEdit = searchParams.get('roomId');
+  const isEditMode = Boolean(roomIdToEdit);
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('⚽');
   const [sport, setSport] = useState('cricket');
@@ -313,7 +317,11 @@ export default function AddRoarForm() {
   const [createWatchAlong, setCreateWatchAlong] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isTestingRoom, setIsTestingRoom] = useState(false);
-  
+
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [existingImage, setExistingImage] = useState<string>('');
+  const [loadingRoom, setLoadingRoom] = useState(isEditMode);
+
   // AI Bots State
   const [availableBots, setAvailableBots] = useState<{ id: string, name: string, role: string, active: boolean, affiliations?: Record<string, string> }[]>([]);
   const [selectedBots, setSelectedBots] = useState<Record<string, { team: string | null; role: string } | false>>({});
@@ -328,7 +336,7 @@ export default function AddRoarForm() {
   ]);
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelIcon, setNewChannelIcon] = useState('📢');
-  
+
   const [matches, setMatches] = useState<{ id: string; team_a: string; team_b: string; sport: string }[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState('');
 
@@ -368,9 +376,41 @@ export default function AddRoarForm() {
     loadBots();
   }, []);
 
+  useEffect(() => {
+    if (!roomIdToEdit) return;
+    async function loadRoom() {
+      try {
+        const res = await axios.get(`/api/roar/rooms/${roomIdToEdit}`);
+        const r = res.data.room;
+        setName(r.name || '');
+        setIcon(r.icon || '⚽');
+        setSport(r.sport || 'cricket');
+        setDescription(r.description || '');
+        setIsActive(r.isActive !== false);
+        setScheduledStartTime(
+          r.scheduledStartTime
+            ? new Date(r.scheduledStartTime).toISOString().slice(0, 16)
+            : ''
+        );
+        setScore(r.score || '');
+        setScoreSubtitle(r.scoreSubtitle || '');
+        setSelectedMatchId(r.matchId || '');
+        setIsTestingRoom(Boolean(r.isTestingRoom));
+        setSelectedBots(r.botConfig || {});
+        setExistingImage(r.image || '');
+      } catch (err) {
+        console.error('Failed to load room for editing', err);
+        alert('Failed to load room details');
+      } finally {
+        setLoadingRoom(false);
+      }
+    }
+    loadRoom();
+  }, [roomIdToEdit]);
+
   const handleAddChannel = () => {
     if (!newChannelName.trim()) return;
-    
+
     const slug = newChannelName.trim().toLowerCase().replace(/\s+/g, '-');
     const newChannel: Channel = {
       id: `temp-${Date.now()}`,
@@ -380,7 +420,7 @@ export default function AddRoarForm() {
       isActive: true,
       order: channels.length,
     };
-    
+
     setChannels([...channels, newChannel]);
     setNewChannelName('');
     setNewChannelIcon('📢');
@@ -397,11 +437,80 @@ export default function AddRoarForm() {
   const handleChannelOrderChange = (index: number, direction: 'up' | 'down') => {
     const newIndex = direction === 'up' ? index - 1 : index + 1;
     if (newIndex < 0 || newIndex >= channels.length) return;
-    
+
     const newChannels = [...channels];
     [newChannels[index], newChannels[newIndex]] = [newChannels[newIndex], newChannels[index]];
     setChannels(newChannels);
   };
+
+  // const handleSubmit = async (e: React.FormEvent) => {
+  //   e.preventDefault();
+  //   if (!name.trim()) return;
+
+  //   setSaving(true);
+  //   try {
+  //     const scheduledTimeMs = scheduledStartTime ? new Date(scheduledStartTime).getTime() : undefined;
+
+  //     // Create the room
+  //     const roomResponse = await axios.post('/api/roar/rooms', {
+  //       name: name.trim(),
+  //       icon,
+  //       sport,
+  //       description: description.trim(),
+  //       isActive,
+  //       scheduledStartTime: scheduledTimeMs,
+  //       score: score.trim(),
+  //       scoreSubtitle: scoreSubtitle.trim(),
+  //       createWatchAlong,
+  //       matchId: selectedMatchId || undefined,
+  //       botConfig: selectedBots,
+  //       isTestingRoom,
+  //     });
+
+  //     const roomId = roomResponse.data.roomId;
+
+  //     // Create channels ONLY if enabled and there are channels
+  //     if (enableChannels && roomId && channels.length > 0) {
+  //       await Promise.all(
+  //         channels.map((channel, index) =>
+  //           axios.post(`/api/roar/rooms/${roomId}/channels`, {
+  //             name: channel.name,
+  //             slug: channel.slug,
+  //             icon: channel.icon,
+  //             order: index,
+  //             isActive: channel.isActive,
+  //           })
+  //         )
+  //       );
+  //     }
+
+  //     // Save bot affiliations in background
+  //     for (const botId of Object.keys(rememberBots)) {
+  //       if (rememberBots[botId] && selectedBots[botId]) {
+  //         const team = (selectedBots[botId] as any).team;
+  //         if (team) {
+  //           axios.post('/api/roar/bots', {
+  //             botId,
+  //             affiliations: { [sport]: team }
+  //           }).catch(err => console.error("Failed to save bot affiliation", err));
+  //         }
+  //       }
+  //     }
+
+  //     if (createWatchAlong) {
+  //       router.push('/admin/watchalong-management/watchalong-list');
+  //     } else {
+  //       router.push('/admin/roar-management/roar-list');
+  //     }
+  //   } catch (error: any) {
+  //     console.error('Failed to create show', error);
+  //     const errorMsg = error.response?.data?.error || error.message || 'Unknown error';
+  //     alert('Failed to create show: ' + errorMsg);
+  //   } finally {
+  //     setSaving(false);
+  //   }
+  // };
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -410,29 +519,36 @@ export default function AddRoarForm() {
     setSaving(true);
     try {
       const scheduledTimeMs = scheduledStartTime ? new Date(scheduledStartTime).getTime() : undefined;
-      
-      // Create the room
-      const roomResponse = await axios.post('/api/roar/rooms', {
-        name: name.trim(),
-        icon,
-        sport,
-        description: description.trim(),
-        isActive,
-        scheduledStartTime: scheduledTimeMs,
-        score: score.trim(),
-        scoreSubtitle: scoreSubtitle.trim(),
-        createWatchAlong,
-        matchId: selectedMatchId || undefined,
-        botConfig: selectedBots,
-        isTestingRoom,
-      });
 
-      const roomId = roomResponse.data.roomId;
+      const fd = new FormData();
+      fd.append('name', name.trim());
+      fd.append('icon', icon);
+      fd.append('sport', sport);
+      fd.append('description', description.trim());
+      fd.append('isActive', String(isActive));
+      if (scheduledTimeMs) fd.append('scheduledStartTime', String(scheduledTimeMs));
+      fd.append('score', score.trim());
+      fd.append('scoreSubtitle', scoreSubtitle.trim());
+      fd.append('createWatchAlong', String(createWatchAlong));
+      if (selectedMatchId) fd.append('matchId', selectedMatchId);
+      fd.append('botConfig', JSON.stringify(selectedBots));
+      fd.append('isTestingRoom', String(isTestingRoom));
+      if (imageFile) fd.append('image', imageFile);
 
-      // Create channels ONLY if enabled and there are channels
-      if (enableChannels && roomId && channels.length > 0) {
+      const roomResponse = isEditMode
+        ? await axios.put(`/api/roar/rooms/${roomIdToEdit}`, fd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        })
+        : await axios.post('/api/roar/rooms', fd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+
+      const roomId = isEditMode ? roomIdToEdit! : roomResponse.data.roomId;
+
+      // Create channels ONLY for new rooms (edit mode manages channels separately)
+      if (!isEditMode && enableChannels && roomId && channels.length > 0) {
         await Promise.all(
-          channels.map((channel, index) => 
+          channels.map((channel, index) =>
             axios.post(`/api/roar/rooms/${roomId}/channels`, {
               name: channel.name,
               slug: channel.slug,
@@ -444,28 +560,27 @@ export default function AddRoarForm() {
         );
       }
 
-      // Save bot affiliations in background
       for (const botId of Object.keys(rememberBots)) {
         if (rememberBots[botId] && selectedBots[botId]) {
           const team = (selectedBots[botId] as any).team;
           if (team) {
             axios.post('/api/roar/bots', {
               botId,
-              affiliations: { [sport]: team }
-            }).catch(err => console.error("Failed to save bot affiliation", err));
+              affiliations: { [sport]: team },
+            }).catch((err) => console.error('Failed to save bot affiliation', err));
           }
         }
       }
-
-      if (createWatchAlong) {
-        router.push('/admin/watchalong-management/watchalong-list');
-      } else {
-        router.push('/admin/roar-management/roar-list');
-      }
+      router.push('/admin/roar-management/roar-list');
+      // if (createWatchAlong) {
+      //   router.push('/admin/watchalong-management/watchalong-list');
+      // } else {
+      //   router.push('/admin/roar-management/roar-list');
+      // }
     } catch (error: any) {
-      console.error('Failed to create show', error);
+      console.error(`Failed to ${isEditMode ? 'update' : 'create'} show`, error);
       const errorMsg = error.response?.data?.error || error.message || 'Unknown error';
-      alert('Failed to create show: ' + errorMsg);
+      alert(`Failed to ${isEditMode ? 'update' : 'create'} show: ` + errorMsg);
     } finally {
       setSaving(false);
     }
@@ -476,7 +591,10 @@ export default function AddRoarForm() {
   return (
     <div className="max-w-[800px] mx-auto p-6">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold text-white">Create RoAR Show Room</h1>
+        {/* <h1 className="text-xl font-semibold text-white">Create RoAR Show Room</h1> */}
+        <h1 className="text-xl font-semibold text-white">
+          {isEditMode ? 'Edit RoAR Show Room' : 'Create RoAR Show Room'}
+        </h1>
         <p className="text-sm text-gray-400">Launch a new dynamic live chat room for fans</p>
       </div>
 
@@ -741,11 +859,11 @@ export default function AddRoarForm() {
                       const isChecked = e.target.checked;
                       let defaultTeam = null;
                       if (isChecked && bot.role === 'partisan' && bot.affiliations && bot.affiliations[sport]) {
-                         defaultTeam = bot.affiliations[sport];
+                        defaultTeam = bot.affiliations[sport];
                       }
-                      setSelectedBots({ 
-                        ...selectedBots, 
-                        [bot.id]: isChecked ? { team: defaultTeam, role: bot.role } : false 
+                      setSelectedBots({
+                        ...selectedBots,
+                        [bot.id]: isChecked ? { team: defaultTeam, role: bot.role } : false
                       });
                     }}
                     className="w-4 h-4 rounded text-blue-600 border-[#30363d] focus:ring-blue-500 bg-[#161b22] cursor-pointer"
@@ -818,22 +936,20 @@ export default function AddRoarForm() {
             <button
               type="button"
               onClick={() => setIsActive(true)}
-              className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
-                isActive
-                  ? 'border-green-500 bg-green-500/10 text-green-400'
-                  : 'border-[#30363d] bg-[#0d1117] text-gray-400 hover:border-gray-500'
-              }`}
+              className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${isActive
+                ? 'border-green-500 bg-green-500/10 text-green-400'
+                : 'border-[#30363d] bg-[#0d1117] text-gray-400 hover:border-gray-500'
+                }`}
             >
               Active / Open
             </button>
             <button
               type="button"
               onClick={() => setIsActive(false)}
-              className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
-                !isActive
-                  ? 'border-red-500 bg-red-500/10 text-red-400'
-                  : 'border-[#30363d] bg-[#0d1117] text-gray-400 hover:border-gray-500'
-              }`}
+              className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${!isActive
+                ? 'border-red-500 bg-red-500/10 text-red-400'
+                : 'border-[#30363d] bg-[#0d1117] text-gray-400 hover:border-gray-500'
+                }`}
             >
               Closed / Inactive
             </button>
@@ -851,15 +967,36 @@ export default function AddRoarForm() {
                 key={item}
                 type="button"
                 onClick={() => setIcon(item)}
-                className={`w-12 h-12 text-2xl flex items-center justify-center rounded-lg border transition ${
-                  icon === item
-                    ? 'border-blue-500 bg-blue-600/10'
-                    : 'border-[#30363d] bg-[#0d1117] hover:border-gray-500'
-                }`}
+                className={`w-12 h-12 text-2xl flex items-center justify-center rounded-lg border transition ${icon === item
+                  ? 'border-blue-500 bg-blue-600/10'
+                  : 'border-[#30363d] bg-[#0d1117] hover:border-gray-500'
+                  }`}
               >
                 {item}
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Room Cover Image */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-300 mb-2">
+            Room Cover Image (Optional)
+          </label>
+          <div className="flex items-center gap-4">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
+              className="block w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-4 py-2.5 text-white text-sm cursor-pointer file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-blue-600 file:text-white file:text-xs file:font-semibold"
+            />
+            {(imageFile || existingImage) && (
+              <img
+                src={imageFile ? URL.createObjectURL(imageFile) : existingImage}
+                alt="preview"
+                className="w-14 h-14 rounded-lg object-cover border border-[#30363d]"
+              />
+            )}
           </div>
         </div>
 
@@ -877,7 +1014,10 @@ export default function AddRoarForm() {
             disabled={saving || !name.trim()}
             className="px-6 py-2.5 rounded-lg bg-blue-600 text-sm font-semibold text-white hover:bg-pink-700 disabled:opacity-50"
           >
-            {saving ? 'Creating Room...' : 'Create Show Room'}
+            {/* {saving ? 'Creating Room...' : 'Create Show Room'} */}
+            {saving
+              ? isEditMode ? 'Updating Room...' : 'Creating Room...'
+              : isEditMode ? 'Update Show Room' : 'Create Show Room'}
           </button>
         </div>
       </form>

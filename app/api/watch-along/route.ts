@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const isLiveFilter = searchParams.get("isLive");
+    const includeInactive = searchParams.get("includeInactive") === "true";
     const limit = parseInt(searchParams.get("limit") || "20");
 
     let roomsData: WatchAlongRoom[] = [];
@@ -59,6 +60,9 @@ export async function GET(req: NextRequest) {
         if (isLiveFilter === "true") {
           items = items.filter((item) => item.isLive === true || item.isLive === "true");
         }
+        if (!includeInactive) {
+          items = items.filter((item) => item.isActive !== false);
+        }
 
         roomsData = items.map((item) => ({
           id: (item.roomId as string)?.replace(/^ROOM#/, "") || item.id,
@@ -69,10 +73,13 @@ export async function GET(req: NextRequest) {
           borderColor: item.borderColor,
           initials: item.initials,
           displayPicture: item.displayPicture,
+          mediaFile: item.mediaFile,
+          isActive: item.isActive !== false,
           isLive: Boolean(item.isLive),
           watching: item.watching,
           engagement: item.engagement,
           active: item.active,
+          startTime: item.startTime,
           liveMatchId: item.liveMatchId,
           hostUserId: item.hostUserId,
           coHostUserId: item.coHostUserId,
@@ -98,6 +105,9 @@ export async function GET(req: NextRequest) {
         id: doc.id,
         ...doc.data(),
       })) as WatchAlongRoom[];
+      if (!includeInactive) {
+        roomsData = roomsData.filter((room) => room.isActive !== false);
+      }
     }
 
     // Sort by createdAt desc and slice to limit
@@ -200,9 +210,11 @@ export async function POST(req: NextRequest) {
     const badgeColor = (formData.get("badgeColor") as string) || "bg-pink-600";
     const borderColor = (formData.get("borderColor") as string) || "border-pink-500";
     const isLive = formData.get("isLive") === "true";
+    const isActive = formData.get("isActive") !== "false";
     const watching = (formData.get("watching") as string) || "0";
     const engagement = (formData.get("engagement") as string) || "0%";
     const active = (formData.get("active") as string) || "0";
+    const startTime = (formData.get("startTime") as string) || "";
     const liveMatchId = (formData.get("liveMatchId") as string) || null;
     const hostUserId = (formData.get("hostUserId") as string) || user.userId || null;
     const coHostUserId = (formData.get("coHostUserId") as string) || null;
@@ -220,6 +232,21 @@ export async function POST(req: NextRequest) {
         public_id: `${Date.now()}-${dpFile.name.replace(/\s/g, "_")}`,
       });
       displayPicture = uploaded.secure_url;
+    }
+
+    let mediaFile = "";
+    const uploadedFile = formData.get("mediaFile") as File | null;
+    if (uploadedFile && uploadedFile.size > 0) {
+      const bytes = await uploadedFile.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+      const base64 = `data:${uploadedFile.type || "application/octet-stream"};base64,${buffer.toString("base64")}`;
+
+      const uploaded = await cloudinary.uploader.upload(base64, {
+        folder: "watchAlong/files",
+        public_id: `${Date.now()}-${uploadedFile.name.replace(/\s/g, "_")}`,
+        resource_type: "auto",
+      });
+      mediaFile = uploaded.secure_url;
     }
 
     const initials = name
@@ -265,10 +292,13 @@ export async function POST(req: NextRequest) {
       borderColor,
       initials,
       displayPicture,
+      mediaFile,
       isLive,
+      isActive,
       watching,
       engagement,
       active,
+      startTime,
       liveMatchId: resolvedMatchId,
       hostUserId: hostUserId || null,
       coHostUserId: coHostUserId || null,
@@ -286,6 +316,7 @@ export async function POST(req: NextRequest) {
         roomId: `ROOM#${roomId}`,
         sk: "ROOM#META",
         ...roomData,
+        isActive: String(isActive),
       },
       firestoreRef: db.collection("watchAlongRooms").doc(roomId),
       firestoreData: roomData,

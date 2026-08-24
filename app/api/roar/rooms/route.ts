@@ -266,6 +266,7 @@ import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { QueryCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { ChatRoom } from "@/app/models/ChatRoom";
+import cloudinary from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
 
@@ -404,6 +405,7 @@ export async function GET(req: NextRequest) {
               matchId: item.matchId as string | undefined,
               botConfig: item.botConfig as any,
               isTestingRoom: Boolean(item.isTestingRoom),
+              image: item.image as string | undefined,
             }))
           );
         }
@@ -442,6 +444,83 @@ export async function GET(req: NextRequest) {
 // ────────────────────────────────────────────────────────────────────────────
 // POST  /api/roar/rooms
 // ────────────────────────────────────────────────────────────────────────────
+// export async function POST(req: NextRequest) {
+//   try {
+//     const user = await getUser(req);
+//     if (!user) {
+//       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+//     }
+
+//     const body = await req.json();
+//     const {
+//       name,
+//       icon,
+//       sport,
+//       description,
+//       isActive,
+//       scheduledStartTime,
+//       score,
+//       scoreSubtitle,
+//       matchId,
+//       privacy,
+//       isTestingRoom,
+//       botConfig,
+//     } = body;
+
+//     if (!name?.trim()) {
+//       return NextResponse.json({ error: "Room name is required" }, { status: 400 });
+//     }
+
+//     const VALID_PRIVACY = ["public", "private", "premium"];
+//     const normalizedPrivacy = VALID_PRIVACY.includes(privacy) ? privacy : "public";
+//     const now = Date.now();
+//     const roomId = `room_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
+//     const newRoom: ChatRoom & {
+//       matchId?: string;
+//       privacy?: string;
+//       isTestingRoom?: boolean;
+//       botConfig?: Record<string, unknown>;
+//     } = {
+//       roomId,
+//       name: name.trim(),
+//       sport: sport || "general",
+//       createdAt: now,
+//       isActive: isActive !== undefined ? Boolean(isActive) : true,
+//       privacy: normalizedPrivacy,
+//       fanCount: 0,
+//       createdByUid: user.userId,
+//       isTestingRoom: Boolean(isTestingRoom),
+//       ...(icon && { icon }),
+//       ...(description && { description: description.trim() }),
+//       ...(scheduledStartTime && { scheduledStartTime: Number(scheduledStartTime) }),
+//       ...(score && { score }),
+//       ...(scoreSubtitle && { scoreSubtitle }),
+//       ...(matchId && { matchId }),
+//       ...(botConfig && { botConfig }),
+//     };
+
+//     const dynamoItem = {
+//       ...newRoom,
+//       roomId: `ROOM#${roomId}`,
+//       sk: `META#${roomId}`,
+//       isActive: newRoom.isActive ? "true" : "false",
+//       order: now,
+//     };
+
+//     await docClient.send(new PutCommand({ TableName: "RealTimeChat", Item: dynamoItem }));
+
+//     return NextResponse.json({ success: true, room: newRoom });
+//   } catch (error: unknown) {
+//     const msg = error instanceof Error ? error.message : "Unexpected error";
+//     console.error("POST /api/roar/rooms error:", error);
+//     return NextResponse.json({ error: msg }, { status: 500 });
+//   }
+// }
+
+
+
+
 export async function POST(req: NextRequest) {
   try {
     const user = await getUser(req);
@@ -449,46 +528,50 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
-    const {
-      name,
-      icon,
-      sport,
-      description,
-      isActive,
-      scheduledStartTime,
-      score,
-      scoreSubtitle,
-      matchId,
-      privacy,
-      isTestingRoom,
-      botConfig,
-    } = body;
-
+    const formData = await req.formData();
+    const name = formData.get("name") as string;
     if (!name?.trim()) {
       return NextResponse.json({ error: "Room name is required" }, { status: 400 });
     }
 
-    const VALID_PRIVACY = ["public", "private", "premium"];
-    const normalizedPrivacy = VALID_PRIVACY.includes(privacy) ? privacy : "public";
+    const icon = formData.get("icon") as string | null;
+    const sport = (formData.get("sport") as string) || "general";
+    const description = formData.get("description") as string | null;
+    const isActive = formData.get("isActive") !== "false";
+    const scheduledStartTime = formData.get("scheduledStartTime") as string | null;
+    const score = formData.get("score") as string | null;
+    const scoreSubtitle = formData.get("scoreSubtitle") as string | null;
+    const matchId = formData.get("matchId") as string | null;
+    const isTestingRoom = formData.get("isTestingRoom") === "true";
+    const botConfigRaw = formData.get("botConfig") as string | null;
+    const botConfig = botConfigRaw ? JSON.parse(botConfigRaw) : undefined;
+
+    let image = "";
+    const imageFile = formData.get("image") as File | null;
+    if (imageFile && imageFile.size > 0) {
+      const bytes = await imageFile.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+      const base64 = `data:${imageFile.type};base64,${buffer.toString("base64")}`;
+      const uploaded = await cloudinary.uploader.upload(base64, {
+        folder: "roar/rooms",
+        public_id: `${Date.now()}-${imageFile.name.replace(/\s/g, "_")}`,
+      });
+      image = uploaded.secure_url;
+    }
+
     const now = Date.now();
     const roomId = `room_${now}_${Math.random().toString(36).substring(2, 9)}`;
 
-    const newRoom: ChatRoom & {
-      matchId?: string;
-      privacy?: string;
-      isTestingRoom?: boolean;
-      botConfig?: Record<string, unknown>;
-    } = {
+    const newRoom: ChatRoom & Record<string, unknown> = {
       roomId,
       name: name.trim(),
-      sport: sport || "general",
+      sport,
       createdAt: now,
-      isActive: isActive !== undefined ? Boolean(isActive) : true,
-      privacy: normalizedPrivacy,
+      isActive,
+      privacy: "public",
       fanCount: 0,
       createdByUid: user.userId,
-      isTestingRoom: Boolean(isTestingRoom),
+      isTestingRoom,
       ...(icon && { icon }),
       ...(description && { description: description.trim() }),
       ...(scheduledStartTime && { scheduledStartTime: Number(scheduledStartTime) }),
@@ -496,6 +579,7 @@ export async function POST(req: NextRequest) {
       ...(scoreSubtitle && { scoreSubtitle }),
       ...(matchId && { matchId }),
       ...(botConfig && { botConfig }),
+      ...(image && { image }),
     };
 
     const dynamoItem = {
@@ -508,7 +592,7 @@ export async function POST(req: NextRequest) {
 
     await docClient.send(new PutCommand({ TableName: "RealTimeChat", Item: dynamoItem }));
 
-    return NextResponse.json({ success: true, room: newRoom });
+    return NextResponse.json({ success: true, roomId, room: newRoom });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("POST /api/roar/rooms error:", error);
