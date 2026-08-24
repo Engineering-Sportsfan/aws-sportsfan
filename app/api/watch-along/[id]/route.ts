@@ -184,7 +184,7 @@ export async function PUT(req: NextRequest) {
     const formData = await req.formData();
     const updates: Record<string, unknown> = { updatedAt: Date.now() };
 
-    const fields = ["name", "role", "badge", "badgeColor", "borderColor", "watching", "engagement", "active", "hostUserId", "coHostUserId", "sport"];
+    const fields = ["name", "role", "badge", "badgeColor", "borderColor", "watching", "engagement", "active", "startTime", "hostUserId", "coHostUserId", "sport"];
     for (const field of fields) {
       const val = formData.get(field);
       if (val !== null) {
@@ -198,6 +198,9 @@ export async function PUT(req: NextRequest) {
 
     const isLive = formData.get("isLive");
     if (isLive !== null) updates.isLive = isLive === "true";
+
+    const isActive = formData.get("isActive");
+    if (isActive !== null) updates.isActive = isActive !== "false";
 
     const liveMatchId = formData.get("liveMatchId");
     if (liveMatchId !== null) {
@@ -230,6 +233,20 @@ export async function PUT(req: NextRequest) {
       updates.displayPicture = uploaded.secure_url;
     }
 
+    const mediaFile = formData.get("mediaFile") as File | null;
+    if (mediaFile && mediaFile.size > 0) {
+      const bytes = await mediaFile.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+      const base64 = `data:${mediaFile.type || "application/octet-stream"};base64,${buffer.toString("base64")}`;
+
+      const uploaded = await cloudinary.uploader.upload(base64, {
+        folder: "watchAlong/files",
+        public_id: `${Date.now()}-${mediaFile.name.replace(/\s/g, "_")}`,
+        resource_type: "auto",
+      });
+      updates.mediaFile = uploaded.secure_url;
+    }
+
     const finalData = {
       ...existingData,
       ...updates,
@@ -242,6 +259,7 @@ export async function PUT(req: NextRequest) {
         roomId: `ROOM#${id}`,
         sk: "ROOM#META",
         ...finalData,
+         isActive: String(finalData.isActive),
       },
       firestoreRef: db.collection("watchAlongRooms").doc(id),
       firestoreData: updates,

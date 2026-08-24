@@ -5,7 +5,8 @@ import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { GetCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { ChatRoom } from "@/app/models/ChatRoom";
-
+import cloudinary from "@/lib/cloudinary";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
 export const dynamic = "force-dynamic";
 
 export async function GET(
@@ -96,6 +97,101 @@ export async function GET(
   }
 }
 
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ roomId: string }> }
+) {
+  try {
+    const { roomId } = await params;
+    const user = await getUser(req);
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Fetch existing item so unedited fields survive
+    let existing: any = null;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: "RealTimeChat",
+          Key: { roomId: `ROOM#${roomId}`, sk: `META#${roomId}` },
+        })
+      );
+      existing = getRes.Item;
+    } catch (e) {
+      console.warn("PUT room: dynamo get notice", e);
+    }
+    if (!existing) {
+      return NextResponse.json({ error: "Room not found" }, { status: 404 });
+    }
+
+    const formData = await req.formData();
+    const updates: Record<string, unknown> = {};
+
+    const strFields = ["name", "icon", "sport", "description", "score", "scoreSubtitle", "matchId"];
+    for (const field of strFields) {
+      const val = formData.get(field);
+      if (val !== null) updates[field] = (val as string).trim?.() ?? val;
+    }
+
+    const isActive = formData.get("isActive");
+    if (isActive !== null) updates.isActive = isActive !== "false";
+
+    const isTestingRoom = formData.get("isTestingRoom");
+    if (isTestingRoom !== null) updates.isTestingRoom = isTestingRoom === "true";
+
+    const scheduledStartTime = formData.get("scheduledStartTime");
+    if (scheduledStartTime !== null) updates.scheduledStartTime = Number(scheduledStartTime);
+
+    const botConfigRaw = formData.get("botConfig") as string | null;
+    if (botConfigRaw !== null) updates.botConfig = JSON.parse(botConfigRaw);
+
+    const imageFile = formData.get("image") as File | null;
+    if (imageFile && imageFile.size > 0) {
+      const bytes = await imageFile.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+      const base64 = `data:${imageFile.type};base64,${buffer.toString("base64")}`;
+      const uploaded = await cloudinary.uploader.upload(base64, {
+        folder: "roar/rooms",
+        public_id: `${Date.now()}-${imageFile.name.replace(/\s/g, "_")}`,
+      });
+      updates.image = uploaded.secure_url;
+    }
+
+    const finalItem = {
+      ...existing,
+      ...updates,
+      roomId: `ROOM#${roomId}`,
+      sk: `META#${roomId}`,
+      isActive: (updates.isActive ?? existing.isActive === "true") ? "true" : "false",
+    };
+
+    await docClient.send(new PutCommand({ TableName: "RealTimeChat", Item: finalItem }));
+
+    // Best-effort Firestore mirror, matching your other routes' pattern
+    try {
+      await db.collection("roarRooms").doc(roomId).set(
+        { ...updates, isActive: updates.isActive ?? existing.isActive === "true" },
+        { merge: true }
+      );
+    } catch (fbErr) {
+      console.warn("PUT room: firestore notice", fbErr);
+    }
+
+    return NextResponse.json({
+      success: true,
+      room: { ...finalItem, roomId: roomId, isActive: finalItem.isActive === "true" },
+    });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unexpected error";
+    console.error("PUT /api/roar/rooms/[roomId] error:", error);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ roomId: string }> }
@@ -162,7 +258,6 @@ export async function DELETE(
 //   }
 // }
 
-
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ roomId: string }> }
@@ -190,7 +285,19 @@ export async function PATCH(
 
     // 1. Update in DynamoDB
     try {
+      const setParts: string[] = [];
+      const exprValues: Record<string, unknown> = {};
+
       if (body.matchId !== undefined) {
+        setParts.push("matchId = :m");
+        exprValues[":m"] = body.matchId;
+      }
+      if (body.isActive !== undefined) {
+        setParts.push("isActive = :a");
+        exprValues[":a"] = Boolean(body.isActive) ? "true" : "false"; // string, matches GSI key type
+      }
+
+      if (setParts.length > 0) {
         await docClient.send(
           new UpdateCommand({
             TableName: "RealTimeChat",
@@ -198,8 +305,8 @@ export async function PATCH(
               roomId: `ROOM#${roomId}`,
               sk: `META#${roomId}`,
             },
-            UpdateExpression: "SET matchId = :m",
-            ExpressionAttributeValues: { ":m": body.matchId },
+            UpdateExpression: `SET ${setParts.join(", ")}`,
+            ExpressionAttributeValues: exprValues,
           })
         );
       }

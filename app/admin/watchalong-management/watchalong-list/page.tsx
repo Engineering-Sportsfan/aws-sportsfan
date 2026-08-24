@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { Eye, Pencil, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Pencil, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { Room } from "@/context/WatchAlongContext";
 
@@ -11,17 +11,46 @@ export default function WatchAlongListPage() {
     const [rooms, setRooms] = useState<Room[]>([]);
     const [loading, setLoading] = useState(true);
     const [deletingId, setDeletingId] = useState<string | null>(null);
+    const [togglingId, setTogglingId] = useState<string | null>(null);
 
     const fetchRooms = async () => {
         try {
             setLoading(true);
-            const res = await axios.get("/api/watch-along");
+            const res = await axios.get("/api/watch-along?includeInactive=true");
             setRooms(res.data.rooms || []);
         } catch (error) {
             console.error("Failed to fetch rooms", error);
             setRooms([]);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleToggleActive = async (room: Room) => {
+        const nextActive = room.isActive === false;
+        setTogglingId(room.id);
+        try {
+            const fd = new FormData();
+            fd.append("isActive", String(nextActive));
+            const res = await axios.put(`/api/watch-along/${room.id}`, fd, {
+                headers: {
+                    "Content-Type": "multipart/form-data",
+                    "x-user-role": "admin",
+                    "x-user-id": "admin_user",
+                },
+            });
+            if (res.data.success) {
+                setRooms((prev) =>
+                    prev.map((item) =>
+                        item.id === room.id ? { ...item, isActive: nextActive } : item
+                    )
+                );
+            }
+        } catch (error) {
+            console.error("Visibility update failed", error);
+            alert("Failed to update room visibility");
+        } finally {
+            setTogglingId(null);
         }
     };
 
@@ -80,6 +109,7 @@ export default function WatchAlongListPage() {
                                     "Room Name",
                                     "Expert",
                                     "Status",
+                                    "Start Time",
                                     "Match",
                                     "Stats",
                                     "Actions",
@@ -170,6 +200,20 @@ export default function WatchAlongListPage() {
                                                     RECORDED
                                                 </span>
                                             )}
+                                            {room.isActive === false && (
+                                                <span className="ml-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold bg-red-600/20 text-red-400 border border-red-600/30">
+                                                    HIDDEN
+                                                </span>
+                                            )}
+                                        </td>
+
+                                        {/* Start Time */}
+                                        <td className="px-4 py-3 text-sm text-gray-300">
+                                            {room.startTime ? (
+                                                new Date(room.startTime).toLocaleString()
+                                            ) : (
+                                                <span className="text-gray-500">Not set</span>
+                                            )}
                                         </td>
 
                                         {/* Match */}
@@ -211,6 +255,24 @@ export default function WatchAlongListPage() {
                                                         <Pencil size={16} />
                                                     </button>
                                                 </Link>
+                                                <button
+                                                    onClick={() => handleToggleActive(room)}
+                                                    disabled={togglingId === room.id}
+                                                    className={`p-2 rounded-md transition disabled:opacity-50 ${
+                                                        room.isActive === false
+                                                            ? "bg-green-500/10 text-green-400 hover:bg-green-500/20"
+                                                            : "bg-gray-500/10 text-gray-400 hover:bg-gray-500/20"
+                                                    }`}
+                                                    title={room.isActive === false ? "Show on frontend" : "Hide from frontend"}
+                                                >
+                                                    {togglingId === room.id ? (
+                                                        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                                                    ) : room.isActive === false ? (
+                                                        <Eye size={16} />
+                                                    ) : (
+                                                        <EyeOff size={16} />
+                                                    )}
+                                                </button>
                                                 <button
                                                     onClick={() => handleDelete(room.id)}
                                                     disabled={deletingId === room.id}

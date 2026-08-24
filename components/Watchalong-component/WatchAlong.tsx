@@ -1222,7 +1222,9 @@ interface RoomForm {
   watching: string;
   engagement: string;
   active: string;
+  startTime: string;
   isLive: boolean;
+  isActive: boolean;
   liveMatchId: string;
   hostUserId?: string;
   coHostUserId?: string;
@@ -1298,14 +1300,18 @@ export default function CreateWatchAlong({
     watching: "",
     engagement: "",
     active: "",
+    startTime: "",
     isLive: false,
+    isActive: true,
     liveMatchId: "",
     hostUserId: "",
     coHostUserId: "",
     sport: "cricket",
   });
   const [dpFile, setDpFile] = useState<File | null>(null);
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [existingDp, setExistingDp] = useState<string>("");
+  const [existingMedia, setExistingMedia] = useState<string>("");
   const [roomLoading, setRoomLoading] = useState<boolean>(false);
 
   /* ── Match state ── */
@@ -1382,13 +1388,16 @@ export default function CreateWatchAlong({
         watching: r.watching || "",
         engagement: r.engagement || "",
         active: r.active || "",
+        startTime: r.startTime || "",
         isLive: r.isLive || false,
+        isActive: r.isActive !== false,
         liveMatchId: r.liveMatchId || "",
         hostUserId: r.hostUserId || "",
         coHostUserId: r.coHostUserId || "",
         sport: r.sport || "cricket",
       });
       setExistingDp(r.displayPicture || "");
+      setExistingMedia(r.mediaFile || "");
       if (r.liveMatchId) {
         setSelectedMatchId(r.liveMatchId);
       }
@@ -1448,6 +1457,7 @@ export default function CreateWatchAlong({
       const fd = new FormData();
       Object.entries(roomForm).forEach(([k, v]) => fd.append(k, String(v)));
       if (dpFile) fd.append("displayPicture", dpFile);
+      if (mediaFile) fd.append("mediaFile", mediaFile);
 
       const url = roomIdToEdit
         ? `/api/watch-along/${roomIdToEdit}`
@@ -1673,6 +1683,22 @@ export default function CreateWatchAlong({
             </div>
           </Section>
 
+          <Section title="Upload File">
+            <div>
+              <label className="text-xs text-gray-400">Upload File</label>
+              <input
+                type="file"
+                onChange={(e) => setMediaFile(e.target.files?.[0] ?? null)}
+                className="block w-full bg-[#0d1117] border border-gray-700 px-3 py-2 rounded text-sm text-white mt-1 cursor-pointer"
+              />
+              {(mediaFile || existingMedia) && (
+                <p className="text-xs text-gray-500 mt-2">
+                  {mediaFile ? mediaFile.name : existingMedia}
+                </p>
+              )}
+            </div>
+          </Section>
+
           <Section title="Badge">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
               {BADGE_OPTIONS.map((opt) => (
@@ -1704,7 +1730,31 @@ export default function CreateWatchAlong({
             </div>
           </Section>
 
+          <Section title="Schedule">
+            <TextInput
+              label="Watch Along Start Time"
+              name="startTime"
+              type="datetime-local"
+              value={roomForm.startTime}
+              onChange={handleRoomChange}
+            />
+          </Section>
+
           <Section title="Live Match">
+            <div className="flex items-center gap-3 mb-4">
+              <input
+                type="checkbox"
+                id="isActive"
+                name="isActive"
+                checked={roomForm.isActive}
+                onChange={handleRoomChange}
+                className="w-4 h-4 accent-blue-600"
+              />
+              <label htmlFor="isActive" className="text-sm text-gray-300">
+                Show this room on frontend
+              </label>
+            </div>
+
             <div className="flex items-center gap-3 mb-4">
               <input
                 type="checkbox"

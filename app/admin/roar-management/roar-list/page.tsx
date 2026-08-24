@@ -338,7 +338,7 @@
 
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { Trash2, MessageSquare, X, Eye, EyeOff } from "lucide-react";
+import { Trash2, MessageSquare, X, Eye, EyeOff, Pencil } from "lucide-react";
 import Link from "next/link";
 
 export default function RoarListPage() {
@@ -521,11 +521,10 @@ export default function RoarListPage() {
                     {/* Status */}
                     <td className="px-4 py-3">
                       <span
-                        className={`text-[10px] font-semibold uppercase px-2 py-1 rounded-full ${
-                          room.isActive
+                        className={`text-[10px] font-semibold uppercase px-2 py-1 rounded-full ${room.isActive
                             ? "bg-green-500/10 text-green-400 border border-green-500/20"
                             : "bg-gray-500/10 text-gray-400 border border-gray-500/20"
-                        }`}
+                          }`}
                       >
                         {room.isActive ? "Active" : "Inactive"}
                       </span>
@@ -542,6 +541,16 @@ export default function RoarListPage() {
                         >
                           <MessageSquare size={16} />
                         </button>
+
+                        {/* Edit Room button */}
+                        <Link href={`/admin/roar-management/add-roar?roomId=${room.roomId}`}>
+                          <button
+                            className="p-2 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition"
+                            title="Edit Room"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                        </Link>
 
                         {/* ⭐ MANAGE CHANNELS BUTTON ⭐ */}
                         <Link href={`/admin/roar-management/rooms/${room.roomId}/channels`}>
@@ -561,11 +570,10 @@ export default function RoarListPage() {
                         <button
                           onClick={() => handleToggleActive(room)}
                           disabled={togglingId === room.roomId}
-                          className={`p-2 rounded-md transition disabled:opacity-50 ${
-                            room.isActive
+                          className={`p-2 rounded-md transition disabled:opacity-50 ${room.isActive
                               ? "bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
                               : "bg-green-500/10 text-green-400 hover:bg-green-500/20"
-                          }`}
+                            }`}
                           title={room.isActive ? "Deactivate Room" : "Activate Room"}
                         >
                           {togglingId === room.roomId ? (
@@ -659,10 +667,10 @@ export default function RoarListPage() {
                           </span>
                           {message.type && (
                             <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${message.type === "hot_take" || message.type === "hottake"
-                                ? "bg-red-500/10 text-red-400 border border-red-500/20"
-                                : message.type === "prediction"
-                                  ? "bg-orange-500/10 text-orange-400 border border-orange-500/20"
-                                  : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                              ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                              : message.type === "prediction"
+                                ? "bg-orange-500/10 text-orange-400 border border-orange-500/20"
+                                : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
                               }`}>
                               {message.type}
                             </span>

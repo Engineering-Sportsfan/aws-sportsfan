@@ -86,9 +86,12 @@ export interface Room {
   watching: string;
   engagement: string;
   active: string;
+  startTime?: string;
   isLive: boolean;
   liveMatchId: string;
   displayPicture: string;
+  mediaFile?: string;
+  isActive?: boolean;
   createdAt?: number;
   updatedAt?: number;
 }
