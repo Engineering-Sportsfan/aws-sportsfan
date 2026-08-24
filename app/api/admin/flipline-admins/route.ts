@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     let lastEvaluatedKey: Record<string, unknown> | undefined = undefined;
 
     do {
-      const scanRes = await docClient.send(
+      const scanRes: any = await docClient.send(
         new ScanCommand({
           TableName: "IdentityAndAccess",
           FilterExpression: filterExpression,
@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, role } = await request.json();
+    const { email, role, title, verifiedFlipLineAdmin, addfliplineAdminPhoto } = await request.json();
     if (!email) {
       return NextResponse.json({ error: "Email is required" }, { status: 400 });
     }
@@ -76,6 +76,33 @@ export async function POST(request: NextRequest) {
     const targetRole = role ?? "FlipLineAdmin";
 
     // 1. Update in DynamoDB (IdentityAndAccess)
+    const updateExpressionParts = ["#role = :role", "updatedAt = :updatedAt"];
+    const expressionAttributeNames: Record<string, string> = {
+      "#role": "role",
+    };
+    const expressionAttributeValues: Record<string, unknown> = {
+      ":role": targetRole,
+      ":updatedAt": Date.now(),
+    };
+
+    if (title !== undefined) {
+      updateExpressionParts.push("#title = :title");
+      expressionAttributeNames["#title"] = "title";
+      expressionAttributeValues[":title"] = title;
+    }
+    if (verifiedFlipLineAdmin !== undefined) {
+      updateExpressionParts.push("#verified = :verified");
+      expressionAttributeNames["#verified"] = "verifiedFlipLineAdmin";
+      expressionAttributeValues[":verified"] = verifiedFlipLineAdmin;
+    }
+    if (addfliplineAdminPhoto !== undefined) {
+      updateExpressionParts.push("#photo = :photo");
+      expressionAttributeNames["#photo"] = "addfliplineAdminPhoto";
+      expressionAttributeValues[":photo"] = addfliplineAdminPhoto;
+    }
+
+    const updateExpression = "SET " + updateExpressionParts.join(", ");
+
     await docClient.send(
       new UpdateCommand({
         TableName: "IdentityAndAccess",
@@ -83,26 +110,23 @@ export async function POST(request: NextRequest) {
           entityId: `USER#${email}`,
           sk: "USER#META",
         },
-        UpdateExpression: "SET #role = :role, updatedAt = :updatedAt",
-        ExpressionAttributeNames: {
-          "#role": "role",
-        },
-        ExpressionAttributeValues: {
-          ":role": targetRole,
-          ":updatedAt": Date.now(),
-        },
+        UpdateExpression: updateExpression,
+        ExpressionAttributeNames: expressionAttributeNames,
+        ExpressionAttributeValues: expressionAttributeValues,
       })
     );
 
     // 2. Sync to Firebase
     try {
-      await db.collection("users").doc(email).set(
-        {
-          role: targetRole,
-          updatedAt: Date.now(),
-        },
-        { merge: true }
-      );
+      const fbData: Record<string, unknown> = {
+        role: targetRole,
+        updatedAt: Date.now(),
+      };
+      if (title !== undefined) fbData.title = title;
+      if (verifiedFlipLineAdmin !== undefined) fbData.verifiedFlipLineAdmin = verifiedFlipLineAdmin;
+      if (addfliplineAdminPhoto !== undefined) fbData.addfliplineAdminPhoto = addfliplineAdminPhoto;
+
+      await db.collection("users").doc(email).set(fbData, { merge: true });
     } catch (fbErr) {
       console.warn("Firebase role sync warning:", fbErr);
     }

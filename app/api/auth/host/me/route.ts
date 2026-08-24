@@ -73,6 +73,10 @@ export async function GET(req: NextRequest) {
 
     // Fetch the latest user profile from DynamoDB to get the fresh role
     let freshRole = decoded.role;
+    let title = "";
+    let verifiedFlipLineAdmin = false;
+    let addfliplineAdminPhoto = "";
+
     try {
       const cleanEmail = decoded.email.toLowerCase().trim();
       const uRes = await docClient.send(new GetCommand({
@@ -81,6 +85,9 @@ export async function GET(req: NextRequest) {
       }));
       if (uRes.Item) {
         freshRole = uRes.Item.role ?? decoded.role;
+        title = uRes.Item.title ?? "";
+        verifiedFlipLineAdmin = uRes.Item.verifiedFlipLineAdmin ?? false;
+        addfliplineAdminPhoto = uRes.Item.addfliplineAdminPhoto ?? "";
       }
     } catch (dynErr) {
       console.warn("Failed to fetch fresh user role from DynamoDB:", dynErr);
@@ -93,6 +100,9 @@ export async function GET(req: NextRequest) {
         name: decoded.name,
         role: freshRole,
         userId: decoded.userId,
+        title,
+        verifiedFlipLineAdmin,
+        addfliplineAdminPhoto,
       },
     });
   } catch (error) {

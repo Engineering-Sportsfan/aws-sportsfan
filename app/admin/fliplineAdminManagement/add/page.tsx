@@ -18,6 +18,15 @@ export default function FlipLineAdminAdd() {
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
+
+  // New States for Grant Details Form Modal
+  const [selectedUser, setSelectedUser] = useState<{ email: string; name: string } | null>(null);
+  const [title, setTitle] = useState("");
+  const [verifiedFlipLineAdmin, setVerifiedFlipLineAdmin] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
+
   const router = useRouter();
 
   useEffect(() => {
@@ -44,11 +53,57 @@ export default function FlipLineAdminAdd() {
     }
   };
 
-  const handleGrantAccess = async (email: string, name: string) => {
+  const uploadFile = async (file: File): Promise<string> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("folder", "flipline-admins");
+
+    const response = await axios.post("/api/upload", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+
+    if (!response.data?.success || !response.data?.url) {
+      throw new Error(response.data?.message || "File upload failed");
+    }
+
+    return response.data.url;
+  };
+
+  const handleConfirmGrantAccess = async () => {
+    if (!selectedUser) return;
+    if (!title.trim()) {
+      alert("Title is required");
+      return;
+    }
+
     try {
-      setSubmitting(email);
-      await axios.post("/api/admin/flipline-admins", { email, role: "FlipLineAdmin" });
-      alert(`FlipLineAdmin access granted to ${name || email} successfully!`);
+      setSubmitting(selectedUser.email);
+      let photoUrl = "";
+
+      if (photoFile) {
+        setUploading(true);
+        try {
+          photoUrl = await uploadFile(photoFile);
+        } catch (uploadErr) {
+          console.error("Photo upload failed", uploadErr);
+          alert("Failed to upload admin photo. Please try again.");
+          setUploading(false);
+          setSubmitting(null);
+          return;
+        }
+        setUploading(false);
+      }
+
+      await axios.post("/api/admin/flipline-admins", {
+        email: selectedUser.email,
+        role: "FlipLineAdmin",
+        title: title.trim(),
+        verifiedFlipLineAdmin,
+        addfliplineAdminPhoto: photoUrl || undefined,
+      });
+
+      alert(`FlipLineAdmin access granted to ${selectedUser.name || selectedUser.email} successfully!`);
+      setSelectedUser(null);
       router.push("/admin/fliplineAdminManagement/list");
     } catch (error) {
       console.error("Failed to grant access", error);
@@ -126,11 +181,17 @@ export default function FlipLineAdminAdd() {
                         </span>
                       ) : (
                         <button
-                          onClick={() => handleGrantAccess(user.email, fullName)}
+                          onClick={() => {
+                            setSelectedUser({ email: user.email, name: fullName });
+                            setTitle("");
+                            setVerifiedFlipLineAdmin(false);
+                            setPhotoFile(null);
+                            setPhotoPreviewUrl("");
+                          }}
                           disabled={submitting !== null}
                           className="bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800/40 disabled:text-gray-500 text-white px-3 py-1.5 rounded text-xs font-semibold transition-all active:scale-95"
                         >
-                          {submitting === user.email ? "Granting..." : "Grant Admin Access"}
+                          Grant Admin Access
                         </button>
                       )}
                     </div>
@@ -141,6 +202,137 @@ export default function FlipLineAdminAdd() {
           )}
         </div>
       </div>
+
+      {/* Grant Details Modal */}
+      {selectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm transition-all duration-300">
+          <div className="bg-[#161b22] border border-[#30363d] rounded-xl shadow-2xl max-w-[480px] w-full overflow-hidden transform scale-100 transition-all duration-300 text-left">
+            {/* Modal Header */}
+            <div className="flex justify-between items-center px-6 py-4 border-b border-[#21262d] bg-[#0d1117]/50">
+              <h2 className="text-lg font-semibold text-white">Grant Admin Details</h2>
+              <button
+                onClick={() => setSelectedUser(null)}
+                className="text-gray-400 hover:text-white transition-colors text-xl font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5">
+              <div>
+                <span className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Target User</span>
+                <div className="bg-[#0d1117] border border-[#21262d] rounded-lg p-3 flex flex-col gap-0.5">
+                  <span className="text-sm font-bold text-white">{selectedUser.name}</span>
+                  <span className="text-xs text-gray-400">{selectedUser.email}</span>
+                </div>
+              </div>
+
+              {/* Title input */}
+              <div>
+                <label htmlFor="admin-title" className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
+                  Admin Title / Designation <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="admin-title"
+                  type="text"
+                  placeholder="e.g. Senior Cricket Analyst"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                />
+              </div>
+
+              {/* Verified admin checkbox/toggle */}
+              <div className="flex items-center justify-between bg-[#0d1117]/40 border border-[#21262d] p-3 rounded-lg">
+                <div>
+                  <label htmlFor="verified-admin" className="block text-sm font-semibold text-white cursor-pointer select-none">
+                    Verified FlipLine Admin
+                  </label>
+                  <span className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
+                    Display a verified badge next to this admin's posts
+                  </span>
+                </div>
+                <input
+                  id="verified-admin"
+                  type="checkbox"
+                  checked={verifiedFlipLineAdmin}
+                  onChange={(e) => setVerifiedFlipLineAdmin(e.target.checked)}
+                  className="w-5 h-5 bg-[#0d1117] border border-[#30363d] rounded focus:ring-0 focus:ring-offset-0 text-blue-600 cursor-pointer accent-blue-600"
+                />
+              </div>
+
+              {/* Photo upload input */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
+                  FlipLine Admin Photo
+                </label>
+                
+                <div className="flex items-center gap-4">
+                  {photoPreviewUrl ? (
+                    <div className="relative w-16 h-16 rounded-full overflow-hidden border border-[#30363d] bg-gray-800 shrink-0">
+                      <img src={photoPreviewUrl} alt="Preview" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPhotoFile(null);
+                          setPhotoPreviewUrl("");
+                        }}
+                        className="absolute inset-0 bg-black/60 flex items-center justify-center text-white opacity-0 hover:opacity-100 transition-opacity text-xs font-bold"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-[#0d1117] border border-[#30363d] flex items-center justify-center text-gray-500 text-xs shrink-0 font-medium">
+                      No Photo
+                    </div>
+                  )}
+
+                  <div className="flex-1">
+                    <label className="cursor-pointer inline-flex items-center justify-center bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-white px-4 py-2 rounded text-xs font-semibold transition-all">
+                      Choose Image File
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setPhotoFile(file);
+                            setPhotoPreviewUrl(URL.createObjectURL(file));
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                    <span className="block text-[10px] text-gray-500 mt-1">Recommended: Square format, PNG or JPG</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-[#21262d] bg-[#0d1117]/50">
+              <button
+                type="button"
+                onClick={() => setSelectedUser(null)}
+                disabled={submitting !== null || uploading}
+                className="px-4 py-2 border border-[#30363d] text-gray-300 hover:bg-[#21262d] disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmGrantAccess}
+                disabled={!title.trim() || submitting !== null || uploading}
+                className="bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800/40 disabled:text-gray-500 text-white px-4 py-2 rounded text-xs font-semibold transition-all flex items-center gap-1.5"
+              >
+                {uploading ? "Uploading..." : submitting !== null ? "Granting..." : "Confirm & Grant"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
