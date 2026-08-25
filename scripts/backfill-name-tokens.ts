@@ -2,6 +2,7 @@ import admin from "firebase-admin";
 import * as fs from "fs";
 import * as path from "path";
 
+
 const serviceAccountPath = path.resolve("C:/Users/HP/Downloads/sportsfan360-new-firebase-adminsdk-fbsvc-d2cb901c35.json");
 const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf-8"));
 

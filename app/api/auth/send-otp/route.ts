@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
 
     // 3. Create User in DynamoDB & Sync to Firebase
     const now = Date.now();
-    const userId = `${firstName.toLowerCase()}_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const userId = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
 
     const userData = {
       firstName,
@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
     };
 
     await dualWrite("users", cleanEmail, "IdentityAndAccess", dynamoUserItem);
+    console.log(`[DynamoDB Auth] ⚡ SUCCESS: User created in DynamoDB -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
 
     // 4. Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -109,6 +110,7 @@ export async function POST(req: NextRequest) {
           Item: dynamoOtpItem,
         })
       );
+      console.log(`[DynamoDB Auth] ⚡ SUCCESS: OTP saved in DynamoDB -> entityId: [OTP#${cleanEmail}], sk: [OTP#ACTIVE] (OTP: ${otp})`);
     } catch (err) {
       console.warn("DynamoDB OTP save notice:", err);
     }

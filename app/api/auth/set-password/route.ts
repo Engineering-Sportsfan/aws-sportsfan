@@ -90,6 +90,7 @@ export async function POST(req: NextRequest) {
           },
         })
       );
+      console.log(`[DynamoDB Auth] ⚡ SUCCESS: Password hashed and saved in DynamoDB -> entityId: [${(user.entityId as string) || `USER#${cleanEmail}`}], sk: [${(user.sk as string) || "USER#META"}]`);
     } catch (err) {
       console.warn("DynamoDB update password notice:", err);
     }
