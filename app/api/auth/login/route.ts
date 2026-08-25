@@ -336,6 +336,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    console.log(`[DynamoDB Auth] ⚡ SUCCESS: User authenticated via DynamoDB -> email: [${cleanEmail}], userId: [${user.userId || cleanEmail}], role: [${user.role || 'user'}]`);
+
     // ── 6. Check if host needs to change password on first login ─────────────
     const requiresPasswordChange = user.role === "host" && user.isFirstLogin === true;
 

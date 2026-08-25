@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
           },
         })
       );
+      console.log(`[DynamoDB Auth] ⚡ SUCCESS: User verified in DynamoDB -> entityId: [USER#${cleanEmail}], sk: [USER#META] (isVerified=true)`);
     } catch (err) {
       console.warn("DynamoDB verify update notice:", err);
     }
@@ -128,6 +129,7 @@ export async function POST(req: NextRequest) {
           Key: { entityId: `OTP#${cleanEmail}`, sk: "OTP#ACTIVE" },
         })
       );
+      console.log(`[DynamoDB Auth] ⚡ SUCCESS: Used OTP deleted from DynamoDB -> entityId: [OTP#${cleanEmail}], sk: [OTP#ACTIVE]`);
     } catch (err) {
       console.warn("DynamoDB used OTP delete notice:", err);
     }
