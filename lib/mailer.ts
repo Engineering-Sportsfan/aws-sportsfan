@@ -1,12 +1,13 @@
 import nodemailer from "nodemailer";
 
-const emailUser = (process.env.EMAIL || process.env.SMTP_USER || "").trim().replace(/^["']|["']$/g, "");
-const emailPass = (process.env.EMAIL_PASS || process.env.SMTP_PASS || "").trim().replace(/^["']|["']$/g, "");
-const smtpHost = (process.env.SMTP_HOST || process.env.MAIL_HOST || "").trim().replace(/^["']|["']$/g, "");
-const smtpPort = parseInt(process.env.SMTP_PORT || process.env.MAIL_PORT || "465", 10);
+export function getTransporter() {
+  const emailUser = (process.env.EMAIL || process.env.SMTP_USER || "").trim().replace(/^["']|["']$/g, "");
+  const emailPass = (process.env.EMAIL_PASS || process.env.SMTP_PASS || "").trim().replace(/^["']|["']$/g, "");
+  const smtpHost = (process.env.SMTP_HOST || process.env.MAIL_HOST || "").trim().replace(/^["']|["']$/g, "");
+  const smtpPort = parseInt(process.env.SMTP_PORT || process.env.MAIL_PORT || "465", 10);
 
-export const transporter = smtpHost
-  ? nodemailer.createTransport({
+  if (smtpHost) {
+    return nodemailer.createTransport({
       host: smtpHost,
       port: smtpPort,
       secure: smtpPort === 465,
@@ -14,11 +15,20 @@ export const transporter = smtpHost
         user: emailUser,
         pass: emailPass,
       },
-    })
-  : nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: emailUser,
-        pass: emailPass,
-      },
     });
+  }
+
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: emailUser,
+      pass: emailPass,
+    },
+  });
+}
+
+// Proxy transporter object to always dynamically fetch latest env vars at send-time
+export const transporter = {
+  sendMail: (options: nodemailer.SendMailOptions) => getTransporter().sendMail(options),
+  verify: () => getTransporter().verify(),
+};

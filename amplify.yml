@@ -13,6 +13,8 @@ frontend:
         - env | grep -e FIREBASE_ >> .env.production
         - env | grep -e CLOUDINARY_ >> .env.production
         - env | grep -e ROANUZ_ >> .env.production
+        - env | grep -e EMAIL >> .env.production
+        - env | grep -e SMTP_ >> .env.production
         - env | grep -e NEXT_PUBLIC_ >> .env.production
     build:
       commands:
