@@ -281,6 +281,7 @@ export async function POST(req: NextRequest) {
     const userId = (formData.get("userId") as string) || undefined;
     const email = (formData.get("email") as string) || undefined;
     const day = (formData.get("day") as string) || undefined;
+    const time = (formData.get("time") as string) || undefined;
     const isVerified = formData.get("isVerified") === "true";
     const adminPhoto = (formData.get("adminPhoto") as string) || undefined;
 
@@ -345,7 +346,7 @@ export async function POST(req: NextRequest) {
     const h = now.getHours(), mn = now.getMinutes();
     const ampm = h >= 12 ? 'PM' : 'AM';
     const h12 = h % 12 || 12;
-    const timeStr = `${h12}:${mn.toString().padStart(2, '0')} ${ampm}`;
+    const timeStr = time || `${h12}:${mn.toString().padStart(2, '0')} ${ampm}`;
 
     const sportMeta: Record<string, { emoji: string; label: string }> = {
       cricket: { emoji: '🏏', label: 'IND vs SL' },
