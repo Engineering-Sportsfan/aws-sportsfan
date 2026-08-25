@@ -10,7 +10,7 @@ const ROANUZ_BASE_URL = `https://api.sports.roanuz.com/v5/cricket/${ROANUZ_PROJE
 
 interface TickerItem {
   id: string;
-  type: "live_score" | "news" | "sports_update" | "moments";
+  type: "live_score" | "news" | "sports_update" | "moments" | "ball_by_ball" | "over_summary";
   sport: "cricket" | "football";
   text: string;
   badge: string;
@@ -41,29 +41,40 @@ async function getRoanuzToken(): Promise<string | null> {
   }
 }
 
-async function fetchRoanuzFeaturedMatches(token: string): Promise<any[]> {
-  const cached = cacheService.get<any[]>("roanuz:featured");
-  if (cached) return cached;
-  try {
-    const res = await axios.get(`${ROANUZ_BASE_URL}/featured-matches-2/`, { headers: { "rs-token": token } });
-    const data = res.data;
-    const matches = data?.data?.matches || data?.matches || [];
-    cacheService.set("roanuz:featured", matches, 30);
-    return matches;
-  } catch (e: any) { console.warn("[Roanuz] Featured error:", e.message); return []; }
-}
-
 async function fetchRoanuzMatchScore(token: string, matchKey: string): Promise<any | null> {
   const cacheKey = `roanuz:match:${matchKey}`;
   const cached = cacheService.get<any>(cacheKey);
   if (cached) return cached;
   try {
     const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/`, { headers: { "rs-token": token } });
-    const data = res.data;
-    const match = data?.data || data;
+    const match = res.data?.data || res.data;
     cacheService.set(cacheKey, match, 15);
     return match;
   } catch (e: any) { console.warn("[Roanuz] Match score error:", e.message); return null; }
+}
+
+async function fetchBallByBall(token: string, matchKey: string): Promise<any[]> {
+  const cacheKey = `roanuz:bbb:${matchKey}`;
+  const cached = cacheService.get<any[]>(cacheKey);
+  if (cached) return cached;
+  try {
+    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/ball-by-ball/`, { headers: { "rs-token": token } });
+    const balls = res.data?.data?.over?.balls || [];
+    cacheService.set(cacheKey, balls, 10);
+    return balls;
+  } catch (e: any) { console.warn("[Roanuz] Ball-by-ball error:", e.message); return []; }
+}
+
+async function fetchOverSummary(token: string, matchKey: string): Promise<any[]> {
+  const cacheKey = `roanuz:overs:${matchKey}`;
+  const cached = cacheService.get<any[]>(cacheKey);
+  if (cached) return cached;
+  try {
+    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/over-summary/`, { headers: { "rs-token": token } });
+    const summaries = res.data?.data?.summaries || [];
+    cacheService.set(cacheKey, summaries, 30);
+    return summaries;
+  } catch (e: any) { console.warn("[Roanuz] Over summary error:", e.message); return []; }
 }
 
 function formatMatchToTickerItems(match: any): TickerItem[] {
@@ -96,6 +107,17 @@ function formatMatchToTickerItems(match: any): TickerItem[] {
 
   if (status === "started" || status === "live" || status === "in_progress") {
     items.push({ id: `cricket_${matchKey}_score`, type: "live_score", sport: "cricket", text: `🏏 LIVE · ${scoreText}`, badge: tournament, status: "live" });
+    
+    // Play status label
+    if (match?.play_status && match.play_status !== "live") {
+      const playStatusMap: Record<string, string> = {
+        lunch_break: "🍽️ LUNCH BREAK", tea_break: "☕ TEA BREAK",
+        drinks: "💧 DRINKS BREAK", innings_break: "🔄 INNINGS BREAK",
+        stumps: "🌙 STUMPS", rain_delay: "🌧️ RAIN DELAY",
+      };
+      const label = playStatusMap[match.play_status] || match.play_status.replace(/_/g, " ").toUpperCase();
+      items.push({ id: `cricket_${matchKey}_playstatus`, type: "sports_update", sport: "cricket", text: `${label} · ${scoreText}`, badge: tournament, status: "live" });
+    }
   } else if (status === "completed" || status === "finished" || status === "result") {
     items.push({ id: `cricket_${matchKey}_result`, type: "moments", sport: "cricket", text: `🏏 RESULT · ${scoreText} · ${result}`, badge: tournament, status: "ended" });
   } else {
@@ -106,24 +128,62 @@ function formatMatchToTickerItems(match: any): TickerItem[] {
   return items;
 }
 
+function formatBallByBallItems(balls: any[], matchName: string, matchKey: string): TickerItem[] {
+  const items: TickerItem[] = [];
+  for (const ball of balls.slice(0, 5)) {
+    if (!ball.comment) continue;
+    const isWicket = ball.bowler?.is_wicket || !!ball.wicket;
+    const isFour = ball.batsman?.is_four;
+    const isSix = ball.batsman?.is_six;
+    const emoji = isWicket ? "🔴 WICKET!" : isSix ? "💥 SIX!" : isFour ? "🔵 FOUR!" : "🏏";
+    items.push({ id: `bbb_${matchKey}_${ball.key}`, type: "ball_by_ball", sport: "cricket", text: `${emoji} ${ball.comment}`, badge: matchName, status: "live" });
+  }
+  return items;
+}
+
+function formatOverSummaryItems(summaries: any[], matchName: string, matchKey: string): TickerItem[] {
+  const recent = summaries.slice(-3).reverse();
+  return recent.filter(s => s.over_number !== undefined).map((s, i) => ({
+    id: `over_${matchKey}_${s.over_number ?? i}`,
+    type: "over_summary" as const,
+    sport: "cricket" as const,
+    text: `📊 OVER ${s.over_number}: ${s.runs} runs${s.wickets ? `, ${s.wickets} wkt` : ""}`,
+    badge: matchName,
+    status: "live"
+  }));
+}
+
 async function fetchCricketTicker(): Promise<TickerItem[]> {
   const token = await getRoanuzToken();
   if (!token) return [];
 
-  // 1. Fetch Featured Tournaments
+  // 1. Global fixtures
+  let globalLive: any[] = [];
+  let globalUpcoming: any[] = [];
+  let globalCompleted: any[] = [];
+  const now = Date.now() / 1000;
+  try {
+    const res = await axios.get(`${ROANUZ_BASE_URL}/fixtures/`, { headers: { "rs-token": token } });
+    const days = res.data?.data?.month?.days || [];
+    for (const day of days) {
+      for (const m of (day.matches || [])) {
+        if (m.status === "started") globalLive.push(m);
+        else if (m.status === "not_started" && m.start_at > now) globalUpcoming.push(m);
+        else if (m.status === "completed") globalCompleted.push(m);
+      }
+    }
+  } catch (e: any) { console.warn("[Roanuz] Global fixtures error:", e.message); }
+
+  // 2. Featured tournament fixtures
   let tournaments: any[] = cacheService.get("roanuz:tournaments") || [];
   if (!tournaments.length) {
     try {
       const res = await axios.get(`${ROANUZ_BASE_URL}/association/icc/featured-tournaments/`, { headers: { "rs-token": token } });
       tournaments = res.data?.data?.tournaments || [];
       cacheService.set("roanuz:tournaments", tournaments, 60 * 60);
-    } catch (e: any) {
-      console.warn("[Roanuz] Tournaments error:", e.message);
-    }
+    } catch (e: any) { console.warn("[Roanuz] Tournaments error:", e.message); }
   }
-
-  // 2. Fetch Fixtures for top 5 tournaments
-  let allMatches: any[] = [];
+  let tournamentMatches: any[] = [];
   for (let i = 0; i < Math.min(tournaments.length, 5); i++) {
     const tKey = tournaments[i].key;
     const cacheKey = `roanuz:fixtures:${tKey}`;
@@ -133,32 +193,49 @@ async function fetchCricketTicker(): Promise<TickerItem[]> {
         const res = await axios.get(`${ROANUZ_BASE_URL}/tournament/${tKey}/fixtures/`, { headers: { "rs-token": token } });
         matches = res.data?.data?.matches || [];
         cacheService.set(cacheKey, matches, 15 * 60);
-      } catch (e: any) {
-        console.warn("[Roanuz] Fixtures error:", e.message);
-      }
+      } catch (e: any) { console.warn("[Roanuz] Fixtures error:", e.message); }
     }
-    allMatches.push(...matches);
+    tournamentMatches.push(...matches);
   }
 
-  // 3. Sort and filter matches
-  const now = Date.now() / 1000;
-  const liveMatches = allMatches.filter(m => m.status === "started");
-  const upcomingMatches = allMatches.filter(m => m.status === "not_started" && m.start_at > now).sort((a, b) => a.start_at - b.start_at);
-  const completedMatches = allMatches.filter(m => m.status === "completed").sort((a, b) => b.start_at - a.start_at);
+  // 3. Deduplicate and merge
+  const seen = new Set<string>();
+  const allLive: any[] = [];
+  const allUpcoming: any[] = [];
+  const allCompleted: any[] = [];
+  for (const m of [...globalLive, ...tournamentMatches.filter(m => m.status === "started")]) {
+    if (!seen.has(m.key)) { seen.add(m.key); allLive.push(m); }
+  }
+  for (const m of [...globalUpcoming, ...tournamentMatches.filter(m => m.status === "not_started" && m.start_at > now)]) {
+    if (!seen.has(m.key)) { seen.add(m.key); allUpcoming.push(m); }
+  }
+  for (const m of [...globalCompleted, ...tournamentMatches.filter(m => m.status === "completed")]) {
+    if (!seen.has(m.key)) { seen.add(m.key); allCompleted.push(m); }
+  }
 
-  console.log(`[Roanuz] Found ${liveMatches.length} live, ${upcomingMatches.length} upcoming, ${completedMatches.length} completed matches.`);
-
-  const selectedMatches = [...liveMatches.slice(0, 2), ...upcomingMatches.slice(0, 3), ...completedMatches.slice(0, 2)];
-  
   const items: TickerItem[] = [];
-  for (const match of selectedMatches) {
-    let displayMatch = match;
-    // Fetch detailed match score for live or recently completed matches to get runs and wickets
-    if (match.status === "started" || match.status === "completed") {
-      const details = await fetchRoanuzMatchScore(token, match.key);
-      if (details) displayMatch = details;
-    }
+
+  // 4. LIVE matches
+  for (const match of allLive.slice(0, 3)) {
+    const details = await fetchRoanuzMatchScore(token, match.key);
+    const displayMatch = details || match;
+    const matchName = displayMatch.short_name || displayMatch.name || "Cricket";
     items.push(...formatMatchToTickerItems(displayMatch));
+    const balls = await fetchBallByBall(token, match.key);
+    if (balls.length > 0) items.push(...formatBallByBallItems(balls, matchName, match.key));
+    const overs = await fetchOverSummary(token, match.key);
+    if (overs.length > 0) items.push(...formatOverSummaryItems(overs, matchName, match.key));
+  }
+
+  // 5. Upcoming
+  for (const match of allUpcoming.slice(0, 3)) {
+    items.push(...formatMatchToTickerItems(match));
+  }
+
+  // 6. Recent completed
+  for (const match of allCompleted.slice(0, 2)) {
+    const details = await fetchRoanuzMatchScore(token, match.key);
+    items.push(...formatMatchToTickerItems(details || match));
   }
 
   return items.length ? items : DEMO_UPDATES.filter(u => u.sport === "cricket");
@@ -195,8 +272,6 @@ async function getRoanuzFootballToken(): Promise<string | null> {
 async function fetchFootballTicker(): Promise<TickerItem[]> {
   const token = await getRoanuzFootballToken();
   if (!token) return [];
-  // For now, returning a static live score placeholder until we integrate the full football endpoints
-  // This confirms auth is working if it reaches here!
   return [
     { id: "football_live_auth_ok", type: "live_score", sport: "football", text: `⚽ FOOTBALL API CONNECTED! Waiting for live matches...`, badge: "Football Update", status: "live" }
   ];
@@ -206,8 +281,8 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const sports = searchParams.get("sports")?.split(",") || ["cricket", "football"];
-    const types = searchParams.get("types")?.split(",") || ["live_score", "sports_update", "news", "moments"];
-    const limit = parseInt(searchParams.get("limit") || "20");
+    const types = searchParams.get("types")?.split(",") || ["live_score", "sports_update", "news", "moments", "ball_by_ball", "over_summary"];
+    const limit = parseInt(searchParams.get("limit") || "30");
     const [cricketItems, footballItems] = await Promise.all([
       sports.includes("cricket") ? fetchCricketTicker() : Promise.resolve([]),
       sports.includes("football") ? Promise.resolve(fetchFootballTicker()) : Promise.resolve([]),

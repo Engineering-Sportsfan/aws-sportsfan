@@ -280,6 +280,19 @@ export async function POST(req: NextRequest) {
     const flipResponse = (formData.get("flipResponse") as string) || "";
     const userId = (formData.get("userId") as string) || undefined;
     const email = (formData.get("email") as string) || undefined;
+    const day = (formData.get("day") as string) || undefined;
+    const time = (formData.get("time") as string) || undefined;
+    const isVerified = formData.get("isVerified") === "true";
+    const adminPhoto = (formData.get("adminPhoto") as string) || undefined;
+    const authorPhoto = (formData.get("authorPhoto") as string) || undefined;
+
+    console.log("FlipLine POST received:", {
+      content: content?.substring(0, 30),
+      day,
+      time,
+      userId,
+      email
+    });
 
     const mediaFiles = formData.getAll("media") as File[];
     console.log(
@@ -339,10 +352,16 @@ export async function POST(req: NextRequest) {
     const timeMs = Date.now();
     const id = Date.now() + Math.floor(Math.random() * 1000);
     const now = new Date();
-    const h = now.getHours(), mn = now.getMinutes();
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const h12 = h % 12 || 12;
-    const timeStr = `${h12}:${mn.toString().padStart(2, '0')} ${ampm}`;
+
+    // Format default timeStr in India timezone (Asia/Kolkata) if client did not send one
+    const defaultTimeStr = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(now);
+
+    const timeStr = time || defaultTimeStr;
 
     const sportMeta: Record<string, { emoji: string; label: string }> = {
       cricket: { emoji: '🏏', label: 'IND vs SL' },
@@ -359,7 +378,10 @@ export async function POST(req: NextRequest) {
       sport,
       sportEmoji: sportMeta[sport]?.emoji || "🏆",
       sportLabel: sportMeta[sport]?.label || "General",
-      day: "Just Now",
+      day: day || "Just Now",
+      isVerified,
+      adminPhoto,
+      authorPhoto,
       time: timeStr,
       timeMs,
       author,

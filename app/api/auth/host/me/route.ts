@@ -71,8 +71,14 @@ export async function GET(req: NextRequest) {
       userId?: string;
     };
 
-    // Fetch the latest user profile from DynamoDB to get the fresh role
+    // Fetch the latest user profile from DynamoDB to get the fresh role and profile info
     let freshRole = decoded.role;
+    let title = "";
+    let verifiedFlipLineAdmin = false;
+    let addfliplineAdminPhoto = "";
+    let avatar = "";
+    let avatarUrl = "";
+
     try {
       const cleanEmail = decoded.email.toLowerCase().trim();
       const uRes = await docClient.send(new GetCommand({
@@ -81,9 +87,14 @@ export async function GET(req: NextRequest) {
       }));
       if (uRes.Item) {
         freshRole = uRes.Item.role ?? decoded.role;
+        title = uRes.Item.title ?? "";
+        verifiedFlipLineAdmin = uRes.Item.verifiedFlipLineAdmin ?? false;
+        addfliplineAdminPhoto = uRes.Item.addfliplineAdminPhoto ?? "";
+        avatar = uRes.Item.avatar ?? "";
+        avatarUrl = uRes.Item.avatarUrl ?? "";
       }
     } catch (dynErr) {
-      console.warn("Failed to fetch fresh user role from DynamoDB:", dynErr);
+      console.warn("Failed to fetch fresh user profile from DynamoDB:", dynErr);
     }
     
     return NextResponse.json({
@@ -93,6 +104,11 @@ export async function GET(req: NextRequest) {
         name: decoded.name,
         role: freshRole,
         userId: decoded.userId,
+        title,
+        verifiedFlipLineAdmin,
+        addfliplineAdminPhoto,
+        avatar: avatar || avatarUrl || "",
+        avatarUrl: avatarUrl || avatar || "",
       },
     });
   } catch (error) {
