@@ -285,6 +285,14 @@ export async function POST(req: NextRequest) {
     const isVerified = formData.get("isVerified") === "true";
     const adminPhoto = (formData.get("adminPhoto") as string) || undefined;
 
+    console.log("FlipLine POST received:", {
+      content: content?.substring(0, 30),
+      day,
+      time,
+      userId,
+      email
+    });
+
     const mediaFiles = formData.getAll("media") as File[];
     console.log(
       "MEDIA FILES:",
@@ -343,10 +351,16 @@ export async function POST(req: NextRequest) {
     const timeMs = Date.now();
     const id = Date.now() + Math.floor(Math.random() * 1000);
     const now = new Date();
-    const h = now.getHours(), mn = now.getMinutes();
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const h12 = h % 12 || 12;
-    const timeStr = time || `${h12}:${mn.toString().padStart(2, '0')} ${ampm}`;
+
+    // Format default timeStr in India timezone (Asia/Kolkata) if client did not send one
+    const defaultTimeStr = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(now);
+
+    const timeStr = time || defaultTimeStr;
 
     const sportMeta: Record<string, { emoji: string; label: string }> = {
       cricket: { emoji: '🏏', label: 'IND vs SL' },
