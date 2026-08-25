@@ -284,6 +284,7 @@ export async function POST(req: NextRequest) {
     const time = (formData.get("time") as string) || undefined;
     const isVerified = formData.get("isVerified") === "true";
     const adminPhoto = (formData.get("adminPhoto") as string) || undefined;
+    const authorPhoto = (formData.get("authorPhoto") as string) || undefined;
 
     console.log("FlipLine POST received:", {
       content: content?.substring(0, 30),
@@ -380,6 +381,7 @@ export async function POST(req: NextRequest) {
       day: day || "Just Now",
       isVerified,
       adminPhoto,
+      authorPhoto,
       time: timeStr,
       timeMs,
       author,
