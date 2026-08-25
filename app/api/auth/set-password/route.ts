@@ -2,8 +2,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { dualWrite } from "@/lib/dualWrite";
 import bcrypt from "bcryptjs";
-import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand, UpdateCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -17,8 +18,36 @@ export async function POST(req: NextRequest) {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Fetch user from DynamoDB IdentityAndAccess
-    let user: Record<string, unknown> | null = null;
+    // 1. Fetch OTP record to check if OTP was verified
+    let otpData: Record<string, unknown> | null = null;
+    try {
+      const otpRes = await docClient.send(
+        new GetCommand({
+          TableName: "IdentityAndAccess",
+          Key: { entityId: `OTP#${cleanEmail}`, sk: "OTP#ACTIVE" },
+        })
+      );
+      if (otpRes.Item) {
+        otpData = otpRes.Item as Record<string, unknown>;
+      }
+    } catch (err) {
+      console.warn("DynamoDB OTP lookup notice:", err);
+    }
+
+    // Fallback to Firebase for OTP
+    if (!otpData) {
+      try {
+        const fbOtpDoc = await db.collection("otps").doc(cleanEmail).get();
+        if (fbOtpDoc.exists) {
+          otpData = fbOtpDoc.data() as Record<string, unknown>;
+        }
+      } catch (err) {
+        console.warn("Firebase OTP lookup notice:", err);
+      }
+    }
+
+    // 2. Fetch existing user from DynamoDB IdentityAndAccess (if already created)
+    let existingUser: Record<string, unknown> | null = null;
 
     try {
       const emailQuery = await docClient.send(
@@ -31,13 +60,13 @@ export async function POST(req: NextRequest) {
         })
       );
       if (emailQuery.Items && emailQuery.Items.length > 0) {
-        user = emailQuery.Items[0] as Record<string, unknown>;
+        existingUser = emailQuery.Items[0] as Record<string, unknown>;
       }
     } catch (err) {
       console.warn("DynamoDB set-password user query notice:", err);
     }
 
-    if (!user) {
+    if (!existingUser) {
       try {
         const directGet = await docClient.send(
           new GetCommand({
@@ -45,67 +74,81 @@ export async function POST(req: NextRequest) {
             Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" },
           })
         );
-        if (directGet.Item) user = directGet.Item as Record<string, unknown>;
+        if (directGet.Item) existingUser = directGet.Item as Record<string, unknown>;
       } catch (err) {
         console.warn("DynamoDB direct get notice:", err);
       }
     }
 
-    // Fallback to Firebase
-    if (!user) {
+    // Fallback to Firebase for existing user
+    if (!existingUser) {
       try {
         const userDoc = await db.collection("users").doc(cleanEmail).get();
         if (userDoc.exists) {
-          user = userDoc.data() as Record<string, unknown>;
+          existingUser = userDoc.data() as Record<string, unknown>;
         }
       } catch (err) {
         console.warn("Firebase set-password fallback notice:", err);
       }
     }
 
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    if (!user.isVerified) {
-      return NextResponse.json({ error: "Verify OTP first" }, { status: 403 });
+    // Check verification status (either from OTP or from existing user)
+    const isVerified = otpData?.isVerified === true || existingUser?.isVerified === true;
+    if (!isVerified) {
+      return NextResponse.json({ error: "Please verify your OTP code first before setting a password." }, { status: 403 });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const now = Date.now();
+    const userId = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
 
-    // 2. Update password in DynamoDB
+    // 3. CREATE or UPDATE the official User Document in DynamoDB & Firebase
+    const firstName = (existingUser?.firstName as string) || (otpData?.firstName as string) || "";
+    const lastName = (existingUser?.lastName as string) || (otpData?.lastName as string) || "";
+
+    const finalUserData = {
+      ...existingUser,
+      firstName,
+      lastName,
+      email: cleanEmail,
+      userId: (existingUser?.userId as string) || userId,
+      password: hashedPassword,
+      isVerified: true,
+      status: (existingUser?.status as string) || "active",
+      role: (existingUser?.role as string) || "user",
+      authProviders: {
+        ...((existingUser?.authProviders as Record<string, boolean>) || {}),
+        emailPassword: true,
+      },
+      totalPoints: (existingUser?.totalPoints as number) || 0,
+      createdAt: (existingUser?.createdAt as number) || now,
+      updatedAt: now,
+    };
+
+    const dynamoUserItem = {
+      entityId: `USER#${cleanEmail}`,
+      sk: "USER#META",
+      ...finalUserData,
+    };
+
+    await dualWrite("users", cleanEmail, "IdentityAndAccess", dynamoUserItem);
+    console.log(`[DynamoDB Auth] ⚡ SUCCESS: User document officially created/updated in DynamoDB -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
+
+    // 4. Clean up used OTP record
     try {
       await docClient.send(
-        new UpdateCommand({
+        new DeleteCommand({
           TableName: "IdentityAndAccess",
-          Key: {
-            entityId: (user.entityId as string) || `USER#${cleanEmail}`,
-            sk: (user.sk as string) || "USER#META",
-          },
-          UpdateExpression: "SET password = :p, updatedAt = :u",
-          ExpressionAttributeValues: {
-            ":p": hashedPassword,
-            ":u": now,
-          },
+          Key: { entityId: `OTP#${cleanEmail}`, sk: "OTP#ACTIVE" },
         })
       );
-      console.log(`[DynamoDB Auth] ⚡ SUCCESS: Password hashed and saved in DynamoDB -> entityId: [${(user.entityId as string) || `USER#${cleanEmail}`}], sk: [${(user.sk as string) || "USER#META"}]`);
-    } catch (err) {
-      console.warn("DynamoDB update password notice:", err);
-    }
+    } catch {}
 
-    // 3. Sync to Firebase
     try {
-      await db.collection("users").doc(cleanEmail).update({
-        password: hashedPassword,
-        updatedAt: now,
-      });
-    } catch (err) {
-      console.warn("Firebase update password sync notice:", err);
-    }
+      await db.collection("otps").doc(cleanEmail).delete();
+    } catch {}
 
-    return NextResponse.json({ success: true, message: "Password set successfully" });
+    return NextResponse.json({ success: true, message: "Password set and account created successfully" });
   } catch (error: unknown) {
     console.error("POST /api/auth/set-password error:", error);
     const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred";
