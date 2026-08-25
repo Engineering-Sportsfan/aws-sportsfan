@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 2. Check if user already exists in DynamoDB
+    // 2. Check if a FULLY REGISTERED user already exists in DynamoDB
     let userExists = false;
 
     try {
@@ -32,22 +32,28 @@ export async function POST(req: NextRequest) {
           IndexName: "email-index",
           KeyConditionExpression: "email = :e",
           ExpressionAttributeValues: { ":e": cleanEmail },
-          Limit: 1,
         })
       );
-      if (emailQuery.Items && emailQuery.Items.length > 0) {
+      const items = (emailQuery.Items || []).filter(item => {
+        const eid = String(item.entityId || "");
+        return eid.startsWith("USER#") && (item.password || item.isVerified || item.authProviders);
+      });
+      if (items.length > 0) {
         userExists = true;
       }
     } catch (err) {
       console.warn("DynamoDB email-index check notice:", err);
     }
 
-    // Fallback check to Firebase
+    // Fallback check to Firebase for registered user
     if (!userExists) {
       try {
         const userDoc = await db.collection("users").doc(cleanEmail).get();
         if (userDoc.exists) {
-          userExists = true;
+          const data = userDoc.data();
+          if (data?.password || data?.isVerified || data?.authProviders) {
+            userExists = true;
+          }
         }
       } catch (err) {
         console.warn("Firebase check notice:", err);
@@ -56,40 +62,22 @@ export async function POST(req: NextRequest) {
 
     if (userExists) {
       return NextResponse.json(
-        { error: "User already exists. Please login." },
+        { error: "This email is already registered. Please log in instead." },
         { status: 409 }
       );
     }
 
-    // 3. Create User in DynamoDB & Sync to Firebase
+    // 3. Generate OTP (DO NOT create user document until password is set)
     const now = Date.now();
-    const userId = `${firstName.toLowerCase()}_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
-
-    const userData = {
-      firstName,
-      lastName,
-      email: cleanEmail,
-      userId,
-      createdAt: now,
-      isVerified: false,
-      status: "active",
-      role: "user",
-    };
-
-    const dynamoUserItem = {
-      entityId: `USER#${cleanEmail}`,
-      sk: "USER#META",
-      ...userData,
-    };
-
-    await dualWrite("users", cleanEmail, "IdentityAndAccess", dynamoUserItem);
-
-    // 4. Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = now + 5 * 60 * 1000;
 
     const otpData = {
       otp,
+      firstName,
+      lastName,
+      email: cleanEmail,
+      isVerified: false,
       createdAt: now,
       expiresAt,
     };
@@ -98,7 +86,6 @@ export async function POST(req: NextRequest) {
     const dynamoOtpItem = {
       entityId: `OTP#${cleanEmail}`,
       sk: "OTP#ACTIVE",
-      email: cleanEmail,
       ...otpData,
     };
 
@@ -109,6 +96,7 @@ export async function POST(req: NextRequest) {
           Item: dynamoOtpItem,
         })
       );
+      console.log(`[DynamoDB Auth] ⚡ SUCCESS: OTP saved in DynamoDB -> entityId: [OTP#${cleanEmail}], sk: [OTP#ACTIVE] (OTP: ${otp})`);
     } catch (err) {
       console.warn("DynamoDB OTP save notice:", err);
     }
@@ -132,8 +120,12 @@ export async function POST(req: NextRequest) {
           <p>Expires in 5 minutes.</p>
         `,
       });
-    } catch (mailErr) {
-      console.warn("Mailer notification notice:", mailErr);
+      console.log(`[DynamoDB Auth] 📧 SUCCESS: OTP email delivered to ${cleanEmail}`);
+    } catch (mailErr: any) {
+      console.error(`[DynamoDB Auth] ❌ FAILED to send email to ${cleanEmail}:`, mailErr?.message || mailErr);
+      return NextResponse.json({
+        error: `Failed to deliver OTP email: ${mailErr?.message || 'SMTP delivery error'}. Please verify EMAIL and EMAIL_PASS configuration.`
+      }, { status: 500 });
     }
 
     return NextResponse.json({

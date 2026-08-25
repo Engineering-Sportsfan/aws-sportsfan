@@ -188,6 +188,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           };
 
           await dualWrite("users", cleanEmail, "IdentityAndAccess", dynamoUserItem);
+          console.log(`[DynamoDB Auth] ⚡ SUCCESS: NextAuth Google created new user in DynamoDB -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
         } else {
           if (existingData.status === "disabled") return false;
           
@@ -216,6 +217,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           };
 
           await dualWrite("users", cleanEmail, "IdentityAndAccess", updatedDynamoUser);
+          console.log(`[DynamoDB Auth] ⚡ SUCCESS: NextAuth Google linked & updated existing user in DynamoDB -> entityId: [USER#${cleanEmail}]`);
         }
         return true;
       } catch (error) {

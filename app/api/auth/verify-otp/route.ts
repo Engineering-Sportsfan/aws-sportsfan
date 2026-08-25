@@ -87,7 +87,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid OTP" }, { status: 400 });
     }
 
-    // ── 4. Mark user as verified in DynamoDB & Firebase ──────────────────────
+    // ── 4. Mark OTP as verified in DynamoDB & Firebase ──────────────────────
+    try {
+      await docClient.send(
+        new UpdateCommand({
+          TableName: "IdentityAndAccess",
+          Key: {
+            entityId: `OTP#${cleanEmail}`,
+            sk: "OTP#ACTIVE",
+          },
+          UpdateExpression: "SET isVerified = :v, verifiedAt = :va",
+          ExpressionAttributeValues: {
+            ":v": true,
+            ":va": now,
+          },
+        })
+      );
+      console.log(`[DynamoDB Auth] ⚡ SUCCESS: OTP verified in DynamoDB for ${cleanEmail}`);
+    } catch (err) {
+      console.warn("DynamoDB OTP verify update notice:", err);
+    }
+
+    try {
+      await db.collection("otps").doc(cleanEmail).set(
+        {
+          email: cleanEmail,
+          isVerified: true,
+          verifiedAt: now,
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn("Firebase verify update notice:", err);
+    }
+
+    // Also update user doc if it already existed
     try {
       await docClient.send(
         new UpdateCommand({
@@ -103,39 +137,8 @@ export async function POST(req: NextRequest) {
           },
         })
       );
-    } catch (err) {
-      console.warn("DynamoDB verify update notice:", err);
-    }
-
-    try {
-      await db.collection("users").doc(cleanEmail).set(
-        {
-          email: cleanEmail,
-          isVerified: true,
-          verifiedAt: now,
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      console.warn("Firebase verify update notice:", err);
-    }
-
-    // ── 5. Delete used OTP ───────────────────────────────────────────────────
-    try {
-      await docClient.send(
-        new DeleteCommand({
-          TableName: "IdentityAndAccess",
-          Key: { entityId: `OTP#${cleanEmail}`, sk: "OTP#ACTIVE" },
-        })
-      );
-    } catch (err) {
-      console.warn("DynamoDB used OTP delete notice:", err);
-    }
-
-    try {
-      await db.collection("otps").doc(cleanEmail).delete();
-    } catch (err) {
-      console.warn("Firebase used OTP delete notice:", err);
+    } catch {
+      // User doc does not exist yet (normal for new signup flow)
     }
 
     return NextResponse.json({
