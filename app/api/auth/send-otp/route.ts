@@ -134,8 +134,12 @@ export async function POST(req: NextRequest) {
           <p>Expires in 5 minutes.</p>
         `,
       });
-    } catch (mailErr) {
-      console.warn("Mailer notification notice:", mailErr);
+      console.log(`[DynamoDB Auth] 📧 SUCCESS: OTP email delivered to ${cleanEmail}`);
+    } catch (mailErr: any) {
+      console.error(`[DynamoDB Auth] ❌ FAILED to send email to ${cleanEmail}:`, mailErr?.message || mailErr);
+      return NextResponse.json({
+        error: `Failed to deliver OTP email: ${mailErr?.message || 'SMTP delivery error'}. Please verify EMAIL and EMAIL_PASS configuration.`
+      }, { status: 500 });
     }
 
     return NextResponse.json({

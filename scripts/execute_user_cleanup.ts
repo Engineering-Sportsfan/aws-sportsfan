@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, ScanCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, ScanCommand, DeleteCommand, QueryCommand, BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
@@ -9,10 +9,17 @@ dotenv.config({ path: path.join(process.cwd(), '.env.local') });
 dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 // ============================================================================
-// ⚠️ TARGET USERS TO DELETE PERMANENTLY (FIRESTORE + AWS DYNAMODB)
+// 🔒 WHITELIST PRESERVATION CONFIGURATION
+//
+// Add all email addresses or User IDs you want to PRESERVE / KEEP here.
+// EVERYTHING ELSE in the database (Firestore + AWS DynamoDB) will be PERMANENTLY DELETED.
+// All multi-ID aliases for these whitelisted emails will be automatically PROTECTED.
 // ============================================================================
-export const TARGET_USERS_TO_DELETE: string[] = [
-  "srikakulamchandu@gmail.com"
+export const WHITELIST_EMAILS: string[] = [
+  "chandu.srikakulam@sportsfan360.com",
+  "anandvasu@gmail.com",
+  "jignesh@sportsfan360.com",
+  // "tushar.deshmukh@sportsfan360.com"
 ];
 
 // ============================================================================
@@ -77,11 +84,11 @@ function generateUserAliases(identifier: string): Set<string> {
   return aliases;
 }
 
-// Helper to batch delete Firestore documents (up to 400 per commit)
+// Helper to batch delete Firestore documents (up to 450 per commit)
 async function deleteFirestoreDocs(docRefs: FirebaseFirestore.DocumentReference[]) {
   if (docRefs.length === 0) return 0;
   let count = 0;
-  const chunkSize = 400;
+  const chunkSize = 450;
 
   for (let i = 0; i < docRefs.length; i += chunkSize) {
     const chunk = docRefs.slice(i, i + chunkSize);
@@ -101,10 +108,62 @@ async function deleteDynamoItem(tableName: string, key: Record<string, any>) {
       Key: key
     }));
     return true;
-  } catch (err: any) {
-    console.warn(`   ⚠️ Failed to delete item from ${tableName}:`, err.message);
+  } catch {
     return false;
   }
+}
+
+// ⚡ High-Performance Parallel Batch Deletion for DynamoDB (25 items per batch, 5 concurrent workers)
+async function batchDeleteDynamoItems(tableName: string, keys: Record<string, any>[]): Promise<number> {
+  if (keys.length === 0) return 0;
+  let totalDeleted = 0;
+  const BATCH_SIZE = 25;
+
+  const chunks: Record<string, any>[][] = [];
+  for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+    chunks.push(keys.slice(i, i + BATCH_SIZE));
+  }
+
+  const CONCURRENCY = 6;
+  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+    const activeChunks = chunks.slice(i, i + CONCURRENCY);
+
+    await Promise.all(activeChunks.map(async (chunk) => {
+      let requestItems: any = {
+        [tableName]: chunk.map(k => ({
+          DeleteRequest: { Key: k }
+        }))
+      };
+
+      let retries = 0;
+      while (requestItems && Object.keys(requestItems).length > 0 && retries < 4) {
+        try {
+          const res = await docClient.send(new BatchWriteCommand({
+            RequestItems: requestItems
+          }));
+
+          const unprocessed = res.UnprocessedItems;
+          if (unprocessed && unprocessed[tableName] && unprocessed[tableName].length > 0) {
+            requestItems = unprocessed;
+            retries++;
+            await new Promise(r => setTimeout(r, 60 * retries));
+          } else {
+            requestItems = null;
+          }
+        } catch {
+          // Fallback to parallel individual deletes if batch write encounters schema conflict
+          await Promise.all(chunk.map(k => deleteDynamoItem(tableName, k)));
+          requestItems = null;
+        }
+      }
+      totalDeleted += chunk.length;
+    }));
+
+    const progress = Math.min(100, Math.round(((i + activeChunks.length) / chunks.length) * 100));
+    process.stdout.write(`\r   ⚡ Deleting from ${tableName}: ${Math.min(totalDeleted, keys.length)} / ${keys.length} items (${progress}%)   `);
+  }
+  console.log(`\n   ✅ Finished deleting ${keys.length} items from '${tableName}'.`);
+  return keys.length;
 }
 
 // Helper to scan entire DynamoDB table with pagination (handles >1MB tables)
@@ -124,272 +183,270 @@ async function scanFullDynamoTable(tableName: string): Promise<any[]> {
       lastEvaluatedKey = res.LastEvaluatedKey;
     } while (lastEvaluatedKey);
   } catch (err: any) {
-    console.warn(`   ⚠️ Scan error on ${tableName}:`, err.message);
+    console.warn(`   ⚠️ Scan notice on ${tableName}:`, err.message);
   }
   return items;
 }
 
-async function runPermanentCleanup() {
+async function runWhitelistCleanup() {
   console.log("======================================================================");
-  console.log("🚨 STARTING COMPLETE DYNAMODB & FIRESTORE USER CLEANUP");
+  console.log("🚨 EXECUTING HIGH-SPEED DATABASE CLEANUP (WHITELIST PRESERVATION MODE)");
   console.log("======================================================================\n");
 
-  if (TARGET_USERS_TO_DELETE.length === 0) {
-    console.log("⚠️ TARGET LIST IS EMPTY. Nothing to delete.");
+  if (WHITELIST_EMAILS.length === 0) {
+    console.log("⚠️ WHITELIST IS EMPTY!");
+    console.log("👉 Please specify at least one email or ID in WHITELIST_EMAILS to protect.");
+    console.log("======================================================================");
     return;
   }
 
-  // 1. Build initial target aliases set
-  const allTargetAliases = new Set<string>();
-  const targetEmails = new Set<string>();
+  // 1. Build initial Whitelist Aliases Set
+  const whitelistedAliases = new Set<string>();
+  const whitelistedEmails = new Set<string>();
 
-  TARGET_USERS_TO_DELETE.forEach(t => {
-    const clean = t.trim().toLowerCase();
-    if (clean.includes("@")) {
-      targetEmails.add(clean);
+  WHITELIST_EMAILS.forEach(email => {
+    const clean = email.trim().toLowerCase();
+    if (clean) {
+      whitelistedEmails.add(clean);
+      const aliases = generateUserAliases(clean);
+      aliases.forEach(a => whitelistedAliases.add(a));
     }
-    const aliases = generateUserAliases(t);
-    aliases.forEach(a => allTargetAliases.add(a));
   });
 
-  console.log(`📋 Target Users Configured: ${TARGET_USERS_TO_DELETE.length}`);
-  TARGET_USERS_TO_DELETE.forEach(t => console.log(`   🎯 ${t}`));
-  console.log(`   🔑 Initial Search Aliases: ${allTargetAliases.size}\n`);
+  console.log(`🔒 Whitelist Configured: ${whitelistedEmails.size} account(s) to KEEP:`);
+  whitelistedEmails.forEach(e => console.log(`   🛡️ KEEP: ${e}`));
+  console.log(`   🔑 Initial Protected Search Keys: ${whitelistedAliases.size}\n`);
 
-  // 2. Discover all matching document IDs from Firestore
-  console.log("📡 Resolving users from Firestore...");
-  const targetResolvedAliases = new Set<string>(allTargetAliases);
-  const matchedUsersDocIds: string[] = [];
+  // 2. Discover all Whitelisted User Profiles & IDs in Firestore & DynamoDB
+  console.log("📡 Scanning Firestore & DynamoDB to map protected user records...");
+  const protectedFirestoreDocIds = new Set<string>();
 
   const firestoreUsersSnap = await db.collection("users").get();
   for (const doc of firestoreUsersSnap.docs) {
     const data = doc.data();
     const docId = doc.id;
     const email = (data.email || (docId.includes("@") ? docId : "")).trim().toLowerCase();
-    const userId = data.userId ? String(data.userId).trim() : "";
+    const userId = data.userId ? String(data.userId).trim().toLowerCase() : "";
 
-    const isMatch = (
-      allTargetAliases.has(docId.toLowerCase()) ||
-      (email && allTargetAliases.has(email)) ||
-      (userId && allTargetAliases.has(userId.toLowerCase()))
+    const isWhitelisted = (
+      whitelistedAliases.has(docId.toLowerCase()) ||
+      (email && whitelistedEmails.has(email)) ||
+      (userId && whitelistedAliases.has(userId))
     );
 
-    if (isMatch) {
-      matchedUsersDocIds.push(docId);
-      if (email) targetEmails.add(email);
-      const userAliases = generateUserAliases(email || docId);
-      if (userId) userAliases.add(userId.toLowerCase());
-      userAliases.add(docId.toLowerCase());
-      userAliases.forEach(a => targetResolvedAliases.add(a));
+    if (isWhitelisted) {
+      protectedFirestoreDocIds.add(docId);
+      whitelistedAliases.add(docId.toLowerCase());
+      if (email) {
+        whitelistedEmails.add(email);
+        const aliases = generateUserAliases(email);
+        aliases.forEach(a => whitelistedAliases.add(a));
+      }
+      if (userId) {
+        whitelistedAliases.add(userId);
+        const aliases = generateUserAliases(userId);
+        aliases.forEach(a => whitelistedAliases.add(a));
+      }
     }
   }
 
-  // 3. Query DynamoDB IdentityAndAccess using email-index for EVERY target email
-  console.log("📡 Querying DynamoDB 'IdentityAndAccess' via email-index...");
-  const dynamoIdentityKeysToDelete: { entityId: string; sk: string; email?: string }[] = [];
+  // Check DynamoDB IdentityAndAccess
+  const allIdentityItems = await scanFullDynamoTable("IdentityAndAccess");
+  const protectedDynamoKeys = new Set<string>();
 
-  for (const email of targetEmails) {
-    try {
-      const gRes = await docClient.send(new QueryCommand({
-        TableName: "IdentityAndAccess",
-        IndexName: "email-index",
-        KeyConditionExpression: "email = :email",
-        ExpressionAttributeValues: {
-          ":email": email
-        }
-      }));
-
-      (gRes.Items || []).forEach(item => {
-        dynamoIdentityKeysToDelete.push({ entityId: item.entityId, sk: item.sk, email: item.email });
-        targetResolvedAliases.add(item.entityId);
-        targetResolvedAliases.add(item.entityId.toLowerCase());
-        targetResolvedAliases.add(item.entityId.replace(/^USER#/, "").toLowerCase());
-        if (item.userId) targetResolvedAliases.add(String(item.userId).toLowerCase());
-      });
-    } catch (gErr: any) {
-      console.warn(`   ⚠️ email-index query notice for ${email}:`, gErr.message);
-    }
-  }
-
-  // Also do full paginated scan on IdentityAndAccess to catch non-indexed items
-  console.log("📡 Scanning full DynamoDB 'IdentityAndAccess' table...");
-  const fullIdentityItems = await scanFullDynamoTable("IdentityAndAccess");
-  fullIdentityItems.forEach(item => {
+  allIdentityItems.forEach(item => {
     const entityId = String(item.entityId || "");
     const cleanEntityId = entityId.replace(/^USER#/, "");
     const email = (item.email || (cleanEntityId.includes("@") ? cleanEntityId : "")).trim().toLowerCase();
-    const userId = item.userId ? String(item.userId).trim() : "";
+    const userId = item.userId ? String(item.userId).trim().toLowerCase() : "";
 
-    const isMatch = (
-      targetResolvedAliases.has(entityId) ||
-      targetResolvedAliases.has(entityId.toLowerCase()) ||
-      targetResolvedAliases.has(cleanEntityId.toLowerCase()) ||
-      (email && (targetEmails.has(email) || targetResolvedAliases.has(email))) ||
-      (userId && targetResolvedAliases.has(userId.toLowerCase()))
+    const isWhitelisted = (
+      whitelistedAliases.has(entityId.toLowerCase()) ||
+      whitelistedAliases.has(cleanEntityId.toLowerCase()) ||
+      (email && (whitelistedEmails.has(email) || whitelistedAliases.has(email))) ||
+      (userId && whitelistedAliases.has(userId))
     );
 
-    if (isMatch) {
-      const alreadyInList = dynamoIdentityKeysToDelete.some(k => k.entityId === item.entityId && k.sk === item.sk);
-      if (!alreadyInList) {
-        dynamoIdentityKeysToDelete.push({ entityId: item.entityId, sk: item.sk, email: item.email });
+    if (isWhitelisted) {
+      protectedDynamoKeys.add(`${item.entityId}###${item.sk}`);
+      whitelistedAliases.add(entityId.toLowerCase());
+      whitelistedAliases.add(cleanEntityId.toLowerCase());
+      if (email) {
+        whitelistedEmails.add(email);
+        const aliases = generateUserAliases(email);
+        aliases.forEach(a => whitelistedAliases.add(a));
       }
-      targetResolvedAliases.add(entityId);
-      targetResolvedAliases.add(entityId.toLowerCase());
-      targetResolvedAliases.add(cleanEntityId.toLowerCase());
-      if (email) targetEmails.add(email);
-      if (userId) targetResolvedAliases.add(userId.toLowerCase());
+      if (userId) {
+        whitelistedAliases.add(userId);
+        const aliases = generateUserAliases(userId);
+        aliases.forEach(a => whitelistedAliases.add(a));
+      }
     }
   });
 
-  console.log(`   ✅ Matched ${dynamoIdentityKeysToDelete.length} item(s) in DynamoDB IdentityAndAccess:`);
-  dynamoIdentityKeysToDelete.forEach((k, i) => {
-    console.log(`      ${i + 1}. entityId: [${k.entityId}] | sk: [${k.sk}] | email: [${k.email || 'N/A'}]`);
-  });
-  console.log(`   🔑 Total Unified Alias Keys to Clean: ${targetResolvedAliases.size}\n`);
+  console.log(`   🛡️ Protected Firestore User Docs : ${protectedFirestoreDocIds.size}`);
+  console.log(`   🛡️ Protected DynamoDB User Items : ${protectedDynamoKeys.size}`);
+  console.log(`   🔑 Total Protected Alias Keys    : ${whitelistedAliases.size}\n`);
 
   // ============================================================================
-  // 4. DELETE FROM AWS DYNAMODB TABLES
+  // 3. DELETE NON-WHITELISTED USERS FROM DYNAMODB (PARALLEL BATCH)
   // ============================================================================
   console.log("======================================================================");
-  console.log("⚡ DELETING DATA FROM AWS DYNAMODB TABLES");
+  console.log("⚡ DELETING NON-WHITELISTED DATA FROM AWS DYNAMODB TABLES (TURBO BATCH)");
   console.log("======================================================================\n");
 
   let totalDynamoDeleted = 0;
 
-  // 4a. Delete matched items from IdentityAndAccess
-  console.log("📡 Deleting matched items from DynamoDB 'IdentityAndAccess'...");
-  for (const k of dynamoIdentityKeysToDelete) {
-    const ok = await deleteDynamoItem("IdentityAndAccess", { entityId: k.entityId, sk: k.sk });
-    if (ok) {
-      console.log(`   🗑️ Deleted IdentityAndAccess key: entityId=[${k.entityId}], sk=[${k.sk}]`);
-      totalDynamoDeleted++;
+  // 3a. Delete from IdentityAndAccess
+  console.log("📡 Preparing DynamoDB 'IdentityAndAccess' deletion keys...");
+  const identityKeysToDelete: Record<string, any>[] = [];
+  for (const item of allIdentityItems) {
+    const entityId = String(item.entityId || "");
+    const cleanEntityId = entityId.replace(/^USER#/, "").replace(/^OTP#/, "").replace(/^PREF#USER#/, "");
+    const email = (item.email || (cleanEntityId.includes("@") ? cleanEntityId : "")).trim().toLowerCase();
+    const userId = item.userId ? String(item.userId).trim().toLowerCase() : "";
+
+    const isProtected = (
+      protectedDynamoKeys.has(`${item.entityId}###${item.sk}`) ||
+      whitelistedAliases.has(entityId.toLowerCase()) ||
+      whitelistedAliases.has(cleanEntityId.toLowerCase()) ||
+      (email && whitelistedAliases.has(email)) ||
+      (userId && whitelistedAliases.has(userId))
+    );
+
+    if (!isProtected) {
+      const isUserRelated = (
+        entityId.startsWith("USER#") ||
+        entityId.startsWith("OTP#") ||
+        entityId.startsWith("PREF#") ||
+        entityId.startsWith("PROFILE_ROAR#") ||
+        entityId.startsWith("PROFILE_SF360#") ||
+        item.sk?.startsWith("USER#") ||
+        item.sk === "OTP#ACTIVE"
+      );
+
+      if (isUserRelated) {
+        identityKeysToDelete.push({ entityId: item.entityId, sk: item.sk });
+      }
     }
   }
+  totalDynamoDeleted += await batchDeleteDynamoItems("IdentityAndAccess", identityKeysToDelete);
 
-  // 4b. Delete from GamificationAndWallet (Partition Key: userId, Sort Key: sk)
-  console.log("📡 Scanning & Deleting from DynamoDB 'GamificationAndWallet'...");
-  const fullGamificationItems = await scanFullDynamoTable("GamificationAndWallet");
-  for (const item of fullGamificationItems) {
-    const uId = String(item.userId || "");
+  // 3b. Delete from GamificationAndWallet
+  console.log("📡 Scanning & Preparing DynamoDB 'GamificationAndWallet' deletion keys...");
+  const allGamificationItems = await scanFullDynamoTable("GamificationAndWallet");
+  const gamificationKeysToDelete: Record<string, any>[] = [];
+
+  for (const item of allGamificationItems) {
+    const uId = String(item.userId || "").toLowerCase();
     const cleanUId = uId.replace(/^USER#/, "");
     const uEmail = String(item.userEmail || item.email || "").toLowerCase();
 
-    const isMatch = (
-      targetResolvedAliases.has(uId) ||
-      targetResolvedAliases.has(uId.toLowerCase()) ||
-      targetResolvedAliases.has(cleanUId.toLowerCase()) ||
-      (uEmail && targetEmails.has(uEmail))
+    const isProtected = (
+      whitelistedAliases.has(uId) ||
+      whitelistedAliases.has(cleanUId) ||
+      (uEmail && whitelistedAliases.has(uEmail))
     );
 
-    if (isMatch) {
-      const ok = await deleteDynamoItem("GamificationAndWallet", { userId: item.userId, sk: item.sk });
-      if (ok) {
-        console.log(`   🗑️ Deleted GamificationAndWallet item: userId=[${item.userId}], sk=[${item.sk}]`);
-        totalDynamoDeleted++;
-      }
+    if (!isProtected && (item.userId && item.sk)) {
+      gamificationKeysToDelete.push({ userId: item.userId, sk: item.sk });
     }
   }
+  totalDynamoDeleted += await batchDeleteDynamoItems("GamificationAndWallet", gamificationKeysToDelete);
 
-  // 4c. Delete from sf360-notifications (Partition Key: PK, Sort Key: SK)
-  console.log("📡 Scanning & Deleting from DynamoDB 'sf360-notifications'...");
-  const fullNotificationItems = await scanFullDynamoTable("sf360-notifications");
-  for (const item of fullNotificationItems) {
-    const pk = String(item.PK || "");
+  // 3c. Delete from sf360-notifications
+  console.log("📡 Scanning & Preparing DynamoDB 'sf360-notifications' deletion keys...");
+  const allNotificationItems = await scanFullDynamoTable("sf360-notifications");
+  const notificationKeysToDelete: Record<string, any>[] = [];
+
+  for (const item of allNotificationItems) {
+    const pk = String(item.PK || "").toLowerCase();
     const cleanPk = pk.replace(/^USER#/, "");
     const uId = String(item.userId || "").toLowerCase();
 
-    const isMatch = (
-      targetResolvedAliases.has(pk) ||
-      targetResolvedAliases.has(pk.toLowerCase()) ||
-      targetResolvedAliases.has(cleanPk.toLowerCase()) ||
-      (uId && targetResolvedAliases.has(uId))
+    const isProtected = (
+      whitelistedAliases.has(pk) ||
+      whitelistedAliases.has(cleanPk) ||
+      (uId && whitelistedAliases.has(uId))
     );
 
-    if (isMatch) {
-      const ok = await deleteDynamoItem("sf360-notifications", { PK: item.PK, SK: item.SK });
-      if (ok) {
-        console.log(`   🗑️ Deleted sf360-notifications item: PK=[${item.PK}], SK=[${item.SK}]`);
-        totalDynamoDeleted++;
-      }
+    if (!isProtected && (item.PK && item.SK)) {
+      notificationKeysToDelete.push({ PK: item.PK, SK: item.SK });
     }
   }
+  totalDynamoDeleted += await batchDeleteDynamoItems("sf360-notifications", notificationKeysToDelete);
 
-  // 4d. Delete from StoreAndCommerce (Partition Key: entityId, Sort Key: sk)
-  console.log("📡 Scanning & Deleting from DynamoDB 'StoreAndCommerce'...");
-  const fullStoreItems = await scanFullDynamoTable("StoreAndCommerce");
-  for (const item of fullStoreItems) {
-    const eId = String(item.entityId || "");
+  // 3d. Delete from StoreAndCommerce
+  console.log("📡 Scanning & Preparing DynamoDB 'StoreAndCommerce' deletion keys...");
+  const allStoreItems = await scanFullDynamoTable("StoreAndCommerce");
+  const storeKeysToDelete: Record<string, any>[] = [];
+
+  for (const item of allStoreItems) {
+    const eId = String(item.entityId || "").toLowerCase();
     const cleanEId = eId.replace(/^MEMBERSHIP#/, "").replace(/^ORDER#/, "");
     const uId = String(item.userId || "").toLowerCase();
     const uEmail = String(item.userEmail || item.email || "").toLowerCase();
 
-    const isMatch = (
-      targetResolvedAliases.has(eId) ||
-      targetResolvedAliases.has(cleanEId.toLowerCase()) ||
-      (uId && targetResolvedAliases.has(uId)) ||
-      (uEmail && targetEmails.has(uEmail))
+    const isProtected = (
+      whitelistedAliases.has(eId) ||
+      whitelistedAliases.has(cleanEId) ||
+      (uId && whitelistedAliases.has(uId)) ||
+      (uEmail && whitelistedAliases.has(uEmail))
     );
 
-    if (isMatch) {
-      const ok = await deleteDynamoItem("StoreAndCommerce", { entityId: item.entityId, sk: item.sk });
-      if (ok) {
-        console.log(`   🗑️ Deleted StoreAndCommerce item: entityId=[${item.entityId}], sk=[${item.sk}]`);
-        totalDynamoDeleted++;
-      }
+    if (!isProtected && (eId.startsWith("membership#") || eId.startsWith("order#") || item.userId)) {
+      storeKeysToDelete.push({ entityId: item.entityId, sk: item.sk });
     }
   }
+  totalDynamoDeleted += await batchDeleteDynamoItems("StoreAndCommerce", storeKeysToDelete);
 
-  // 4e. Delete from SocialAndContent (Partition Key: contentId, Sort Key: sk)
-  console.log("📡 Scanning & Deleting from DynamoDB 'SocialAndContent'...");
-  const fullSocialItems = await scanFullDynamoTable("SocialAndContent");
-  for (const item of fullSocialItems) {
+  // 3e. Delete from SocialAndContent
+  console.log("📡 Scanning & Preparing DynamoDB 'SocialAndContent' deletion keys...");
+  const allSocialItems = await scanFullDynamoTable("SocialAndContent");
+  const socialKeysToDelete: Record<string, any>[] = [];
+
+  for (const item of allSocialItems) {
     const authorUid = String(item.authorUid || item.authorId || item.userId || item.reporterId || "").toLowerCase();
     const authorEmail = String(item.authorEmail || item.email || "").toLowerCase();
-    const contentId = String(item.contentId || "");
 
-    const isMatch = (
-      (authorUid && targetResolvedAliases.has(authorUid)) ||
-      (authorEmail && targetEmails.has(authorEmail)) ||
-      (contentId && targetResolvedAliases.has(contentId.toLowerCase()))
+    const isProtected = (
+      (authorUid && whitelistedAliases.has(authorUid)) ||
+      (authorEmail && whitelistedAliases.has(authorEmail))
     );
 
-    if (isMatch) {
-      const ok = await deleteDynamoItem("SocialAndContent", { contentId: item.contentId, sk: item.sk });
-      if (ok) {
-        console.log(`   🗑️ Deleted SocialAndContent item: contentId=[${item.contentId}], sk=[${item.sk}]`);
-        totalDynamoDeleted++;
-      }
+    if (!isProtected && (authorUid || authorEmail)) {
+      socialKeysToDelete.push({ contentId: item.contentId, sk: item.sk });
     }
   }
+  totalDynamoDeleted += await batchDeleteDynamoItems("SocialAndContent", socialKeysToDelete);
 
-  // 4f. Delete from RealTimeChat (Partition Key: roomId, Sort Key: sk)
-  console.log("📡 Scanning & Deleting from DynamoDB 'RealTimeChat'...");
-  const fullChatItems = await scanFullDynamoTable("RealTimeChat");
-  for (const item of fullChatItems) {
+  // 3f. Delete from RealTimeChat
+  console.log("📡 Scanning & Preparing DynamoDB 'RealTimeChat' deletion keys...");
+  const allChatItems = await scanFullDynamoTable("RealTimeChat");
+  const chatKeysToDelete: Record<string, any>[] = [];
+
+  for (const item of allChatItems) {
     const authorUid = String(item.authorUid || item.senderId || item.userId || "").toLowerCase();
     const hostId = String(item.hostUserId || item.creatorId || "").toLowerCase();
 
-    const isMatch = (
-      (authorUid && targetResolvedAliases.has(authorUid)) ||
-      (hostId && targetResolvedAliases.has(hostId))
+    const isProtected = (
+      (authorUid && whitelistedAliases.has(authorUid)) ||
+      (hostId && whitelistedAliases.has(hostId))
     );
 
-    if (isMatch) {
-      const ok = await deleteDynamoItem("RealTimeChat", { roomId: item.roomId, sk: item.sk });
-      if (ok) {
-        console.log(`   🗑️ Deleted RealTimeChat item: roomId=[${item.roomId}], sk=[${item.sk}]`);
-        totalDynamoDeleted++;
-      }
+    if (!isProtected && (authorUid || hostId)) {
+      chatKeysToDelete.push({ roomId: item.roomId, sk: item.sk });
     }
   }
+  totalDynamoDeleted += await batchDeleteDynamoItems("RealTimeChat", chatKeysToDelete);
 
-  console.log(`\n✅ DynamoDB Total Items Deleted: ${totalDynamoDeleted}\n`);
+  console.log(`\n✅ Total Items Deleted from AWS DynamoDB: ${totalDynamoDeleted}\n`);
 
   // ============================================================================
-  // 5. DELETE FROM FIRESTORE COLLECTIONS
+  // 4. DELETE NON-WHITELISTED USERS & DATA FROM FIRESTORE
   // ============================================================================
   console.log("======================================================================");
-  console.log("🔥 DELETING DATA FROM FIRESTORE COLLECTIONS");
+  console.log("🔥 DELETING NON-WHITELISTED DATA FROM FIRESTORE COLLECTIONS");
   console.log("======================================================================\n");
 
   let totalFirestoreDeleted = 0;
@@ -400,22 +457,24 @@ async function runPermanentCleanup() {
       const toDelete: FirebaseFirestore.DocumentReference[] = [];
 
       for (const doc of snap.docs) {
-        let matched = targetResolvedAliases.has(doc.id.toLowerCase());
-        if (!matched) {
+        const docId = doc.id.toLowerCase();
+        let isProtected = whitelistedAliases.has(docId);
+
+        if (!isProtected) {
           const data = doc.data();
           for (const field of fields) {
             const val = data[field];
-            if (typeof val === 'string' && (targetResolvedAliases.has(val.toLowerCase()) || targetEmails.has(val.toLowerCase()))) {
-              matched = true;
+            if (typeof val === 'string' && whitelistedAliases.has(val.toLowerCase())) {
+              isProtected = true;
               break;
-            } else if (Array.isArray(val) && val.some(v => typeof v === 'string' && (targetResolvedAliases.has(v.toLowerCase()) || targetEmails.has(v.toLowerCase())))) {
-              matched = true;
+            } else if (Array.isArray(val) && val.some(v => typeof v === 'string' && whitelistedAliases.has(v.toLowerCase()))) {
+              isProtected = true;
               break;
             }
           }
         }
 
-        if (matched) {
+        if (!isProtected) {
           toDelete.push(doc.ref);
         }
       }
@@ -430,8 +489,22 @@ async function runPermanentCleanup() {
     }
   }
 
+  // 4a. Clean Firestore 'users' collection (all except whitelisted)
+  const nonWhitelistedUserDocs: FirebaseFirestore.DocumentReference[] = [];
+  for (const doc of firestoreUsersSnap.docs) {
+    if (!protectedFirestoreDocIds.has(doc.id)) {
+      nonWhitelistedUserDocs.push(doc.ref);
+    }
+  }
+
+  if (nonWhitelistedUserDocs.length > 0) {
+    const deletedUsers = await deleteFirestoreDocs(nonWhitelistedUserDocs);
+    console.log(`   🗑️ Deleted ${deletedUsers} non-whitelisted user profiles from 'users' collection.`);
+    totalFirestoreDeleted += deletedUsers;
+  }
+
+  // 4b. Clean all 60+ Dependent Collections
   const collections = [
-    { name: "users", fields: ["email", "userId"] },
     { name: "otps", fields: ["email"] },
     { name: "roarProfiles", fields: ["userId", "uid"] },
     { name: "Sportsfan360Profile", fields: ["userId"] },
@@ -508,40 +581,37 @@ async function runPermanentCleanup() {
     await cleanFirestoreCollection(coll.name, coll.fields);
   }
 
-  // Also clean subcollections under users/{userId} (e.g. activityLog, videoProgress, audioProgress)
-  for (const docId of matchedUsersDocIds) {
-    try {
-      const userRef = db.collection("users").doc(docId);
-      const subActivitySnap = await userRef.collection("activityLog").get();
-      if (!subActivitySnap.empty) {
-        const subRefs = subActivitySnap.docs.map(d => d.ref);
-        const delCount = await deleteFirestoreDocs(subRefs);
-        console.log(`   🗑️ Deleted ${delCount} docs from subcollection 'users/${docId}/activityLog'`);
-        totalFirestoreDeleted += delCount;
-      }
-    } catch {
-      // Subcollection didn't exist or already cleaned
+  // 4c. Clean subcollections for deleted users
+  for (const doc of firestoreUsersSnap.docs) {
+    if (!protectedFirestoreDocIds.has(doc.id)) {
+      try {
+        const subSnap = await doc.ref.collection("activityLog").get();
+        if (!subSnap.empty) {
+          const subCount = await deleteFirestoreDocs(subSnap.docs.map(d => d.ref));
+          totalFirestoreDeleted += subCount;
+        }
+      } catch {}
     }
   }
 
-  console.log(`\n✅ Firestore Deletion Complete. Total Documents Deleted: ${totalFirestoreDeleted}\n`);
+  console.log(`\n✅ Total Documents Deleted from Firestore: ${totalFirestoreDeleted}\n`);
 
   // ============================================================================
-  // 6. FINAL SUMMARY
+  // 5. FINAL SUMMARY
   // ============================================================================
   console.log("======================================================================");
-  console.log("🎉 PERMANENT CLEANUP PROCESS COMPLETED");
+  console.log("🎉 DATABASE CLEANUP COMPLETED SUCCESSFULLY");
   console.log("======================================================================");
-  console.log(`Target Accounts Cleaned         : ${TARGET_USERS_TO_DELETE.length}`);
-  console.log(`DynamoDB Items Deleted          : ${totalDynamoDeleted}`);
-  console.log(`Firestore Documents Deleted     : ${totalFirestoreDeleted}`);
-  console.log(`Total Records Eradicated        : ${totalFirestoreDeleted + totalDynamoDeleted}`);
+  console.log(`Protected Accounts (Kept)         : ${whitelistedEmails.size}`);
+  console.log(`DynamoDB Items Deleted            : ${totalDynamoDeleted}`);
+  console.log(`Firestore Documents Deleted       : ${totalFirestoreDeleted}`);
+  console.log(`Total Database Records Eradicated : ${totalDynamoDeleted + totalFirestoreDeleted}`);
   console.log("----------------------------------------------------------------------");
-  console.log("✅ All targeted user records and dependencies have been 100% removed.");
+  console.log("✅ All non-whitelisted users and their data have been completely wiped.");
   console.log("======================================================================\n");
 }
 
-runPermanentCleanup().catch(err => {
-  console.error("❌ Cleanup execution failed:", err);
+runWhitelistCleanup().catch(err => {
+  console.error("❌ Whitelist cleanup execution failed:", err);
   process.exit(1);
 });

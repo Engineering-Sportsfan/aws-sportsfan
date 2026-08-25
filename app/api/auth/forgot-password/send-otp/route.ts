@@ -331,8 +331,12 @@ export async function POST(req: NextRequest) {
           </div>
         `,
       });
-    } catch (mailErr) {
-      console.warn("Mailer notification notice:", mailErr);
+      console.log(`[DynamoDB Auth] 📧 SUCCESS: Forgot-password OTP delivered to ${cleanEmail}`);
+    } catch (mailErr: any) {
+      console.error(`[DynamoDB Auth] ❌ FAILED to send forgot-password email to ${cleanEmail}:`, mailErr?.message || mailErr);
+      return NextResponse.json({
+        error: `Failed to deliver reset email: ${mailErr?.message || 'SMTP delivery error'}.`
+      }, { status: 500 });
     }
 
     return NextResponse.json({
