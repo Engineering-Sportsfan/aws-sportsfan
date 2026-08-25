@@ -4,18 +4,18 @@ frontend:
     preBuild:
       commands:
         - npm install --legacy-peer-deps
-        - env | grep -e CUSTOM_AWS_ >> .env.production
-        - env | grep -e AWS_REGION >> .env.production
-        - env | grep -e PYTHON_ >> .env.production
-        - env | grep -e NEXTAUTH_ >> .env.production
-        - env | grep -e JWT_ >> .env.production
-        - env | grep -e GOOGLE_ >> .env.production
-        - env | grep -e FIREBASE_ >> .env.production
-        - env | grep -e CLOUDINARY_ >> .env.production
-        - env | grep -e ROANUZ_ >> .env.production
-        - env | grep -e EMAIL >> .env.production
-        - env | grep -e SMTP_ >> .env.production
-        - env | grep -e NEXT_PUBLIC_ >> .env.production
+        - env | grep -e CUSTOM_AWS_ >> .env.production || true
+        - env | grep -e AWS_REGION >> .env.production || true
+        - env | grep -e PYTHON_ >> .env.production || true
+        - env | grep -e NEXTAUTH_ >> .env.production || true
+        - env | grep -e JWT_ >> .env.production || true
+        - env | grep -e GOOGLE_ >> .env.production || true
+        - env | grep -e FIREBASE_ >> .env.production || true
+        - env | grep -e CLOUDINARY_ >> .env.production || true
+        - env | grep -e ROANUZ_ >> .env.production || true
+        - env | grep -e EMAIL >> .env.production || true
+        - env | grep -e SMTP_ >> .env.production || true
+        - env | grep -e NEXT_PUBLIC_ >> .env.production || true
     build:
       commands:
         - npm run build
