@@ -4,6 +4,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
 import { GetCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { VerifyOtpRequest } from "@/types/auth";
+import { logAuthIssue } from "@/lib/logAuthIssue";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (!otpData) {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "otp",
+        reason: "OTP not found (Never requested or expired)",
+        endpoint: "/api/auth/verify-otp",
+      });
       return NextResponse.json(
         { error: "OTP not found. Please request a new one." },
         { status: 400 }
@@ -59,6 +66,12 @@ export async function POST(req: NextRequest) {
     // ── 2. Check expiry FIRST ────────────────────────────────────────────────
     const now = Date.now();
     if (now > (otpData.expiresAt as number)) {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "otp",
+        reason: "OTP expired before verification (>5 minutes)",
+        endpoint: "/api/auth/verify-otp",
+      });
       // Clean up expired OTP
       try {
         await docClient.send(
@@ -84,6 +97,12 @@ export async function POST(req: NextRequest) {
 
     // ── 3. Check OTP value ───────────────────────────────────────────────────
     if (otpData.otp !== otp) {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "otp",
+        reason: `Incorrect OTP code entered`,
+        endpoint: "/api/auth/verify-otp",
+      });
       return NextResponse.json({ error: "Invalid OTP" }, { status: 400 });
     }
 

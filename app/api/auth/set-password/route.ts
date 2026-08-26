@@ -5,6 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
 import bcrypt from "bcryptjs";
 import { GetCommand, QueryCommand, UpdateCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { logAuthIssue } from "@/lib/logAuthIssue";
 
 export const dynamic = "force-dynamic";
 
@@ -95,6 +96,12 @@ export async function POST(req: NextRequest) {
     // Check verification status (either from OTP or from existing user)
     const isVerified = otpData?.isVerified === true || existingUser?.isVerified === true;
     if (!isVerified) {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "signup",
+        reason: "Attempted to set password without completing OTP verification",
+        endpoint: "/api/auth/set-password",
+      });
       return NextResponse.json({ error: "Please verify your OTP code first before setting a password." }, { status: 403 });
     }
 
