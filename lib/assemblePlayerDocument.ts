@@ -77,6 +77,7 @@ export function assemblePlayerDocument(
     playerId: profile.playerId,
     sportId: profile.sportId ?? "cricket",
     format: profile.format ?? "Test",
+    gender: profile.gender ?? "male",
     currentClubId: profile.currentClubId ?? null,
 
     coreInfo: {
@@ -93,6 +94,7 @@ export function assemblePlayerDocument(
       profileImage: profile.profileImage ?? null,
       isCaptain: profile.isCaptain ?? false,
       testCaps: profile.testCaps ?? null,
+      gender: profile.gender ?? "male",
     },
 
     // record_highlight lives on the MS_Transactions row (was stored

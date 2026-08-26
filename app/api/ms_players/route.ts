@@ -270,6 +270,7 @@ export async function POST(request: NextRequest) {
       currentClubId: body.currentClubId ?? null,
       sportId: body.sportId ?? "cricket",
       format: body.format ?? "Test",
+      gender: body.gender ?? "male",
       testCaps: body.testCaps ?? null,
       dateOfBirth: body.dateOfBirth ?? null,
       birthPlace: body.birthPlace ?? null,
