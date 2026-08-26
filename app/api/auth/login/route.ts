@@ -195,6 +195,7 @@ import { docClient } from "@/lib/dynamodb";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { logAuthIssue } from "@/lib/logAuthIssue";
 
 export const dynamic = "force-dynamic";
 
@@ -294,6 +295,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (!user) {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "login",
+        reason: "User account not found in database",
+        endpoint: "/api/auth/login",
+      });
       return NextResponse.json(
         { error: "User not found" },
         { status: 404 }
@@ -302,6 +309,12 @@ export async function POST(req: NextRequest) {
 
     // ── 3. Check verified (skip for hosts created by admin) ──────────────────
     if (user.role !== "host" && !user.isVerified) {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "login",
+        reason: "User account not verified (OTP pending)",
+        endpoint: "/api/auth/login",
+      });
       return NextResponse.json(
         { error: "Please verify OTP first" },
         { status: 403 }
@@ -310,6 +323,12 @@ export async function POST(req: NextRequest) {
 
     // ── 4. Check account status ──────────────────────────────────────────────
     if (user.status === "disabled") {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "login",
+        reason: "User account has been disabled by admin",
+        endpoint: "/api/auth/login",
+      });
       return NextResponse.json(
         { error: "Your account has been disabled. Contact support." },
         { status: 403 }
@@ -319,8 +338,12 @@ export async function POST(req: NextRequest) {
     // ── 5. Check password ────────────────────────────────────────────────────
     const storedPassword = (user.password as string) || "";
     if (!storedPassword) {
-      // No password on any resolved record — this account was likely created via
-      // Google-only signup and has never set a password.
+      logAuthIssue({
+        email: cleanEmail,
+        type: "login",
+        reason: "Account has no password set (Signed up with Google)",
+        endpoint: "/api/auth/login",
+      });
       return NextResponse.json(
         { error: "This account has no password set. Please use 'Continue with Google' or reset your password." },
         { status: 401 }
@@ -330,6 +353,12 @@ export async function POST(req: NextRequest) {
     const isMatch = await bcrypt.compare(password, storedPassword);
 
     if (!isMatch) {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "login",
+        reason: "Invalid password entered (Credentials mismatch)",
+        endpoint: "/api/auth/login",
+      });
       return NextResponse.json(
         { error: "Invalid credentials" },
         { status: 401 }
@@ -341,33 +370,37 @@ export async function POST(req: NextRequest) {
     // ── 6. Check if host needs to change password on first login ─────────────
     const requiresPasswordChange = user.role === "host" && user.isFirstLogin === true;
 
-    // ── 7. Ensure consistent userId ──────────────────────────────────────────
-    let userId = user.userId as string | undefined;
-    if (!userId || userId.startsWith("google_")) {
-      userId = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
-      user.userId = userId;
+    const now = Date.now();
+    const userId = (user.userId as string) || cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
 
-      try {
-        await docClient.send(
-          new UpdateCommand({
-            TableName: "IdentityAndAccess",
-            Key: {
-              entityId: (user.entityId as string) || `USER#${cleanEmail}`,
-              sk: (user.sk as string) || "USER#META",
-            },
-            UpdateExpression: "SET userId = :u",
-            ExpressionAttributeValues: { ":u": userId },
-          })
-        );
-      } catch (err) {
-        console.warn("DynamoDB userId backfill notice:", err);
-      }
+    // Persist lastLoginAt and ensure consistent userId in DynamoDB & Firebase
+    try {
+      await docClient.send(
+        new UpdateCommand({
+          TableName: "IdentityAndAccess",
+          Key: {
+            entityId: (user.entityId as string) || `USER#${cleanEmail}`,
+            sk: (user.sk as string) || "USER#META",
+          },
+          UpdateExpression: "SET lastLoginAt = :ll, updatedAt = :u, userId = :uid",
+          ExpressionAttributeValues: {
+            ":ll": now,
+            ":u": now,
+            ":uid": userId,
+          },
+        })
+      );
+    } catch (err) {
+      console.warn("DynamoDB lastLoginAt update notice:", err);
+    }
 
-      try {
-        await db.collection("users").doc(cleanEmail).update({ userId });
-      } catch (err) {
-        console.warn("Firebase userId backfill notice:", err);
-      }
+    try {
+      await db.collection("users").doc(cleanEmail).set(
+        { lastLoginAt: now, updatedAt: now, userId },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn("Firebase lastLoginAt update notice:", err);
     }
 
     // ── 8. Create JWT token ──────────────────────────────────────────────────

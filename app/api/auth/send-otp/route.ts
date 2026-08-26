@@ -5,6 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
 import { transporter } from "@/lib/mailer";
 import { GetCommand, QueryCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { logAuthIssue } from "@/lib/logAuthIssue";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +15,21 @@ export async function POST(req: NextRequest) {
 
     // 1. Validation
     if (!email || !email.includes("@")) {
+      logAuthIssue({
+        email: email || "unknown",
+        type: "signup",
+        reason: "Invalid email format entered",
+        endpoint: "/api/auth/send-otp",
+      });
       return NextResponse.json({ error: "Valid email required" }, { status: 400 });
     }
     if (!firstName || !lastName) {
+      logAuthIssue({
+        email: email,
+        type: "signup",
+        reason: "First or last name is missing",
+        endpoint: "/api/auth/send-otp",
+      });
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
 
@@ -61,6 +74,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (userExists) {
+      logAuthIssue({
+        email: cleanEmail,
+        type: "signup",
+        reason: "User tried to register with an already registered email",
+        endpoint: "/api/auth/send-otp",
+      });
       return NextResponse.json(
         { error: "This email is already registered. Please log in instead." },
         { status: 409 }
@@ -123,6 +142,12 @@ export async function POST(req: NextRequest) {
       console.log(`[DynamoDB Auth] 📧 SUCCESS: OTP email delivered to ${cleanEmail}`);
     } catch (mailErr: any) {
       console.error(`[DynamoDB Auth] ❌ FAILED to send email to ${cleanEmail}:`, mailErr?.message || mailErr);
+      logAuthIssue({
+        email: cleanEmail,
+        type: "signup",
+        reason: `OTP email delivery failed: ${mailErr?.message || "SMTP error"}`,
+        endpoint: "/api/auth/send-otp",
+      });
       return NextResponse.json({
         error: `Failed to deliver OTP email: ${mailErr?.message || 'SMTP delivery error'}. Please verify EMAIL and EMAIL_PASS configuration.`
       }, { status: 500 });
