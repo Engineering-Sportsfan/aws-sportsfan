@@ -3,11 +3,16 @@ import { useEffect, useState } from "react";
 
 type User = {
   email: string;
-  firstName: string;
-  lastName: string;
+  userId?: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  avatar?: string;
+  authMethod?: string;
   createdAt: number;
+  lastLoginAt?: number;
   status: "active" | "disabled";
-  role: "user" | "moderator" | "admin";
+  role: "user" | "moderator" | "admin" | "host";
 };
 
 export default function SignupsPage() {
@@ -16,6 +21,7 @@ export default function SignupsPage() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [methodFilter, setMethodFilter] = useState<string>("all");
 
   useEffect(() => { fetchUsers(); }, []);
 
@@ -25,14 +31,6 @@ export default function SignupsPage() {
       const res = await fetch("/api/users");
       const data = await res.json();
       setUsers(data.users ?? []);
-
-      // ✅ Deduplicate by email just in case
-    const unique = Array.from(
-      new Map((data.users ?? []).map((u: User) => [u.email, u])).values()
-    ) as User[];
-    
-    console.log("Raw count:", data.users?.length, "Deduped count:", unique.length);
-    setUsers(unique);
     } catch {
       setUsers([]);
     } finally {
@@ -94,30 +92,40 @@ export default function SignupsPage() {
       setDeleting(null);
     }
   }
-  
 
-  const filtered = users.filter(u =>
-    `${u.firstName} ${u.lastName} ${u.email}`
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
+  const filtered = users.filter(u => {
+    const query = search.toLowerCase();
+    const matchesSearch = (
+      (u.name || "").toLowerCase().includes(query) ||
+      (u.firstName || "").toLowerCase().includes(query) ||
+      (u.lastName || "").toLowerCase().includes(query) ||
+      (u.email || "").toLowerCase().includes(query) ||
+      (u.authMethod || "").toLowerCase().includes(query) ||
+      (u.role || "").toLowerCase().includes(query)
+    );
+
+    if (methodFilter === "all") return matchesSearch;
+    if (methodFilter === "google") return matchesSearch && (u.authMethod?.includes("Google"));
+    if (methodFilter === "email") return matchesSearch && (u.authMethod?.includes("Email") || u.authMethod?.includes("Password"));
+    return matchesSearch;
+  });
 
   const totalActive = users.filter(u => u.status === "active").length;
-  const totalDisabled = users.filter(u => u.status === "disabled").length;
+  const totalGoogle = users.filter(u => u.authMethod?.includes("Google")).length;
+  const totalEmail = users.filter(u => u.authMethod?.includes("Password") || u.authMethod?.includes("Email")).length;
 
   return (
     <>
-      {/* Inject responsive styles */}
+      {/* Responsive styles */}
       <style>{`
         .users-stats {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(4, 1fr);
           gap: 14px;
           margin-bottom: 20px;
         }
-        @media (max-width: 480px) {
-          .users-stats { grid-template-columns: 1fr 1fr; }
-          .users-stats > :last-child { grid-column: 1 / -1; }
+        @media (max-width: 768px) {
+          .users-stats { grid-template-columns: repeat(2, 1fr); }
         }
 
         .toolbar-wrap {
@@ -135,15 +143,14 @@ export default function SignupsPage() {
           background: #0d1117;
           border: 1px solid #2d3748;
           border-radius: 6px;
-          padding: 5px 10px;
-          width: 220px;
+          padding: 6px 12px;
+          width: 260px;
         }
         @media (max-width: 480px) {
           .search-wrap { width: 100%; }
           .user-count  { width: 100%; text-align: right; }
         }
 
-        /* Horizontal scroll for table */
         .table-scroll-x {
           overflow-x: auto;
           -webkit-overflow-scrolling: touch;
@@ -151,35 +158,53 @@ export default function SignupsPage() {
         .table-scroll-x table {
           width: 100%;
           border-collapse: collapse;
-          /* min-width keeps columns readable before scroll kicks in */
-          min-width: 700px;
+          min-width: 860px;
         }
 
-        /* Compact action buttons on small screens */
         .action-cell {
           display: flex;
           gap: 6px;
           flex-wrap: nowrap;
         }
-        @media (max-width: 900px) {
-          .action-cell { flex-direction: column; gap: 4px; }
-        }
 
-        /* Scroll hint shadow on right edge */
         .table-container {
           background: #161b22;
           border: 1px solid #21282f;
-          border-radius: 6px;
+          border-radius: 8px;
           overflow: hidden;
         }
       `}</style>
 
       {/* Header */}
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ fontSize: 17, fontWeight: 600 }}>User Management</h1>
-        <p style={{ color: "#7d8590", fontSize: 12, marginTop: 2 }}>
-          Control user access, roles and account status
-        </p>
+      <div style={{ marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h1 style={{ fontSize: 18, fontWeight: 600 }}>User Management & Signups</h1>
+          <p style={{ color: "#7d8590", fontSize: 12, marginTop: 2 }}>
+            Complete list of all users registered via Google and Email & Password
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <a
+            href="/admin/users/auth-issues"
+            style={{
+              background: "rgba(248, 81, 73, 0.15)", border: "1px solid rgba(248, 81, 73, 0.3)", borderRadius: 6,
+              color: "#ff7b72", padding: "6px 12px", fontSize: 12, textDecoration: "none",
+              display: "flex", alignItems: "center", gap: 6, fontWeight: 500,
+            }}
+          >
+            ⚠️ View Auth Issues Logs
+          </a>
+          <button
+            onClick={fetchUsers}
+            style={{
+              background: "#21262d", border: "1px solid #30363d", borderRadius: 6,
+              color: "#c9d1d9", padding: "6px 12px", fontSize: 12, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 6
+            }}
+          >
+            🔄 Refresh List
+          </button>
+        </div>
       </div>
 
       {/* Stat Cards */}
@@ -187,16 +212,17 @@ export default function SignupsPage() {
         {[
           { label: "Total Users", value: users.length, color: "#388bfd" },
           { label: "Active", value: totalActive, color: "#2ea043" },
-          { label: "Disabled", value: totalDisabled, color: "#da3633" },
+          { label: "Google Logins", value: totalGoogle, color: "#e36209" },
+          { label: "Email / Password", value: totalEmail, color: "#a371f7" },
         ].map(s => (
           <div key={s.label} style={{
             background: "#161b22", border: "1px solid #21282f",
-            borderTop: `2px solid ${s.color}`, borderRadius: 6, padding: 16,
+            borderTop: `2px solid ${s.color}`, borderRadius: 6, padding: 14,
           }}>
             <div style={{ fontSize: 11, color: "#7d8590", textTransform: "uppercase", letterSpacing: ".06em" }}>
               {s.label}
             </div>
-            <div style={{ fontSize: 28, fontWeight: 600, fontFamily: "var(--font-mono)", marginTop: 6 }}>
+            <div style={{ fontSize: 26, fontWeight: 600, fontFamily: "var(--font-mono)", marginTop: 6 }}>
               {loading ? "—" : s.value}
             </div>
           </div>
@@ -209,9 +235,9 @@ export default function SignupsPage() {
         {/* Toolbar */}
         <div className="toolbar-wrap">
           <div className="search-wrap">
-            <span style={{ color: "#7d8590" }}>⌕</span>
+            <span style={{ color: "#7d8590" }}>🔍</span>
             <input
-              placeholder="Search name or email…"
+              placeholder="Search name, email, auth method…"
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={{
@@ -220,6 +246,34 @@ export default function SignupsPage() {
               }}
             />
           </div>
+
+          {/* Filter by Auth Method */}
+          <div style={{ display: "flex", gap: 6 }}>
+            {[
+              { id: "all", label: "All Methods" },
+              { id: "google", label: "Google" },
+              { id: "email", label: "Email & Password" }
+            ].map(m => (
+              <button
+                key={m.id}
+                onClick={() => setMethodFilter(m.id)}
+                style={{
+                  background: methodFilter === m.id ? "#388bfd" : "#21262d",
+                  color: methodFilter === m.id ? "#ffffff" : "#8b949e",
+                  border: "1px solid #30363d",
+                  borderRadius: 6,
+                  padding: "4px 10px",
+                  fontSize: 11,
+                  cursor: "pointer",
+                  fontWeight: 500,
+                  transition: "all .15s"
+                }}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
           <div className="user-count" style={{ marginLeft: "auto", fontSize: 12, color: "#7d8590" }}>
             {filtered.length} of {users.length} users
           </div>
@@ -230,9 +284,9 @@ export default function SignupsPage() {
           <table>
             <thead>
               <tr style={{ background: "#1c2330", borderBottom: "1px solid #21282f" }}>
-                {["#", "Name", "Email", "Role", "Signed Up", "Status", "Actions"].map(h => (
+                {["#", "User", "Email", "Login / Signup Method", "Role", "Signed Up", "Last Login", "Status", "Actions"].map(h => (
                   <th key={h} style={{
-                    textAlign: "left", padding: "8px 14px",
+                    textAlign: "left", padding: "10px 14px",
                     fontSize: 10, fontWeight: 600, letterSpacing: ".07em",
                     textTransform: "uppercase", color: "#7d8590",
                     whiteSpace: "nowrap",
@@ -243,22 +297,26 @@ export default function SignupsPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: 24, textAlign: "center", color: "#7d8590" }}>
-                    Loading…
+                  <td colSpan={9} style={{ padding: 30, textAlign: "center", color: "#7d8590" }}>
+                    Loading users from DynamoDB…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: 24, textAlign: "center", color: "#7d8590" }}>
-                    No users found
+                  <td colSpan={9} style={{ padding: 30, textAlign: "center", color: "#7d8590" }}>
+                    No users found matching your search.
                   </td>
                 </tr>
               ) : (
                 filtered.map((u, i) => {
-                  const initials = `${u.firstName?.[0] ?? ""}${u.lastName?.[0] ?? ""}`.toUpperCase() || "?";
+                  const displayName = u.name || `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email.split("@")[0];
+                  const initials = displayName.slice(0, 2).toUpperCase() || "U";
                   const isDeleting = deleting === u.email;
                   const isUpdating = updating === u.email;
                   const isActive = u.status !== "disabled";
+
+                  const isGoogle = u.authMethod?.includes("Google");
+                  const isPassword = u.authMethod?.includes("Password") || u.authMethod?.includes("Email");
 
                   return (
                     <tr key={u.email} style={{
@@ -269,33 +327,77 @@ export default function SignupsPage() {
                     }}>
 
                       {/* # */}
-                      <td style={{ padding: "9px 14px", color: "#7d8590", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                      <td style={{ padding: "10px 14px", color: "#7d8590", fontFamily: "var(--font-mono)", fontSize: 12 }}>
                         {i + 1}
                       </td>
 
-                      {/* Name */}
-                      <td style={{ padding: "9px 14px", whiteSpace: "nowrap" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                          <div style={{
-                            width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-                            background: isActive ? "rgba(31,111,235,.2)" : "rgba(218,54,51,.15)",
-                            color: isActive ? "#388bfd" : "#da3633",
-                            display: "grid", placeItems: "center",
-                            fontSize: 10, fontWeight: 700,
-                          }}>{initials}</div>
-                          <div style={{ fontSize: 12, fontWeight: 500 }}>
-                            {u.firstName ?? "—"} {u.lastName ?? ""}
+                      {/* User Info (Avatar + Name) */}
+                      <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          {u.avatar ? (
+                            <img
+                              src={u.avatar}
+                              alt={displayName}
+                              style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover" }}
+                            />
+                          ) : (
+                            <div style={{
+                              width: 30, height: 30, borderRadius: "50%", flexShrink: 0,
+                              background: isGoogle ? "rgba(227, 98, 9, 0.2)" : "rgba(56, 139, 253, 0.2)",
+                              color: isGoogle ? "#f0883e" : "#58a6ff",
+                              display: "grid", placeItems: "center",
+                              fontSize: 11, fontWeight: 700,
+                            }}>{initials}</div>
+                          )}
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3" }}>
+                              {displayName}
+                            </div>
+                            {u.userId && (
+                              <div style={{ fontSize: 10, color: "#8b949e", fontFamily: "var(--font-mono)" }}>
+                                {u.userId}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
 
                       {/* Email */}
-                      <td style={{ padding: "9px 14px", fontSize: 12, color: "#7d8590", whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "10px 14px", fontSize: 12, color: "#8b949e", whiteSpace: "nowrap" }}>
                         {u.email}
                       </td>
 
+                      {/* Login / Auth Method Badge */}
+                      <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                        {isGoogle && isPassword ? (
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "3px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600,
+                            background: "rgba(163, 113, 247, 0.15)", color: "#d2a8ff", border: "1px solid rgba(163, 113, 247, 0.3)"
+                          }}>
+                            ⚡ Google + Password
+                          </span>
+                        ) : isGoogle ? (
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "3px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600,
+                            background: "rgba(227, 98, 9, 0.15)", color: "#f0883e", border: "1px solid rgba(227, 98, 9, 0.3)"
+                          }}>
+                            <span style={{ fontWeight: 800 }}>G</span> Google
+                          </span>
+                        ) : (
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "3px 8px", borderRadius: 12, fontSize: 11, fontWeight: 600,
+                            background: "rgba(56, 139, 253, 0.15)", color: "#58a6ff", border: "1px solid rgba(56, 139, 253, 0.3)"
+                          }}>
+                            ✉️ Email & Password
+                          </span>
+                        )}
+                      </td>
+
                       {/* Role */}
-                      <td style={{ padding: "9px 14px" }}>
+                      <td style={{ padding: "10px 14px" }}>
                         <select
                           value={u.role ?? "user"}
                           disabled={isUpdating}
@@ -310,11 +412,12 @@ export default function SignupsPage() {
                           <option value="user">User</option>
                           <option value="moderator">Moderator</option>
                           <option value="admin">Admin</option>
+                          <option value="host">Host</option>
                         </select>
                       </td>
 
                       {/* Signed Up */}
-                      <td style={{ padding: "9px 14px", fontFamily: "var(--font-mono)", fontSize: 12, color: "#7d8590", whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "10px 14px", fontFamily: "var(--font-mono)", fontSize: 11, color: "#8b949e", whiteSpace: "nowrap" }}>
                         {u.createdAt
                           ? new Date(u.createdAt).toLocaleString("en-IN", {
                             dateStyle: "medium", timeStyle: "short",
@@ -322,8 +425,17 @@ export default function SignupsPage() {
                           : "—"}
                       </td>
 
+                      {/* Last Login */}
+                      <td style={{ padding: "10px 14px", fontFamily: "var(--font-mono)", fontSize: 11, color: "#8b949e", whiteSpace: "nowrap" }}>
+                        {u.lastLoginAt
+                          ? new Date(u.lastLoginAt).toLocaleString("en-IN", {
+                            dateStyle: "medium", timeStyle: "short",
+                          })
+                          : "—"}
+                      </td>
+
                       {/* Status Badge */}
-                      <td style={{ padding: "9px 14px", whiteSpace: "nowrap" }}>
+                      <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
                         <span style={{
                           display: "inline-flex", alignItems: "center", gap: 4,
                           padding: "2px 8px", borderRadius: 10,
@@ -337,7 +449,7 @@ export default function SignupsPage() {
                       </td>
 
                       {/* Actions */}
-                      <td style={{ padding: "9px 14px" }}>
+                      <td style={{ padding: "10px 14px" }}>
                         <div className="action-cell">
                           <button
                             onClick={() => handleToggleStatus(u)}

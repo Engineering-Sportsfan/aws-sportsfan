@@ -590,6 +590,7 @@ const FULL_NAV: NavGroup[] = [
         label: "Users", icon: "◉", badge: "30+",
         children: [
           { href: "/admin/users/signups", label: "Signups" },
+          { href: "/admin/users/auth-issues", label: "⚠️ Auth Issues Tracker" },
         ],
       },
       {
@@ -602,7 +603,10 @@ const FULL_NAV: NavGroup[] = [
   },
   {
     label: "Auth",
-    items: [{ href: "/admin/otp-logs", icon: "⊡", label: "OTP Logs" }],
+    items: [
+      { href: "/admin/otp-logs", icon: "⊡", label: "OTP Logs" },
+      { href: "/admin/users/auth-issues", icon: "⚠️", label: "Auth Issues Tracker" },
+    ],
   },
   {
     label: "Home Data Components",
