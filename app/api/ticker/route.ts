@@ -235,7 +235,15 @@ async function fetchCricketTicker(): Promise<TickerItem[]> {
   // 6. Recent completed
   for (const match of allCompleted.slice(0, 2)) {
     const details = await fetchRoanuzMatchScore(token, match.key);
-    items.push(...formatMatchToTickerItems(details || match));
+    const displayMatch = details || match;
+    const matchName = displayMatch.short_name || displayMatch.name || "Cricket";
+    items.push(...formatMatchToTickerItems(displayMatch));
+    
+    // Fetch last balls and over summary for highlights
+    const balls = await fetchBallByBall(token, match.key);
+    if (balls.length > 0) items.push(...formatBallByBallItems(balls, matchName, match.key));
+    const overs = await fetchOverSummary(token, match.key);
+    if (overs.length > 0) items.push(...formatOverSummaryItems(overs, matchName, match.key));
   }
 
   return items.length ? items : DEMO_UPDATES.filter(u => u.sport === "cricket");
