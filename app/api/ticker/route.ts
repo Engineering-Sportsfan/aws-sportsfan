@@ -15,12 +15,20 @@ interface TickerItem {
   text: string;
   badge: string;
   status: string;
+  is_four?: boolean;
+  is_six?: boolean;
+  is_wicket?: boolean;
 }
 
 const DEMO_UPDATES: TickerItem[] = [
   { id: "demo_1", type: "live_score", sport: "cricket", text: "🏏 LIVE · India vs Sri Lanka · 1st Test, Galle", badge: "1st Test - Galle", status: "live" },
   { id: "demo_2", type: "moments", sport: "cricket", text: "🔥 WICKET! Ashwin strikes! K. Mendis lbw b Ashwin 42 - SL 187/3", badge: "1st Test - Galle", status: "live" },
   { id: "demo_3", type: "sports_update", sport: "cricket", text: "🏏 DRINKS BREAK · Sri Lanka trailing by 115 runs", badge: "1st Test - Galle", status: "live" },
+  { id: "demo_bbb_1_20.5", type: "ball_by_ball", sport: "cricket", text: "🔵 FOUR! K L Rahul punches it through the covers!", badge: "1st Test - Galle", status: "live", is_four: true },
+  { id: "demo_bbb_2_20.2", type: "ball_by_ball", sport: "cricket", text: "💥 SIX! Rishabh Pant goes big over mid-wicket!", badge: "1st Test - Galle", status: "live", is_six: true },
+  { id: "demo_bbb_3_19.6", type: "ball_by_ball", sport: "cricket", text: "🔴 WICKET! Kamindu Mendis is out! Caught by Gill.", badge: "1st Test - Galle", status: "live", is_wicket: true },
+  { id: "demo_bbb_4_19.3", type: "ball_by_ball", sport: "cricket", text: "🏏 Good running between the wickets! 2 runs added.", badge: "1st Test - Galle", status: "live", is_four: false, is_six: false, is_wicket: false },
+  { id: "demo_bbb_5_19.1", type: "ball_by_ball", sport: "cricket", text: "🔵 FOUR! Beautiful drive from Shubman Gill!", badge: "1st Test - Galle", status: "live", is_four: true },
 ];
 
 import axios from "axios";
@@ -136,7 +144,17 @@ function formatBallByBallItems(balls: any[], matchName: string, matchKey: string
     const isFour = ball.batsman?.is_four;
     const isSix = ball.batsman?.is_six;
     const emoji = isWicket ? "🔴 WICKET!" : isSix ? "💥 SIX!" : isFour ? "🔵 FOUR!" : "🏏";
-    items.push({ id: `bbb_${matchKey}_${ball.key}`, type: "ball_by_ball", sport: "cricket", text: `${emoji} ${ball.comment}`, badge: matchName, status: "live" });
+    items.push({ 
+      id: `bbb_${matchKey}_${ball.key}`, 
+      type: "ball_by_ball", 
+      sport: "cricket", 
+      text: `${emoji} ${ball.comment}`, 
+      badge: matchName, 
+      status: "live",
+      is_four: !!isFour,
+      is_six: !!isSix,
+      is_wicket: !!isWicket
+    });
   }
   return items;
 }
@@ -155,7 +173,9 @@ function formatOverSummaryItems(summaries: any[], matchName: string, matchKey: s
 
 async function fetchCricketTicker(): Promise<TickerItem[]> {
   const token = await getRoanuzToken();
-  if (!token) return [];
+  if (!token) {
+    return DEMO_UPDATES.filter(u => u.sport === "cricket");
+  }
 
   // 1. Global fixtures
   let globalLive: any[] = [];
