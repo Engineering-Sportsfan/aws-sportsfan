@@ -812,10 +812,11 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Fan Battle", icon: "◉",
+        label: "Feed Engagements", icon: "⚡",
         children: [
-          { href: "/admin/fanbattle-management/add-fanbattle", label: "Add Fan Battle" },
-          { href: "/admin/fanbattle-management/fanbattle-list", label: "Fan Battle List" },
+          { href: "/admin/engagements-management", label: "⚡ All Engagements & Creator" },
+          { href: "/admin/fanbattle-management/add-fanbattle", label: "Add Fan Battle Quiz" },
+          { href: "/admin/fanbattle-management/fanbattle-list", label: "Fan Battle Quiz List" },
           { href: "/admin/fanbattlearena-management/add-battlearena", label: "Add Fan Battle Arena" },
           { href: "/admin/fanbattlearena-management/battlearena-list", label: "Fan Battle Arena List" },
         ],
