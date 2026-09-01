@@ -80,8 +80,14 @@ export interface EngagementItem {
 
   // Social / Engagement counters
   likes: number;
+  likeCount?: number;
   shares: number;
   totalEngaged: number;
+
+  // Hydrated user interaction fields
+  userLiked?: boolean;
+  userVoted?: boolean;
+  userVote?: string | null;
 
   createdAt: number;
   updatedAt: number;

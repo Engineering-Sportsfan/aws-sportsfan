@@ -3,8 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
-import { ScanCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem, EngagementType } from "@/types/engagements";
+import { getUser } from "@/lib/getUser";
 
 export const dynamic = "force-dynamic";
 
@@ -107,11 +108,52 @@ export async function GET(req: NextRequest) {
       items = items.filter(i => (i.sport || "cricket").toLowerCase() === sport.toLowerCase());
     }
 
-    // Sort descending by createdAt
-    items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
     if (limit > 0) {
       items = items.slice(0, limit);
+    }
+
+    // 3. Hydrate user interactions (userLiked, userVoted, userVote) matching api/roar pattern
+    const authUser = await getUser(req);
+    const resolvedUserId = authUser?.userId || authUser?.email || searchParams.get("userId");
+
+    if (resolvedUserId && items.length > 0) {
+      try {
+        const [likeResults, voteResults] = await Promise.all([
+          Promise.all(
+            items.map(it =>
+              docClient
+                .send(
+                  new GetCommand({
+                    TableName: "SocialAndContent",
+                    Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `LIKE#${resolvedUserId}` },
+                  })
+                )
+                .catch(() => ({ Item: null }))
+            )
+          ),
+          Promise.all(
+            items.map(it =>
+              docClient
+                .send(
+                  new GetCommand({
+                    TableName: "SocialAndContent",
+                    Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `VOTE#${resolvedUserId}` },
+                  })
+                )
+                .catch(() => ({ Item: null }))
+            )
+          ),
+        ]);
+
+        items = items.map((it, idx) => ({
+          ...it,
+          userLiked: !!likeResults[idx]?.Item,
+          userVoted: !!voteResults[idx]?.Item,
+          userVote: voteResults[idx]?.Item?.selectedOptionId ?? null,
+        }));
+      } catch (hydrationErr) {
+        console.warn("Engagements user interaction hydration notice:", hydrationErr);
+      }
     }
 
     return NextResponse.json({

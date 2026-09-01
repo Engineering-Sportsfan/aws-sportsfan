@@ -1,15 +1,75 @@
-// app/api/engagements/[id]/vote/route.ts — Interactive Voting, Quiz Validation & Prediction Staking
+// app/api/engagements/[id]/vote/route.ts — Interactive Voting, Quiz Validation & Prediction Staking with Single-Vote Enforcement
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
-import { GetCommand, UpdateCommand,PutCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { getUser } from "@/lib/getUser";
 
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
+// ─── GET /api/engagements/[id]/vote — Check if user has already voted ─────────
+export async function GET(req: NextRequest, { params }: RouteParams) {
+  try {
+    const { id } = await params;
+    const { searchParams } = new URL(req.url);
+    const authUser = await getUser(req);
+    const userId = authUser?.userId || authUser?.email || searchParams.get("userId");
+
+    if (!userId) {
+      return NextResponse.json({ hasVoted: false });
+    }
+
+    let voteItem: any = null;
+
+    // 1. Check standardized DynamoDB key shape: contentId = ENGAGEMENT#{id}, sk = VOTE#{userId}
+    try {
+      const getVote = await docClient.send(
+        new GetCommand({
+          TableName: "SocialAndContent",
+          Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${userId}` },
+        })
+      );
+      if (getVote.Item) voteItem = getVote.Item;
+    } catch (dynErr) {
+      console.warn("DynamoDB vote status check notice:", dynErr);
+    }
+
+    // 2. Fallback: Check legacy DynamoDB key shape: contentId = USER_VOTE#{userId}, sk = ENGAGEMENT#{id}
+    if (!voteItem) {
+      try {
+        const legacyVote = await docClient.send(
+          new GetCommand({
+            TableName: "SocialAndContent",
+            Key: { contentId: `USER_VOTE#${userId}`, sk: `ENGAGEMENT#${id}` },
+          })
+        );
+        if (legacyVote.Item) voteItem = legacyVote.Item;
+      } catch {}
+    }
+
+    // 3. Fallback: Check Firestore user_engagements collection
+    if (!voteItem && db) {
+      try {
+        const snap = await db.collection("user_engagements").doc(`${userId}_${id}`).get();
+        if (snap.exists) voteItem = snap.data();
+      } catch {}
+    }
+
+    return NextResponse.json({
+      hasVoted: !!voteItem,
+      selectedOptionId: voteItem?.selectedOptionId || null,
+      vote: voteItem,
+    });
+  } catch (error: unknown) {
+    console.error("GET /api/engagements/[id]/vote error:", error);
+    return NextResponse.json({ hasVoted: false });
+  }
+}
+
+// ─── POST /api/engagements/[id]/vote — Cast Vote (Enforces 1 vote per user) ───
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
@@ -20,11 +80,74 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "selectedOptionId is required" }, { status: 400 });
     }
 
-    // Try to get authenticated user or fallback to input/anonymous ID
+    // Try to get authenticated user or fallback to input ID / client identifier
     const authUser = await getUser(req);
-    const userId = authUser?.userId || inputUserId || `anon_${Math.random().toString(36).slice(2, 9)}`;
+    const userId =
+      authUser?.userId ||
+      authUser?.email ||
+      inputUserId ||
+      req.headers.get("x-user-id") ||
+      `anon_${req.headers.get("x-forwarded-for") || "client"}`;
 
-    // 1. Fetch current engagement item
+    // ─── Step 1: Enforce Single-Vote Pre-check ────────────────────────────────
+    let existingVote: any = null;
+
+    if (userId) {
+      // Check standardized DynamoDB key: contentId = ENGAGEMENT#{id}, sk = VOTE#{userId}
+      try {
+        const voteRes = await docClient.send(
+          new GetCommand({
+            TableName: "SocialAndContent",
+            Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${userId}` },
+          })
+        );
+        if (voteRes.Item) {
+          existingVote = voteRes.Item;
+        }
+      } catch (dynCheckErr) {
+        console.warn("DynamoDB existing vote check notice:", dynCheckErr);
+      }
+
+      // Check legacy DynamoDB key format: contentId = USER_VOTE#{userId}, sk = ENGAGEMENT#{id}
+      if (!existingVote) {
+        try {
+          const legacyVoteRes = await docClient.send(
+            new GetCommand({
+              TableName: "SocialAndContent",
+              Key: { contentId: `USER_VOTE#${userId}`, sk: `ENGAGEMENT#${id}` },
+            })
+          );
+          if (legacyVoteRes.Item) {
+            existingVote = legacyVoteRes.Item;
+          }
+        } catch {}
+      }
+
+      // Firestore fallback check
+      if (!existingVote && db) {
+        try {
+          const snap = await db.collection("user_engagements").doc(`${userId}_${id}`).get();
+          if (snap.exists) {
+            existingVote = snap.data();
+          }
+        } catch {}
+      }
+    }
+
+    if (existingVote) {
+      return NextResponse.json(
+        {
+          success: false,
+          alreadyVoted: true,
+          error: "You have already voted on this engagement",
+          selectedOptionId: existingVote.selectedOptionId,
+          previousVote: existingVote,
+        },
+        { status: 400 }
+      );
+    }
+
+    // ─── Step 2: Fetch Current Engagement Item ───────────────────────────────
     let item: any = null;
     try {
       const getRes = await docClient.send(
@@ -36,7 +159,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       if (getRes.Item) item = getRes.Item;
     } catch {}
 
-    if (!item) {
+    if (!item && db) {
       const snap = await db.collection("engagements").doc(id).get();
       if (snap.exists) item = { id: snap.id, ...snap.data() };
     }
@@ -48,7 +171,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     let responseData: Record<string, any> = { success: true };
     const now = Date.now();
 
-    // ─── 1. Fan Battle Vote Handling ──────────────────────────────────────────
+    // ─── Step 3: Vote Calculation by Type ─────────────────────────────────────
+    // 3.1 Fan Battle Vote Handling
     if (item.type === "fan_battle" && item.fanBattleData) {
       const left = { ...item.fanBattleData.leftCompetitor };
       const right = { ...item.fanBattleData.rightCompetitor };
@@ -80,7 +204,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
-    // ─── 2. Quiz Answer Handling ──────────────────────────────────────────────
+    // 3.2 Quiz Answer Handling
     else if (item.type === "quiz" && item.quizData) {
       const isCorrect = String(selectedOptionId).trim().toUpperCase() === String(item.quizData.correctOptionId).trim().toUpperCase();
       const pointsAwarded = isCorrect ? Number(item.quizData.pointsReward || 50) : 0;
@@ -116,7 +240,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
-    // ─── 3. Poll Vote Handling ────────────────────────────────────────────────
+    // 3.3 Poll Vote Handling
     else if (item.type === "poll" && item.pollData) {
       const options = (item.pollData.options || []).map((opt: any) => {
         if (opt.id === selectedOptionId || opt.text === selectedOptionId) {
@@ -144,7 +268,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
-    // ─── 4. Prediction Stake Handling ─────────────────────────────────────────
+    // 3.4 Prediction Stake Handling
     else if (item.type === "prediction" && item.predictionData) {
       const left = { ...item.predictionData.leftChoice };
       const right = { ...item.predictionData.rightChoice };
@@ -175,28 +299,46 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
-    // Update the engagement item in DynamoDB + Firestore
+    // ─── Step 4: Update Parent Engagement Item ────────────────────────────────
     const dynamoItem = {
       contentId: `ENGAGEMENT#${id}`,
       sk: "ENGAGEMENT#META",
-      entityId: `ENGAGEMENT#${item.type.toUpperCase()}`,
+      entityId: `ENGAGEMENT#${String(item.type).toUpperCase()}`,
       ...item,
       updatedAt: now,
     };
 
     await dualWrite("engagements", id, "SocialAndContent", dynamoItem);
 
-    // Record user interaction in DynamoDB + Firestore
+    // ─── Step 5: Save User Vote Record ────────────────────────────────────────
     const userRecord = {
       userId,
       engagementId: id,
       type: item.type,
       selectedOptionId,
+      votedAt: now,
       timestamp: now,
       ...responseData,
     };
 
-    // 1. Save user vote record to DynamoDB
+    // A. Standardized DynamoDB Key: contentId = ENGAGEMENT#{id}, sk = VOTE#{userId} (Matches api/roar pattern)
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: "SocialAndContent",
+          Item: {
+            contentId: `ENGAGEMENT#${id}`,
+            sk: `VOTE#${userId}`,
+            entityId: `VOTE#${String(item.type).toUpperCase()}`,
+            ...userRecord,
+          },
+        })
+      );
+    } catch (dynVoteErr) {
+      console.warn("DynamoDB standard vote record notice:", dynVoteErr);
+    }
+
+    // B. Legacy DynamoDB Key: contentId = USER_VOTE#{userId}, sk = ENGAGEMENT#{id} (Backwards compatibility)
     try {
       await docClient.send(
         new PutCommand({
@@ -209,11 +351,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           },
         })
       );
-    } catch (dynVoteErr) {
-      console.warn("DynamoDB user vote record notice:", dynVoteErr);
-    }
+    } catch {}
 
-    // 2. Save user vote record to Firestore
+    // C. Save user vote record to Firestore
     if (db) {
       try {
         await db.collection("user_engagements").doc(`${userId}_${id}`).set(userRecord);
