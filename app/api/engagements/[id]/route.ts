@@ -6,6 +6,8 @@ import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem } from "@/types/engagements";
 
+import { getUser } from "@/lib/getUser";
+
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -14,6 +16,7 @@ type RouteParams = { params: Promise<{ id: string }> };
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
+    const { searchParams } = new URL(req.url);
 
     let item: any = null;
 
@@ -42,6 +45,42 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     if (!item) {
       return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
+    }
+
+    // Hydrate user interaction state (userLiked, userVoted, userVote) matching api/roar pattern
+    const authUser = await getUser(req);
+    const resolvedUserId = authUser?.userId || authUser?.email || searchParams.get("userId");
+
+    if (resolvedUserId) {
+      try {
+        const [likeRes, voteRes] = await Promise.all([
+          docClient
+            .send(
+              new GetCommand({
+                TableName: "SocialAndContent",
+                Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${resolvedUserId}` },
+              })
+            )
+            .catch(() => ({ Item: null })),
+          docClient
+            .send(
+              new GetCommand({
+                TableName: "SocialAndContent",
+                Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${resolvedUserId}` },
+              })
+            )
+            .catch(() => ({ Item: null })),
+        ]);
+
+        item = {
+          ...item,
+          userLiked: !!likeRes?.Item,
+          userVoted: !!voteRes?.Item,
+          userVote: voteRes?.Item?.selectedOptionId ?? null,
+        };
+      } catch (hydrationErr) {
+        console.warn("Single engagement user hydration notice:", hydrationErr);
+      }
     }
 
     return NextResponse.json({ success: true, engagement: item });
