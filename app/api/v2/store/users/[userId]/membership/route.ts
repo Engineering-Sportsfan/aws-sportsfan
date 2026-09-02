@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/firebaseAdmin';
 import { docClient } from '@/lib/dynamodb';
+import { TABLES } from '@/lib/tableNames';
 import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { fetchUserMembership } from '@/app/api/v2/store/membership.helper';
 
@@ -41,7 +42,7 @@ export async function POST(
 
     try {
       const res = await docClient.send(new GetCommand({
-        TableName: 'StoreAndCommerce',
+        TableName: TABLES.StoreAndCommerce,
         Key: { entityId: `PRODUCT#${planId}`, sk: `PRODUCT#${planId}` },
       }));
       if (res.Item) {
@@ -88,7 +89,7 @@ export async function POST(
     // 3. Write membership to DynamoDB IdentityAndAccess first
     try {
       await docClient.send(new PutCommand({
-        TableName: 'IdentityAndAccess',
+        TableName: TABLES.IdentityAndAccess,
         Item: {
           entityId: `USER#${userId}`,
           sk: 'MEMBERSHIP',

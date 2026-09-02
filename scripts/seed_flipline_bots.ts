@@ -144,6 +144,9 @@ async function seedFlipLineBots() {
 
   const now = Date.now();
   let seededCount = 0;
+  const env = (process.env.APP_ENV || "prod").toLowerCase().trim();
+  const tableName = env === "prod" || env === "production" ? "IdentityAndAccess" : `IdentityAndAccess-${env}`;
+  console.log(`📌 Targeting Table: ${tableName} (APP_ENV=${env})\n`);
 
   for (const bot of FLIPLINE_BOT_PROFILES) {
     const itemData = {
@@ -158,7 +161,7 @@ async function seedFlipLineBots() {
       // 1. Write to DynamoDB IdentityAndAccess with email key
       await docClient.send(
         new PutCommand({
-          TableName: "IdentityAndAccess",
+          TableName: tableName,
           Item: itemData,
         })
       );
@@ -166,7 +169,7 @@ async function seedFlipLineBots() {
       // 2. Also write by userId key for direct ID lookup
       await docClient.send(
         new PutCommand({
-          TableName: "IdentityAndAccess",
+          TableName: tableName,
           Item: {
             ...itemData,
             entityId: `USER#${bot.userId}`,

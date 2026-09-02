@@ -1,6 +1,7 @@
 // lib/userPoints.ts
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { PutCommand, UpdateCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -251,17 +252,17 @@ async function loadConfigTables() {
   try {
     const [multRes, levelsRes, threshRes] = await Promise.all([
       docClient.send(new QueryCommand({
-        TableName: "GamificationAndWallet",
+        TableName: TABLES.GamificationAndWallet,
         KeyConditionExpression: "userId = :u AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":u": "CONFIG#MULTIPLIERS", ":p": "MULTIPLIER#" }
       })),
       docClient.send(new QueryCommand({
-        TableName: "GamificationAndWallet",
+        TableName: TABLES.GamificationAndWallet,
         KeyConditionExpression: "userId = :u AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":u": "CONFIG#LEVELS", ":p": "LEVEL#" }
       })),
       docClient.send(new QueryCommand({
-        TableName: "GamificationAndWallet",
+        TableName: TABLES.GamificationAndWallet,
         KeyConditionExpression: "userId = :u AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":u": "CONFIG#THRESHOLDS", ":p": "THRESHOLD#" }
       }))
@@ -528,7 +529,7 @@ export async function awardUserPoints({
       // Try DynamoDB first
       try {
         const ruleRes = await docClient.send(new GetCommand({
-          TableName: "GamificationAndWallet",
+          TableName: TABLES.GamificationAndWallet,
           Key: { userId: "CONFIG#RULES", sk: `RULE#${reason}` }
         }));
         if (ruleRes.Item) {
@@ -886,7 +887,7 @@ export async function awardUserPoints({
         // 1. Transaction audit item
         docClient.send(
           new PutCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Item: {
               userId: `USER#${leaderboardUserId}`,
               sk: `TX#${transactionId}`,
@@ -906,7 +907,7 @@ export async function awardUserPoints({
         // 2. Activity log item
         docClient.send(
           new PutCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Item: {
               userId: `USER#${leaderboardUserId}`,
               sk: `ACT#${transactionId}`,
@@ -923,7 +924,7 @@ export async function awardUserPoints({
         // 3. Global leaderboard item with GSI
         docClient.send(
           new PutCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Item: {
               userId: `USER#${leaderboardUserId}`,
               sk: "LEADERBOARD#GLOBAL",
@@ -940,7 +941,7 @@ export async function awardUserPoints({
         // 4. Update user points & rank in IdentityAndAccess
         docClient.send(
           new UpdateCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${actualUserId}`, sk: "USER#META" },
             UpdateExpression: "SET totalPoints = :tp, totalXP = :tx, globalTier = :gt, subRank = :sr, lastActiveTimestamp = :la, updatedAt = :u",
             ExpressionAttributeValues: {

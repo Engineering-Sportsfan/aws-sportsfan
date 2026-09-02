@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
     do {
       const scanRes: any = await docClient.send(
         new ScanCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           FilterExpression: filterExpression,
           ExpressionAttributeValues: expressionAttributeValues,
           ExclusiveStartKey: lastEvaluatedKey,
@@ -105,7 +106,7 @@ export async function POST(request: NextRequest) {
 
     await docClient.send(
       new UpdateCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Key: {
           entityId: `USER#${email}`,
           sk: "USER#META",

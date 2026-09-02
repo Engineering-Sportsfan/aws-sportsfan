@@ -1,6 +1,7 @@
 // app/api/engagements/[id]/route.ts — Single Engagement GET, PUT/PATCH, DELETE
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
         })
       );
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           docClient
             .send(
               new GetCommand({
-                TableName: "SocialAndContent",
+                TableName: TABLES.SocialAndContent,
                 Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${resolvedUserId}` },
               })
             )
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           docClient
             .send(
               new GetCommand({
-                TableName: "SocialAndContent",
+                TableName: TABLES.SocialAndContent,
                 Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${resolvedUserId}` },
               })
             )
@@ -102,7 +103,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
         })
       );
@@ -132,7 +133,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
       ...updatedItem,
     };
 
-    await dualWrite("engagements", id, "SocialAndContent", dynamoItem);
+    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
 
     return NextResponse.json({
       success: true,
@@ -155,7 +156,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     try {
       await docClient.send(
         new DeleteCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
         })
       );

@@ -1,7 +1,7 @@
-// app/api/users/route.ts — Migrated to AWS DynamoDB (IdentityAndAccess Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { ScanCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export async function GET() {
       do {
         const scanRes: any = await docClient.send(
           new ScanCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             FilterExpression: "begins_with(entityId, :prefix) AND begins_with(sk, :skPrefix)",
             ExpressionAttributeValues: {
               ":prefix": "USER#",
@@ -170,7 +170,7 @@ export async function PATCH(req: NextRequest) {
     try {
       await docClient.send(
         new UpdateCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: {
             entityId: `USER#${cleanEmail}`,
             sk: "USER#META",
@@ -220,7 +220,7 @@ export async function DELETE(req: NextRequest) {
     try {
       await docClient.send(
         new DeleteCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: {
             entityId: `USER#${cleanEmail}`,
             sk: "USER#META",
@@ -229,7 +229,7 @@ export async function DELETE(req: NextRequest) {
       );
       await docClient.send(
         new DeleteCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: {
             entityId: `OTP#${cleanEmail}`,
             sk: "OTP#ACTIVE",

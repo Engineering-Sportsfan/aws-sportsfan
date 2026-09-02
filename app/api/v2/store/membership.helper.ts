@@ -2,6 +2,7 @@
 
 import { Firestore } from 'firebase-admin/firestore';
 import { docClient } from '@/lib/dynamodb';
+import { TABLES } from '@/lib/tableNames';
 import { GetCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 
 /**
@@ -22,7 +23,7 @@ export async function fetchUserMembership(
   // 1. Try DynamoDB first
   try {
     const res = await docClient.send(new GetCommand({
-      TableName: 'IdentityAndAccess',
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${userId}`, sk: 'MEMBERSHIP' }
     }));
     if (res.Item) {
@@ -99,7 +100,7 @@ export async function fetchUserMembership(
     // Load plan details from DynamoDB
     try {
       const res = await docClient.send(new GetCommand({
-        TableName: 'StoreAndCommerce',
+        TableName: TABLES.StoreAndCommerce,
         Key: { entityId: `PRODUCT#${planId}`, sk: `PRODUCT#${planId}` }
       }));
       if (res.Item) {

@@ -3,11 +3,12 @@
 // POST -> create a new team/club profile
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
-const CLUBS_TABLE = "MS_Clubs";
+const CLUBS_TABLE = TABLES.MS_Clubs;
 
 export async function GET(req: NextRequest) {
   try {

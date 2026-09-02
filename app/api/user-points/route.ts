@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { awardUserPoints, getUserInfo } from "@/lib/userPoints";
 import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId: `USER#${actualUserId || userId}`, sk: "USER#META" },
         })
       );
@@ -180,7 +181,7 @@ export async function GET(req: NextRequest) {
         try {
           const userGet = await docClient.send(
             new GetCommand({
-              TableName: "IdentityAndAccess",
+              TableName: TABLES.IdentityAndAccess,
               Key: { entityId: `USER#${decodedUserId}`, sk: "USER#META" },
             })
           );

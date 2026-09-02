@@ -1,6 +1,7 @@
 // app/api/admin/flipline-bots/route.ts — API to fetch and manage FlipLine bot profiles in IdentityAndAccess table
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { GetCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -111,7 +112,7 @@ export async function GET() {
       for (const defaultBot of DEFAULT_FLIPLINE_BOTS) {
         const getRes = await docClient.send(
           new GetCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${defaultBot.email}`, sk: "USER#META" },
           })
         );
@@ -133,14 +134,14 @@ export async function GET() {
 
           await docClient.send(
             new PutCommand({
-              TableName: "IdentityAndAccess",
+              TableName: TABLES.IdentityAndAccess,
               Item: itemData,
             })
           );
 
           await docClient.send(
             new PutCommand({
-              TableName: "IdentityAndAccess",
+              TableName: TABLES.IdentityAndAccess,
               Item: {
                 ...itemData,
                 entityId: `USER#${defaultBot.userId}`,

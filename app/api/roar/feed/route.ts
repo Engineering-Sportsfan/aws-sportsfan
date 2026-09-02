@@ -3,6 +3,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post } from "@/app/models/Post";
 
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
     // 1. Try querying DynamoDB first using status-createdAt-index
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         IndexName: "status-createdAt-index",
         KeyConditionExpression: "#s = :active",
         ExpressionAttributeNames: { "#s": "status" },
@@ -102,7 +103,7 @@ export async function GET(req: NextRequest) {
         // Try DynamoDB vote lookup
         try {
           const voteRes = await docClient.send(new GetCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: {
               contentId: `POST#${p.postId}`,
               sk: `VOTE#${resolvedUserId}`
@@ -114,7 +115,7 @@ export async function GET(req: NextRequest) {
           } else {
             // Check legacy vote lookup
             const voteLegacyRes = await docClient.send(new GetCommand({
-              TableName: "SocialAndContent",
+              TableName: TABLES.SocialAndContent,
               Key: {
                 contentId: `POST#${p.postId}`,
                 sk: `VOTE#${user.userId}`

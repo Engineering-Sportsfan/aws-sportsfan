@@ -1,6 +1,7 @@
 // app/api/engagements/route.ts — Main CRUD API for Fan Battles, Quizzes, Polls & Predictions
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { ScanCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
     try {
       const scanRes = await docClient.send(
         new ScanCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           FilterExpression: "begins_with(contentId, :prefix)",
           ExpressionAttributeValues: {
             ":prefix": "ENGAGEMENT#",
@@ -124,7 +125,7 @@ export async function GET(req: NextRequest) {
               docClient
                 .send(
                   new GetCommand({
-                    TableName: "SocialAndContent",
+                    TableName: TABLES.SocialAndContent,
                     Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `LIKE#${resolvedUserId}` },
                   })
                 )
@@ -136,7 +137,7 @@ export async function GET(req: NextRequest) {
               docClient
                 .send(
                   new GetCommand({
-                    TableName: "SocialAndContent",
+                    TableName: TABLES.SocialAndContent,
                     Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `VOTE#${resolvedUserId}` },
                   })
                 )
@@ -234,7 +235,7 @@ export async function POST(req: NextRequest) {
     };
 
     // Dual Write to DynamoDB + Firestore
-    await dualWrite("engagements", id, "SocialAndContent", dynamoItem);
+    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
 
     return NextResponse.json({
       success: true,
