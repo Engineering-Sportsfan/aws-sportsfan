@@ -11,6 +11,8 @@ export interface FlipLineReply {
   userName: string;
   userHandle?: string;
   userAvatar?: string;
+  adminPhoto?: string;
+  authorPhoto?: string;
   content: string;
   replyTo?: string;
   time: string;
@@ -25,6 +27,8 @@ export interface FlipLineComment {
   userName: string;
   userHandle?: string;
   userAvatar?: string;
+  adminPhoto?: string;
+  authorPhoto?: string;
   content: string;
   time: string;
   createdAt: number;
@@ -440,12 +444,13 @@ export async function GET(req: NextRequest) {
       cards = seededItems.sort((a, b) => b.timeMs - a.timeMs);
     }
 
-    // Ensure all returned cards have properly structured comments array and channel
+    // Ensure all returned cards have properly structured comments array, likedBy array, and channel
     cards = cards.map((card) => ({
       ...card,
       channel: card.channel || card.sport || "general",
       comments: Array.isArray(card.comments) ? card.comments : [],
       likes: typeof card.likes === "number" ? card.likes : 0,
+      likedBy: Array.isArray(card.likedBy) ? card.likedBy : [],
     }));
 
     // Filter by channel/sport if specified and not 'all'
@@ -695,23 +700,69 @@ async function handleFlipLineAction(body: any) {
 
   // 1. Post/Card Like or Unlike
   if (action === "like" || action === "unlike") {
-    const val = action === "like" ? 1 : -1;
-    await docClient.send(
-      new UpdateCommand({
+    const cardRes = await docClient.send(
+      new GetCommand({
         TableName: "RealTimeChat",
         Key: {
           roomId: "FLIPLINE#ALL",
           sk: sk,
         },
-        UpdateExpression: "SET likes = if_not_exists(likes, :zero) + :val",
-        ExpressionAttributeValues: {
-          ":val": val,
-          ":zero": 0,
-        },
       })
     );
 
-    return NextResponse.json({ success: true, action });
+    if (cardRes.Item) {
+      const card = cardRes.Item as FlipLineCard;
+      let likedBy = Array.isArray(card.likedBy) ? [...card.likedBy] : [];
+      let likes = typeof card.likes === "number" ? card.likes : 0;
+      const isAlreadyLiked = userId ? likedBy.includes(userId) : false;
+
+      if (action === "unlike" || isAlreadyLiked) {
+        likes = Math.max(0, likes - 1);
+        if (userId) {
+          likedBy = likedBy.filter((u) => u !== userId);
+        }
+      } else {
+        likes = likes + 1;
+        if (userId && !likedBy.includes(userId)) {
+          likedBy.push(userId);
+        }
+      }
+
+      await docClient.send(
+        new UpdateCommand({
+          TableName: "RealTimeChat",
+          Key: {
+            roomId: "FLIPLINE#ALL",
+            sk: sk,
+          },
+          UpdateExpression: "SET likes = :likes, likedBy = :likedBy",
+          ExpressionAttributeValues: {
+            ":likes": likes,
+            ":likedBy": likedBy,
+          },
+        })
+      );
+
+      return NextResponse.json({ success: true, action, likes, likedBy });
+    } else {
+      const val = action === "like" ? 1 : -1;
+      await docClient.send(
+        new UpdateCommand({
+          TableName: "RealTimeChat",
+          Key: {
+            roomId: "FLIPLINE#ALL",
+            sk: sk,
+          },
+          UpdateExpression: "SET likes = if_not_exists(likes, :zero) + :val",
+          ExpressionAttributeValues: {
+            ":val": val,
+            ":zero": 0,
+          },
+        })
+      );
+
+      return NextResponse.json({ success: true, action });
+    }
   }
 
   // 2. Fetch the target card for comment & reply modifications
@@ -744,7 +795,9 @@ async function handleFlipLineAction(body: any) {
       userId: body.userId || userId,
       userName: body.userName || body.author || "SportsFan",
       userHandle: body.userHandle || body.handle || "@sportsfan",
-      userAvatar: body.userAvatar || body.authorPhoto,
+      userAvatar: body.adminPhoto || body.authorPhoto || body.userAvatar,
+      adminPhoto: body.adminPhoto,
+      authorPhoto: body.authorPhoto,
       content,
       time: body.time || formatCurrentTime(),
       createdAt: body.createdAt || Date.now(),
@@ -800,7 +853,9 @@ async function handleFlipLineAction(body: any) {
       userId: body.userId || userId,
       userName: body.userName || body.author || "SportsFan",
       userHandle: body.userHandle || body.handle || "@sportsfan",
-      userAvatar: body.userAvatar || body.authorPhoto,
+      userAvatar: body.adminPhoto || body.authorPhoto || body.userAvatar,
+      adminPhoto: body.adminPhoto,
+      authorPhoto: body.authorPhoto,
       content,
       replyTo: body.replyTo || targetComment.userHandle || targetComment.userName,
       time: body.time || formatCurrentTime(),
