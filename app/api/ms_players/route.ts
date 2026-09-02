@@ -192,7 +192,9 @@ export async function GET(request: NextRequest) {
     // MS_Players is scanned (no composite key that fits every filter combo
     // cleanly yet) and filtered to PROFILE#META items only, same pattern
     // ms_teams/route.ts uses for MS_Clubs.
-    const filterClauses: string[] = ["sk = :sk"];
+    // const filterClauses: string[] = ["sk = :sk"];
+    // const expressionValues: Record<string, unknown> = { ":sk": "PROFILE#META" };
+        const filterClauses: string[] = ["begins_with(sk, :sk)"];
     const expressionValues: Record<string, unknown> = { ":sk": "PROFILE#META" };
     const expressionNames: Record<string, string> = {};
 
