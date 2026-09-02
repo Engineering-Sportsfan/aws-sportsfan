@@ -12,6 +12,8 @@ export interface FlipLineReply {
   userName: string;
   userHandle?: string;
   userAvatar?: string;
+  adminPhoto?: string;
+  authorPhoto?: string;
   content: string;
   replyTo?: string;
   time: string;
@@ -26,6 +28,8 @@ export interface FlipLineComment {
   userName: string;
   userHandle?: string;
   userAvatar?: string;
+  adminPhoto?: string;
+  authorPhoto?: string;
   content: string;
   time: string;
   createdAt: number;
@@ -442,12 +446,13 @@ export async function GET(req: NextRequest) {
       cards = seededItems.sort((a, b) => b.timeMs - a.timeMs);
     }
 
-    // Ensure all returned cards have properly structured comments array and channel
+    // Ensure all returned cards have properly structured comments array, likedBy array, and channel
     cards = cards.map((card) => ({
       ...card,
       channel: card.channel || card.sport || "general",
       comments: Array.isArray(card.comments) ? card.comments : [],
       likes: typeof card.likes === "number" ? card.likes : 0,
+      likedBy: Array.isArray(card.likedBy) ? card.likedBy : [],
     }));
 
     // Filter by channel/sport if specified and not 'all'
@@ -695,18 +700,19 @@ async function handleFlipLineAction(body: any) {
     return NextResponse.json({ success: false, error: "Missing required fields: 'sk' and 'action'" }, { status: 400 });
   }
 
-  const getRes = await docClient.send(
+  // 1. Fetch target card
+  const cardRes = await docClient.send(
     new GetCommand({
       TableName: TABLES.RealTimeChat,
       Key: { roomId: "FLIPLINE#ALL", sk },
     })
   );
-  const card = getRes.Item as FlipLineCard | undefined;
+  const card = cardRes.Item as FlipLineCard | undefined;
   if (!card) {
     return NextResponse.json({ error: "Card not found" }, { status: 404 });
   }
 
-  // 1. Post/Card Like or Unlike
+  // 2. Post/Card Like or Unlike
   if (action === "like") {
     const likedBy = Array.isArray(card.likedBy) ? [...card.likedBy] : [];
     let likes = typeof card.likes === "number" ? card.likes : 0;
@@ -763,7 +769,9 @@ async function handleFlipLineAction(body: any) {
       userId: body.userId || userId,
       userName: body.userName || body.author || "SportsFan",
       userHandle: body.userHandle || body.handle || "@sportsfan",
-      userAvatar: body.userAvatar || body.authorPhoto,
+      userAvatar: body.adminPhoto || body.authorPhoto || body.userAvatar,
+      adminPhoto: body.adminPhoto,
+      authorPhoto: body.authorPhoto,
       content,
       time: body.time || formatCurrentTime(),
       createdAt: body.createdAt || Date.now(),
@@ -819,7 +827,9 @@ async function handleFlipLineAction(body: any) {
       userId: body.userId || userId,
       userName: body.userName || body.author || "SportsFan",
       userHandle: body.userHandle || body.handle || "@sportsfan",
-      userAvatar: body.userAvatar || body.authorPhoto,
+      userAvatar: body.adminPhoto || body.authorPhoto || body.userAvatar,
+      adminPhoto: body.adminPhoto,
+      authorPhoto: body.authorPhoto,
       content,
       replyTo: body.replyTo || targetComment.userHandle || targetComment.userName,
       time: body.time || formatCurrentTime(),

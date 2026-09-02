@@ -58,7 +58,7 @@ async function scanAllItems(tableName: string): Promise<Record<string, any>[]> {
 
   try {
     do {
-      const res = await docClient.send(
+      const res: any = await docClient.send(
         new ScanCommand({
           TableName: tableName,
           ExclusiveStartKey: lastEvaluatedKey,
