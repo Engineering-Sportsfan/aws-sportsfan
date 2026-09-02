@@ -1,8 +1,9 @@
 // lib/notifications.ts
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 
-const TABLE = "sf360-notifications";
+const TABLE = TABLES.Notifications;
 const DEFAULT_TTL_DAYS = 2; // matches doc's typical 48h TTL; override per notification_type if needed
 
 export async function createNotification(payload: {

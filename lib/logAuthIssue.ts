@@ -1,6 +1,7 @@
 // lib/logAuthIssue.ts — Real-time logging of login, signup, and OTP issues to DynamoDB & Firebase
 import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
+import { TABLES } from "@/lib/tableNames";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export type AuthIssueType = "login" | "signup" | "otp";
@@ -43,7 +44,7 @@ export async function logAuthIssue({
   try {
     await docClient.send(
       new PutCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Item: {
           entityId: `AUTH_ISSUE#${timestamp}#${cleanEmail}`,
           sk: `ISSUE#${type.toUpperCase()}#${issueId}`,

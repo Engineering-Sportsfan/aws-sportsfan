@@ -1,6 +1,7 @@
 // app/api/engagements/[id]/vote/route.ts — Interactive Voting, Quiz Validation & Prediction Staking with Single-Vote Enforcement
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     try {
       const getVote = await docClient.send(
         new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${userId}` },
         })
       );
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       try {
         const legacyVote = await docClient.send(
           new GetCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `USER_VOTE#${userId}`, sk: `ENGAGEMENT#${id}` },
           })
         );
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       try {
         const voteRes = await docClient.send(
           new GetCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${userId}` },
           })
         );
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         try {
           const legacyVoteRes = await docClient.send(
             new GetCommand({
-              TableName: "SocialAndContent",
+              TableName: TABLES.SocialAndContent,
               Key: { contentId: `USER_VOTE#${userId}`, sk: `ENGAGEMENT#${id}` },
             })
           );
@@ -152,7 +153,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
         })
       );
@@ -216,7 +217,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         try {
           await docClient.send(
             new UpdateCommand({
-              TableName: "IdentityAndAccess",
+              TableName: TABLES.IdentityAndAccess,
               Key: { entityId: `USER#${authUser.email}`, sk: "USER#META" },
               UpdateExpression: "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, totalXP = if_not_exists(totalXP, :zero) + :pts",
               ExpressionAttributeValues: {
@@ -308,7 +309,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       updatedAt: now,
     };
 
-    await dualWrite("engagements", id, "SocialAndContent", dynamoItem);
+    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
 
     // ─── Step 5: Save User Vote Record ────────────────────────────────────────
     const userRecord = {
@@ -325,7 +326,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     try {
       await docClient.send(
         new PutCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Item: {
             contentId: `ENGAGEMENT#${id}`,
             sk: `VOTE#${userId}`,
@@ -342,7 +343,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     try {
       await docClient.send(
         new PutCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Item: {
             contentId: `USER_VOTE#${userId}`,
             sk: `ENGAGEMENT#${id}`,

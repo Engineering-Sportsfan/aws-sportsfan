@@ -2,6 +2,7 @@
 // Aligned with api/roar/rooms/messages and api/roar/posts/[postId]/like architecture
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     try {
       const getLike = await docClient.send(
         new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${userId}` },
         })
       );
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       try {
         const legacyLike = await docClient.send(
           new GetCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${id}` },
           })
         );
@@ -87,7 +88,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     try {
       const getLike = await docClient.send(
         new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${userId}` },
         })
       );
@@ -99,7 +100,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       try {
         const legacyLike = await docClient.send(
           new GetCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${id}` },
           })
         );
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
         })
       );
@@ -154,7 +155,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       ...item,
     };
 
-    await dualWrite("engagements", id, "SocialAndContent", dynamoItem);
+    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
 
     // 3. Save or remove the user's like record (Standardized like pattern)
     if (nextLikedState) {
@@ -162,7 +163,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       try {
         await docClient.send(
           new PutCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Item: {
               contentId: `ENGAGEMENT#${id}`,
               sk: `LIKE#${userId}`,
@@ -182,7 +183,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       try {
         await docClient.send(
           new PutCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Item: {
               contentId: `LIKE#${userId}`,
               sk: `ENGAGEMENT#${id}`,
@@ -208,7 +209,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       try {
         await docClient.send(
           new DeleteCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${userId}` },
           })
         );
@@ -220,7 +221,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       try {
         await docClient.send(
           new DeleteCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${id}` },
           })
         );

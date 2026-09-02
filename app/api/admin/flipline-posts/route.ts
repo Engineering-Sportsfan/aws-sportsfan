@@ -1,6 +1,7 @@
 // app/api/admin/flipline-posts/route.ts — Admin API to publish FlipLine posts on behalf of verified bot profiles
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import cloudinary from "@/lib/cloudinary";
 import { PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { DEFAULT_FLIPLINE_BOTS } from "@/app/api/admin/flipline-bots/route";
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
 
     const res = await docClient.send(
       new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :roomId AND begins_with(sk, :skPrefix)",
         ExpressionAttributeValues: {
           ":roomId": "FLIPLINE#ALL",
@@ -217,7 +218,7 @@ export async function POST(req: NextRequest) {
 
     await docClient.send(
       new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: newPost,
       })
     );
@@ -246,7 +247,7 @@ export async function DELETE(req: NextRequest) {
 
     await docClient.send(
       new DeleteCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: {
           roomId: "FLIPLINE#ALL",
           sk,

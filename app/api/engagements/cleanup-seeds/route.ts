@@ -1,6 +1,7 @@
 // app/api/engagements/cleanup-seeds/route.ts — Clean up initial static test seeds
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
       try {
         await docClient.send(
           new DeleteCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
           })
         );

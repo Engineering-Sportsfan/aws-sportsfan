@@ -173,10 +173,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { docClient as ddb } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { ScanCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
-const MS_PLAYERS_TABLE = process.env.MS_PLAYERS_TABLE || "MS_Players";
-const MS_TRANSACTIONS_TABLE = process.env.MS_TRANSACTIONS_TABLE || "MS_Transactions";
+const MS_PLAYERS_TABLE = TABLES.MS_Players;
+const MS_TRANSACTIONS_TABLE = TABLES.MS_Transactions;
 
 // ---------- GET: list/filter ----------
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import cloudinary from "@/lib/cloudinary";
 import { PutCommand, QueryCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -409,13 +410,14 @@ export async function GET(req: NextRequest) {
 
     const res = await docClient.send(
       new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :roomId AND begins_with(sk, :skPrefix)",
         ExpressionAttributeValues: {
           ":roomId": "FLIPLINE#ALL",
           ":skPrefix": "CARD#",
         },
         ScanIndexForward: false,
+        Limit: 50,
       })
     );
 
@@ -433,7 +435,7 @@ export async function GET(req: NextRequest) {
         };
         await docClient.send(
           new PutCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Item: item,
           })
         );
@@ -533,7 +535,7 @@ export async function POST(req: NextRequest) {
 
       await docClient.send(
         new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: newCard,
         })
       );
@@ -667,7 +669,7 @@ export async function POST(req: NextRequest) {
 
     await docClient.send(
       new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: newCard,
       })
     );
@@ -698,89 +700,61 @@ async function handleFlipLineAction(body: any) {
     return NextResponse.json({ success: false, error: "Missing required fields: 'sk' and 'action'" }, { status: 400 });
   }
 
-  // 1. Post/Card Like or Unlike
-  if (action === "like" || action === "unlike") {
-    const cardRes = await docClient.send(
-      new GetCommand({
-        TableName: "RealTimeChat",
-        Key: {
-          roomId: "FLIPLINE#ALL",
-          sk: sk,
-        },
-      })
-    );
-
-    if (cardRes.Item) {
-      const card = cardRes.Item as FlipLineCard;
-      let likedBy = Array.isArray(card.likedBy) ? [...card.likedBy] : [];
-      let likes = typeof card.likes === "number" ? card.likes : 0;
-      const isAlreadyLiked = userId ? likedBy.includes(userId) : false;
-
-      if (action === "unlike" || isAlreadyLiked) {
-        likes = Math.max(0, likes - 1);
-        if (userId) {
-          likedBy = likedBy.filter((u) => u !== userId);
-        }
-      } else {
-        likes = likes + 1;
-        if (userId && !likedBy.includes(userId)) {
-          likedBy.push(userId);
-        }
-      }
-
-      await docClient.send(
-        new UpdateCommand({
-          TableName: "RealTimeChat",
-          Key: {
-            roomId: "FLIPLINE#ALL",
-            sk: sk,
-          },
-          UpdateExpression: "SET likes = :likes, likedBy = :likedBy",
-          ExpressionAttributeValues: {
-            ":likes": likes,
-            ":likedBy": likedBy,
-          },
-        })
-      );
-
-      return NextResponse.json({ success: true, action, likes, likedBy });
-    } else {
-      const val = action === "like" ? 1 : -1;
-      await docClient.send(
-        new UpdateCommand({
-          TableName: "RealTimeChat",
-          Key: {
-            roomId: "FLIPLINE#ALL",
-            sk: sk,
-          },
-          UpdateExpression: "SET likes = if_not_exists(likes, :zero) + :val",
-          ExpressionAttributeValues: {
-            ":val": val,
-            ":zero": 0,
-          },
-        })
-      );
-
-      return NextResponse.json({ success: true, action });
-    }
-  }
-
-  // 2. Fetch the target card for comment & reply modifications
+  // 1. Fetch target card
   const cardRes = await docClient.send(
     new GetCommand({
-      TableName: "RealTimeChat",
-      Key: {
-        roomId: "FLIPLINE#ALL",
-        sk: sk,
-      },
+      TableName: TABLES.RealTimeChat,
+      Key: { roomId: "FLIPLINE#ALL", sk },
     })
   );
-
-  if (!cardRes.Item) {
-    return NextResponse.json({ success: false, error: `Card with sk '${sk}' not found` }, { status: 404 });
+  const card = cardRes.Item as FlipLineCard | undefined;
+  if (!card) {
+    return NextResponse.json({ error: "Card not found" }, { status: 404 });
   }
 
-  const card = cardRes.Item as FlipLineCard;
+  // 2. Post/Card Like or Unlike
+  if (action === "like") {
+    const likedBy = Array.isArray(card.likedBy) ? [...card.likedBy] : [];
+    let likes = typeof card.likes === "number" ? card.likes : 0;
+    if (userId && !likedBy.includes(userId)) {
+      likedBy.push(userId);
+      likes += 1;
+    } else if (!userId) {
+      likes += 1;
+    }
+
+    await docClient.send(
+      new UpdateCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId: "FLIPLINE#ALL", sk },
+        UpdateExpression: "SET likes = :l, likedBy = :lb",
+        ExpressionAttributeValues: { ":l": likes, ":lb": likedBy },
+      })
+    );
+    return NextResponse.json({ success: true, likes, likedBy });
+  }
+
+  if (action === "unlike") {
+    let likedBy = Array.isArray(card.likedBy) ? [...card.likedBy] : [];
+    let likes = typeof card.likes === "number" ? card.likes : 0;
+    if (userId && likedBy.includes(userId)) {
+      likedBy = likedBy.filter((u) => u !== userId);
+      likes = Math.max(0, likes - 1);
+    } else if (!userId) {
+      likes = Math.max(0, likes - 1);
+    }
+
+    await docClient.send(
+      new UpdateCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId: "FLIPLINE#ALL", sk },
+        UpdateExpression: "SET likes = :l, likedBy = :lb",
+        ExpressionAttributeValues: { ":l": likes, ":lb": likedBy },
+      })
+    );
+    return NextResponse.json({ success: true, likes, likedBy });
+  }
+
   let comments: FlipLineComment[] = Array.isArray(card.comments) ? [...card.comments] : [];
 
   // 3. Add a top-level Comment to the post
@@ -810,7 +784,7 @@ async function handleFlipLineAction(body: any) {
 
     await docClient.send(
       new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: {
           roomId: "FLIPLINE#ALL",
           sk: sk,
@@ -870,7 +844,7 @@ async function handleFlipLineAction(body: any) {
 
     await docClient.send(
       new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: {
           roomId: "FLIPLINE#ALL",
           sk: sk,
@@ -924,7 +898,7 @@ async function handleFlipLineAction(body: any) {
 
     await docClient.send(
       new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: {
           roomId: "FLIPLINE#ALL",
           sk: sk,
@@ -986,7 +960,7 @@ async function handleFlipLineAction(body: any) {
 
     await docClient.send(
       new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: {
           roomId: "FLIPLINE#ALL",
           sk: sk,
@@ -1017,7 +991,7 @@ async function handleFlipLineAction(body: any) {
 
     await docClient.send(
       new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: {
           roomId: "FLIPLINE#ALL",
           sk: sk,
@@ -1051,7 +1025,7 @@ async function handleFlipLineAction(body: any) {
 
       await docClient.send(
         new UpdateCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: {
             roomId: "FLIPLINE#ALL",
             sk: sk,

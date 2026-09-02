@@ -12,6 +12,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { awardRoarPoints } from "@/lib/roarPoints";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, UpdateCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post, PostType, SportType } from "@/app/models/Post";
 
@@ -122,7 +123,7 @@ async function markExpiredPredictionClosed(postId: string, post: PredictionClose
   // 1. Update in DynamoDB first
   try {
     await docClient.send(new UpdateCommand({
-      TableName: "SocialAndContent",
+      TableName: TABLES.SocialAndContent,
       Key: {
         contentId: `POST#${postId}`,
         sk: `POST#META`
@@ -197,7 +198,7 @@ export async function GET(req: NextRequest) {
     // 1. Query DynamoDB using status-createdAt-index
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         IndexName: "status-createdAt-index",
         KeyConditionExpression: "#s = :active",
         ExpressionAttributeNames: { "#s": "status" },
@@ -301,7 +302,7 @@ export async function GET(req: NextRequest) {
             let fetchedVote = false;
             try {
               const voteRes = await docClient.send(new GetCommand({
-                TableName: "SocialAndContent",
+                TableName: TABLES.SocialAndContent,
                 Key: { contentId: `POST#${postId}`, sk: `VOTE#${resolvedUserId}` }
               }));
               if (voteRes.Item) {
@@ -328,7 +329,7 @@ export async function GET(req: NextRequest) {
             let fetchedLike = false;
             try {
               const likeRes = await docClient.send(new GetCommand({
-                TableName: "SocialAndContent",
+                TableName: TABLES.SocialAndContent,
                 Key: { contentId: `POST#${postId}`, sk: `LIKE#${resolvedUserId}` }
               }));
               if (likeRes.Item) {
@@ -357,7 +358,7 @@ export async function GET(req: NextRequest) {
             let fetchedQuiz = false;
             try {
               const quizRes = await docClient.send(new GetCommand({
-                TableName: "SocialAndContent",
+                TableName: TABLES.SocialAndContent,
                 Key: { contentId: `POST#${postId}`, sk: `QUIZ#${resolvedUserId}` }
               }));
               if (quizRes.Item) {
@@ -392,7 +393,7 @@ export async function GET(req: NextRequest) {
 
         try {
           const userRes = await docClient.send(new GetCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${uid}`, sk: "USER#META" }
           }));
           if (userRes.Item) {
@@ -571,7 +572,7 @@ export async function POST(req: NextRequest) {
     // 1. Put to DynamoDB SocialAndContent table
     try {
       await docClient.send(new PutCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Item: {
           contentId: `POST#${postId}`,
           sk: `POST#META`,
@@ -582,7 +583,7 @@ export async function POST(req: NextRequest) {
       // Increment user counter in IdentityAndAccess table
       const counterField = type === "prediction" ? "predictionCount" : "hotTakeCount";
       await docClient.send(new UpdateCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
         UpdateExpression: "ADD #cnt :one SET updatedAt = :now",
         ExpressionAttributeNames: { "#cnt": counterField },
