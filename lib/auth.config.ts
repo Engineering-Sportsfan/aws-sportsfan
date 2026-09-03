@@ -102,6 +102,7 @@ import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -137,7 +138,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         try {
           const uRes = await docClient.send(new GetCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" }
           }));
           if (uRes.Item) {
@@ -236,7 +237,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // 1. Try DynamoDB first
           try {
             const uRes = await docClient.send(new GetCommand({
-              TableName: "IdentityAndAccess",
+              TableName: TABLES.IdentityAndAccess,
               Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" }
             }));
             if (uRes.Item) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -27,7 +28,7 @@ export async function POST(
     let postItem: any = null;
     try {
       const qRes = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
         Limit: 1
@@ -64,7 +65,7 @@ export async function POST(
     let alreadyLiked = false;
     try {
       const likeRes = await docClient.send(new GetCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: { contentId: `POST#${postId}`, sk: `LIKE#${resolvedUserId}` }
       }));
       alreadyLiked = !!likeRes.Item;
@@ -90,13 +91,13 @@ export async function POST(
       // A. Update DynamoDB
       try {
         await docClient.send(new DeleteCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: `LIKE#${resolvedUserId}` }
         }));
 
         if (postItem) {
           await docClient.send(new UpdateCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `POST#${postId}`, sk: postItem.sk },
             UpdateExpression: "SET likeCount = :c",
             ExpressionAttributeValues: { ":c": likeCount }
@@ -124,7 +125,7 @@ export async function POST(
       // A. Update DynamoDB
       try {
         await docClient.send(new PutCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Item: {
             contentId: `POST#${postId}`,
             sk: `LIKE#${resolvedUserId}`,
@@ -134,7 +135,7 @@ export async function POST(
 
         if (postItem) {
           await docClient.send(new UpdateCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `POST#${postId}`, sk: postItem.sk },
             UpdateExpression: "SET likeCount = :c",
             ExpressionAttributeValues: { ":c": likeCount }

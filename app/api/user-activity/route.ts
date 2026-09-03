@@ -1,7 +1,7 @@
-// app/api/user-activity/route.ts — Migrated to AWS DynamoDB (GamificationAndWallet & IdentityAndAccess Tables)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     try {
       const actRes = await docClient.send(
         new QueryCommand({
-          TableName: "GamificationAndWallet",
+          TableName: TABLES.GamificationAndWallet,
           KeyConditionExpression: "userId = :u AND begins_with(sk, :actPrefix)",
           ExpressionAttributeValues: {
             ":u": `USER#${userId}`,
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
     try {
       const userRes = await docClient.send(
         new GetCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId: `USER#${userId}`, sk: "USER#META" },
         })
       );
