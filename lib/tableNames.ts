@@ -1,5 +1,21 @@
-// lib/tableNames.ts — Centralized DynamoDB Table Name Resolver based on APP_ENV
-const ENV = (process.env.APP_ENV || process.env.NEXT_PUBLIC_APP_ENV || "prod").toLowerCase().trim();
+function resolveEnv(): string {
+  const explicit = (process.env.APP_ENV || process.env.NEXT_PUBLIC_APP_ENV || "").toLowerCase().trim();
+  if (explicit && explicit !== "prod" && explicit !== "production") {
+    return explicit;
+  }
+  if (explicit === "prod" || explicit === "production") {
+    return "prod";
+  }
+
+  // AWS Amplify automatic branch environment detection
+  const awsBranch = (process.env.AWS_BRANCH || "").toLowerCase().trim();
+  if (awsBranch === "develop" || awsBranch === "dev") return "dev";
+  if (awsBranch === "release") return "release";
+
+  return "prod";
+}
+
+const ENV = resolveEnv();
 const suffix = ENV === "prod" || ENV === "production" ? "" : `-${ENV}`;
 
 export const TABLES = {
