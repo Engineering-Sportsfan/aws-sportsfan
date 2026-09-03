@@ -464,7 +464,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ success: true, data: cards });
+    return NextResponse.json({
+      success: true,
+      env: process.env.APP_ENV || "prod",
+      targetTable: TABLES.RealTimeChat,
+      data: cards,
+    });
   } catch (error) {
     console.error("Failed to fetch FlipLine cards:", error);
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
@@ -540,7 +545,12 @@ export async function POST(req: NextRequest) {
         })
       );
 
-      return NextResponse.json({ success: true, data: newCard });
+      return NextResponse.json({
+        success: true,
+        env: process.env.APP_ENV || "prod",
+        targetTable: TABLES.RealTimeChat,
+        data: newCard,
+      });
     }
 
     // Multipart Form Data handling
@@ -674,7 +684,12 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    return NextResponse.json({ success: true, data: newCard });
+    return NextResponse.json({
+      success: true,
+      env: process.env.APP_ENV || "prod",
+      targetTable: TABLES.RealTimeChat,
+      data: newCard,
+    });
   } catch (error) {
     console.error("Failed to create FlipLine post:", error);
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
