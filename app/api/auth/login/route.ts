@@ -196,6 +196,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { logAuthIssue } from "@/lib/logAuthIssue";
+import { logUserActivity } from "@/lib/logUserActivity";
 
 export const dynamic = "force-dynamic";
 
@@ -403,8 +404,22 @@ export async function POST(req: NextRequest) {
       console.warn("Firebase lastLoginAt update notice:", err);
     }
 
-    // ── 8. Create JWT token ──────────────────────────────────────────────────
     const name = `${(user.firstName as string) || ""} ${(user.lastName as string) || ""}`.trim() || cleanEmail.split("@")[0];
+
+    // ── 7.5. Record date-wise login event (with timestamp, IP, location) ────
+    try {
+      await logUserActivity({
+        req,
+        email: cleanEmail,
+        userId,
+        userName: name,
+        action: "login",
+      });
+    } catch (logErr) {
+      console.warn("User activity logging notice:", logErr);
+    }
+
+    // ── 8. Create JWT token ──────────────────────────────────────────────────
 
     const token = jwt.sign(
       {

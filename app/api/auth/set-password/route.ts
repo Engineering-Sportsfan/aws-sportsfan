@@ -6,6 +6,7 @@ import { dualWrite } from "@/lib/dualWrite";
 import bcrypt from "bcryptjs";
 import { GetCommand, QueryCommand, UpdateCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { logAuthIssue } from "@/lib/logAuthIssue";
+import { logUserActivity } from "@/lib/logUserActivity";
 
 export const dynamic = "force-dynamic";
 
@@ -154,6 +155,20 @@ export async function POST(req: NextRequest) {
     try {
       await db.collection("otps").doc(cleanEmail).delete();
     } catch {}
+
+    // 5. Record date-wise signup activity log
+    try {
+      await logUserActivity({
+        req,
+        email: cleanEmail,
+        userId: (existingUser?.userId as string) || userId,
+        userName: `${firstName} ${lastName}`.trim() || cleanEmail.split("@")[0],
+        action: "signup",
+        metadata: { method: "Email & Password" },
+      });
+    } catch (logErr) {
+      console.warn("User signup activity logging notice:", logErr);
+    }
 
     return NextResponse.json({ success: true, message: "Password set and account created successfully" });
   } catch (error: unknown) {

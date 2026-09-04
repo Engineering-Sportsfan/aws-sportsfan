@@ -1,7 +1,7 @@
 // app/api/engagements/[id]/route.ts — Single Engagement GET, PUT/PATCH, DELETE
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Fallback to Firestore
     if (!item) {
-      const snap = await db.collection("engagements").doc(id).get();
+      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
       if (snap.exists) {
         item = { id: snap.id, ...snap.data() };
       }
@@ -111,7 +111,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     } catch {}
 
     if (!existing) {
-      const snap = await db.collection("engagements").doc(id).get();
+      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
       if (snap.exists) existing = { id: snap.id, ...snap.data() };
     }
 
@@ -166,7 +166,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
     // Delete from Firestore
     try {
-      await db.collection("engagements").doc(id).delete();
+      await db.collection(getFirestoreCollection("engagements")).doc(id).delete();
     } catch (fbErr: any) {
       console.warn("Firestore delete engagement notice:", fbErr?.message || fbErr);
     }

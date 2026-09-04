@@ -1,6 +1,7 @@
 // app/api/engagements/[id]/share/route.ts — Dynamic Share counter increment
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
         })
       );
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     } catch {}
 
     if (!item && db) {
-      const snap = await db.collection("engagements").doc(id).get();
+      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
       if (snap.exists) item = { id: snap.id, ...snap.data() };
     }
 
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       ...item,
     };
 
-    await dualWrite("engagements", id, "SocialAndContent", dynamoItem);
+    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
 
     return NextResponse.json({
       success: true,
