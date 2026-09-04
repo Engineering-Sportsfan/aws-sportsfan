@@ -8,6 +8,7 @@ import {
   QueryCommand,
   ScanCommand,
   GetCommand,
+  PutCommand,
   DeleteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -78,26 +79,53 @@ export async function GET(req: NextRequest) {
     } else {
       // 2. Fetch top-level comments for contentId
       const cleanContentId = (contentId || "").replace(/^(ARTICLE|NEWS|POST|ENGAGEMENT)#/, "").trim();
-      try {
-        const scanRes = await docClient.send(
-          new ScanCommand({
-            TableName: TABLES.SocialAndContent,
-            FilterExpression:
-              "(contentId = :c OR contentId = :cClean OR contentId = :cPrefix OR targetContentId = :c OR targetContentId = :cClean) AND (attribute_not_exists(parentCommentId) OR parentCommentId = :nullVal)",
-            ExpressionAttributeValues: {
-              ":c": contentId,
-              ":cClean": cleanContentId,
-              ":cPrefix": `ARTICLE#${cleanContentId}`,
-              ":nullVal": null,
-            },
-            Limit: limit,
-          })
-        );
-        if (scanRes.Items && scanRes.Items.length > 0) {
-          comments = scanRes.Items;
+      
+      // Try fast QueryCommand on primary partition key
+      const candidateKeys = [`ARTICLE#${cleanContentId}`, cleanContentId, `POST#${cleanContentId}`, contentId].filter(Boolean);
+      for (const candKey of candidateKeys) {
+        try {
+          const qRes = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :c AND begins_with(sk, :skp)",
+              ExpressionAttributeValues: {
+                ":c": candKey,
+                ":skp": "COMMENT#",
+              },
+              Limit: limit,
+            })
+          );
+          if (qRes.Items && qRes.Items.length > 0) {
+            for (const item of qRes.Items) {
+              if (!item.parentCommentId) comments.push(item);
+            }
+          }
+        } catch {}
+      }
+
+      // If query found nothing, fallback to ScanCommand
+      if (comments.length === 0) {
+        try {
+          const scanRes = await docClient.send(
+            new ScanCommand({
+              TableName: TABLES.SocialAndContent,
+              FilterExpression:
+                "(contentId = :c OR contentId = :cClean OR contentId = :cPrefix OR targetContentId = :c OR targetContentId = :cClean) AND (attribute_not_exists(parentCommentId) OR parentCommentId = :nullVal)",
+              ExpressionAttributeValues: {
+                ":c": contentId,
+                ":cClean": cleanContentId,
+                ":cPrefix": `ARTICLE#${cleanContentId}`,
+                ":nullVal": null,
+              },
+              Limit: limit,
+            })
+          );
+          if (scanRes.Items && scanRes.Items.length > 0) {
+            comments = scanRes.Items;
+          }
+        } catch (err) {
+          console.warn("DynamoDB top-level comments scan notice:", err);
         }
-      } catch (err) {
-        console.warn("DynamoDB top-level comments scan notice:", err);
       }
     }
 
@@ -132,14 +160,26 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const formatted = comments.map((c) => ({
-      id: c.id || (c.commentId as string) || (c.contentId as string)?.replace(/^COMMENT#/, ""),
+    // Remove duplicates
+    const seen = new Set<string>();
+    const uniqueComments = comments.filter((c) => {
+      const cid = String(c.id || c.commentId || (c.sk as string) || "");
+      if (!cid || seen.has(cid)) return false;
+      seen.add(cid);
+      return true;
+    });
+
+    const formatted = uniqueComments.map((c) => ({
+      id: c.id || (c.commentId as string) || (c.sk as string)?.replace(/^COMMENT#\d+#?/, "") || (c.contentId as string)?.replace(/^COMMENT#/, ""),
+      commentId: c.commentId || c.id,
       ...c,
     }));
 
     return NextResponse.json({
       success: true,
       comments: formatted.slice(0, limit),
+      data: formatted.slice(0, limit),
+      total: formatted.length,
       pagination: {
         limit,
         hasMore: formatted.length > limit,
@@ -157,68 +197,87 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const {
-      contentId,
-      contentType,
-      commentText,
-      userId,
-      userName,
-      userEmail,
-      userAvatar,
-      parentCommentId,
-      timestamp,
-      metadata,
-    } = body;
 
-    if (!contentId || !contentType || !commentText || !userId || !userName) {
+    const rawContentId = String(body.contentId || body.articleId || body.postId || body.id || "").trim();
+    const cleanContentId = rawContentId.replace(/^(ARTICLE|NEWS|POST|ENGAGEMENT)#/, "").trim();
+    
+    const commentText = String(body.commentText || body.text || body.content || body.comment || body.message || "").trim();
+    const userId = String(body.userId || body.authorUid || body.authorId || body.uid || body.user_id || `guest_${Date.now()}`).trim();
+    const userName = String(body.userName || body.authorName || body.username || body.name || body.displayName || "Fan").trim();
+    const contentType = String(body.contentType || body.type || "article").trim();
+    const userEmail = String(body.userEmail || body.email || "").trim();
+    const userAvatar = String(body.userAvatar || body.authorAvatar || body.avatar || body.photoURL || "").trim();
+    const parentCommentId = body.parentCommentId || null;
+    const metadata = body.metadata || {};
+
+    if (!cleanContentId || !commentText) {
       return NextResponse.json(
-        { error: "contentId, contentType, commentText, userId, and userName are required" },
+        { error: "contentId and commentText (or text) are required" },
         { status: 400 }
       );
     }
 
     const now = Date.now();
-    const commentId = uuidv4();
+    const commentId = `cmt_${now}_${uuidv4().substring(0, 8)}`;
 
     const newComment: Comment = {
       id: commentId,
-      contentId,
+      contentId: cleanContentId,
       contentType,
       userId,
       userName,
-      userEmail: userEmail || "",
-      userAvatar: userAvatar || "",
-      commentText: commentText.trim(),
-      parentCommentId: parentCommentId || null,
+      userEmail,
+      userAvatar,
+      commentText,
+      parentCommentId,
       likes: 0,
       likedBy: [],
       replyCount: 0,
-      timestamp: timestamp || null,
+      timestamp: body.timestamp || now,
       createdAt: now,
       updatedAt: now,
       isFlagged: false,
       flaggedAt: null,
-      metadata: metadata || {},
+      metadata,
     };
 
-    // ── Dual-Write to DynamoDB & Firebase ────────────────────────────────────
-    const cleanContentId = contentId.replace(/^(ARTICLE|NEWS|POST|ENGAGEMENT)#/, "").trim();
+    // 1. DynamoDB Item (Dual partition keys so both Query and Scan can find it)
     const dynamoItem = {
       ...newComment,
-      contentId: `COMMENT#${commentId}`,
+      contentId: `ARTICLE#${cleanContentId}`,
       targetContentId: cleanContentId,
-      sk: `COMMENT#${now}`,
+      sk: `COMMENT#${now}#${commentId}`,
       commentId,
     };
 
-    await dualWrite("comments", commentId, TABLES.SocialAndContent, dynamoItem);
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.SocialAndContent,
+          Item: dynamoItem,
+        })
+      );
+    } catch (dynErr) {
+      console.warn("DynamoDB comment insert notice:", dynErr);
+    }
 
+    // 2. Dual-Write to Firestore 'comments' collection
+    try {
+      await db.collection(getFirestoreCollection("comments")).doc(commentId).set({
+        ...newComment,
+        contentId: cleanContentId,
+      });
+    } catch (fbErr) {
+      console.warn("Firestore comment insert notice:", fbErr);
+    }
+
+    // 3. Update replyCount or commentCount
     if (parentCommentId) {
       try {
-        await db.collection(getFirestoreCollection("comments")).doc(parentCommentId).update({
+        await db.collection(getFirestoreCollection("comments")).doc(parentCommentId).set({
           replyCount: FieldValue.increment(1),
           updatedAt: now,
-        });
+        }, { merge: true });
       } catch (fbErr) {
         console.warn("Firebase increment replyCount sync notice:", fbErr);
       }
@@ -228,17 +287,23 @@ export async function POST(req: NextRequest) {
           ? getFirestoreCollection("socialPosts")
           : getFirestoreCollection("cricketArticles");
       try {
-        await db.collection(contentCollection).doc(cleanContentId).update({
+        await db.collection(contentCollection).doc(cleanContentId).set({
           commentCount: FieldValue.increment(1),
           updatedAt: now,
-        });
+        }, { merge: true });
       } catch (fbErr) {
-        console.warn("Firebase increment post commentCount sync notice:", fbErr);
+        console.warn("Firebase increment article commentCount sync notice:", fbErr);
       }
     }
 
     return NextResponse.json(
-      { success: true, id: commentId, comment: { id: commentId, ...newComment } },
+      {
+        success: true,
+        id: commentId,
+        commentId,
+        comment: { id: commentId, commentId, ...newComment },
+        data: { id: commentId, commentId, ...newComment },
+      },
       { status: 201 }
     );
   } catch (error: unknown) {
