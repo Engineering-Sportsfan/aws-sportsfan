@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { logUserActivity } from "@/lib/logUserActivity";
 import jwt from "jsonwebtoken";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -160,6 +161,20 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.warn("Firebase google user update notice:", err);
       }
+    }
+
+    // ── Log date-wise user activity (login vs signup) ────────────────────────
+    try {
+      await logUserActivity({
+        req,
+        email: cleanEmail,
+        userId,
+        userName: username,
+        action: existingUser ? "login" : "signup",
+        metadata: { provider: "google" },
+      });
+    } catch (logErr) {
+      console.warn("Google auth activity logging notice:", logErr);
     }
 
     // ── Issue standard JWT cookie ────────────────────────────────────────────

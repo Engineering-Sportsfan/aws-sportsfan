@@ -71,6 +71,9 @@ export default function AuthIssuesPage() {
       setIssues(prev =>
         prev.map(i => i.issueId === issue.issueId ? { ...i, status: nextStatus } : i)
       );
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("auth-issues-updated"));
+      }
     } catch {
       alert("Failed to update status.");
     } finally {
@@ -92,6 +95,9 @@ export default function AuthIssuesPage() {
         }),
       });
       setIssues(prev => prev.filter(i => i.issueId !== issue.issueId));
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("auth-issues-updated"));
+      }
     } catch {
       alert("Failed to delete log.");
     } finally {
@@ -110,6 +116,9 @@ export default function AuthIssuesPage() {
       });
       setIssues([]);
       setStats({ total: 0, login: 0, signup: 0, otp: 0, pending: 0 });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("auth-issues-updated"));
+      }
     } catch {
       alert("Failed to clear logs.");
     } finally {

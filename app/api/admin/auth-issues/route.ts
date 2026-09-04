@@ -1,7 +1,7 @@
-// app/api/admin/auth-issues/route.ts — Admin API for fetching, filtering, and resolving Login/Signup/OTP issues
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { ScanCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
       do {
         const scanRes: any = await docClient.send(
           new ScanCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             FilterExpression: "begins_with(entityId, :prefix)",
             ExpressionAttributeValues: {
               ":prefix": "AUTH_ISSUE#",
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
 
     // 2. Fallback / merge from Firebase 'auth_issues'
     try {
-      const fbSnap = await db.collection("auth_issues").orderBy("timestamp", "desc").limit(200).get();
+      const fbSnap = await db.collection(getFirestoreCollection("auth_issues")).orderBy("timestamp", "desc").limit(200).get();
       const fbIssues: any[] = fbSnap.docs.map(d => ({
         id: d.id,
         ...d.data(),
@@ -58,8 +58,8 @@ export async function GET(req: NextRequest) {
       console.warn("Firebase auth issues fallback notice:", fbErr?.message || fbErr);
     }
 
-    // 3. Format and filter
-    let formatted = issues.map(item => ({
+    // 3. Format all issues
+    const allFormatted = issues.map(item => ({
       entityId: item.entityId,
       sk: item.sk,
       issueId: item.issueId || `ISSUE_${item.timestamp || Date.now()}`,
@@ -73,28 +73,32 @@ export async function GET(req: NextRequest) {
       metadata: item.metadata || {},
     }));
 
+    // Calculate global stats across all items (before filters)
+    const totalLoginIssues = allFormatted.filter(i => i.type === "login").length;
+    const totalSignupIssues = allFormatted.filter(i => i.type === "signup").length;
+    const totalOtpIssues = allFormatted.filter(i => i.type === "otp").length;
+    const totalPending = allFormatted.filter(i => (i.status || "pending") === "pending").length;
+
+    let filtered = [...allFormatted];
+
     if (typeFilter && typeFilter !== "all") {
-      formatted = formatted.filter(i => i.type.toLowerCase() === typeFilter.toLowerCase());
+      filtered = filtered.filter(i => i.type.toLowerCase() === typeFilter.toLowerCase());
     }
 
     if (statusFilter && statusFilter !== "all") {
-      formatted = formatted.filter(i => (i.status || "pending").toLowerCase() === statusFilter.toLowerCase());
+      filtered = filtered.filter(i => (i.status || "pending").toLowerCase() === statusFilter.toLowerCase());
     }
 
     // Sort descending (newest issues first)
-    formatted.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-
-    const totalLoginIssues = formatted.filter(i => i.type === "login").length;
-    const totalSignupIssues = formatted.filter(i => i.type === "signup").length;
-    const totalOtpIssues = formatted.filter(i => i.type === "otp").length;
-    const totalPending = formatted.filter(i => (i.status || "pending") === "pending").length;
+    filtered.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     return NextResponse.json(
       {
-        issues: formatted,
-        total: formatted.length,
+        issues: filtered,
+        total: filtered.length,
+        pendingCount: totalPending,
         stats: {
-          total: formatted.length,
+          total: allFormatted.length,
           login: totalLoginIssues,
           signup: totalSignupIssues,
           otp: totalOtpIssues,
@@ -123,7 +127,7 @@ export async function PATCH(req: NextRequest) {
       try {
         await docClient.send(
           new UpdateCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId, sk },
             UpdateExpression: "SET #st = :s, resolvedAt = :ra",
             ExpressionAttributeNames: { "#st": "status" },
@@ -141,7 +145,7 @@ export async function PATCH(req: NextRequest) {
     // Update in Firebase
     if (issueId) {
       try {
-        await db.collection("auth_issues").doc(issueId).update({
+        await db.collection(getFirestoreCollection("auth_issues")).doc(issueId).update({
           status,
           resolvedAt: Date.now(),
         });
@@ -166,7 +170,7 @@ export async function DELETE(req: NextRequest) {
       // Clear logs from DynamoDB & Firebase
       const scanRes: any = await docClient.send(
         new ScanCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           FilterExpression: "begins_with(entityId, :prefix)",
           ExpressionAttributeValues: { ":prefix": "AUTH_ISSUE#" },
         })
@@ -176,14 +180,14 @@ export async function DELETE(req: NextRequest) {
           scanRes.Items.map((it: any) =>
             docClient.send(
               new DeleteCommand({
-                TableName: "IdentityAndAccess",
+                TableName: TABLES.IdentityAndAccess,
                 Key: { entityId: it.entityId, sk: it.sk },
               })
             )
           )
         );
       }
-      const fbSnap = await db.collection("auth_issues").get();
+      const fbSnap = await db.collection(getFirestoreCollection("auth_issues")).get();
       await Promise.all(fbSnap.docs.map(d => d.ref.delete()));
       return NextResponse.json({ success: true, message: "All auth issue logs deleted" });
     }
@@ -191,14 +195,14 @@ export async function DELETE(req: NextRequest) {
     if (entityId && sk) {
       await docClient.send(
         new DeleteCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId, sk },
         })
       );
     }
 
     if (issueId) {
-      await db.collection("auth_issues").doc(issueId).delete().catch(() => {});
+      await db.collection(getFirestoreCollection("auth_issues")).doc(issueId).delete().catch(() => {});
     }
 
     return NextResponse.json({ success: true, message: "Issue log deleted" });
