@@ -82,6 +82,9 @@ export interface FlipLineCard {
   image?: string;
   videoUrl?: string;
   mediaType?: "image" | "video" | "audio";
+  isScheduled?: boolean;
+  scheduledAt?: number;
+  scheduledTimeMs?: number;
 }
 
 const SPORT_META: Record<string, { emoji: string; label: string; defaultScore?: FlipLineScoreChip }> = {
@@ -473,6 +476,18 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // Filter out posts scheduled for a future time (not yet arrived)
+    const now = Date.now();
+    cards = cards.filter((card) => {
+      const scheduledTime = Number(card.scheduledAt) || Number(card.scheduledTimeMs);
+      if (card.isScheduled || (scheduledTime && scheduledTime > 0)) {
+        if (scheduledTime && scheduledTime > now) {
+          return false;
+        }
+      }
+      return true;
+    });
+
     return NextResponse.json({
       success: true,
       env: process.env.APP_ENV || "prod",
@@ -504,7 +519,9 @@ export async function POST(req: NextRequest) {
       const sport = rawChannel;
       const meta = SPORT_META[sport] || { emoji: "🏆", label: "General" };
 
-      const timeMs = Date.now();
+      const isScheduled = body.isScheduled === true || body.isScheduled === "true";
+      const scheduledAt = body.scheduledAt ? Number(body.scheduledAt) : (body.scheduledTimeMs ? Number(body.scheduledTimeMs) : undefined);
+      const timeMs = (isScheduled && scheduledAt) ? scheduledAt : (body.timeMs ? Number(body.timeMs) : Date.now());
       const id = Date.now() + Math.floor(Math.random() * 1000);
       const timeStr = body.time || formatCurrentTime();
       const tags = typeof body.content === "string" ? body.content.match(/#[a-zA-Z0-9_]+/g) || [] : [];
@@ -524,6 +541,9 @@ export async function POST(req: NextRequest) {
         authorPhoto: body.authorPhoto,
         time: timeStr,
         timeMs,
+        isScheduled,
+        scheduledAt,
+        scheduledTimeMs: scheduledAt,
         author: body.author || "Fan",
         handle: body.handle,
         source: body.source || "FlipLine",
@@ -603,11 +623,11 @@ export async function POST(req: NextRequest) {
 
       const isVideo = file.type.startsWith("video/");
 
-      if (isVideo && file.size > 100 * 1024 * 1024) {
+      if (isVideo && file.size > 4.5 * 1024 * 1024) {
         return NextResponse.json(
           {
             success: false,
-            error: "Video must be smaller than 100 MB",
+            error: "Video must be smaller than 4.5 MB (serverless limit)",
           },
           { status: 400 }
         );
@@ -628,7 +648,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const timeMs = Date.now();
+    const isScheduledStr = formData.get("isScheduled") as string | null;
+    const isScheduled = isScheduledStr === "true";
+    const scheduledAtStr = (formData.get("scheduledAt") as string | null) || (formData.get("scheduledTimeMs") as string | null);
+    const scheduledAt = scheduledAtStr ? Number(scheduledAtStr) : undefined;
+    const timeMs = (isScheduled && scheduledAt) ? scheduledAt : (formData.get("timeMs") ? Number(formData.get("timeMs")) : Date.now());
     const id = Date.now() + Math.floor(Math.random() * 1000);
     const timeStr = time || formatCurrentTime();
     const meta = SPORT_META[sport] || { emoji: "🏆", label: "General" };
@@ -649,6 +673,9 @@ export async function POST(req: NextRequest) {
       authorPhoto,
       time: timeStr,
       timeMs,
+      isScheduled,
+      scheduledAt,
+      scheduledTimeMs: scheduledAt,
       author,
       handle,
       source,
