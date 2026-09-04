@@ -1,34 +1,134 @@
+
+
+
 // // app/api/cricket-articles/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 // import { NextRequest, NextResponse } from "next/server";
 // import { db } from "@/lib/firebaseAdmin";
 // import { docClient } from "@/lib/dynamodb";
 // import { dualWrite } from "@/lib/dualWrite";
 // import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+// import cloudinary from "@/lib/cloudinary";
 
 // export const dynamic = "force-dynamic";
 
 // type BadgeType = "FEATURE" | "ANALYSIS" | "OPINION" | "NEWS";
 
+// // Cloudinary Dynamic Folders — videos live under IndvsSl (same folder the
+// // cricket media browser reads from), images live under Images.
+// const VIDEO_FOLDER = "IndvsSl";
+// const IMAGE_FOLDER = "Images";
+
+// // Turn an article title into a safe Cloudinary public_id / display name.
+// function slugifyTitle(title: string): string {
+//   return title
+//     .trim()
+//     .toLowerCase()
+//     .replace(/[^a-z0-9]+/g, "_")
+//     .replace(/^_+|_+$/g, "")
+//     .slice(0, 80) || "article";
+// }
+
+// // ─── Cloudinary upload helper ─────────────────────────────────────────────────
+// // For videos, the uploaded file is named after the article title (so the
+// // cricket media library shows it as e.g. "india_vs_sri_lanka_recap" instead
+// // of the original device filename). Images keep the default filename logic.
+// async function uploadMediaFile(file: File, articleTitle?: string): Promise<string> {
+//   const isVideo = file.type.startsWith("video/");
+//   const arrayBuffer = await file.arrayBuffer();
+//   const buffer = Buffer.from(arrayBuffer);
+//   const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
+
+//   if (isVideo) {
+//     const baseName = articleTitle ? slugifyTitle(articleTitle) : "article";
+//     const uploadResult = await cloudinary.uploader.upload(base64, {
+//       resource_type: "video",
+//       asset_folder: VIDEO_FOLDER,
+//       public_id: `${baseName}_${Date.now()}`,
+//       display_name: articleTitle || baseName,
+//       overwrite: false,
+//     });
+
+//     // Force a browser-playable mp4 delivery URL for video.
+//     return cloudinary.url(uploadResult.public_id, {
+//       resource_type: "video",
+//       format: "mp4",
+//       transformation: [{ quality: "auto" }],
+//     });
+//   }
+
+//   const uploadResult = await cloudinary.uploader.upload(base64, {
+//     resource_type: "image",
+//     asset_folder: IMAGE_FOLDER,
+//     use_filename: true,
+//     unique_filename: true,
+//     overwrite: false,
+//   });
+
+//   return uploadResult.secure_url;
+// }
+
 // // ─── POST: Create a new article ───────────────────────────────────────────────
 // export async function POST(req: NextRequest) {
 //   try {
-//     const body = await req.json();
-//     const {
-//       badge,
-//       title,
-//       description,
-//       readTime,
-//       author,
-//       views,
-//       image,
-//       tags,
-//     } = body;
+//     const contentType = req.headers.get("content-type") || "";
+
+//     let badge: string | undefined;
+//     let title: string | undefined;
+//     let description: string[] | undefined;
+//     let readTime: string | undefined;
+//     let author: string | undefined;
+//     let views: string | undefined;
+//     let tags: string[] = [];
+//     let imageUrl: string | undefined;
+
+//     if (contentType.includes("multipart/form-data")) {
+//       // File comes straight from the client — upload it to Cloudinary here.
+//       const formData = await req.formData();
+
+//       badge = (formData.get("badge") as string) || undefined;
+//       title = (formData.get("title") as string) || undefined;
+//       readTime = (formData.get("readTime") as string) || undefined;
+//       author = (formData.get("author") as string) || undefined;
+//       views = (formData.get("views") as string) || undefined;
+
+//       const descriptionRaw = formData.get("description") as string | null;
+//       if (descriptionRaw) {
+//         try {
+//           description = JSON.parse(descriptionRaw);
+//         } catch {
+//           description = [descriptionRaw];
+//         }
+//       }
+
+//       const tagsRaw = formData.get("tags") as string | null;
+//       if (tagsRaw) {
+//         try {
+//           tags = JSON.parse(tagsRaw);
+//         } catch {
+//           tags = [];
+//         }
+//       }
+
+//       const file = formData.get("file") as File | null;
+//       const existingImage = formData.get("existingImage") as string | null;
+
+//       if (file && file.size > 0) {
+//         imageUrl = await uploadMediaFile(file, title);
+//       } else if (existingImage) {
+//         imageUrl = existingImage;
+//       }
+//     } else {
+//       // Backwards-compatible JSON path (image already a URL).
+//       const body = await req.json();
+//       ({ badge, title, description, readTime, author, views, tags = [] } = body);
+//       imageUrl = body.image;
+//     }
 
 //     const validBadges: BadgeType[] = ["FEATURE", "ANALYSIS", "OPINION", "NEWS"];
-//     if (!title || !image) {
-//       return NextResponse.json({ error: "title and image are required" }, { status: 400 });
+//     if (!title || !imageUrl) {
+//       return NextResponse.json({ error: "title and image/video are required" }, { status: 400 });
 //     }
-//     if (badge && !validBadges.includes(badge)) {
+//     if (badge && !validBadges.includes(badge as BadgeType)) {
 //       return NextResponse.json(
 //         { error: "Invalid badge type. Must be FEATURE, ANALYSIS, OPINION, or NEWS" },
 //         { status: 400 }
@@ -40,13 +140,13 @@
 
 //     const newArticle = {
 //       articleId,
-//       badge: badge || "NEWS",
+//       badge: (badge as BadgeType) || "NEWS",
 //       title,
 //       description,
 //       author: author || "SportsFan Staff",
 //       readTime: readTime || "5 min read",
 //       views: views || "0 views",
-//       image,
+//       image: imageUrl,
 //       tags: Array.isArray(tags) ? tags : [],
 //       createdAt: now,
 //       updatedAt: now,
@@ -154,6 +254,9 @@
 
 
 
+
+
+
 // app/api/cricket-articles/route.ts — Migrated to AWS DynamoDB (SocialAndContent Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
@@ -182,9 +285,6 @@ function slugifyTitle(title: string): string {
 }
 
 // ─── Cloudinary upload helper ─────────────────────────────────────────────────
-// For videos, the uploaded file is named after the article title (so the
-// cricket media library shows it as e.g. "india_vs_sri_lanka_recap" instead
-// of the original device filename). Images keep the default filename logic.
 async function uploadMediaFile(file: File, articleTitle?: string): Promise<string> {
   const isVideo = file.type.startsWith("video/");
   const arrayBuffer = await file.arrayBuffer();
@@ -201,7 +301,6 @@ async function uploadMediaFile(file: File, articleTitle?: string): Promise<strin
       overwrite: false,
     });
 
-    // Force a browser-playable mp4 delivery URL for video.
     return cloudinary.url(uploadResult.public_id, {
       resource_type: "video",
       format: "mp4",
@@ -235,7 +334,6 @@ export async function POST(req: NextRequest) {
     let imageUrl: string | undefined;
 
     if (contentType.includes("multipart/form-data")) {
-      // File comes straight from the client — upload it to Cloudinary here.
       const formData = await req.formData();
 
       badge = (formData.get("badge") as string) || undefined;
@@ -271,7 +369,6 @@ export async function POST(req: NextRequest) {
         imageUrl = existingImage;
       }
     } else {
-      // Backwards-compatible JSON path (image already a URL).
       const body = await req.json();
       ({ badge, title, description, readTime, author, views, tags = [] } = body);
       imageUrl = body.image;
@@ -305,7 +402,6 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     };
 
-    // ── Dual-Write to DynamoDB & Firebase ────────────────────────────────────
     const dynamoItem = {
       contentId: `ARTICLE#${articleId}`,
       sk: `ARTICLE#${now}`,
@@ -333,6 +429,7 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+    // `limit` is a RESPONSE page size, not a scan cap — see note below.
     const limit = Math.min(parseInt(searchParams.get("limit") || "10"), 50);
     const badge = searchParams.get("badge");
 
@@ -351,20 +448,49 @@ export async function GET(req: NextRequest) {
         expressionAttributeValues[":bd"] = badge;
       }
 
-      const scanRes = await docClient.send(
-        new ScanCommand({
-          TableName: "SocialAndContent",
-          FilterExpression: filterExpression,
-          ExpressionAttributeValues: expressionAttributeValues,
-          Limit: limit,
-        })
-      );
+      // IMPORTANT: We intentionally do NOT pass `Limit` here.
+      //
+      // DynamoDB's Scan `Limit` caps how many *raw items* are read off disk
+      // BEFORE FilterExpression is applied — not how many items survive the
+      // filter. SocialAndContent is a shared single-table holding posts,
+      // comments, banners, etc. alongside articles, in physical (partition
+      // hash) order, not creation order. With `Limit` set, a scan could read
+      // 10 items that happen to all be non-article content, apply the filter,
+      // and legitimately return zero articles even though many exist in the
+      // table — which is exactly the bug that was hiding newly-created
+      // articles here.
+      //
+      // Since you're publishing articles daily, this table will keep growing,
+      // so we paginate through the *entire* scan via LastEvaluatedKey to make
+      // sure every article-shaped item gets a chance to pass the filter, then
+      // sort/paginate for the response ourselves afterward.
+      let items: Record<string, unknown>[] = [];
+      let lastEvaluatedKey: Record<string, unknown> | undefined = undefined;
+      let pageCount = 0;
+      const MAX_PAGES = 50; // safety cap: ~50 x 1MB scan pages before we bail
 
-      if (scanRes.Items && scanRes.Items.length > 0) {
-        articles = scanRes.Items.map((item) => ({
-          id: (item.contentId as string)?.replace(/^(ARTICLE|NEWS)#/, "") || item.articleId || item.id,
-          ...item,
-        }));
+      do {
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: "SocialAndContent",
+            FilterExpression: filterExpression,
+            ExpressionAttributeValues: expressionAttributeValues,
+            ExclusiveStartKey: lastEvaluatedKey,
+          })
+        );
+        items = items.concat(scanRes.Items || []);
+        lastEvaluatedKey = scanRes.LastEvaluatedKey as Record<string, unknown> | undefined;
+        pageCount += 1;
+      } while (lastEvaluatedKey && pageCount < MAX_PAGES);
+
+      if (items.length > 0) {
+        articles = items
+          .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
+          .slice(0, limit)
+          .map((item) => ({
+            id: (item.contentId as string)?.replace(/^(ARTICLE|NEWS)#/, "") || item.articleId || item.id,
+            ...item,
+          }));
       }
     } catch (dynErr) {
       console.warn("DynamoDB articles scan notice:", dynErr);

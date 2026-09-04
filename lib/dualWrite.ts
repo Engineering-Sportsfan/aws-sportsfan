@@ -1,5 +1,6 @@
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { getFirestoreCollection } from "@/lib/tableNames";
 import { PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export interface DualWriteOptions {
@@ -74,7 +75,8 @@ export async function dualWrite(
       delete firebaseData.GSI1PK;
       delete firebaseData.GSI1SK;
 
-      await db.collection(collectionName).doc(documentId).set(firebaseData, { merge: true });
+      const targetCollection = getFirestoreCollection(collectionName);
+      await db.collection(targetCollection).doc(documentId).set(firebaseData, { merge: true });
     }
 
     return true;
@@ -129,7 +131,8 @@ export async function dualDelete(
     if (firestoreRef) {
       await firestoreRef.delete();
     } else if (collectionName && documentId) {
-      await db.collection(collectionName).doc(documentId).delete();
+      const targetCollection = getFirestoreCollection(collectionName);
+      await db.collection(targetCollection).doc(documentId).delete();
     }
 
     return true;
