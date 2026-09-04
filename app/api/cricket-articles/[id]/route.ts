@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
-import { QueryCommand, UpdateCommand, DeleteCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand, UpdateCommand, DeleteCommand, ScanCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import cloudinary from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +69,10 @@ async function extractId(
   }
   const url = new URL(req.url);
   const parts = url.pathname.split("/").filter(Boolean);
+  const idIdx = parts.indexOf("cricket-articles");
+  if (idIdx !== -1 && parts[idIdx + 1] && !["like", "likes", "view", "views"].includes(parts[idIdx + 1])) {
+    return decodeURIComponent(parts[idIdx + 1]);
+  }
   const lastPart = parts[parts.length - 1];
   return decodeURIComponent(lastPart || "");
 }
@@ -84,6 +88,9 @@ export async function GET(
     if (!rawId) {
       return NextResponse.json({ error: "Article ID is required" }, { status: 400 });
     }
+
+    const { searchParams } = new URL(req.url);
+    const requestingUserId = searchParams.get("userId") || searchParams.get("user") || "";
 
     const cleanId = rawId.replace(/^(ARTICLE|NEWS)#/, "").trim();
     const candidates = Array.from(
@@ -119,7 +126,7 @@ export async function GET(
       }
     }
 
-    // 2. Fallback to Firebase
+    // 2. Fallback to Firestore
     if (!article) {
       const collections = Array.from(
         new Set([getFirestoreCollection("cricketArticles"), "cricketArticles"])
@@ -149,17 +156,54 @@ export async function GET(
       return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
 
+    // Check if user liked this article in DynamoDB engagement records
+    let isUserLiked = false;
+    const likedByArray: string[] = Array.isArray(article.likedBy) ? (article.likedBy as string[]) : [];
+    if (requestingUserId) {
+      if (likedByArray.includes(requestingUserId)) {
+        isUserLiked = true;
+      } else {
+        try {
+          const likeCheck = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: {
+                contentId: `ARTICLE#${cleanId}`,
+                sk: `LIKE#${requestingUserId}`,
+              },
+            })
+          );
+          if (likeCheck.Item) isUserLiked = true;
+        } catch {}
+      }
+    }
+
+    const likes = Number(article.likes ?? article.likeCount ?? 0);
+    const viewCount = Number(
+      article.viewCount ??
+        (article.views ? parseInt(String(article.views).replace(/[^\d]/g, ""), 10) || 0 : 0)
+    );
+
+    const normalizedArticle = {
+      id:
+        (article.contentId as string)?.replace(/^(ARTICLE|NEWS)#/, "") ||
+        article.articleId ||
+        article.id ||
+        cleanId,
+      ...article,
+      likes,
+      likeCount: likes,
+      likedBy: likedByArray,
+      isLiked: isUserLiked,
+      viewCount,
+      views: article.views || `${viewCount} views`,
+      commentCount: Number(article.commentCount ?? 0),
+    };
+
     return NextResponse.json(
       {
         success: true,
-        article: {
-          id:
-            (article.contentId as string)?.replace(/^(ARTICLE|NEWS)#/, "") ||
-            article.articleId ||
-            article.id ||
-            cleanId,
-          ...article,
-        },
+        article: normalizedArticle,
       },
       { headers: { "Cache-Control": "no-store" } }
     );
@@ -170,8 +214,22 @@ export async function GET(
   }
 }
 
-// ─── PUT: Update article by ID (Media is optional) ────────────────────────────
+// ─── PUT / PATCH: Update article or handle like/view actions ─────────────────
 export async function PUT(
+  req: NextRequest,
+  context?: { params?: { id?: string } | Promise<{ id?: string }> }
+) {
+  return handleUpdateOrAction(req, context);
+}
+
+export async function PATCH(
+  req: NextRequest,
+  context?: { params?: { id?: string } | Promise<{ id?: string }> }
+) {
+  return handleUpdateOrAction(req, context);
+}
+
+async function handleUpdateOrAction(
   req: NextRequest,
   context?: { params?: { id?: string } | Promise<{ id?: string }> }
 ) {
@@ -183,6 +241,8 @@ export async function PUT(
     }
 
     const contentType = req.headers.get("content-type") || "";
+    let body: any = {};
+
     let badge: string | undefined;
     let title: string | undefined;
     let description: string[] | undefined;
@@ -230,29 +290,14 @@ export async function PUT(
         imageUrl = imageParam;
       }
     } else {
-      const body = await req.json();
+      body = await req.json().catch(() => ({}));
       ({ badge, title, description, readTime, author, views, tags } = body);
       imageUrl = body.image;
     }
 
     const cleanId = rawId.replace(/^(ARTICLE|NEWS)#/, "").trim();
-    const validBadges: BadgeType[] = ["FEATURE", "ANALYSIS", "OPINION", "NEWS"];
-    if (badge && !validBadges.includes(badge as BadgeType)) {
-      return NextResponse.json({ error: "Invalid badge type" }, { status: 400 });
-    }
-
-    const updates: Record<string, unknown> = {
-      updatedAt: Date.now(),
-    };
-
-    if (badge !== undefined) updates.badge = badge;
-    if (title !== undefined) updates.title = title.trim();
-    if (author !== undefined) updates.author = author.trim();
-    if (description !== undefined) updates.description = description;
-    if (readTime !== undefined) updates.readTime = readTime.trim();
-    if (views !== undefined) updates.views = views.trim();
-    if (tags !== undefined) updates.tags = tags;
-    if (imageUrl !== undefined) updates.image = imageUrl; // Allows setting "" if cleared
+    const action = body.action; // "like" | "unlike" | "toggle" | "view"
+    const userId = (body.userId || body.user?.userId || "guest").trim();
 
     const candidates = Array.from(
       new Set([
@@ -262,6 +307,205 @@ export async function PUT(
         rawId,
       ])
     );
+
+    const now = Date.now();
+
+    // ── CASE 1: LIKE / UNLIKE ACTION ──────────────────────────────────────────
+    if (action === "like" || action === "unlike" || action === "toggle") {
+      let articleItem: Record<string, unknown> | null = null;
+      for (const cand of candidates) {
+        try {
+          const qRes = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :c",
+              ExpressionAttributeValues: { ":c": cand },
+              Limit: 1,
+            })
+          );
+          if (qRes.Items && qRes.Items.length > 0) {
+            articleItem = qRes.Items[0];
+            break;
+          }
+        } catch {}
+      }
+
+      let currentLikes = Number(articleItem?.likes ?? articleItem?.likeCount ?? 0);
+      let likedBy: string[] = Array.isArray(articleItem?.likedBy)
+        ? [...(articleItem.likedBy as string[])]
+        : [];
+
+      const isCurrentlyLiked = likedBy.includes(userId);
+      let isLiked = isCurrentlyLiked;
+
+      if (action === "toggle") {
+        if (isCurrentlyLiked) {
+          likedBy = likedBy.filter((u) => u !== userId);
+          currentLikes = Math.max(0, currentLikes - 1);
+          isLiked = false;
+        } else {
+          if (!likedBy.includes(userId)) likedBy.push(userId);
+          currentLikes += 1;
+          isLiked = true;
+        }
+      } else if (action === "unlike") {
+        if (isCurrentlyLiked) {
+          likedBy = likedBy.filter((u) => u !== userId);
+          currentLikes = Math.max(0, currentLikes - 1);
+        }
+        isLiked = false;
+      } else {
+        // like
+        if (!isCurrentlyLiked) {
+          if (!likedBy.includes(userId)) likedBy.push(userId);
+          currentLikes += 1;
+        }
+        isLiked = true;
+      }
+
+      // Update DynamoDB
+      for (const cand of candidates) {
+        try {
+          const qRes = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :c",
+              ExpressionAttributeValues: { ":c": cand },
+            })
+          );
+          if (qRes.Items && qRes.Items.length > 0) {
+            for (const it of qRes.Items) {
+              await docClient.send(
+                new UpdateCommand({
+                  TableName: TABLES.SocialAndContent,
+                  Key: { contentId: it.contentId as string, sk: it.sk as string },
+                  UpdateExpression: "SET likes = :l, likeCount = :l, likedBy = :lb, updatedAt = :u",
+                  ExpressionAttributeValues: { ":l": currentLikes, ":lb": likedBy, ":u": now },
+                })
+              );
+            }
+          }
+        } catch {}
+      }
+
+      // Update Firestore
+      const collections = Array.from(
+        new Set([getFirestoreCollection("cricketArticles"), "cricketArticles"])
+      );
+      for (const col of collections) {
+        try {
+          await db.collection(col).doc(cleanId).set(
+            { likes: currentLikes, likeCount: currentLikes, likedBy, updatedAt: now },
+            { merge: true }
+          );
+        } catch {}
+      }
+
+      return NextResponse.json({
+        success: true,
+        id: cleanId,
+        likes: currentLikes,
+        likeCount: currentLikes,
+        likedBy,
+        isLiked,
+        action: isLiked ? "liked" : "unliked",
+      });
+    }
+
+    // ── CASE 2: VIEW COUNT ACTION ─────────────────────────────────────────────
+    if (action === "view") {
+      let currentViews = 0;
+      for (const cand of candidates) {
+        try {
+          const qRes = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :c",
+              ExpressionAttributeValues: { ":c": cand },
+              Limit: 1,
+            })
+          );
+          if (qRes.Items && qRes.Items.length > 0) {
+            const it = qRes.Items[0];
+            currentViews = typeof it.viewCount === "number" ? it.viewCount : 0;
+            if (!currentViews && it.views) {
+              const p = parseInt(String(it.views).replace(/[^\d]/g, ""), 10);
+              if (!isNaN(p)) currentViews = p;
+            }
+            break;
+          }
+        } catch {}
+      }
+
+      const newViews = currentViews + 1;
+      const formattedViews = `${newViews} views`;
+
+      for (const cand of candidates) {
+        try {
+          const qRes = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :c",
+              ExpressionAttributeValues: { ":c": cand },
+            })
+          );
+          if (qRes.Items && qRes.Items.length > 0) {
+            for (const it of qRes.Items) {
+              await docClient.send(
+                new UpdateCommand({
+                  TableName: TABLES.SocialAndContent,
+                  Key: { contentId: it.contentId as string, sk: it.sk as string },
+                  UpdateExpression: "SET viewCount = :vc, views = :v, updatedAt = :u",
+                  ExpressionAttributeValues: { ":vc": newViews, ":v": formattedViews, ":u": now },
+                })
+              );
+            }
+          }
+        } catch {}
+      }
+
+      const collections = Array.from(
+        new Set([getFirestoreCollection("cricketArticles"), "cricketArticles"])
+      );
+      for (const col of collections) {
+        try {
+          await db.collection(col).doc(cleanId).set(
+            { viewCount: newViews, views: formattedViews, updatedAt: now },
+            { merge: true }
+          );
+        } catch {}
+      }
+
+      return NextResponse.json({
+        success: true,
+        id: cleanId,
+        viewCount: newViews,
+        views: formattedViews,
+      });
+    }
+
+    // ── CASE 3: STANDARD ARTICLE EDIT / UPDATE ────────────────────────────────
+    const validBadges: BadgeType[] = ["FEATURE", "ANALYSIS", "OPINION", "NEWS"];
+    if (badge && !validBadges.includes(badge as BadgeType)) {
+      return NextResponse.json({ error: "Invalid badge type" }, { status: 400 });
+    }
+
+    const updates: Record<string, unknown> = {
+      updatedAt: now,
+    };
+
+    if (badge !== undefined) updates.badge = badge;
+    if (title !== undefined) updates.title = title.trim();
+    if (author !== undefined) updates.author = author.trim();
+    if (description !== undefined) updates.description = description;
+    if (readTime !== undefined) updates.readTime = readTime.trim();
+    if (views !== undefined) updates.views = views.trim();
+    if (tags !== undefined) updates.tags = tags;
+    if (imageUrl !== undefined) updates.image = imageUrl;
+    if (body.likes !== undefined) updates.likes = Number(body.likes);
+    if (body.likeCount !== undefined) updates.likeCount = Number(body.likeCount);
+    if (body.likedBy !== undefined) updates.likedBy = body.likedBy;
+    if (body.viewCount !== undefined) updates.viewCount = Number(body.viewCount);
 
     // 1. Update in DynamoDB
     for (const cand of candidates) {
@@ -309,6 +553,22 @@ export async function PUT(
             if (updates.tags !== undefined) {
               updateExprParts.push("tags = :tags");
               exprVals[":tags"] = updates.tags;
+            }
+            if (updates.likes !== undefined) {
+              updateExprParts.push("likes = :l");
+              exprVals[":l"] = updates.likes;
+            }
+            if (updates.likeCount !== undefined) {
+              updateExprParts.push("likeCount = :lc");
+              exprVals[":lc"] = updates.likeCount;
+            }
+            if (updates.likedBy !== undefined) {
+              updateExprParts.push("likedBy = :lb");
+              exprVals[":lb"] = updates.likedBy;
+            }
+            if (updates.viewCount !== undefined) {
+              updateExprParts.push("viewCount = :vc");
+              exprVals[":vc"] = updates.viewCount;
             }
 
             await docClient.send(
@@ -383,7 +643,6 @@ export async function DELETE(
 
     let deletedFromDynamoCount = 0;
 
-    // 1. Delete all matching candidate items from DynamoDB SocialAndContent table
     for (const cand of candidates) {
       try {
         const qRes = await docClient.send(
@@ -405,7 +664,6 @@ export async function DELETE(
               })
             );
             deletedFromDynamoCount++;
-            console.log(`[Cricket Articles] 🗑️ Deleted DynamoDB item -> contentId: [${item.contentId}], sk: [${item.sk}]`);
           }
         }
       } catch (dynErr: any) {
@@ -413,41 +671,6 @@ export async function DELETE(
       }
     }
 
-    // 2. Targeted Scan fallback if not found via Query
-    if (deletedFromDynamoCount === 0) {
-      try {
-        const scanRes = await docClient.send(
-          new ScanCommand({
-            TableName: TABLES.SocialAndContent,
-            FilterExpression: "contentId = :c1 OR contentId = :c2 OR articleId = :id OR id = :id",
-            ExpressionAttributeValues: {
-              ":c1": `ARTICLE#${cleanId}`,
-              ":c2": `NEWS#${cleanId}`,
-              ":id": cleanId,
-            },
-          })
-        );
-        if (scanRes.Items && scanRes.Items.length > 0) {
-          for (const item of scanRes.Items) {
-            await docClient.send(
-              new DeleteCommand({
-                TableName: TABLES.SocialAndContent,
-                Key: {
-                  contentId: item.contentId as string,
-                  sk: item.sk as string,
-                },
-              })
-            );
-            deletedFromDynamoCount++;
-            console.log(`[Cricket Articles] 🗑️ Deleted DynamoDB scanned item -> contentId: [${item.contentId}], sk: [${item.sk}]`);
-          }
-        }
-      } catch (scanErr: any) {
-        console.warn("DynamoDB article fallback scan delete notice:", scanErr?.message || scanErr);
-      }
-    }
-
-    // 3. Delete from Firebase across collections
     const firebaseCollections = Array.from(
       new Set([
         getFirestoreCollection("cricketArticles"),
@@ -468,8 +691,6 @@ export async function DELETE(
         console.warn(`Firebase article delete [${col}] notice:`, fbErr?.message || fbErr);
       }
     }
-
-    console.log(`[Cricket Articles] ⚡ Article [${rawId}] completely deleted from DynamoDB & Firebase`);
 
     return NextResponse.json({
       success: true,
