@@ -11,6 +11,7 @@ import {
   DeleteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { FieldValue } from "firebase-admin/firestore";
 
 export const dynamic = "force-dynamic";
@@ -61,7 +62,7 @@ export async function GET(req: NextRequest) {
       try {
         const replyRes = await docClient.send(
           new QueryCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             IndexName: "parentCommentId-createdAt-index",
             KeyConditionExpression: "parentCommentId = :p",
             ExpressionAttributeValues: { ":p": parentCommentId },
@@ -76,13 +77,17 @@ export async function GET(req: NextRequest) {
       }
     } else {
       // 2. Fetch top-level comments for contentId
+      const cleanContentId = (contentId || "").replace(/^(ARTICLE|NEWS|POST|ENGAGEMENT)#/, "").trim();
       try {
         const scanRes = await docClient.send(
           new ScanCommand({
-            TableName: "SocialAndContent",
-            FilterExpression: "contentId = :c AND (attribute_not_exists(parentCommentId) OR parentCommentId = :nullVal)",
+            TableName: TABLES.SocialAndContent,
+            FilterExpression:
+              "(contentId = :c OR contentId = :cClean OR contentId = :cPrefix OR targetContentId = :c OR targetContentId = :cClean) AND (attribute_not_exists(parentCommentId) OR parentCommentId = :nullVal)",
             ExpressionAttributeValues: {
               ":c": contentId,
+              ":cClean": cleanContentId,
+              ":cPrefix": `ARTICLE#${cleanContentId}`,
               ":nullVal": null,
             },
             Limit: limit,
@@ -99,17 +104,19 @@ export async function GET(req: NextRequest) {
     // 3. Fallback to Firebase if DynamoDB returned no items
     if (comments.length === 0) {
       try {
+        const commentsCol = getFirestoreCollection("comments");
         let query: FirebaseFirestore.Query;
         if (parentCommentId) {
           query = db
-            .collection("comments")
+            .collection(commentsCol)
             .where("parentCommentId", "==", parentCommentId)
             .orderBy("createdAt", "asc")
             .limit(limit);
         } else {
+          const cleanContentId = (contentId || "").replace(/^(ARTICLE|NEWS|POST|ENGAGEMENT)#/, "").trim();
           query = db
-            .collection("comments")
-            .where("contentId", "==", contentId)
+            .collection(commentsCol)
+            .where("contentId", "in", [contentId, cleanContentId, `ARTICLE#${cleanContentId}`].filter(Boolean))
             .where("parentCommentId", "==", null)
             .orderBy("createdAt", "desc")
             .limit(limit);
@@ -195,18 +202,20 @@ export async function POST(req: NextRequest) {
     };
 
     // ── Dual-Write to DynamoDB & Firebase ────────────────────────────────────
+    const cleanContentId = contentId.replace(/^(ARTICLE|NEWS|POST|ENGAGEMENT)#/, "").trim();
     const dynamoItem = {
       ...newComment,
       contentId: `COMMENT#${commentId}`,
+      targetContentId: cleanContentId,
       sk: `COMMENT#${now}`,
       commentId,
     };
 
-    await dualWrite("comments", commentId, "SocialAndContent", dynamoItem);
+    await dualWrite("comments", commentId, TABLES.SocialAndContent, dynamoItem);
 
     if (parentCommentId) {
       try {
-        await db.collection("comments").doc(parentCommentId).update({
+        await db.collection(getFirestoreCollection("comments")).doc(parentCommentId).update({
           replyCount: FieldValue.increment(1),
           updatedAt: now,
         });
@@ -214,9 +223,12 @@ export async function POST(req: NextRequest) {
         console.warn("Firebase increment replyCount sync notice:", fbErr);
       }
     } else {
-      const contentCollection = contentType === "post" ? "socialPosts" : "articles";
+      const contentCollection =
+        contentType === "post"
+          ? getFirestoreCollection("socialPosts")
+          : getFirestoreCollection("cricketArticles");
       try {
-        await db.collection(contentCollection).doc(contentId).update({
+        await db.collection(contentCollection).doc(cleanContentId).update({
           commentCount: FieldValue.increment(1),
           updatedAt: now,
         });
@@ -255,7 +267,7 @@ export async function PUT(req: NextRequest) {
     try {
       const qRes = await docClient.send(
         new QueryCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :c",
           ExpressionAttributeValues: { ":c": `COMMENT#${commentId}` },
           Limit: 1,
@@ -270,7 +282,7 @@ export async function PUT(req: NextRequest) {
 
     if (!commentData) {
       try {
-        const doc = await db.collection("comments").doc(commentId).get();
+        const doc = await db.collection(getFirestoreCollection("comments")).doc(commentId).get();
         if (doc.exists) commentData = doc.data() as Record<string, unknown>;
       } catch (fbErr) {
         console.warn("Firebase comment fetch notice:", fbErr);
@@ -303,7 +315,7 @@ export async function PUT(req: NextRequest) {
       try {
         await docClient.send(
           new UpdateCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: {
               contentId: (commentData.contentId as string) || `COMMENT#${commentId}`,
               sk: (commentData.sk as string) || `COMMENT#${commentData.createdAt || now}`,
@@ -322,7 +334,7 @@ export async function PUT(req: NextRequest) {
 
       // Sync to Firebase
       try {
-        await db.collection("comments").doc(commentId).update({
+        await db.collection(getFirestoreCollection("comments")).doc(commentId).update({
           likes,
           likedBy,
           updatedAt: now,
@@ -348,7 +360,7 @@ export async function PUT(req: NextRequest) {
       try {
         await docClient.send(
           new UpdateCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: {
               contentId: (commentData.contentId as string) || `COMMENT#${commentId}`,
               sk: (commentData.sk as string) || `COMMENT#${commentData.createdAt || now}`,
@@ -366,7 +378,7 @@ export async function PUT(req: NextRequest) {
 
       // Sync to Firebase
       try {
-        await db.collection("comments").doc(commentId).update({
+        await db.collection(getFirestoreCollection("comments")).doc(commentId).update({
           commentText: cleanText,
           updatedAt: now,
         });
@@ -407,7 +419,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const qRes = await docClient.send(
         new QueryCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :c",
           ExpressionAttributeValues: { ":c": `COMMENT#${commentId}` },
           Limit: 1,
@@ -420,7 +432,7 @@ export async function DELETE(req: NextRequest) {
 
     if (!commentData) {
       try {
-        const doc = await db.collection("comments").doc(commentId).get();
+        const doc = await db.collection(getFirestoreCollection("comments")).doc(commentId).get();
         if (doc.exists) commentData = doc.data() as Record<string, unknown>;
       } catch (fbErr) {
         console.warn("Firebase fetch comment for delete notice:", fbErr);
@@ -439,7 +451,7 @@ export async function DELETE(req: NextRequest) {
     try {
       await docClient.send(
         new DeleteCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: {
             contentId: (commentData.contentId as string) || `COMMENT#${commentId}`,
             sk: (commentData.sk as string) || `COMMENT#${commentData.createdAt || Date.now()}`,
@@ -452,7 +464,7 @@ export async function DELETE(req: NextRequest) {
 
     // 3. Delete from Firebase
     try {
-      await db.collection("comments").doc(commentId).delete();
+      await db.collection(getFirestoreCollection("comments")).doc(commentId).delete();
     } catch (fbErr) {
       console.warn("Firebase delete comment notice:", fbErr);
     }
