@@ -32,8 +32,8 @@ export function extractArticleId(pathname: string): string {
 }
 
 export function validateCreateArticle(input: CricketArticleInput) {
-  if (!input.title || !input.image) {
-    return { ok: false as const, status: 400, error: "title and image are required" };
+  if (!input.title) {
+    return { ok: false as const, status: 400, error: "title is required" };
   }
 
   if (input.badge && !VALID_BADGES.includes(input.badge as BadgeType)) {
@@ -148,7 +148,6 @@ export function buildAdminApiRequest(input: CricketArticleInput) {
 export function validateAdminArticleForm(input: CricketArticleInput) {
   const errors: string[] = [];
   if (!input.title?.trim()) errors.push("Title is required");
-  if (!input.image?.trim()) errors.push("Image is required");
   if (input.tags !== undefined && !Array.isArray(input.tags)) {
     errors.push("Tags must be an array of strings");
   }

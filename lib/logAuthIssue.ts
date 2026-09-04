@@ -1,7 +1,6 @@
-// lib/logAuthIssue.ts — Real-time logging of login, signup, and OTP issues to DynamoDB & Firebase
 import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export type AuthIssueType = "login" | "signup" | "otp";
@@ -59,7 +58,7 @@ export async function logAuthIssue({
 
   // 2. Dual-write to Firebase 'auth_issues'
   try {
-    await db.collection("auth_issues").doc(issueId).set(issueRecord);
+    await db.collection(getFirestoreCollection("auth_issues")).doc(issueId).set(issueRecord);
   } catch (fbErr: any) {
     console.warn("Firebase auth issue logging notice:", fbErr?.message || fbErr);
   }
