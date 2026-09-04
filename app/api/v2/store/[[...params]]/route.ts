@@ -5,6 +5,7 @@ import { db } from '@/lib/firebaseAdmin';
 import { StoreService } from '@/app/api/v2/store/store.service';
 import { fetchUserMembership } from '@/app/api/v2/store/membership.helper';
 import { docClient } from '@/lib/dynamodb';
+import { TABLES } from '@/lib/tableNames';
 import { GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 
 export const dynamic = 'force-dynamic';
@@ -262,7 +263,7 @@ export async function GET(
       // Try DynamoDB scan
       try {
         const res = await docClient.send(new ScanCommand({
-          TableName: 'StoreAndCommerce',
+          TableName: TABLES.StoreAndCommerce,
           FilterExpression: 'begins_with(entityId, :pk) AND (category = :c1 OR category = :c2)',
           ExpressionAttributeValues: {
             ':pk': 'PRODUCT#',
@@ -409,7 +410,7 @@ export async function POST(
         let fetchedFromDynamo = false;
         try {
           const resPlan = await docClient.send(new GetCommand({
-            TableName: 'StoreAndCommerce',
+            TableName: TABLES.StoreAndCommerce,
             Key: { entityId: `PRODUCT#${planId}`, sk: `PRODUCT#${planId}` }
           }));
           if (resPlan.Item) {
@@ -451,7 +452,7 @@ export async function POST(
         // Dual-write to DynamoDB
         try {
           await docClient.send(new PutCommand({
-            TableName: 'IdentityAndAccess',
+            TableName: TABLES.IdentityAndAccess,
             Item: {
               entityId: `USER#${userId}`,
               sk: 'MEMBERSHIP',
@@ -491,7 +492,7 @@ export async function POST(
         let fetchedFromDynamo = false;
         try {
           const resAthlete = await docClient.send(new GetCommand({
-            TableName: 'StoreAndCommerce',
+            TableName: TABLES.StoreAndCommerce,
             Key: { entityId: `PRODUCT#${athleteId}`, sk: `PRODUCT#${athleteId}` }
           }));
           if (resAthlete.Item) {

@@ -556,11 +556,19 @@ const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"] });
 interface NavChildItem {
   href?: string;
   label: string;
+  badge?: string;
+  badgeBg?: string;
+  badgePulse?: boolean;
   children?: NavChildItem[];
 }
 interface NavItem {
-  href?: string; icon?: string; label: string;
-  badge?: string; children?: NavChildItem[];
+  href?: string;
+  icon?: string;
+  label: string;
+  badge?: string;
+  badgeBg?: string;
+  badgePulse?: boolean;
+  children?: NavChildItem[];
 }
 interface NavGroup { label: string; items: NavItem[]; }
 
@@ -639,8 +647,9 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Admins Management", icon: "◉",
+        label: "FlipLine Management", icon: "◉",
         children: [
+          { href: "/admin/flipline-management", label: "⚡ Bot Post Creator" },
           { href: "/admin/fliplineAdminManagement/list", label: "FlipLine Admins" },
         ],
       },
@@ -812,10 +821,11 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Fan Battle", icon: "◉",
+        label: "Feed Engagements", icon: "⚡",
         children: [
-          { href: "/admin/fanbattle-management/add-fanbattle", label: "Add Fan Battle" },
-          { href: "/admin/fanbattle-management/fanbattle-list", label: "Fan Battle List" },
+          { href: "/admin/engagements-management", label: "⚡ All Engagements & Creator" },
+          { href: "/admin/fanbattle-management/add-fanbattle", label: "Add Fan Battle Quiz" },
+          { href: "/admin/fanbattle-management/fanbattle-list", label: "Fan Battle Quiz List" },
           { href: "/admin/fanbattlearena-management/add-battlearena", label: "Add Fan Battle Arena" },
           { href: "/admin/fanbattlearena-management/battlearena-list", label: "Fan Battle Arena List" },
         ],
@@ -918,9 +928,43 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const [isRestrictedUser, setIsRestrictedUser] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingAuthCount, setPendingAuthCount] = useState<number>(0);
 
   const toggleMenu = (label: string) =>
     setOpenMenus(p => ({ ...p, [label]: !p[label] }));
+
+  // Fetch pending auth issues count
+  const fetchAuthIssuesCount = async () => {
+    try {
+      const res = await fetch("/api/admin/auth-issues?status=pending");
+      if (res.ok) {
+        const data = await res.json();
+        const count =
+          data.pendingCount ??
+          data.stats?.pending ??
+          (Array.isArray(data.issues) ? data.issues.length : 0);
+        setPendingAuthCount(Number(count) || 0);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    fetchAuthIssuesCount();
+
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchAuthIssuesCount, 30000);
+
+    // Listen for real-time events when admin resolves/deletes issues
+    const handleUpdate = () => fetchAuthIssuesCount();
+    window.addEventListener("auth-issues-updated", handleUpdate);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("auth-issues-updated", handleUpdate);
+    };
+  }, [pathname]);
 
   // Check user email and determine if restricted
   useEffect(() => {
@@ -931,8 +975,48 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setIsLoading(false);
   }, [session, status]);
 
-  // Select NAV based on user type
-  const NAV = isRestrictedUser ? LIMITED_NAV : FULL_NAV;
+  // Select NAV based on user type & inject dynamic pending issues badges
+  const baseNav = isRestrictedUser ? LIMITED_NAV : FULL_NAV;
+  const NAV = baseNav.map(group => ({
+    ...group,
+    items: group.items.map(item => {
+      const updatedItem = { ...item };
+
+      // Direct Auth Issues Tracker item (e.g. in Auth section)
+      if (item.href === "/admin/users/auth-issues") {
+        if (pendingAuthCount > 0) {
+          updatedItem.badge = `${pendingAuthCount} Pending`;
+          updatedItem.badgeBg = "#da3633";
+          updatedItem.badgePulse = true;
+        } else {
+          updatedItem.badge = undefined;
+        }
+      }
+
+      // If item has nested children
+      if (item.children) {
+        updatedItem.children = item.children.map(sub => {
+          if (sub.href === "/admin/users/auth-issues") {
+            return {
+              ...sub,
+              badge: pendingAuthCount > 0 ? `${pendingAuthCount} Pending` : undefined,
+              badgeBg: "#da3633",
+              badgePulse: pendingAuthCount > 0,
+            };
+          }
+          return sub;
+        });
+
+        // If parent item is Users and has pending issues
+        if (item.label === "Users" && pendingAuthCount > 0) {
+          updatedItem.badge = `${pendingAuthCount} New`;
+          updatedItem.badgeBg = "#da3633";
+        }
+      }
+
+      return updatedItem;
+    }),
+  }));
 
   // CHECK: If user is on login page (/admin), show NO sidebar
   const isLoginPage = pathname === "/admin";
@@ -1036,9 +1120,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                       {item.label}
                       {item.badge && (
                         <span style={{
-                          marginLeft: "auto", background: "#1f6feb", color: "#fff",
+                          marginLeft: "auto", background: item.badgeBg || "#1f6feb", color: "#fff",
                           fontSize: 10, fontFamily: plexMono.style.fontFamily,
                           padding: "1px 6px", borderRadius: 10, fontWeight: 600,
+                          boxShadow: item.badgePulse ? "0 0 8px rgba(218, 54, 51, 0.6)" : "none",
                         }}>{item.badge}</span>
                       )}
                       <span style={{ marginLeft: item.badge ? 6 : "auto", fontSize: 10 }}>
@@ -1065,6 +1150,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                               >
                                 <span style={{ fontSize: 9 }}>{isSubOpen ? "▼" : "▶"}</span>
                                 {sub.label}
+                                {sub.badge && (
+                                  <span style={{
+                                    marginLeft: "auto", background: sub.badgeBg || "#da3633", color: "#fff",
+                                    fontSize: 9, fontFamily: plexMono.style.fontFamily,
+                                    padding: "1px 5px", borderRadius: 8, fontWeight: 700,
+                                    boxShadow: sub.badgePulse ? "0 0 6px rgba(218, 54, 51, 0.5)" : "none",
+                                  }}>{sub.badge}</span>
+                                )}
                               </div>
                               {isSubOpen &&
                                 sub.children.map((child: any) => {
@@ -1080,6 +1173,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                     >
                                       <div
                                         style={{
+                                          display: "flex",
+                                          alignItems: "center",
+                                          justifyContent: "space-between",
                                           padding: "5px 16px 5px 54px",
                                           fontSize: 11,
                                           cursor: "pointer",
@@ -1090,7 +1186,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                           borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
                                         }}
                                       >
-                                        • {child.label}
+                                        <span>• {child.label}</span>
+                                        {child.badge && (
+                                          <span style={{
+                                            background: child.badgeBg || "#da3633", color: "#fff",
+                                            fontSize: 9, fontFamily: plexMono.style.fontFamily,
+                                            padding: "1px 5px", borderRadius: 8, fontWeight: 700,
+                                          }}>{child.badge}</span>
+                                        )}
                                       </div>
                                     </Link>
                                   );
@@ -1111,6 +1214,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           >
                             <div
                               style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
                                 padding: "6px 16px 6px 36px",
                                 fontSize: 12,
                                 cursor: "pointer",
@@ -1121,7 +1227,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                 borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
                               }}
                             >
-                              • {sub.label}
+                              <span>• {sub.label}</span>
+                              {sub.badge && (
+                                <span style={{
+                                  background: sub.badgeBg || "#da3633", color: "#fff",
+                                  fontSize: 9, fontFamily: plexMono.style.fontFamily,
+                                  padding: "1px 5px", borderRadius: 8, fontWeight: 700,
+                                  boxShadow: sub.badgePulse ? "0 0 6px rgba(218, 54, 51, 0.5)" : "none",
+                                }}>{sub.badge}</span>
+                              )}
                             </div>
                           </Link>
                         );
@@ -1145,9 +1259,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     {item.label}
                     {item.badge && (
                       <span style={{
-                        marginLeft: "auto", background: "#1f6feb", color: "#fff",
+                        marginLeft: "auto", background: item.badgeBg || "#1f6feb", color: "#fff",
                         fontSize: 10, fontFamily: plexMono.style.fontFamily,
                         padding: "1px 6px", borderRadius: 10, fontWeight: 600,
+                        boxShadow: item.badgePulse ? "0 0 8px rgba(218, 54, 51, 0.6)" : "none",
                       }}>{item.badge}</span>
                     )}
                   </div>

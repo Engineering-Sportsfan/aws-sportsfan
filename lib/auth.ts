@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+import TABLES from "./tableNames";
 
 export interface UserSession {
   role: string;
@@ -139,7 +140,7 @@ export async function isAuthorizedForMatch(user: UserSession, matchId: string): 
     // 1. Try DynamoDB Scan (safe limit of total watchAlongRooms < 24)
     try {
       const scanRes = await docClient.send(new ScanCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         FilterExpression: "begins_with(sk, :prefix) AND liveMatchId = :matchId",
         ExpressionAttributeValues: {
           ":prefix": "ROOM_WATCHALONG#",

@@ -1,6 +1,10 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  env: {
+    APP_ENV: process.env.APP_ENV || process.env.NEXT_PUBLIC_APP_ENV || (process.env.AWS_BRANCH === "develop" ? "dev" : process.env.AWS_BRANCH === "release" ? "release" : "prod"),
+    NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV || process.env.APP_ENV || (process.env.AWS_BRANCH === "develop" ? "dev" : process.env.AWS_BRANCH === "release" ? "release" : "prod"),
+  },
   eslint: {
     ignoreDuringBuilds: true,
   },

@@ -56,6 +56,14 @@ test("API create success validation", () => {
   assert.equal(result.ok, true);
 });
 
+test("API create success validation without image (optional media)", () => {
+  const result = validateCreateArticle({
+    badge: "NEWS",
+    title: "Title without media",
+  });
+  assert.equal(result.ok, true);
+});
+
 test("API success response contract", () => {
   const response = toApiSuccess({ articles: seedRows });
   assert.equal(response.success, true);
@@ -69,12 +77,12 @@ test("API error response contract", () => {
   assert.equal(response.error, "Unexpected error");
 });
 
-test("API create error handling for required fields", () => {
+test("API create error handling for required title", () => {
   const result = validateCreateArticle({ title: "", image: "" });
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.equal(result.status, 400);
-    assert.equal(result.error, "title and image are required");
+    assert.equal(result.error, "title is required");
   }
 });
 
@@ -159,12 +167,11 @@ test("Database delete edge case", () => {
 });
 
 test("Admin panel form validation", () => {
-  const bad = validateAdminArticleForm({ title: "", image: "" });
+  const bad = validateAdminArticleForm({ title: "" });
   assert.equal(bad.valid, false);
   assert.equal(bad.errors.includes("Title is required"), true);
-  assert.equal(bad.errors.includes("Image is required"), true);
 
-  const good = validateAdminArticleForm({ title: "Valid", image: "ok.jpg" });
+  const good = validateAdminArticleForm({ title: "Valid" });
   assert.equal(good.valid, true);
 });
 

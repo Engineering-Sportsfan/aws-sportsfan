@@ -173,10 +173,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { docClient as ddb } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { ScanCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
-const MS_PLAYERS_TABLE = process.env.MS_PLAYERS_TABLE || "MS_Players";
-const MS_TRANSACTIONS_TABLE = process.env.MS_TRANSACTIONS_TABLE || "MS_Transactions";
+const MS_PLAYERS_TABLE = TABLES.MS_Players;
+const MS_TRANSACTIONS_TABLE = TABLES.MS_Transactions;
 
 // ---------- GET: list/filter ----------
 
@@ -192,7 +193,9 @@ export async function GET(request: NextRequest) {
     // MS_Players is scanned (no composite key that fits every filter combo
     // cleanly yet) and filtered to PROFILE#META items only, same pattern
     // ms_teams/route.ts uses for MS_Clubs.
-    const filterClauses: string[] = ["sk = :sk"];
+    // const filterClauses: string[] = ["sk = :sk"];
+    // const expressionValues: Record<string, unknown> = { ":sk": "PROFILE#META" };
+        const filterClauses: string[] = ["begins_with(sk, :sk)"];
     const expressionValues: Record<string, unknown> = { ":sk": "PROFILE#META" };
     const expressionNames: Record<string, string> = {};
 
