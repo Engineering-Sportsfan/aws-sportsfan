@@ -713,7 +713,7 @@ export default function FlipLineManagementPage() {
                         VERIFIED
                       </span>
                     </div>
-                    <div className="text-xs text-[#8b949e]">{activeBot?.handle || "@kabir_sf360"} · Just now</div>
+                    <div className="text-xs text-[#8b949e]">{activeBot?.handle || "@kabir_sf360"} · {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</div>
                   </div>
                 </div>
 
@@ -819,7 +819,7 @@ export default function FlipLineManagementPage() {
                       <span className="text-[10px] bg-[#21262d] text-[#8b949e] px-1.5 py-0.5 rounded capitalize">
                         {post.channel || post.sport || "general"}
                       </span>
-                      <span className="text-[11px] text-[#8b949e]">{post.time || "Just now"}</span>
+                      <span className="text-[11px] text-[#8b949e]">{post.time || (post.timeMs ? new Date(post.timeMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : "")}</span>
                     </div>
                     <p className="text-xs text-[#c9d1d9] mt-1 line-clamp-2 max-w-2xl">{post.content}</p>
                     {post.image && (
