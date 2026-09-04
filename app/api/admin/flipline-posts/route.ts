@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import cloudinary from "@/lib/cloudinary";
-import { PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand, DeleteCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { DEFAULT_FLIPLINE_BOTS } from "@/app/api/admin/flipline-bots/route";
 
 export const dynamic = "force-dynamic";
@@ -231,6 +231,165 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     console.error("POST /api/admin/flipline-posts error:", error);
     const msg = error instanceof Error ? error.message : "Failed to publish post";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+// ─── PUT /api/admin/flipline-posts — Update an existing FlipLine post ─────────
+export async function PUT(req: NextRequest) {
+  try {
+    const contentType = req.headers.get("content-type") || "";
+    let sk = "";
+    let content: string | undefined;
+    let channel: string | undefined;
+    let fomoMsg: string | undefined;
+    let fomoCount: number | undefined;
+    let customScore: string | undefined;
+    let directImageUrl: string | undefined;
+    let directVideoUrl: string | undefined;
+    let removeMedia = false;
+    let uploadedFiles: File[] = [];
+
+    if (contentType.includes("application/json")) {
+      const body = await req.json();
+      sk = body.sk || "";
+      content = body.content !== undefined ? (body.content || "").trim() : undefined;
+      channel = body.channel || body.sport;
+      fomoMsg = body.fomoMsg;
+      fomoCount = body.fomoCount !== undefined ? Number(body.fomoCount) : undefined;
+      customScore = body.score;
+      directImageUrl = body.image;
+      directVideoUrl = body.videoUrl;
+      removeMedia = !!body.removeMedia;
+    } else {
+      const formData = await req.formData();
+      sk = (formData.get("sk") as string) || "";
+      if (formData.has("content")) {
+        content = ((formData.get("content") as string) || "").trim();
+      }
+      if (formData.has("channel")) {
+        channel = (formData.get("channel") as string).toLowerCase();
+      }
+      if (formData.has("fomoMsg")) {
+        fomoMsg = (formData.get("fomoMsg") as string) || "";
+      }
+      if (formData.has("fomoCount")) {
+        fomoCount = parseInt((formData.get("fomoCount") as string) || "0", 10);
+      }
+      if (formData.has("score")) {
+        customScore = (formData.get("score") as string) || "";
+      }
+      if (formData.has("imageUrl")) {
+        directImageUrl = (formData.get("imageUrl") as string) || "";
+      }
+      if (formData.has("videoUrl")) {
+        directVideoUrl = (formData.get("videoUrl") as string) || "";
+      }
+      if (formData.has("removeMedia")) {
+        removeMedia = formData.get("removeMedia") === "true";
+      }
+      uploadedFiles = formData.getAll("media") as File[];
+    }
+
+    if (!sk) {
+      return NextResponse.json({ error: "Missing required 'sk'" }, { status: 400 });
+    }
+
+    // Handle new media upload if provided
+    let imageUrl = directImageUrl;
+    let videoUrl = directVideoUrl;
+
+    for (const file of uploadedFiles) {
+      if (!file || file.size === 0) continue;
+      const isVideo = file.type.startsWith("video/");
+
+      if (isVideo && file.size > 100 * 1024 * 1024) {
+        return NextResponse.json({ error: "Video must be smaller than 100 MB" }, { status: 400 });
+      }
+
+      const bytes = await file.arrayBuffer();
+      const buffer = Buffer.from(bytes);
+
+      const uploadRes = await uploadToCloudinary(buffer, isVideo ? "video" : "image");
+      if (isVideo) {
+        videoUrl = uploadRes.secure_url;
+      } else {
+        imageUrl = uploadRes.secure_url;
+      }
+    }
+
+    // Fetch existing item to merge
+    const existingRes = await docClient.send(
+      new GetCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: {
+          roomId: "FLIPLINE#ALL",
+          sk,
+        },
+      })
+    );
+
+    if (!existingRes.Item) {
+      return NextResponse.json({ error: "Post not found" }, { status: 404 });
+    }
+
+    const existing = existingRes.Item;
+    const finalContent = content !== undefined ? content : existing.content;
+    const finalChannel = channel !== undefined ? channel.toLowerCase() : (existing.channel || existing.sport || "general");
+    const meta = SPORT_META[finalChannel] || { emoji: "🏆", label: "General" };
+    const finalTags = finalContent ? finalContent.match(/#[a-zA-Z0-9_]+/g) || [] : [];
+
+    let finalImageUrl = existing.image;
+    let finalVideoUrl = existing.videoUrl;
+    let finalMediaType = existing.mediaType;
+
+    if (removeMedia) {
+      finalImageUrl = undefined;
+      finalVideoUrl = undefined;
+      finalMediaType = undefined;
+    } else {
+      if (imageUrl !== undefined) finalImageUrl = imageUrl || undefined;
+      if (videoUrl !== undefined) finalVideoUrl = videoUrl || undefined;
+      if (finalVideoUrl) finalMediaType = "video";
+      else if (finalImageUrl) finalMediaType = "image";
+      else finalMediaType = undefined;
+    }
+
+    const updatedPost = {
+      ...existing,
+      content: finalContent,
+      channel: finalChannel,
+      sport: finalChannel,
+      sportEmoji: meta.emoji,
+      sportLabel: meta.label,
+      tags: finalTags,
+      fomoMsg: fomoMsg !== undefined ? fomoMsg : existing.fomoMsg,
+      fomoCount: fomoCount !== undefined ? fomoCount : existing.fomoCount,
+      scoreChip: customScore !== undefined
+        ? (customScore ? { score: customScore, status: "Live", statusType: "live" } : undefined)
+        : existing.scoreChip,
+      image: finalImageUrl,
+      videoUrl: finalVideoUrl,
+      mediaType: finalMediaType,
+      hasAttachedImage: !!finalImageUrl,
+      hasAttachedVideo: !!finalVideoUrl,
+    };
+
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLES.RealTimeChat,
+        Item: updatedPost,
+      })
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: "Post updated successfully",
+      post: updatedPost,
+    });
+  } catch (error: unknown) {
+    console.error("PUT /api/admin/flipline-posts error:", error);
+    const msg = error instanceof Error ? error.message : "Failed to update post";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
