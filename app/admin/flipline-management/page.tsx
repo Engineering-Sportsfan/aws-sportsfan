@@ -20,6 +20,8 @@ import {
   Flame,
   Award,
   Layers,
+  Pencil,
+  X,
 } from "lucide-react";
 
 interface BotProfile {
@@ -95,6 +97,21 @@ export default function FlipLineManagementPage() {
   const [feedFilterChannel, setFeedFilterChannel] = useState<string>("all");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Edit Modal state
+  const [editingPost, setEditingPost] = useState<FlipLinePost | null>(null);
+  const [editContent, setEditContent] = useState<string>("");
+  const [editChannel, setEditChannel] = useState<string>("cricket");
+  const [editFomoCount, setEditFomoCount] = useState<number>(300);
+  const [editFomoMsg, setEditFomoMsg] = useState<string>("");
+  const [editMediaFile, setEditMediaFile] = useState<File | null>(null);
+  const [editMediaPreview, setEditMediaPreview] = useState<string>("");
+  const [editExistingMediaUrl, setEditExistingMediaUrl] = useState<string>("");
+  const [editExistingMediaType, setEditExistingMediaType] = useState<"image" | "video" | undefined>(undefined);
+  const [editRemoveMedia, setEditRemoveMedia] = useState<boolean>(false);
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState<boolean>(false);
+  const [editStatusMsg, setEditStatusMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const editFileInputRef = useRef<HTMLInputElement>(null);
 
   // 1. Fetch bots
   useEffect(() => {
@@ -240,6 +257,127 @@ export default function FlipLineManagementPage() {
       }
     } catch {
       alert("Error deleting post");
+    }
+  };
+
+  // ── Edit Post Handlers ───────────────────────────────────────────────────────
+  const handleOpenEditModal = (post: FlipLinePost) => {
+    setEditingPost(post);
+    setEditContent(post.content || "");
+    setEditChannel(post.channel || post.sport || "general");
+    setEditFomoCount(post.fomoCount || 300);
+    setEditFomoMsg(post.fomoMsg || "");
+    setEditMediaFile(null);
+    setEditMediaPreview("");
+    setEditRemoveMedia(false);
+    setEditStatusMsg(null);
+
+    if (post.videoUrl) {
+      setEditExistingMediaUrl(post.videoUrl);
+      setEditExistingMediaType("video");
+    } else if (post.image) {
+      setEditExistingMediaUrl(post.image);
+      setEditExistingMediaType("image");
+    } else {
+      setEditExistingMediaUrl("");
+      setEditExistingMediaType(undefined);
+    }
+  };
+
+  const handleCloseEditModal = () => {
+    setEditingPost(null);
+    setEditMediaFile(null);
+    setEditMediaPreview("");
+    setEditStatusMsg(null);
+  };
+
+  const handleEditFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setEditMediaFile(file);
+    const url = URL.createObjectURL(file);
+    setEditMediaPreview(url);
+    setEditRemoveMedia(false);
+  };
+
+  const handleEditClearNewMedia = () => {
+    setEditMediaFile(null);
+    setEditMediaPreview("");
+    if (editFileInputRef.current) {
+      editFileInputRef.current.value = "";
+    }
+  };
+
+  const handleEditRemoveExistingMedia = () => {
+    setEditRemoveMedia(true);
+    setEditExistingMediaUrl("");
+    setEditExistingMediaType(undefined);
+    handleEditClearNewMedia();
+  };
+
+  const handleEditAddHashtag = (tag: string) => {
+    if (!editContent.includes(tag)) {
+      setEditContent((prev) => (prev ? `${prev} ${tag}` : tag));
+    }
+  };
+
+  const handleUpdatePost = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPost) return;
+
+    if (!editContent.trim() && !editMediaFile && (!editExistingMediaUrl || editRemoveMedia)) {
+      setEditStatusMsg({ type: "error", text: "Post must contain either text content or attached media." });
+      return;
+    }
+
+    try {
+      setIsSubmittingEdit(true);
+      setEditStatusMsg(null);
+
+      const formData = new FormData();
+      formData.append("sk", editingPost.sk);
+      formData.append("content", editContent.trim());
+      formData.append("channel", editChannel);
+      formData.append("fomoCount", String(editFomoCount));
+      if (editFomoMsg) {
+        formData.append("fomoMsg", editFomoMsg.trim());
+      }
+      if (editRemoveMedia) {
+        formData.append("removeMedia", "true");
+      }
+      if (editMediaFile) {
+        formData.append("media", editMediaFile);
+      }
+
+      const res = await fetch("/api/admin/flipline-posts", {
+        method: "PUT",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (data.success && data.post) {
+        setEditStatusMsg({
+          type: "success",
+          text: "🎉 Post updated successfully!",
+        });
+
+        // Update local list
+        setRecentPosts((prev) =>
+          prev.map((p) => (p.sk === editingPost.sk ? { ...p, ...data.post } : p))
+        );
+
+        setTimeout(() => {
+          handleCloseEditModal();
+        }, 1200);
+      } else {
+        setEditStatusMsg({ type: "error", text: data.error || "Failed to update post" });
+      }
+    } catch (err) {
+      console.error("Post update error:", err);
+      setEditStatusMsg({ type: "error", text: "Network error updating post." });
+    } finally {
+      setIsSubmittingEdit(false);
     }
   };
 
@@ -697,14 +835,21 @@ export default function FlipLineManagementPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="text-right text-xs text-[#8b949e]">
+                <div className="flex items-center gap-2">
+                  <div className="text-right text-xs text-[#8b949e] mr-2">
                     <div>{post.likes || 0} likes</div>
                     <div>{(post.comments || []).length} comments</div>
                   </div>
                   <button
+                    onClick={() => handleOpenEditModal(post)}
+                    className="p-2 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded-lg transition-colors border border-transparent hover:border-indigo-500/30 cursor-pointer"
+                    title="Edit Post"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
                     onClick={() => handleDeletePost(post.sk)}
-                    className="p-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors border border-transparent hover:border-rose-500/30"
+                    className="p-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors border border-transparent hover:border-rose-500/30 cursor-pointer"
                     title="Delete Post"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -715,6 +860,240 @@ export default function FlipLineManagementPage() {
           </div>
         )}
       </div>
+
+      {/* Edit FlipLine Post Modal */}
+      {editingPost && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#161b22] border border-[#30363d] rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden my-8">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-[#30363d] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-500/10 border border-indigo-500/30 rounded-xl text-indigo-400">
+                  <Pencil className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    Edit FlipLine Post
+                  </h3>
+                  <p className="text-xs text-[#8b949e]">
+                    Author: {editingPost.author} · {editingPost.time || "Recent"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseEditModal}
+                className="p-1.5 text-[#8b949e] hover:text-white hover:bg-[#21262d] rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleUpdatePost} className="p-6 space-y-5">
+              {/* Channel Selector */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#8b949e] mb-2">
+                  Select Channel / Sport
+                </label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {CHANNELS.map((ch) => {
+                    const isSelected = editChannel === ch.id;
+                    return (
+                      <button
+                        type="button"
+                        key={ch.id}
+                        onClick={() => setEditChannel(ch.id)}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          isSelected
+                            ? "bg-indigo-950/40 border-indigo-500 text-white shadow-lg shadow-indigo-500/10"
+                            : "bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#8b949e]"
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 font-bold text-xs">
+                          <span>{ch.emoji}</span>
+                          <span className={isSelected ? "text-white" : "text-[#c9d1d9]"}>{ch.label}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Content Textarea */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-[#8b949e]">
+                    Post Commentary / Content
+                  </label>
+                  <span className="text-[11px] text-[#8b949e]">{editContent.length} chars</span>
+                </div>
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  rows={4}
+                  placeholder="Update post content..."
+                  className="w-full bg-[#0d1117] border border-[#30363d] focus:border-indigo-500 rounded-xl p-3.5 text-xs text-white placeholder-[#8b949e] outline-none transition-colors"
+                />
+
+                {/* Hashtag Suggestions */}
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {(SUGGESTED_HASHTAGS[editChannel] || SUGGESTED_HASHTAGS.general).map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => handleEditAddHashtag(tag)}
+                      className="text-[10.5px] px-2 py-0.5 rounded-md bg-[#21262d] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40 border border-[#30363d] transition-colors cursor-pointer"
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Attached Media Section */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#8b949e] mb-2">
+                  Attached Media
+                </label>
+
+                {/* New upload preview */}
+                {editMediaPreview ? (
+                  <div className="relative bg-[#0d1117] border border-indigo-500/40 rounded-xl p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {editMediaFile?.type.startsWith("video/") ? (
+                        <div className="w-16 h-12 bg-purple-950/50 border border-purple-500/30 rounded-lg flex items-center justify-center text-purple-400">
+                          <Video className="w-6 h-6" />
+                        </div>
+                      ) : (
+                        <img
+                          src={editMediaPreview}
+                          alt="New upload"
+                          className="w-16 h-12 rounded-lg object-cover border border-[#30363d]"
+                        />
+                      )}
+                      <div>
+                        <div className="text-xs font-semibold text-white">
+                          New: {editMediaFile?.name || "Selected file"}
+                        </div>
+                        <div className="text-[11px] text-[#8b949e]">
+                          {editMediaFile ? `${(editMediaFile.size / 1024 / 1024).toFixed(2)} MB` : "Ready to upload"}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleEditClearNewMedia}
+                      className="p-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                      title="Clear new upload"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : editExistingMediaUrl && !editRemoveMedia ? (
+                  /* Existing media preview */
+                  <div className="relative bg-[#0d1117] border border-[#30363d] rounded-xl p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {editExistingMediaType === "video" ? (
+                        <div className="w-16 h-12 bg-purple-950/50 border border-purple-500/30 rounded-lg flex items-center justify-center text-purple-400">
+                          <Video className="w-6 h-6" />
+                        </div>
+                      ) : (
+                        <img
+                          src={editExistingMediaUrl}
+                          alt="Current media"
+                          className="w-16 h-12 rounded-lg object-cover border border-[#30363d]"
+                        />
+                      )}
+                      <div>
+                        <div className="text-xs font-semibold text-white">
+                          Current Attached {editExistingMediaType === "video" ? "Video" : "Image"}
+                        </div>
+                        <div className="text-[11px] text-[#8b949e]">Active on post</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => editFileInputRef.current?.click()}
+                        className="px-2.5 py-1 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded-lg border border-indigo-500/30 transition-colors cursor-pointer"
+                      >
+                        Replace
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleEditRemoveExistingMedia}
+                        className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                        title="Remove media"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* No media attached / removed */
+                  <div
+                    onClick={() => editFileInputRef.current?.click()}
+                    className="border-2 border-dashed border-[#30363d] hover:border-indigo-500/50 bg-[#0d1117] hover:bg-[#161c26] rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer transition-all text-center"
+                  >
+                    <Upload className="w-6 h-6 text-[#8b949e] mb-1.5" />
+                    <span className="text-xs font-semibold text-white">Click to attach image or video</span>
+                    <span className="text-[10px] text-[#8b949e] mt-0.5">PNG, JPG, MP4 or WebM</span>
+                  </div>
+                )}
+                <input
+                  ref={editFileInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  onChange={handleEditFileChange}
+                  className="hidden"
+                />
+              </div>
+
+              {/* Status Message */}
+              {editStatusMsg && (
+                <div
+                  className={`p-3 rounded-xl border text-xs font-medium ${
+                    editStatusMsg.type === "success"
+                      ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
+                      : "bg-rose-950/40 border-rose-500/50 text-rose-300"
+                  }`}
+                >
+                  {editStatusMsg.text}
+                </div>
+              )}
+
+              {/* Modal Actions */}
+              <div className="pt-3 border-t border-[#30363d] flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseEditModal}
+                  className="px-4 py-2 text-xs font-semibold text-[#8b949e] hover:text-white hover:bg-[#21262d] rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingEdit}
+                  className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-semibold rounded-xl text-xs shadow-lg shadow-indigo-600/20 transition-all flex items-center gap-2 disabled:opacity-60 cursor-pointer"
+                >
+                  {isSubmittingEdit ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      Saving changes...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Save Changes
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
