@@ -375,6 +375,15 @@ function formatCurrentTime(): string {
   }).format(new Date());
 }
 
+function formatCurrentDate(date = new Date()): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
 function generateId(prefix = "id_"): string {
   return `${prefix}${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 }
@@ -509,7 +518,7 @@ export async function POST(req: NextRequest) {
         channel: sport,
         sportEmoji: body.sportEmoji || meta.emoji,
         sportLabel: body.sportLabel || meta.label,
-        day: body.day || "Just Now",
+        day: body.day && body.day.toLowerCase() !== "just now" ? body.day : formatCurrentDate(),
         isVerified: !!body.isVerified,
         adminPhoto: body.adminPhoto,
         authorPhoto: body.authorPhoto,
@@ -634,7 +643,7 @@ export async function POST(req: NextRequest) {
       channel: sport,
       sportEmoji: meta.emoji,
       sportLabel: meta.label,
-      day: day || "Just Now",
+      day: day && day.toLowerCase() !== "just now" ? day : formatCurrentDate(),
       isVerified,
       adminPhoto,
       authorPhoto,

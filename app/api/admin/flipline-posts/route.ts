@@ -24,6 +24,15 @@ function formatCurrentTime(): string {
   }).format(new Date());
 }
 
+function formatCurrentDate(date = new Date()): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
 const uploadToCloudinary = (
   buffer: Buffer,
   resourceType: "image" | "video"
@@ -174,7 +183,7 @@ export async function POST(req: NextRequest) {
       channel,
       sportEmoji: meta.emoji,
       sportLabel: meta.label,
-      day: "Just Now",
+      day: formatCurrentDate(),
       time: timeStr,
       timeMs,
 
