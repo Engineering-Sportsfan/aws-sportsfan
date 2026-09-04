@@ -1,7 +1,7 @@
 // app/api/engagements/cleanup-seeds/route.ts — Clean up initial static test seeds
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       // 2. Delete from Firestore engagements
       if (db) {
         try {
-          await db.collection("engagements").doc(id).delete();
+          await db.collection(getFirestoreCollection("engagements")).doc(id).delete();
         } catch (err: any) {
           console.warn(`Firestore delete notice for ${id}:`, err?.message || err);
         }

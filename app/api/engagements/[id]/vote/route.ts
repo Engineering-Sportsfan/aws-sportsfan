@@ -1,7 +1,7 @@
 // app/api/engagements/[id]/vote/route.ts — Interactive Voting, Quiz Validation & Prediction Staking with Single-Vote Enforcement
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // 3. Fallback: Check Firestore user_engagements collection
     if (!voteItem && db) {
       try {
-        const snap = await db.collection("user_engagements").doc(`${userId}_${id}`).get();
+        const snap = await db.collection(getFirestoreCollection("user_engagements")).doc(`${userId}_${id}`).get();
         if (snap.exists) voteItem = snap.data();
       } catch {}
     }
@@ -161,7 +161,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     } catch {}
 
     if (!item && db) {
-      const snap = await db.collection("engagements").doc(id).get();
+      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
       if (snap.exists) item = { id: snap.id, ...snap.data() };
     }
 

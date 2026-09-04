@@ -1,7 +1,7 @@
 // app/api/engagements/route.ts — Main CRUD API for Fan Battles, Quizzes, Polls & Predictions
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { ScanCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
     // 2. Fetch from Firestore 'engagements' collection and merge
     if (db) {
       try {
-        const snap = await db.collection("engagements").get();
+        const snap = await db.collection(getFirestoreCollection("engagements")).get();
         for (const doc of snap.docs) {
           const it = doc.data();
           const id = doc.id;

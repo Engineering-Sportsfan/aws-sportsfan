@@ -48,4 +48,16 @@ export function getTableName(baseName: TableKey | string): string {
   return suffix ? `${baseName}${suffix}` : baseName;
 }
 
+/**
+ * Returns the environment-isolated Firestore collection name.
+ * @param baseName The base Firestore collection (e.g. 'engagements')
+ */
+export function getFirestoreCollection(baseName: string): string {
+  return ENV === "prod" || ENV === "production" ? baseName : `${baseName}_${ENV}`;
+}
+
+export function getEnv(): string {
+  return ENV;
+}
+
 export default TABLES;

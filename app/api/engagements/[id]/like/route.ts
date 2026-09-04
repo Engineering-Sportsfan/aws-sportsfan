@@ -2,7 +2,7 @@
 // Aligned with api/roar/rooms/messages and api/roar/posts/[postId]/like architecture
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
@@ -132,7 +132,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     } catch {}
 
     if (!item && db) {
-      const snap = await db.collection("engagements").doc(id).get();
+      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
       if (snap.exists) item = { id: snap.id, ...snap.data() };
     }
 
