@@ -301,8 +301,8 @@ export async function POST(req: NextRequest) {
         success: true,
         id: commentId,
         commentId,
-        comment: { id: commentId, commentId, ...newComment },
-        data: { id: commentId, commentId, ...newComment },
+        comment: newComment,
+        data: newComment,
       },
       { status: 201 }
     );
