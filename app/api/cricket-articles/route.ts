@@ -179,11 +179,20 @@ export async function GET(req: NextRequest) {
 
     // 1. Scan DynamoDB SocialAndContent table
     try {
-      let filterExpression = "(begins_with(contentId, :aPrefix) OR begins_with(contentId, :nPrefix))";
-      const expressionAttributeValues: Record<string, unknown> = {
-        ":aPrefix": "ARTICLE#",
-        ":nPrefix": "NEWS#",
-      };
+      // let filterExpression = "(begins_with(contentId, :aPrefix) OR begins_with(contentId, :nPrefix))";
+      // const expressionAttributeValues: Record<string, unknown> = {
+      //   ":aPrefix": "ARTICLE#",
+      //   ":nPrefix": "NEWS#",
+      // };
+      let filterExpression =
+  "(begins_with(contentId, :aPrefix) OR begins_with(contentId, :nPrefix)) " +
+  "AND (begins_with(sk, :askPrefix) OR begins_with(sk, :nskPrefix))";
+const expressionAttributeValues: Record<string, unknown> = {
+  ":aPrefix": "ARTICLE#",
+  ":nPrefix": "NEWS#",
+  ":askPrefix": "ARTICLE#",
+  ":nskPrefix": "NEWS#",
+};
 
       if (badge && ["FEATURE", "ANALYSIS", "OPINION", "NEWS"].includes(badge)) {
         filterExpression += " AND badge = :bd";
