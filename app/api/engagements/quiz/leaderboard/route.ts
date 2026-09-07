@@ -3,7 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { ScanCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  ScanCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import type { QuizLeaderboardEntry } from "@/types/engagements";
 
@@ -18,100 +25,248 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(parseInt(searchParams.get("limit") || "50", 10), 200);
 
     const authUser = await getUser(req);
-    const requestingUserId = authUser?.userId || authUser?.email || searchParams.get("userId");
+    const requestingUserId =
+      authUser?.userId || authUser?.email || searchParams.get("userId");
 
     const entriesMap = new Map<string, QuizLeaderboardEntry>();
 
-    // 1. Fetch from DynamoDB SocialAndContent table
-    try {
-      const targetContentId = quizId ? `QUIZ_LEADERBOARD#${quizId}` : "QUIZ_LEADERBOARD#GLOBAL";
-      const scanRes = await docClient.send(
-        new ScanCommand({
-          TableName: TABLES.SocialAndContent,
-          FilterExpression: "begins_with(contentId, :pfx)",
-          ExpressionAttributeValues: {
-            ":pfx": "QUIZ_LEADERBOARD#",
-          },
-          Limit: 300,
-        })
-      );
+    // Helper to merge entry records cleanly
+    const mergeEntry = (item: {
+      userId: string;
+      userName?: string;
+      userAvatar?: string;
+      userEmail?: string;
+      totalPoints?: number;
+      pointsEarned?: number;
+      correctCount?: number;
+      incorrectCount?: number;
+      totalAnswered?: number;
+      lastAnsweredAt?: number;
+      updatedAt?: number;
+    }) => {
+      const uid = item.userId;
+      if (!uid) return;
 
-      if (scanRes.Items && scanRes.Items.length > 0) {
-        for (const it of scanRes.Items) {
-          const itemQuizMatch =
-            !quizId ||
-            it.contentId === targetContentId ||
-            it.contentId === "QUIZ_LEADERBOARD#GLOBAL";
-          if (!itemQuizMatch) continue;
+      const pts = Number(item.totalPoints ?? item.pointsEarned ?? 0);
+      const corr = Number(item.correctCount ?? 0);
+      const incorr = Number(item.incorrectCount ?? 0);
+      const answered = Number(item.totalAnswered ?? (corr + incorr));
+      const activityTime = Number(item.lastAnsweredAt ?? item.updatedAt ?? Date.now());
 
-          const uid = (it.sk as string)?.replace(/^USER#/, "") || it.userId;
-          if (!uid) continue;
-
-          const existing = entriesMap.get(uid);
-          const points = Number(it.totalPoints || it.pointsEarned || 0);
-          const correct = Number(it.correctCount || 0);
-          const incorrect = Number(it.incorrectCount || 0);
-          const answered = Number(it.totalAnswered || correct + incorrect || 0);
-
-          if (!existing) {
-            entriesMap.set(uid, {
-              rank: 0,
-              userId: uid,
-              userName: it.userName || it.username || "Fan Quizzer",
-              userAvatar: it.userAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-              userEmail: it.userEmail || "",
-              totalPoints: points,
-              correctCount: correct,
-              incorrectCount: incorrect,
-              totalAnswered: answered,
-              lastAnsweredAt: it.lastAnsweredAt || it.updatedAt || Date.now(),
-            });
-          } else {
-            existing.totalPoints = Math.max(existing.totalPoints, points);
-            existing.correctCount = Math.max(existing.correctCount, correct);
-            existing.incorrectCount = Math.max(existing.incorrectCount, incorrect);
-            existing.totalAnswered = Math.max(existing.totalAnswered, answered);
-          }
+      const existing = entriesMap.get(uid);
+      if (!existing) {
+        entriesMap.set(uid, {
+          rank: 0,
+          userId: uid,
+          userName: item.userName || "Fan Quizzer",
+          userAvatar:
+            item.userAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+          userEmail: item.userEmail || "",
+          totalPoints: pts,
+          correctCount: corr,
+          incorrectCount: incorr,
+          totalAnswered: answered,
+          lastAnsweredAt: activityTime,
+        });
+      } else {
+        existing.totalPoints = Math.max(existing.totalPoints, pts);
+        existing.correctCount = Math.max(existing.correctCount, corr);
+        existing.incorrectCount = Math.max(existing.incorrectCount, incorr);
+        existing.totalAnswered = Math.max(existing.totalAnswered, answered);
+        existing.lastAnsweredAt = Math.max(existing.lastAnsweredAt || 0, activityTime);
+        if (item.userName && existing.userName === "Fan Quizzer") {
+          existing.userName = item.userName;
+        }
+        if (item.userAvatar && existing.userAvatar?.includes("dicebear")) {
+          existing.userAvatar = item.userAvatar;
         }
       }
+    };
+
+    // 1. Fetch from DynamoDB SocialAndContent table
+    try {
+      if (quizId) {
+        // A. Direct Query on quiz-specific partition
+        const queryQuiz = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.SocialAndContent,
+            KeyConditionExpression: "contentId = :cid",
+            ExpressionAttributeValues: {
+              ":cid": `QUIZ_LEADERBOARD#${quizId}`,
+            },
+          })
+        );
+        if (queryQuiz.Items) {
+          for (const it of queryQuiz.Items) {
+            const uid = (it.sk as string)?.replace(/^USER#/, "") || it.userId;
+            mergeEntry({ ...it, userId: uid });
+          }
+        }
+
+        // B. Query direct votes on this quiz engagement: contentId = ENGAGEMENT#{quizId}, sk begins_with VOTE#
+        const queryVotes = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.SocialAndContent,
+            KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+            ExpressionAttributeValues: {
+              ":cid": `ENGAGEMENT#${quizId}`,
+              ":skpfx": "VOTE#",
+            },
+          })
+        );
+        if (queryVotes.Items) {
+          const userVotesMap = new Map<
+            string,
+            {
+              pts: number;
+              corr: number;
+              incorr: number;
+              answered: number;
+              name: string;
+              avatar: string;
+              last: number;
+            }
+          >();
+          for (const v of queryVotes.Items) {
+            const uid = v.userId || (v.sk as string)?.replace(/^VOTE#/, "").split("#")[0];
+            if (!uid) continue;
+            const isCorr = v.isCorrect ?? (Number(v.pointsAwarded || 0) > 0);
+            const pts = Number(v.pointsAwarded || 0);
+            const rec = userVotesMap.get(uid) || {
+              pts: 0,
+              corr: 0,
+              incorr: 0,
+              answered: 0,
+              name: v.userName || v.displayName || "Fan Quizzer",
+              avatar: v.userAvatar || "",
+              last: Number(v.votedAt || v.timestamp || Date.now()),
+            };
+            rec.pts += pts;
+            rec.corr += isCorr ? 1 : 0;
+            rec.incorr += isCorr ? 0 : 1;
+            rec.answered += 1;
+            rec.last = Math.max(rec.last, Number(v.votedAt || v.timestamp || Date.now()));
+            userVotesMap.set(uid, rec);
+          }
+          for (const [uid, stats] of userVotesMap.entries()) {
+            mergeEntry({
+              userId: uid,
+              userName: stats.name,
+              userAvatar: stats.avatar,
+              totalPoints: stats.pts,
+              correctCount: stats.corr,
+              incorrectCount: stats.incorr,
+              totalAnswered: stats.answered,
+              lastAnsweredAt: stats.last,
+            });
+          }
+        }
+      } else {
+        // Global Leaderboard: Direct Query on QUIZ_LEADERBOARD#GLOBAL partition
+        const queryGlobal = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.SocialAndContent,
+            KeyConditionExpression: "contentId = :cid",
+            ExpressionAttributeValues: {
+              ":cid": "QUIZ_LEADERBOARD#GLOBAL",
+            },
+          })
+        );
+        if (queryGlobal.Items) {
+          for (const it of queryGlobal.Items) {
+            const uid = (it.sk as string)?.replace(/^USER#/, "") || it.userId;
+            mergeEntry({ ...it, userId: uid });
+          }
+        }
+
+        // If Global has few entries, also scan with pagination for any QUIZ_LEADERBOARD# items
+        let lastKey: any = undefined;
+        let scannedCount = 0;
+        do {
+          const scanRes = await docClient.send(
+            new ScanCommand({
+              TableName: TABLES.SocialAndContent,
+              FilterExpression: "begins_with(contentId, :pfx)",
+              ExpressionAttributeValues: {
+                ":pfx": "QUIZ_LEADERBOARD#",
+              },
+              ExclusiveStartKey: lastKey,
+            })
+          );
+          if (scanRes.Items) {
+            for (const it of scanRes.Items) {
+              const uid = (it.sk as string)?.replace(/^USER#/, "") || it.userId;
+              mergeEntry({ ...it, userId: uid });
+            }
+          }
+          lastKey = scanRes.LastEvaluatedKey;
+          scannedCount += scanRes.ScannedCount || 0;
+        } while (lastKey && scannedCount < 1500 && entriesMap.size < limit);
+      }
     } catch (dynErr) {
-      console.warn("[Quiz Leaderboard] DynamoDB scan notice:", dynErr);
+      console.warn("[Quiz Leaderboard] DynamoDB fetch notice:", dynErr);
     }
 
-    // 2. Fallback / Merge with Firestore quiz_leaderboard collection
+    // 2. Firestore integration
     if (db) {
       try {
-        const snap = await db
-          .collection(getFirestoreCollection("quiz_leaderboard"))
-          .limit(100)
-          .get();
-        for (const doc of snap.docs) {
-          const it = doc.data();
-          const uid = it.userId || doc.id.split("_")[0];
-          if (!uid) continue;
+        const collectionsToTry = [
+          getFirestoreCollection("quiz_leaderboard"),
+          "quiz_leaderboard",
+        ];
+        const seenCol = new Set<string>();
 
-          const points = Number(it.totalPoints || 0);
-          const correct = Number(it.correctCount || 0);
-          const incorrect = Number(it.incorrectCount || 0);
-          const answered = Number(it.totalAnswered || correct + incorrect || 0);
+        for (const colName of collectionsToTry) {
+          if (seenCol.has(colName)) continue;
+          seenCol.add(colName);
 
-          if (!entriesMap.has(uid)) {
-            entriesMap.set(uid, {
-              rank: 0,
-              userId: uid,
-              userName: it.userName || "Fan Quizzer",
-              userAvatar: it.userAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-              userEmail: it.userEmail || "",
-              totalPoints: points,
-              correctCount: correct,
-              incorrectCount: incorrect,
-              totalAnswered: answered,
-              lastAnsweredAt: it.lastAnsweredAt || Date.now(),
-            });
+          const snap = await db.collection(colName).limit(100).get();
+          for (const doc of snap.docs) {
+            const it = doc.data();
+            if (quizId && it.quizId && it.quizId !== quizId) continue;
+            const uid = it.userId || doc.id.split("_")[0];
+            mergeEntry({ ...it, userId: uid });
+          }
+        }
+
+        // If quizId is provided, also check user_engagements collection for any quiz votes
+        if (quizId) {
+          const engCols = [
+            getFirestoreCollection("user_engagements"),
+            "user_engagements",
+          ];
+          const seenEngCol = new Set<string>();
+          for (const col of engCols) {
+            if (seenEngCol.has(col)) continue;
+            seenEngCol.add(col);
+
+            const vSnap = await db
+              .collection(col)
+              .where("engagementId", "==", quizId)
+              .where("type", "==", "quiz")
+              .limit(100)
+              .get();
+
+            for (const doc of vSnap.docs) {
+              const v = doc.data();
+              const uid = v.userId;
+              if (!uid) continue;
+              const isCorr = v.isCorrect ?? (Number(v.pointsAwarded || 0) > 0);
+              mergeEntry({
+                userId: uid,
+                userName: v.userName || "Fan Quizzer",
+                userAvatar: v.userAvatar,
+                totalPoints: Number(v.pointsAwarded || 0),
+                correctCount: isCorr ? 1 : 0,
+                incorrectCount: isCorr ? 0 : 1,
+                totalAnswered: 1,
+                lastAnsweredAt: Number(v.votedAt || v.timestamp || Date.now()),
+              });
+            }
           }
         }
       } catch (fbErr) {
-        console.warn("[Quiz Leaderboard] Firestore fallback notice:", fbErr);
+        console.warn("[Quiz Leaderboard] Firestore fetch notice:", fbErr);
       }
     }
 
@@ -157,7 +312,7 @@ export async function GET(req: NextRequest) {
 }
 
 // ─── POST /api/engagements/quiz/leaderboard ───────────────────────────────────
-// Updates or records user's quiz score, points, correct and incorrect answers
+// Updates or records user's quiz score, points, correct and incorrect answers atomically
 export async function POST(req: NextRequest) {
   try {
     const authUser = await getUser(req);
@@ -184,87 +339,113 @@ export async function POST(req: NextRequest) {
     const pts = isCorrect ? Number(pointsEarned) : 0;
     const now = Date.now();
 
-    // 1. Update / Get current stats in DynamoDB SocialAndContent table
-    const globalKey = { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${userId}` };
-    let currentRecord: any = null;
-
+    // 1. Atomic DynamoDB Updates for Global + Quiz Specific Leaderboard
+    let updatedGlobalAttrs: any = null;
     try {
-      const getRes = await docClient.send(
-        new GetCommand({
+      const updateGlobalPromise = docClient.send(
+        new UpdateCommand({
           TableName: TABLES.SocialAndContent,
-          Key: globalKey,
+          Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${userId}` },
+          UpdateExpression:
+            "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+            "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+            "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+            "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+            "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+            "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
+          ExpressionAttributeValues: {
+            ":zero": 0,
+            ":pts": pts,
+            ":corr": isCorrect ? 1 : 0,
+            ":incorr": isCorrect ? 0 : 1,
+            ":one": 1,
+            ":uname": displayName,
+            ":uavatar": avatar,
+            ":uemail": authUser?.email || "",
+            ":now": now,
+            ":entity": "QUIZ_LEADERBOARD",
+            ":uid": userId,
+          },
+          ReturnValues: "ALL_NEW",
         })
       );
-      currentRecord = getRes.Item;
-    } catch {}
 
-    const totalPoints = (Number(currentRecord?.totalPoints) || 0) + pts;
-    const correctCount = (Number(currentRecord?.correctCount) || 0) + (isCorrect ? 1 : 0);
-    const incorrectCount = (Number(currentRecord?.incorrectCount) || 0) + (isCorrect ? 0 : 1);
-    const totalAnswered = (Number(currentRecord?.totalAnswered) || 0) + 1;
+      const updateQuizPromise = quizId
+        ? docClient.send(
+            new UpdateCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `QUIZ_LEADERBOARD#${quizId}`, sk: `USER#${userId}` },
+              UpdateExpression:
+                "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+                "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+                "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+                "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+                "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+                "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid, quizId = :qid",
+              ExpressionAttributeValues: {
+                ":zero": 0,
+                ":pts": pts,
+                ":corr": isCorrect ? 1 : 0,
+                ":incorr": isCorrect ? 0 : 1,
+                ":one": 1,
+                ":uname": displayName,
+                ":uavatar": avatar,
+                ":uemail": authUser?.email || "",
+                ":now": now,
+                ":entity": "QUIZ_LEADERBOARD",
+                ":uid": userId,
+                ":qid": quizId,
+              },
+            })
+          )
+        : Promise.resolve();
 
-    const updatedLeaderboardItem = {
-      userId,
-      userName: displayName,
-      userAvatar: avatar,
-      userEmail: authUser?.email || "",
-      totalPoints,
-      correctCount,
-      incorrectCount,
-      totalAnswered,
-      lastAnsweredAt: now,
-      updatedAt: now,
-    };
-
-    // Save to DynamoDB SocialAndContent Table (Global + Quiz Specific)
-    try {
-      await Promise.all([
-        docClient.send(
-          new PutCommand({
-            TableName: TABLES.SocialAndContent,
-            Item: {
-              contentId: "QUIZ_LEADERBOARD#GLOBAL",
-              sk: `USER#${userId}`,
-              entityId: "QUIZ_LEADERBOARD",
-              ...updatedLeaderboardItem,
-            },
-          })
-        ),
-        quizId
-          ? docClient.send(
-              new PutCommand({
-                TableName: TABLES.SocialAndContent,
-                Item: {
-                  contentId: `QUIZ_LEADERBOARD#${quizId}`,
-                  sk: `USER#${userId}`,
-                  entityId: "QUIZ_LEADERBOARD",
-                  ...updatedLeaderboardItem,
-                },
-              })
-            )
-          : Promise.resolve(),
-      ]);
+      const [resGlobal] = await Promise.all([updateGlobalPromise, updateQuizPromise]);
+      updatedGlobalAttrs = (resGlobal as any)?.Attributes;
     } catch (dynErr) {
-      console.warn("[Quiz Leaderboard POST] DynamoDB write notice:", dynErr);
+      console.warn("[Quiz Leaderboard POST] DynamoDB update notice:", dynErr);
     }
 
-    // Save to Firestore
+    // 2. Atomic Firestore Updates
     if (db) {
       try {
-        await db.collection("quiz_leaderboard").doc(userId).set(updatedLeaderboardItem, { merge: true });
-        if (quizId) {
-          await db
-            .collection("quiz_leaderboard")
-            .doc(`${userId}_${quizId}`)
-            .set(updatedLeaderboardItem, { merge: true });
-        }
+        const colName = getFirestoreCollection("quiz_leaderboard");
+        const incData = {
+          userId,
+          userName: displayName,
+          userAvatar: avatar,
+          userEmail: authUser?.email || "",
+          totalPoints: FieldValue.increment(pts),
+          correctCount: FieldValue.increment(isCorrect ? 1 : 0),
+          incorrectCount: FieldValue.increment(isCorrect ? 0 : 1),
+          totalAnswered: FieldValue.increment(1),
+          lastAnsweredAt: now,
+          updatedAt: now,
+        };
+
+        await Promise.all([
+          db.collection(colName).doc(userId).set(incData, { merge: true }),
+          quizId
+            ? db
+                .collection(colName)
+                .doc(`${userId}_${quizId}`)
+                .set({ ...incData, quizId }, { merge: true })
+            : Promise.resolve(),
+          colName !== "quiz_leaderboard"
+            ? db.collection("quiz_leaderboard").doc(userId).set(incData, { merge: true })
+            : Promise.resolve(),
+        ]);
       } catch (fbErr) {
         console.warn("[Quiz Leaderboard POST] Firestore write notice:", fbErr);
       }
     }
 
+    const totalPts = Number(updatedGlobalAttrs?.totalPoints || pts);
+    const corrCount = Number(updatedGlobalAttrs?.correctCount || (isCorrect ? 1 : 0));
+    const incorrCount = Number(updatedGlobalAttrs?.incorrectCount || (isCorrect ? 0 : 1));
+    const totAnswered = Number(updatedGlobalAttrs?.totalAnswered || 1);
     const accuracy =
-      totalAnswered > 0 ? `${Math.round((correctCount / totalAnswered) * 100)}%` : "0%";
+      totAnswered > 0 ? `${Math.round((corrCount / totAnswered) * 100)}%` : "0%";
 
     return NextResponse.json({
       success: true,
@@ -272,10 +453,10 @@ export async function POST(req: NextRequest) {
         userId,
         userName: displayName,
         userAvatar: avatar,
-        totalPoints,
-        correctCount,
-        incorrectCount,
-        totalAnswered,
+        totalPoints: totalPts,
+        correctCount: corrCount,
+        incorrectCount: incorrCount,
+        totalAnswered: totAnswered,
         accuracy,
         pointsAwarded: pts,
         isCorrect: Boolean(isCorrect),

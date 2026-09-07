@@ -5,6 +5,7 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 
 export const dynamic = "force-dynamic";
@@ -372,6 +373,108 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         await db.collection("user_engagements").doc(firestoreVoteDocId).set(userRecord);
       } catch (fbVoteErr) {
         console.warn("Firestore user vote record notice:", fbVoteErr);
+      }
+    }
+
+    // ─── Step 6: Update Quiz Leaderboard in DynamoDB and Firestore ────────────
+    if (item.type === "quiz" && responseData?.type === "quiz") {
+      const isCorrect = Boolean(responseData.isCorrect);
+      const pts = Number(responseData.pointsAwarded || 0);
+      const displayName = userName || authUser?.name || "Fan Quizzer";
+      const avatar =
+        userAvatar ||
+        (authUser as any)?.picture ||
+        (authUser as any)?.photoURL ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`;
+
+      // 1. DynamoDB: Update QUIZ_LEADERBOARD#GLOBAL and QUIZ_LEADERBOARD#{id}
+      try {
+        const updateGlobal = docClient.send(
+          new UpdateCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${userId}` },
+            UpdateExpression:
+              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+              "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+              "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+              "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+              "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
+            ExpressionAttributeValues: {
+              ":zero": 0,
+              ":pts": pts,
+              ":corr": isCorrect ? 1 : 0,
+              ":incorr": isCorrect ? 0 : 1,
+              ":one": 1,
+              ":uname": displayName,
+              ":uavatar": avatar,
+              ":uemail": authUser?.email || "",
+              ":now": now,
+              ":entity": "QUIZ_LEADERBOARD",
+              ":uid": userId,
+            },
+          })
+        );
+
+        const updateQuiz = docClient.send(
+          new UpdateCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: `QUIZ_LEADERBOARD#${id}`, sk: `USER#${userId}` },
+            UpdateExpression:
+              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+              "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+              "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+              "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+              "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid, quizId = :qid",
+            ExpressionAttributeValues: {
+              ":zero": 0,
+              ":pts": pts,
+              ":corr": isCorrect ? 1 : 0,
+              ":incorr": isCorrect ? 0 : 1,
+              ":one": 1,
+              ":uname": displayName,
+              ":uavatar": avatar,
+              ":uemail": authUser?.email || "",
+              ":now": now,
+              ":entity": "QUIZ_LEADERBOARD",
+              ":uid": userId,
+              ":qid": id,
+            },
+          })
+        );
+
+        await Promise.all([updateGlobal, updateQuiz]);
+      } catch (lbDynErr) {
+        console.warn("DynamoDB quiz leaderboard update notice:", lbDynErr);
+      }
+
+      // 2. Firestore: Update quiz_leaderboard collection
+      if (db) {
+        try {
+          const colName = getFirestoreCollection("quiz_leaderboard");
+          const incData = {
+            userId,
+            userName: displayName,
+            userAvatar: avatar,
+            userEmail: authUser?.email || "",
+            totalPoints: FieldValue.increment(pts),
+            correctCount: FieldValue.increment(isCorrect ? 1 : 0),
+            incorrectCount: FieldValue.increment(isCorrect ? 0 : 1),
+            totalAnswered: FieldValue.increment(1),
+            lastAnsweredAt: now,
+            updatedAt: now,
+          };
+          await Promise.all([
+            db.collection(colName).doc(userId).set(incData, { merge: true }),
+            db.collection(colName).doc(`${userId}_${id}`).set({ ...incData, quizId: id }, { merge: true }),
+            colName !== "quiz_leaderboard"
+              ? db.collection("quiz_leaderboard").doc(userId).set(incData, { merge: true })
+              : Promise.resolve(),
+          ]);
+        } catch (lbFbErr) {
+          console.warn("Firestore quiz leaderboard update notice:", lbFbErr);
+        }
       }
     }
 
