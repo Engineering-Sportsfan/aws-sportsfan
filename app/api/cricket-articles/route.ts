@@ -74,6 +74,16 @@ export async function POST(req: NextRequest) {
     let tags: string[] = [];
     let imageUrl: string | undefined;
 
+    let isScheduled = false;
+    let scheduledAt: number | undefined;
+    let scheduledTimeMs: number | undefined;
+    let day: string | undefined;
+    let time: string | undefined;
+    let timeMs: number | undefined;
+    let userId: string | undefined;
+    let email: string | undefined;
+    let authorPhoto: string | undefined;
+
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
 
@@ -82,6 +92,21 @@ export async function POST(req: NextRequest) {
       readTime = (formData.get("readTime") as string) || undefined;
       author = (formData.get("author") as string) || undefined;
       views = (formData.get("views") as string) || undefined;
+      userId = (formData.get("userId") as string) || undefined;
+      email = (formData.get("email") as string) || undefined;
+      authorPhoto = (formData.get("authorPhoto") as string) || undefined;
+
+      const isScheduledStr = formData.get("isScheduled") as string | null;
+      isScheduled = isScheduledStr === "true";
+      const scheduledAtStr =
+        (formData.get("scheduledAt") as string | null) ||
+        (formData.get("scheduledTimeMs") as string | null);
+      scheduledAt = scheduledAtStr ? Number(scheduledAtStr) : undefined;
+      scheduledTimeMs = scheduledAt;
+      day = (formData.get("day") as string) || undefined;
+      time = (formData.get("time") as string) || undefined;
+      const timeMsStr = formData.get("timeMs") as string | null;
+      timeMs = isScheduled && scheduledAt ? scheduledAt : timeMsStr ? Number(timeMsStr) : Date.now();
 
       const descriptionRaw = formData.get("description") as string | null;
       if (descriptionRaw) {
@@ -111,8 +136,14 @@ export async function POST(req: NextRequest) {
       }
     } else {
       const body = await req.json();
-      ({ badge, title, description, readTime, author, views, tags = [] } = body);
+      ({ badge, title, description, readTime, author, views, tags = [], userId, email, authorPhoto } = body);
       imageUrl = body.image;
+      isScheduled = body.isScheduled === true || body.isScheduled === "true";
+      scheduledAt = body.scheduledAt ? Number(body.scheduledAt) : body.scheduledTimeMs ? Number(body.scheduledTimeMs) : undefined;
+      scheduledTimeMs = scheduledAt;
+      day = body.day;
+      time = body.time;
+      timeMs = isScheduled && scheduledAt ? scheduledAt : body.timeMs ? Number(body.timeMs) : Date.now();
     }
 
     const validBadges: BadgeType[] = ["FEATURE", "ANALYSIS", "OPINION", "NEWS"];
@@ -141,6 +172,14 @@ export async function POST(req: NextRequest) {
       views: (views && views.trim()) || "0 views",
       image: imageUrl || "", // Media is optional — defaults to empty string if not provided
       tags: Array.isArray(tags) ? tags : [],
+      isScheduled,
+      ...(scheduledAt ? { scheduledAt, scheduledTimeMs: scheduledAt } : {}),
+      ...(day ? { day } : {}),
+      ...(time ? { time } : {}),
+      timeMs: timeMs || now,
+      ...(userId ? { userId } : {}),
+      ...(email ? { email } : {}),
+      ...(authorPhoto ? { authorPhoto } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -174,6 +213,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 200);
     const badge = searchParams.get("badge");
+    const includeScheduled = searchParams.get("includeScheduled") === "true";
 
     let articles: Array<Record<string, unknown>> = [];
 
@@ -219,7 +259,19 @@ const expressionAttributeValues: Record<string, unknown> = {
       } while (lastEvaluatedKey && pageCount < MAX_PAGES);
 
       if (items.length > 0) {
+        const nowMs = Date.now();
         articles = items
+          .filter((item) => {
+            if (includeScheduled) return true;
+            const itemScheduled = item.isScheduled === true || item.isScheduled === "true";
+            const schedTime = Number(item.scheduledAt) || Number(item.scheduledTimeMs);
+            if (itemScheduled || (schedTime && schedTime > 0)) {
+              if (schedTime && schedTime > nowMs) {
+                return false; // Future scheduled article — hide
+              }
+            }
+            return true;
+          })
           .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
           .slice(0, limit)
           .map((item) => ({
@@ -240,10 +292,23 @@ const expressionAttributeValues: Record<string, unknown> = {
         }
 
         const snapshot = await query.limit(limit).get();
-        articles = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
+        const nowMs = Date.now();
+        articles = snapshot.docs
+          .map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }))
+          .filter((item: any) => {
+            if (includeScheduled) return true;
+            const itemScheduled = item.isScheduled === true || item.isScheduled === "true";
+            const schedTime = Number(item.scheduledAt) || Number(item.scheduledTimeMs);
+            if (itemScheduled || (schedTime && schedTime > 0)) {
+              if (schedTime && schedTime > nowMs) {
+                return false;
+              }
+            }
+            return true;
+          });
       } catch (fbErr) {
         console.warn("Firebase articles fallback notice:", fbErr);
       }

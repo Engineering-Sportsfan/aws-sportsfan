@@ -1,10 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { EngagementItem, EngagementType } from "@/types/engagements";
+import { useEffect, useState, useCallback } from "react";
+import { EngagementItem, EngagementType, QuizOption, QuizLeaderboardEntry } from "@/types/engagements";
+
+interface AdminQuizQuestion {
+  id: string;
+  question: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  correctOptionId: string;
+  pointsReward: number;
+  explanation: string;
+}
 
 export default function EngagementsManagementPage() {
-  const [activeTab, setActiveTab] = useState<"list" | "fan_battle" | "quiz" | "poll" | "prediction">("list");
+  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "fan_battle" | "quiz" | "poll" | "prediction">("list");
   const [engagements, setEngagements] = useState<EngagementItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -12,7 +24,7 @@ export default function EngagementsManagementPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [editingItem, setEditingItem] = useState<EngagementItem | null>(null);
 
-  // ── Form State ─────────────────────────────────────────────────────────────
+  // ── General Form State ───────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
   const [sport, setSport] = useState("cricket");
@@ -26,15 +38,22 @@ export default function EngagementsManagementPage() {
   const [fbRightName, setFbRightName] = useState("Babar Azam");
   const [fbRightStat, setFbRightStat] = useState("Avg 44.8 in Tests");
 
-  // Quiz state
-  const [quizQuestion, setQuizQuestion] = useState("How many Test centuries has Virat Kohli scored?");
-  const [quizOptionA, setQuizOptionA] = useState("27");
-  const [quizOptionB, setQuizOptionB] = useState("29");
-  const [quizOptionC, setQuizOptionC] = useState("30");
-  const [quizOptionD, setQuizOptionD] = useState("32");
-  const [quizCorrect, setQuizCorrect] = useState("B");
-  const [quizPoints, setQuizPoints] = useState(50);
-  const [quizExplanation, setQuizExplanation] = useState("Correct: 29");
+  // Multi-Question Quiz State with Starting Time & Frequency
+  const [quizStartTime, setQuizStartTime] = useState<string>("");
+  const [quizFrequencyMinutes, setQuizFrequencyMinutes] = useState<number>(10);
+  const [quizQuestions, setQuizQuestions] = useState<AdminQuizQuestion[]>([
+    {
+      id: "q_1",
+      question: "How many Test centuries has Virat Kohli scored?",
+      optionA: "27",
+      optionB: "29",
+      optionC: "30",
+      optionD: "32",
+      correctOptionId: "B",
+      pointsReward: 50,
+      explanation: "Virat Kohli scored his 29th Test hundred against West Indies.",
+    },
+  ]);
 
   // Poll state
   const [pollQuestion, setPollQuestion] = useState("Who takes more wickets in Galle?");
@@ -51,6 +70,12 @@ export default function EngagementsManagementPage() {
   const [predRightText, setPredRightText] = useState("SL hold / win");
   const [predRightCode, setPredRightCode] = useState("LK");
   const [predCoinStake, setPredCoinStake] = useState(25);
+
+  // ── Leaderboard Tab State ────────────────────────────────────────────────────
+  const [leaderboardData, setLeaderboardData] = useState<QuizLeaderboardEntry[]>([]);
+  const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
+  const [selectedLeaderboardQuizId, setSelectedLeaderboardQuizId] = useState<string>("global");
+  const [leaderboardSearch, setLeaderboardSearch] = useState<string>("");
 
   useEffect(() => {
     fetchEngagements();
@@ -69,12 +94,54 @@ export default function EngagementsManagementPage() {
     }
   }
 
+  // Fetch Leaderboard for Admin Tab
+  const fetchAdminLeaderboard = useCallback(async () => {
+    setLoadingLeaderboard(true);
+    try {
+      const quizParam = selectedLeaderboardQuizId === "global" ? "" : `?quizId=${selectedLeaderboardQuizId}&limit=100`;
+      const res = await fetch(`/api/engagements/quiz/leaderboard${quizParam}`);
+      const data = await res.json();
+      if (data.success) {
+        setLeaderboardData(data.leaderboard || []);
+      } else {
+        setLeaderboardData([]);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch admin leaderboard:", err);
+      setLeaderboardData([]);
+    } finally {
+      setLoadingLeaderboard(false);
+    }
+  }, [selectedLeaderboardQuizId]);
+
+  useEffect(() => {
+    if (activeTab === "leaderboard") {
+      fetchAdminLeaderboard();
+    }
+  }, [activeTab, fetchAdminLeaderboard]);
+
   function handleOpenCreate(type: EngagementType) {
     setEditingItem(null);
     setActiveTab(type);
     if (type === "fan_battle") setTitle("Fan Battle · Who wins your vote?");
-    else if (type === "quiz") setTitle("Quick Cricket Quiz");
-    else if (type === "poll") setTitle("Who takes more wickets in Galle?");
+    else if (type === "quiz") {
+      setTitle("Quick Live Cricket Quiz");
+      setQuizStartTime("");
+      setQuizFrequencyMinutes(10);
+      setQuizQuestions([
+        {
+          id: "q_1",
+          question: "How many Test centuries has Virat Kohli scored?",
+          optionA: "27",
+          optionB: "29",
+          optionC: "30",
+          optionD: "32",
+          correctOptionId: "B",
+          pointsReward: 50,
+          explanation: "Virat Kohli scored his 29th Test hundred against West Indies.",
+        },
+      ]);
+    } else if (type === "poll") setTitle("Who takes more wickets in Galle?");
     else if (type === "prediction") setTitle("Predict the outcome!");
   }
 
@@ -94,14 +161,52 @@ export default function EngagementsManagementPage() {
       setFbRightName(item.fanBattleData.rightCompetitor.name);
       setFbRightStat(item.fanBattleData.rightCompetitor.stat);
     } else if (item.type === "quiz" && item.quizData) {
-      setQuizQuestion(item.quizData.question);
-      setQuizOptionA(item.quizData.options[0]?.text || "");
-      setQuizOptionB(item.quizData.options[1]?.text || "");
-      setQuizOptionC(item.quizData.options[2]?.text || "");
-      setQuizOptionD(item.quizData.options[3]?.text || "");
-      setQuizCorrect(item.quizData.correctOptionId);
-      setQuizPoints(item.quizData.pointsReward || 50);
-      setQuizExplanation(item.quizData.explanation || "");
+      // Start Time
+      if (item.quizData.startTime || item.quizData.scheduledStartTime) {
+        try {
+          const d = new Date(Number(item.quizData.startTime || item.quizData.scheduledStartTime));
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setQuizStartTime(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+        } catch {
+          setQuizStartTime("");
+        }
+      } else {
+        setQuizStartTime("");
+      }
+
+      // Frequency
+      setQuizFrequencyMinutes(item.quizData.frequencyMinutes || 10);
+
+      // Questions array
+      if (item.quizData.questions && item.quizData.questions.length > 0) {
+        setQuizQuestions(
+          item.quizData.questions.map((q, idx) => ({
+            id: q.id || `q_${idx + 1}`,
+            question: q.question || "",
+            optionA: q.options?.[0]?.text || "",
+            optionB: q.options?.[1]?.text || "",
+            optionC: q.options?.[2]?.text || "",
+            optionD: q.options?.[3]?.text || "",
+            correctOptionId: q.correctOptionId || "B",
+            pointsReward: q.pointsReward || 50,
+            explanation: q.explanation || "",
+          }))
+        );
+      } else {
+        setQuizQuestions([
+          {
+            id: "q_1",
+            question: item.quizData.question || item.title || "",
+            optionA: item.quizData.options?.[0]?.text || "",
+            optionB: item.quizData.options?.[1]?.text || "",
+            optionC: item.quizData.options?.[2]?.text || "",
+            optionD: item.quizData.options?.[3]?.text || "",
+            correctOptionId: item.quizData.correctOptionId || "B",
+            pointsReward: item.quizData.pointsReward || 50,
+            explanation: item.quizData.explanation || "",
+          },
+        ]);
+      }
     } else if (item.type === "poll" && item.pollData) {
       setPollQuestion(item.pollData.question);
       setPollOptions(item.pollData.options.map(o => o.text));
@@ -113,6 +218,40 @@ export default function EngagementsManagementPage() {
       setPredRightCode(item.predictionData.rightChoice.code || "");
       setPredCoinStake(item.predictionData.coinStake || 25);
     }
+  }
+
+  // Quiz Question Array Helpers
+  function handleAddQuizQuestion() {
+    setQuizQuestions(prev => [
+      ...prev,
+      {
+        id: `q_${Date.now()}_${prev.length + 1}`,
+        question: "",
+        optionA: "",
+        optionB: "",
+        optionC: "",
+        optionD: "",
+        correctOptionId: "A",
+        pointsReward: 50,
+        explanation: "",
+      },
+    ]);
+  }
+
+  function handleRemoveQuizQuestion(index: number) {
+    if (quizQuestions.length <= 1) {
+      alert("At least one quiz question is required.");
+      return;
+    }
+    setQuizQuestions(prev => prev.filter((_, i) => i !== index));
+  }
+
+  function handleUpdateQuizQuestion(index: number, field: keyof AdminQuizQuestion, value: any) {
+    setQuizQuestions(prev => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -136,18 +275,38 @@ export default function EngagementsManagementPage() {
           totalVotes: 0,
         };
       } else if (activeTab === "quiz") {
-        payload.tags = ["🧠 QUIZ", `⭐ ${quizPoints} PTS`];
-        payload.quizData = {
-          question: quizQuestion,
+        const startMs = quizStartTime ? new Date(quizStartTime).getTime() : Date.now();
+        const formattedQuestions = quizQuestions.map((q, idx) => ({
+          id: q.id || `q_${idx + 1}`,
+          question: q.question,
           options: [
-            { id: "A", text: quizOptionA },
-            { id: "B", text: quizOptionB },
-            { id: "C", text: quizOptionC },
-            { id: "D", text: quizOptionD },
+            { id: "A", text: q.optionA },
+            { id: "B", text: q.optionB },
+            { id: "C", text: q.optionC },
+            { id: "D", text: q.optionD },
           ],
-          correctOptionId: quizCorrect,
-          pointsReward: Number(quizPoints),
-          explanation: quizExplanation,
+          correctOptionId: q.correctOptionId,
+          pointsReward: Number(q.pointsReward) || 50,
+          explanation: q.explanation,
+        }));
+
+        payload.tags = [
+          "🧠 QUIZ",
+          `⭐ ${formattedQuestions[0]?.pointsReward || 50} PTS/Q`,
+          `⏱️ ${quizFrequencyMinutes}m`,
+        ];
+
+        payload.quizData = {
+          startTime: startMs,
+          scheduledStartTime: startMs,
+          frequencyMinutes: Number(quizFrequencyMinutes) || 10,
+          questions: formattedQuestions,
+          // Backwards compatibility for single-question readers
+          question: formattedQuestions[0]?.question || title,
+          options: formattedQuestions[0]?.options || [],
+          correctOptionId: formattedQuestions[0]?.correctOptionId || "B",
+          pointsReward: Number(formattedQuestions[0]?.pointsReward) || 50,
+          explanation: formattedQuestions[0]?.explanation || "",
         };
       } else if (activeTab === "poll") {
         payload.tags = ["📊 POLL"];
@@ -226,67 +385,99 @@ export default function EngagementsManagementPage() {
       i.type.toLowerCase().includes(search.toLowerCase())
   );
 
+  const quizEngagements = engagements.filter(i => i.type === "quiz");
+
+  const filteredLeaderboard = leaderboardData.filter(
+    entry =>
+      entry.userName.toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
+      (entry.userEmail || "").toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
+      entry.userId.toLowerCase().includes(leaderboardSearch.toLowerCase())
+  );
+
+  // Leaderboard Statistics
+  const totalParticipants = leaderboardData.length;
+  const totalPointsDistributed = leaderboardData.reduce((acc, curr) => acc + (curr.totalPoints || 0), 0);
+  const totalQuestionsAnswered = leaderboardData.reduce((acc, curr) => acc + (curr.totalAnswered || 0), 0);
+  const topScorer = leaderboardData[0] || null;
+
   return (
-    <div style={{ padding: "20px", color: "#e6edf3", maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ padding: "20px", color: "#e6edf3", maxWidth: 1250, margin: "0 auto" }}>
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
-            ⚡ Interactive Engagements Manager
+            ⚡ Interactive Engagements & Leaderboard Manager
           </h1>
           <p style={{ color: "#8b949e", fontSize: 13, marginTop: 4 }}>
-            Create & manage Fan Battles, Quizzes, Polls, and Match Predictions for the live feed
+            Create & manage Fan Battles, Multi-Question Quizzes, Polls, Predictions & view Live Leaderboards
           </p>
         </div>
 
-        {activeTab === "list" && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={() => handleOpenCreate("fan_battle")}
-              style={{
-                background: "#238636", color: "#fff", padding: "8px 14px", borderRadius: 6,
-                fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
-              }}
-            >
-              + ⚔️ Fan Battle
-            </button>
-            <button
-              onClick={() => handleOpenCreate("quiz")}
-              style={{
-                background: "#8957e5", color: "#fff", padding: "8px 14px", borderRadius: 6,
-                fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
-              }}
-            >
-              + 🧠 Quiz
-            </button>
-            <button
-              onClick={() => handleOpenCreate("poll")}
-              style={{
-                background: "#1f6feb", color: "#fff", padding: "8px 14px", borderRadius: 6,
-                fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
-              }}
-            >
-              + 📊 Poll
-            </button>
-            <button
-              onClick={() => handleOpenCreate("prediction")}
-              style={{
-                background: "#d29922", color: "#000", padding: "8px 14px", borderRadius: 6,
-                fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer",
-              }}
-            >
-              + 🎯 Prediction
-            </button>
-          </div>
-        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={() => setActiveTab("leaderboard")}
+            style={{
+              background: activeTab === "leaderboard" ? "#e3b341" : "#21262d",
+              color: activeTab === "leaderboard" ? "#000000" : "#e3b341",
+              border: "1px solid #e3b341",
+              padding: "8px 14px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            🏆 Live Leaderboard
+          </button>
+          <button
+            onClick={() => handleOpenCreate("fan_battle")}
+            style={{
+              background: "#238636", color: "#fff", padding: "8px 14px", borderRadius: 6,
+              fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
+            }}
+          >
+            + ⚔️ Fan Battle
+          </button>
+          <button
+            onClick={() => handleOpenCreate("quiz")}
+            style={{
+              background: "#8957e5", color: "#fff", padding: "8px 14px", borderRadius: 6,
+              fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
+            }}
+          >
+            + 🧠 Multi-Question Quiz
+          </button>
+          <button
+            onClick={() => handleOpenCreate("poll")}
+            style={{
+              background: "#1f6feb", color: "#fff", padding: "8px 14px", borderRadius: 6,
+              fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
+            }}
+          >
+            + 📊 Poll
+          </button>
+          <button
+            onClick={() => handleOpenCreate("prediction")}
+            style={{
+              background: "#d29922", color: "#000", padding: "8px 14px", borderRadius: 6,
+              fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer",
+            }}
+          >
+            + 🎯 Prediction
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #30363d", paddingBottom: 10, marginBottom: 20 }}>
         {[
           { id: "list", label: "📋 All Engagements" },
+          { id: "leaderboard", label: "🏆 Quiz Leaderboard" },
           { id: "fan_battle", label: "⚔️ Fan Battle Creator" },
-          { id: "quiz", label: "🧠 Quiz Creator" },
+          { id: "quiz", label: "🧠 Multi-Question Quiz Creator" },
           { id: "poll", label: "📊 Poll Creator" },
           { id: "prediction", label: "🎯 Prediction Creator" },
         ].map(tab => (
@@ -294,14 +485,14 @@ export default function EngagementsManagementPage() {
             key={tab.id}
             onClick={() => {
               setActiveTab(tab.id as any);
-              if (tab.id !== "list") setEditingItem(null);
+              if (tab.id !== "list" && tab.id !== "leaderboard") setEditingItem(null);
             }}
             style={{
               padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600,
-              background: activeTab === tab.id ? "#388bfd" : "transparent",
-              color: activeTab === tab.id ? "#fff" : "#8b949e",
+              background: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : "#388bfd") : "transparent",
+              color: activeTab === tab.id ? (tab.id === "leaderboard" ? "#000" : "#fff") : "#8b949e",
               border: "1px solid",
-              borderColor: activeTab === tab.id ? "#388bfd" : "transparent",
+              borderColor: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : "#388bfd") : "transparent",
               cursor: "pointer",
             }}
           >
@@ -310,11 +501,11 @@ export default function EngagementsManagementPage() {
         ))}
       </div>
 
-      {/* ── LIST TAB ────────────────────────────────────────────────────────── */}
-      {activeTab === "list" ? (
+      {/* ── TAB 1: ENGAGEMENTS LIST ─────────────────────────────────────────── */}
+      {activeTab === "list" && (
         <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, overflow: "hidden" }}>
           {/* Toolbar */}
-          <div style={{ padding: 12, display: "flex", gap: 10, borderBottom: "1px solid #30363d", alignItems: "center" }}>
+          <div style={{ padding: 12, display: "flex", gap: 10, borderBottom: "1px solid #30363d", alignItems: "center", flexWrap: "wrap" }}>
             <input
               placeholder="Search engagements…"
               value={search}
@@ -353,7 +544,7 @@ export default function EngagementsManagementPage() {
               <tr style={{ background: "#1c2128", borderBottom: "1px solid #30363d", color: "#8b949e", textAlign: "left" }}>
                 <th style={{ padding: "10px 14px" }}>Type</th>
                 <th style={{ padding: "10px 14px" }}>Title / Question</th>
-                <th style={{ padding: "10px 14px" }}>Details</th>
+                <th style={{ padding: "10px 14px" }}>Details & Timing</th>
                 <th style={{ padding: "10px 14px" }}>Engaged</th>
                 <th style={{ padding: "10px 14px" }}>Status</th>
                 <th style={{ padding: "10px 14px" }}>Actions</th>
@@ -380,6 +571,8 @@ export default function EngagementsManagementPage() {
                   else if (item.type === "quiz") { typeBadgeBg = "rgba(163, 113, 247, 0.15)"; typeBadgeColor = "#d2a8ff"; }
                   else if (item.type === "prediction") { typeBadgeBg = "rgba(210, 153, 34, 0.15)"; typeBadgeColor = "#e3b341"; }
 
+                  const totalQuestions = item.quizData?.questions?.length || (item.quizData?.question ? 1 : 0);
+
                   return (
                     <tr key={item.id} style={{ borderBottom: "1px solid #21262d" }}>
                       <td style={{ padding: "10px 14px" }}>
@@ -393,7 +586,11 @@ export default function EngagementsManagementPage() {
 
                       <td style={{ padding: "10px 14px", fontWeight: 600, color: "#f0f6fc" }}>
                         {item.title}
-                        {item.quizData?.question && <div style={{ fontSize: 11, color: "#8b949e" }}>{item.quizData.question}</div>}
+                        {item.quizData && (
+                          <div style={{ fontSize: 11, color: "#8b949e" }}>
+                            {totalQuestions} Question{totalQuestions !== 1 ? "s" : ""} · {item.quizData.question || item.quizData.questions?.[0]?.question}
+                          </div>
+                        )}
                         {item.pollData?.question && <div style={{ fontSize: 11, color: "#8b949e" }}>{item.pollData.question}</div>}
                         {item.predictionData?.question && <div style={{ fontSize: 11, color: "#8b949e" }}>{item.predictionData.question}</div>}
                       </td>
@@ -403,7 +600,16 @@ export default function EngagementsManagementPage() {
                           <span>{item.fanBattleData?.leftCompetitor.name} vs {item.fanBattleData?.rightCompetitor.name}</span>
                         )}
                         {item.type === "quiz" && (
-                          <span>Ans: {item.quizData?.correctOptionId} ({item.quizData?.pointsReward} PTS)</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ color: "#d2a8ff" }}>
+                              🧠 {totalQuestions} Qs · ⏱️ Every {item.quizData?.frequencyMinutes || 10} mins
+                            </span>
+                            {item.quizData?.startTime && (
+                              <span style={{ color: "#8b949e", fontSize: 10 }}>
+                                📅 Starts: {new Date(item.quizData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
                         )}
                         {item.type === "poll" && (
                           <span>{item.pollData?.options.length} options</span>
@@ -459,15 +665,231 @@ export default function EngagementsManagementPage() {
             </tbody>
           </table>
         </div>
-      ) : (
-        /* ── CREATOR FORM TAB ─────────────────────────────────────────────────── */
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 24 }}>
+      )}
+
+      {/* ── TAB 2: LEADERBOARD LIST ─────────────────────────────────────────── */}
+      {activeTab === "leaderboard" && (
+        <div>
+          {/* Top Metrics Cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
+            <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: "14px 18px" }}>
+              <div style={{ fontSize: 12, color: "#8b949e", fontWeight: 600 }}>Total Participants</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#58a6ff", marginTop: 4 }}>
+                {totalParticipants.toLocaleString()}
+              </div>
+            </div>
+
+            <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: "14px 18px" }}>
+              <div style={{ fontSize: 12, color: "#8b949e", fontWeight: 600 }}>Total Points Awarded</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#e3b341", marginTop: 4 }}>
+                {totalPointsDistributed.toLocaleString()} PTS
+              </div>
+            </div>
+
+            <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: "14px 18px" }}>
+              <div style={{ fontSize: 12, color: "#8b949e", fontWeight: 600 }}>Total Questions Answered</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#3fb950", marginTop: 4 }}>
+                {totalQuestionsAnswered.toLocaleString()}
+              </div>
+            </div>
+
+            <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: "14px 18px" }}>
+              <div style={{ fontSize: 12, color: "#8b949e", fontWeight: 600 }}>Top Performer</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#d2a8ff", marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                <span>🥇</span> {topScorer ? `${topScorer.userName} (${topScorer.totalPoints} PTS)` : "None yet"}
+              </div>
+            </div>
+          </div>
+
+          {/* Leaderboard Table Container */}
+          <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, overflow: "hidden" }}>
+            {/* Filter & Search Bar */}
+            <div style={{ padding: 14, display: "flex", gap: 12, borderBottom: "1px solid #30363d", alignItems: "center", flexWrap: "wrap", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                {/* Quiz Selection Filter */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <label style={{ fontSize: 12, color: "#8b949e", fontWeight: 600 }}>Filter by Quiz:</label>
+                  <select
+                    value={selectedLeaderboardQuizId}
+                    onChange={e => setSelectedLeaderboardQuizId(e.target.value)}
+                    style={{
+                      background: "#0d1117",
+                      border: "1px solid #30363d",
+                      borderRadius: 6,
+                      color: "#fff",
+                      padding: "6px 12px",
+                      fontSize: 12,
+                      outline: "none",
+                    }}
+                  >
+                    <option value="global">🌐 All Quizzes (Global Leaderboard)</option>
+                    {quizEngagements.map(q => (
+                      <option key={q.id} value={q.id}>
+                        🧠 {q.title} ({q.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Search Input */}
+                <input
+                  placeholder="Search user name or ID…"
+                  value={leaderboardSearch}
+                  onChange={e => setLeaderboardSearch(e.target.value)}
+                  style={{
+                    background: "#0d1117",
+                    border: "1px solid #30363d",
+                    borderRadius: 6,
+                    color: "#e6edf3",
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    width: 240,
+                    outline: "none",
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 12, color: "#8b949e" }}>
+                  Showing {filteredLeaderboard.length} users
+                </span>
+                <button
+                  onClick={fetchAdminLeaderboard}
+                  style={{
+                    background: "#21262d",
+                    border: "1px solid #30363d",
+                    color: "#c9d1d9",
+                    borderRadius: 6,
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                  }}
+                >
+                  🔄 Refresh Board
+                </button>
+              </div>
+            </div>
+
+            {/* Table */}
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: "#1c2128", borderBottom: "1px solid #30363d", color: "#8b949e", textAlign: "left" }}>
+                  <th style={{ padding: "12px 14px", width: 80 }}>Rank</th>
+                  <th style={{ padding: "12px 14px" }}>User</th>
+                  <th style={{ padding: "12px 14px" }}>Total Points</th>
+                  <th style={{ padding: "12px 14px" }}>Answers Breakdown</th>
+                  <th style={{ padding: "12px 14px" }}>Accuracy</th>
+                  <th style={{ padding: "12px 14px" }}>Last Activity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingLeaderboard ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 40, textAlign: "center", color: "#8b949e" }}>
+                      Loading leaderboard participants…
+                    </td>
+                  </tr>
+                ) : filteredLeaderboard.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 40, textAlign: "center", color: "#8b949e" }}>
+                      No participants found for the selected quiz.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredLeaderboard.map(entry => {
+                    const isTop1 = entry.rank === 1;
+                    const isTop2 = entry.rank === 2;
+                    const isTop3 = entry.rank === 3;
+                    const rankColor = isTop1 ? "#ffd700" : isTop2 ? "#c0c0c0" : isTop3 ? "#cd7f32" : "#8b949e";
+                    const medal = isTop1 ? "🥇 #1" : isTop2 ? "🥈 #2" : isTop3 ? "🥉 #3" : `#${entry.rank}`;
+
+                    const accuracyPct = entry.accuracy || "0%";
+                    const lastDate = entry.lastAnsweredAt ? new Date(entry.lastAnsweredAt).toLocaleString() : "Recently";
+
+                    return (
+                      <tr key={entry.userId} style={{ borderBottom: "1px solid #21262d" }}>
+                        <td style={{ padding: "12px 14px", fontWeight: 900, color: rankColor, fontSize: 13 }}>
+                          {medal}
+                        </td>
+
+                        <td style={{ padding: "12px 14px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <img
+                              src={entry.userAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${entry.userId}`}
+                              alt={entry.userName}
+                              style={{ width: 34, height: 34, borderRadius: "50%", background: "#21262d" }}
+                            />
+                            <div>
+                              <div style={{ fontWeight: 700, color: "#f0f6fc", fontSize: 13 }}>
+                                {entry.userName}
+                              </div>
+                              <div style={{ color: "#6e7681", fontSize: 11 }}>
+                                {entry.userEmail || entry.userId}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td style={{ padding: "12px 14px" }}>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: "#e3b341" }}>
+                            {entry.totalPoints.toLocaleString()} PTS
+                          </span>
+                        </td>
+
+                        <td style={{ padding: "12px 14px" }}>
+                          <div style={{ display: "flex", gap: 8, fontSize: 11 }}>
+                            <span style={{ color: "#3fb950", fontWeight: 700 }}>✓ {entry.correctCount} Correct</span>
+                            <span style={{ color: "#8b949e" }}>·</span>
+                            <span style={{ color: "#ff7b72", fontWeight: 700 }}>✕ {entry.incorrectCount} Incorrect</span>
+                            <span style={{ color: "#8b949e" }}>·</span>
+                            <span style={{ color: "#c9d1d9" }}>{entry.totalAnswered} Total</span>
+                          </div>
+                        </td>
+
+                        <td style={{ padding: "12px 14px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ color: "#3fb950", fontWeight: 700, width: 42 }}>
+                              {accuracyPct}
+                            </span>
+                            <div style={{ width: 80, height: 6, background: "#21262d", borderRadius: 3, overflow: "hidden" }}>
+                              <div
+                                style={{
+                                  width: accuracyPct,
+                                  height: "100%",
+                                  background: "#3fb950",
+                                  borderRadius: 3,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+
+                        <td style={{ padding: "12px 14px", color: "#8b949e", fontSize: 11 }}>
+                          {lastDate}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB 3-6: CREATOR FORM TABS ───────────────────────────────────────── */}
+      {activeTab !== "list" && activeTab !== "leaderboard" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", gap: 24 }}>
           {/* Form Area */}
           <form onSubmit={handleSubmit} style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 20 }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
               {editingItem ? "✏️ Edit" : "+ Create New"}{" "}
               {activeTab === "fan_battle" && "⚔️ Fan Battle"}
-              {activeTab === "quiz" && "🧠 Quick Quiz"}
+              {activeTab === "quiz" && "🧠 Multi-Question Live Quiz"}
               {activeTab === "poll" && "📊 Poll"}
               {activeTab === "prediction" && "🎯 Match Prediction"}
             </h2>
@@ -475,10 +897,11 @@ export default function EngagementsManagementPage() {
             {/* General Fields */}
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 14 }}>
               <div>
-                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Title Header</label>
+                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Quiz / Engagement Title</label>
                 <input
                   value={title}
                   onChange={e => setTitle(e.target.value)}
+                  placeholder="e.g. IND vs ENG Match Quiz"
                   required
                   style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13 }}
                 />
@@ -517,43 +940,272 @@ export default function EngagementsManagementPage() {
               </div>
             )}
 
-            {/* ── QUIZ FIELDS ────────────────────────────────────────────────────── */}
+            {/* ── MULTI-QUESTION QUIZ FIELDS ───────────────────────────────────────── */}
             {activeTab === "quiz" && (
               <div style={{ borderTop: "1px solid #30363d", paddingTop: 14, marginTop: 14 }}>
-                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Question</label>
-                <input value={quizQuestion} onChange={e => setQuizQuestion(e.target.value)} required style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13, marginBottom: 12 }} />
-
-                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Options & Correct Answer</label>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-                  {[
-                    { id: "A", val: quizOptionA, set: setQuizOptionA },
-                    { id: "B", val: quizOptionB, set: setQuizOptionB },
-                    { id: "C", val: quizOptionC, set: setQuizOptionC },
-                    { id: "D", val: quizOptionD, set: setQuizOptionD },
-                  ].map(opt => (
-                    <div key={opt.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {/* 1. Timing & Frequency Section */}
+                <div
+                  style={{
+                    background: "rgba(137, 87, 229, 0.08)",
+                    border: "1px solid rgba(137, 87, 229, 0.25)",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <h3 style={{ fontSize: 12, fontWeight: 700, color: "#d2a8ff", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                    ⏱️ Quiz Timing & Question Interval Setup
+                  </h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        📅 Starting Time
+                      </label>
                       <input
-                        type="radio"
-                        name="correctAnswer"
-                        checked={quizCorrect === opt.id}
-                        onChange={() => setQuizCorrect(opt.id)}
+                        type="datetime-local"
+                        value={quizStartTime}
+                        onChange={e => setQuizStartTime(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
                       />
-                      <span style={{ fontSize: 11, fontWeight: 700, color: "#8b949e" }}>{opt.id}:</span>
-                      <input value={opt.val} onChange={e => opt.set(e.target.value)} required style={{ flex: 1, padding: "5px 8px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        When question #1 unlocks (leave empty for immediate start)
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        ⏳ Question Frequency (Minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={quizFrequencyMinutes}
+                        onChange={e => setQuizFrequencyMinutes(Math.max(1, Number(e.target.value)))}
+                        placeholder="10"
+                        required
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      />
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        How much time before the next quiz question shows (e.g. 10 mins)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Questions List Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "#f0f6fc", margin: 0 }}>
+                    🧠 Quiz Questions ({quizQuestions.length})
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={handleAddQuizQuestion}
+                    style={{
+                      background: "#238636",
+                      border: "none",
+                      color: "#ffffff",
+                      borderRadius: 6,
+                      padding: "5px 12px",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    + Add Question
+                  </button>
+                </div>
+
+                {/* 3. Questions Array Inputs */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {quizQuestions.map((q, qIdx) => (
+                    <div
+                      key={q.id || qIdx}
+                      style={{
+                        background: "#0d1117",
+                        border: "1px solid #21262d",
+                        borderRadius: 8,
+                        padding: "14px",
+                        position: "relative",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: "#58a6ff" }}>
+                          Question #{qIdx + 1}
+                        </span>
+                        {quizQuestions.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveQuizQuestion(qIdx)}
+                            style={{
+                              background: "transparent",
+                              border: "1px solid #da3633",
+                              color: "#f85149",
+                              borderRadius: 4,
+                              padding: "2px 8px",
+                              fontSize: 11,
+                              cursor: "pointer",
+                            }}
+                          >
+                            ✕ Remove
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Question Text */}
+                      <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>
+                        Question Prompt
+                      </label>
+                      <input
+                        value={q.question}
+                        onChange={e => handleUpdateQuizQuestion(qIdx, "question", e.target.value)}
+                        placeholder={`e.g. Which team has won the most IPL titles?`}
+                        required
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#161b22",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                          marginBottom: 10,
+                        }}
+                      />
+
+                      {/* Options Grid (A, B, C, D) */}
+                      <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>
+                        Options & Select Correct Answer
+                      </label>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                        {[
+                          { id: "A", field: "optionA" as const },
+                          { id: "B", field: "optionB" as const },
+                          { id: "C", field: "optionC" as const },
+                          { id: "D", field: "optionD" as const },
+                        ].map(opt => (
+                          <div
+                            key={opt.id}
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              alignItems: "center",
+                              background: "#161b22",
+                              border: `1px solid ${q.correctOptionId === opt.id ? "#2ea043" : "#30363d"}`,
+                              borderRadius: 6,
+                              padding: "4px 8px",
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name={`correct_${qIdx}`}
+                              checked={q.correctOptionId === opt.id}
+                              onChange={() => handleUpdateQuizQuestion(qIdx, "correctOptionId", opt.id)}
+                            />
+                            <span style={{ fontSize: 11, fontWeight: 700, color: q.correctOptionId === opt.id ? "#3fb950" : "#8b949e" }}>
+                              {opt.id}:
+                            </span>
+                            <input
+                              value={q[opt.field]}
+                              onChange={e => handleUpdateQuizQuestion(qIdx, opt.field, e.target.value)}
+                              placeholder={`Option ${opt.id}`}
+                              required
+                              style={{
+                                flex: 1,
+                                padding: "4px 6px",
+                                background: "transparent",
+                                border: "none",
+                                color: "#fff",
+                                fontSize: 12,
+                                outline: "none",
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Points & Explanation */}
+                      <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 10 }}>
+                        <div>
+                          <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>
+                            Points
+                          </label>
+                          <input
+                            type="number"
+                            value={q.pointsReward}
+                            onChange={e => handleUpdateQuizQuestion(qIdx, "pointsReward", Number(e.target.value))}
+                            style={{
+                              width: "100%",
+                              padding: "6px 8px",
+                              background: "#161b22",
+                              border: "1px solid #30363d",
+                              borderRadius: 6,
+                              color: "#fff",
+                              fontSize: 12,
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>
+                            Feedback / Explanation
+                          </label>
+                          <input
+                            value={q.explanation}
+                            onChange={e => handleUpdateQuizQuestion(qIdx, "explanation", e.target.value)}
+                            placeholder="e.g. Correct answer is Option B because..."
+                            style={{
+                              width: "100%",
+                              padding: "6px 10px",
+                              background: "#161b22",
+                              border: "1px solid #30363d",
+                              borderRadius: 6,
+                              color: "#fff",
+                              fontSize: 12,
+                            }}
+                          />
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 10 }}>
-                  <div>
-                    <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Points Reward</label>
-                    <input type="number" value={quizPoints} onChange={e => setQuizPoints(Number(e.target.value))} style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Feedback / Explanation</label>
-                    <input value={quizExplanation} onChange={e => setQuizExplanation(e.target.value)} placeholder="e.g. Correct: 29" style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
-                  </div>
-                </div>
+                {/* Bottom Add Button */}
+                <button
+                  type="button"
+                  onClick={handleAddQuizQuestion}
+                  style={{
+                    width: "100%",
+                    background: "#21262d",
+                    border: "1px dashed #388bfd",
+                    color: "#58a6ff",
+                    borderRadius: 8,
+                    padding: "10px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    marginTop: 12,
+                  }}
+                >
+                  + Add Question #{quizQuestions.length + 1}
+                </button>
               </div>
             )}
 
@@ -613,7 +1265,7 @@ export default function EngagementsManagementPage() {
                   </div>
                   <div>
                     <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Option 2</label>
-                    <input placeholder="Text (e.g. SL hold / win)" value={predRightText} onChange={e => setPredRightText(e.target.value)} required style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }} />
+                    <input placeholder="Text (e.g. SL hold / win)" value={predRightText} onChange={e => setPredRightText(e.target.value)} required style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
                     <input placeholder="Code (e.g. LK)" value={predRightCode} onChange={e => setPredRightCode(e.target.value)} style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
                   </div>
                 </div>
@@ -656,7 +1308,7 @@ export default function EngagementsManagementPage() {
               👁️ Live Frontend Preview
             </div>
 
-            {/* Preview Container matching the exact dark style from the user screenshots */}
+            {/* Preview Container matching the exact dark style */}
             <div style={{ background: "#06090e", border: "1px solid #1f242c", borderRadius: 12, padding: 18, color: "#fff" }}>
               {/* Card Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -669,8 +1321,8 @@ export default function EngagementsManagementPage() {
                   )}
                   {activeTab === "quiz" && (
                     <>
-                      <span style={{ color: "#d2a8ff" }}>🧠 QUIZ</span>
-                      <span style={{ color: "#e3b341" }}>⭐ {quizPoints} PTS</span>
+                      <span style={{ color: "#d2a8ff" }}>🧠 LIVE QUIZ</span>
+                      <span style={{ color: "#e3b341" }}>⭐ {quizQuestions[0]?.pointsReward || 50} PTS/Q</span>
                     </>
                   )}
                   {activeTab === "poll" && <span style={{ color: "#58a6ff" }}>📊 POLL</span>}
@@ -681,11 +1333,11 @@ export default function EngagementsManagementPage() {
                     </>
                   )}
                 </div>
-                <span style={{ fontSize: 10, color: "#8b949e" }}>11:20 AM</span>
+                <span style={{ fontSize: 10, color: "#8b949e" }}>Live Feed</span>
               </div>
 
               {/* Title */}
-              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>{title}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>{title}</div>
 
               {/* Fan Battle Preview */}
               {activeTab === "fan_battle" && (
@@ -712,19 +1364,50 @@ export default function EngagementsManagementPage() {
               {/* Quiz Preview */}
               {activeTab === "quiz" && (
                 <div>
-                  <div style={{ fontSize: 13, color: "#c9d1d9", marginBottom: 10 }}>{quizQuestion}</div>
+                  {/* Progress & Frequency Bar Preview */}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      background: "rgba(22, 30, 46, 0.6)",
+                      border: "1px solid #1f2a3e",
+                      borderRadius: 8,
+                      padding: "6px 10px",
+                      marginBottom: 10,
+                      fontSize: 11,
+                    }}
+                  >
+                    <span style={{ color: "#a5d6ff", fontWeight: 700 }}>
+                      Question 1 of {quizQuestions.length}
+                    </span>
+                    <span style={{ color: "#3fb950", fontWeight: 700 }}>
+                      ⏱️ Unlocks every {quizFrequencyMinutes}m
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: 13, color: "#c9d1d9", marginBottom: 10, fontWeight: 600 }}>
+                    {quizQuestions[0]?.question}
+                  </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                     {[
-                      { id: "A", val: quizOptionA },
-                      { id: "B", val: quizOptionB },
-                      { id: "C", val: quizOptionC },
-                      { id: "D", val: quizOptionD },
+                      { id: "A", val: quizQuestions[0]?.optionA },
+                      { id: "B", val: quizQuestions[0]?.optionB },
+                      { id: "C", val: quizQuestions[0]?.optionC },
+                      { id: "D", val: quizQuestions[0]?.optionD },
                     ].map(opt => (
                       <div
                         key={opt.id}
                         style={{
-                          background: "#0d1117", border: "1px solid #30363d", borderRadius: 6,
-                          padding: "10px", fontSize: 13, fontWeight: 700, display: "flex", gap: 6,
+                          background: "#0d1117",
+                          border: `1px solid ${quizQuestions[0]?.correctOptionId === opt.id ? "#2ea043" : "#30363d"}`,
+                          borderRadius: 6,
+                          padding: "8px 10px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          display: "flex",
+                          gap: 6,
+                          color: quizQuestions[0]?.correctOptionId === opt.id ? "#3fb950" : "#e6edf3",
                         }}
                       >
                         <span style={{ color: "#8b949e" }}>{opt.id}</span>
@@ -732,9 +1415,11 @@ export default function EngagementsManagementPage() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ background: "rgba(218,54,51,0.15)", border: "1px solid rgba(218,54,51,0.3)", borderRadius: 6, padding: "8px 12px", marginTop: 10, fontSize: 12, color: "#ff7b72", fontWeight: 600 }}>
-                    ✕ {quizExplanation}
-                  </div>
+                  {quizQuestions[0]?.explanation && (
+                    <div style={{ background: "rgba(46,160,67,0.12)", border: "1px solid rgba(46,160,67,0.3)", borderRadius: 6, padding: "8px 12px", marginTop: 10, fontSize: 11, color: "#3fb950", fontWeight: 600 }}>
+                      💡 {quizQuestions[0]?.explanation}
+                    </div>
+                  )}
                 </div>
               )}
 

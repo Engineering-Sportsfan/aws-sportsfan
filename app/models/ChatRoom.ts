@@ -13,4 +13,11 @@ export interface ChatRoom {
   watchAlongRoomId?: string;
   activeBots?: string[];
   botConfig?: Record<string, { team: string | null; role: string }>;
+  matchId?: string;
+  image?: string;
+  isTestingRoom?: boolean;
+  privacy?: string;
+  createdByUid?: string;
+  updatedAt?: number;
+  order?: number;
 }

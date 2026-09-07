@@ -4,6 +4,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUserSessionAndRole, isAuthorizedForMatch } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +29,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: {
             roomId: `ROOM#watchalong_${id}`,
             sk: "EMOJI_STORM#COUNTS",
@@ -47,7 +48,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     }
 
     // 2. Fallback to Firestore
-    const countsDoc = await db.collection("watchAlongMatches").doc(id)
+    const countsDoc = await db.collection(getFirestoreCollection("watchAlongMatches")).doc(id)
       .collection("emojiReactions").doc("counts").get();
 
     if (!countsDoc.exists) {
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
       await docClient.send(
         new UpdateCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: {
             roomId: `ROOM#watchalong_${id}`,
             sk: "EMOJI_STORM#COUNTS",
@@ -149,7 +150,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         fsUpdates[emoji] = FieldValue.increment(count);
       }
 
-      const countsRef = db.collection("watchAlongMatches").doc(id)
+      const countsRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id)
         .collection("emojiReactions").doc("counts");
       await countsRef.set(fsUpdates, { merge: true });
     } catch (fsErr) {
@@ -195,7 +196,7 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
     try {
       await docClient.send(
         new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#watchalong_${id}`,
             sk: "EMOJI_STORM#COUNTS",
@@ -209,7 +210,7 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
 
     // 2. Reset in Firestore
     try {
-      await db.collection("watchAlongMatches").doc(id)
+      await db.collection(getFirestoreCollection("watchAlongMatches")).doc(id)
         .collection("emojiReactions").doc("counts").set(reset);
     } catch (fsErr) {
       console.warn("[emoji-storm DELETE] Firestore reset notice:", fsErr);
