@@ -5,6 +5,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getUserSessionAndRole, isAuthorizedForMatch } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
 
@@ -24,14 +25,14 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     const activeOnly = searchParams.get("active") === "true";
     const leaderboard = searchParams.get("leaderboard") === "true";
 
-    const matchRef = db.collection("watchAlongMatches").doc(id);
+    const matchRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
 
     if (leaderboard) {
       let entries: any[] = [];
       try {
         const qRes = await docClient.send(
           new QueryCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             KeyConditionExpression: "userId = :uId AND begins_with(sk, :skPrefix)",
             ExpressionAttributeValues: {
               ":uId": `MATCH#${id}`,
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     try {
       const qRes = await docClient.send(
         new QueryCommand({
-          TableName: "GamificationAndWallet",
+          TableName: TABLES.GamificationAndWallet,
           KeyConditionExpression: "userId = :uId AND begins_with(sk, :skPrefix)",
           ExpressionAttributeValues: {
             ":uId": `MATCH#${id}`,
@@ -99,12 +100,16 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       let query: FirebaseFirestore.Query = matchRef
         .collection("quizQuestions")
         .orderBy("createdAt", "desc");
-
-      if (activeOnly) query = query.where("isActive", "==", true).limit(1);
+      if (activeOnly) {
+        query = query.where("isActive", "==", true).limit(1);
+      } else {
+        query = query.limit(20);
+      }
 
       const snapshot = await query.get();
       questions = snapshot.docs.map((doc) => {
-        const { correctAnswer, ...safe } = doc.data() as Record<string, unknown>;
+        const data = doc.data();
+        const { correctAnswer, ...safe } = data;
         void correctAnswer;
         return { id: doc.id, ...safe };
       });
@@ -126,7 +131,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     const body = await req.json();
     const { action } = body;
 
-    const matchRef = db.collection("watchAlongMatches").doc(id);
+    const matchRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
 
     // ── CREATE ──
     if (action === "create") {
@@ -179,7 +184,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       };
 
       await dualWrite({
-        tableName: "GamificationAndWallet",
+        tableName: TABLES.GamificationAndWallet,
         dynamoItem: {
           userId: `MATCH#${id}`,
           sk: `QUIZ#${questionId}`,
@@ -208,7 +213,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       try {
         const getRes = await docClient.send(
           new GetCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Key: { userId: `MATCH#${id}`, sk: `QUIZ#${questionId}` },
           })
         );
@@ -235,7 +240,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       try {
         const ansCheck = await docClient.send(
           new GetCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Key: { userId: `MATCH#${id}`, sk: `QUIZ_ANSWER#${questionId}#${userId}` },
           })
         );
@@ -261,7 +266,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
       // Write answer
       await dualWrite({
-        tableName: "GamificationAndWallet",
+        tableName: TABLES.GamificationAndWallet,
         dynamoItem: {
           userId: `MATCH#${id}`,
           sk: `QUIZ_ANSWER#${questionId}#${userId}`,
@@ -277,7 +282,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       try {
         await docClient.send(
           new UpdateCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Key: { userId: `MATCH#${id}`, sk: `QUIZ#${questionId}` },
             UpdateExpression: "ADD competing :inc SET updatedAt = :now",
             ExpressionAttributeValues: { ":inc": 1, ":now": now },
@@ -302,7 +307,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         try {
           await docClient.send(
             new UpdateCommand({
-              TableName: "GamificationAndWallet",
+              TableName: TABLES.GamificationAndWallet,
               Key: { userId: `MATCH#${id}`, sk: `QUIZ_LEADERBOARD#${userId}` },
               UpdateExpression: "ADD totalPoints :pts SET displayName = :dn, updatedAt = :now",
               ExpressionAttributeValues: {
@@ -390,7 +395,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     try {
       await docClient.send(
         new UpdateCommand({
-          TableName: "GamificationAndWallet",
+          TableName: TABLES.GamificationAndWallet,
           Key: { userId: `MATCH#${id}`, sk: `QUIZ#${questionId}` },
           UpdateExpression: "SET isActive = :act, updatedAt = :now" + (isActive ? ", opensAt = :op, closesAt = :cl" : ""),
           ExpressionAttributeValues: {
@@ -406,7 +411,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 
     // Update Firestore
     try {
-      const matchRef = db.collection("watchAlongMatches").doc(id);
+      const matchRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
       await matchRef.collection("quizQuestions").doc(questionId).update(updates);
     } catch (e) {
       console.warn("[quiz PATCH] Firestore update notice:", e);

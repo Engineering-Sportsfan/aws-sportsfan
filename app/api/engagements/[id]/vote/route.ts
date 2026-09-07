@@ -5,6 +5,7 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           })
         );
         if (legacyVote.Item) voteItem = legacyVote.Item;
-      } catch {}
+      } catch { }
     }
 
     // 3. Fallback: Check Firestore user_engagements collection
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       try {
         const snap = await db.collection(getFirestoreCollection("user_engagements")).doc(`${userId}_${id}`).get();
         if (snap.exists) voteItem = snap.data();
-      } catch {}
+      } catch { }
     }
 
     return NextResponse.json({
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await req.json();
-    const { selectedOptionId, userId: inputUserId } = body;
+    const { selectedOptionId, questionId, userId: inputUserId, userName, userAvatar } = body;
 
     if (!selectedOptionId) {
       return NextResponse.json({ error: "selectedOptionId is required" }, { status: 400 });
@@ -90,16 +91,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       req.headers.get("x-user-id") ||
       `anon_${req.headers.get("x-forwarded-for") || "client"}`;
 
+    const voteSk = questionId ? `VOTE#${userId}#${questionId}` : `VOTE#${userId}`;
+    const firestoreVoteDocId = questionId ? `${userId}_${id}_${questionId}` : `${userId}_${id}`;
+
     // ─── Step 1: Enforce Single-Vote Pre-check ────────────────────────────────
     let existingVote: any = null;
 
     if (userId) {
-      // Check standardized DynamoDB key: contentId = ENGAGEMENT#{id}, sk = VOTE#{userId}
+      // Check standardized DynamoDB key
       try {
         const voteRes = await docClient.send(
           new GetCommand({
             TableName: TABLES.SocialAndContent,
-            Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${userId}` },
+            Key: { contentId: `ENGAGEMENT#${id}`, sk: voteSk },
           })
         );
         if (voteRes.Item) {
@@ -115,23 +119,23 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           const legacyVoteRes = await docClient.send(
             new GetCommand({
               TableName: TABLES.SocialAndContent,
-              Key: { contentId: `USER_VOTE#${userId}`, sk: `ENGAGEMENT#${id}` },
+              Key: { contentId: `USER_VOTE#${userId}`, sk: questionId ? `ENGAGEMENT#${id}#${questionId}` : `ENGAGEMENT#${id}` },
             })
           );
           if (legacyVoteRes.Item) {
             existingVote = legacyVoteRes.Item;
           }
-        } catch {}
+        } catch { }
       }
 
       // Firestore fallback check
       if (!existingVote && db) {
         try {
-          const snap = await db.collection("user_engagements").doc(`${userId}_${id}`).get();
+          const snap = await db.collection("user_engagements").doc(firestoreVoteDocId).get();
           if (snap.exists) {
             existingVote = snap.data();
           }
-        } catch {}
+        } catch { }
       }
     }
 
@@ -140,7 +144,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         {
           success: false,
           alreadyVoted: true,
-          error: "You have already voted on this engagement",
+          error: "You have already voted on this question",
           selectedOptionId: existingVote.selectedOptionId,
           previousVote: existingVote,
         },
@@ -158,7 +162,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         })
       );
       if (getRes.Item) item = getRes.Item;
-    } catch {}
+    } catch { }
 
     if (!item && db) {
       const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
@@ -207,8 +211,16 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     // 3.2 Quiz Answer Handling
     else if (item.type === "quiz" && item.quizData) {
-      const isCorrect = String(selectedOptionId).trim().toUpperCase() === String(item.quizData.correctOptionId).trim().toUpperCase();
-      const pointsAwarded = isCorrect ? Number(item.quizData.pointsReward || 50) : 0;
+      // Find matching question if questions array is present
+      const targetQ =
+        item.quizData.questions?.find((q: any) => q.id === questionId) ||
+        item.quizData.questions?.[0] ||
+        item.quizData;
+
+      const correctOptId = targetQ.correctOptionId || "B";
+      const ptsReward = Number(targetQ.pointsReward || item.quizData.pointsReward || 50);
+      const isCorrect = String(selectedOptionId).trim().toUpperCase() === String(correctOptId).trim().toUpperCase();
+      const pointsAwarded = isCorrect ? ptsReward : 0;
 
       item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
 
@@ -234,10 +246,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       responseData = {
         success: true,
         type: "quiz",
+        questionId: targetQ.id || questionId,
         isCorrect,
-        correctOptionId: item.quizData.correctOptionId,
+        correctOptionId: correctOptId,
         pointsAwarded,
-        explanation: item.quizData.explanation || `Correct: ${item.quizData.correctOptionId}`,
+        explanation: targetQ.explanation || item.quizData.explanation || `Correct: ${correctOptId}`,
       };
     }
 
@@ -322,14 +335,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       ...responseData,
     };
 
-    // A. Standardized DynamoDB Key: contentId = ENGAGEMENT#{id}, sk = VOTE#{userId} (Matches api/roar pattern)
+    // A. Standardized DynamoDB Key: contentId = ENGAGEMENT#{id}, sk = voteSk
     try {
       await docClient.send(
         new PutCommand({
           TableName: TABLES.SocialAndContent,
           Item: {
             contentId: `ENGAGEMENT#${id}`,
-            sk: `VOTE#${userId}`,
+            sk: voteSk,
             entityId: `VOTE#${String(item.type).toUpperCase()}`,
             ...userRecord,
           },
@@ -346,20 +359,122 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           TableName: TABLES.SocialAndContent,
           Item: {
             contentId: `USER_VOTE#${userId}`,
-            sk: `ENGAGEMENT#${id}`,
+            sk: questionId ? `ENGAGEMENT#${id}#${questionId}` : `ENGAGEMENT#${id}`,
             entityId: `VOTE#${String(item.type).toUpperCase()}`,
             ...userRecord,
           },
         })
       );
-    } catch {}
+    } catch { }
 
     // C. Save user vote record to Firestore
     if (db) {
       try {
-        await db.collection("user_engagements").doc(`${userId}_${id}`).set(userRecord);
+        await db.collection("user_engagements").doc(firestoreVoteDocId).set(userRecord);
       } catch (fbVoteErr) {
         console.warn("Firestore user vote record notice:", fbVoteErr);
+      }
+    }
+
+    // ─── Step 6: Update Quiz Leaderboard in DynamoDB and Firestore ────────────
+    if (item.type === "quiz" && responseData?.type === "quiz") {
+      const isCorrect = Boolean(responseData.isCorrect);
+      const pts = Number(responseData.pointsAwarded || 0);
+      const displayName = userName || authUser?.name || "Fan Quizzer";
+      const avatar =
+        userAvatar ||
+        (authUser as any)?.picture ||
+        (authUser as any)?.photoURL ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`;
+
+      // 1. DynamoDB: Update QUIZ_LEADERBOARD#GLOBAL and QUIZ_LEADERBOARD#{id}
+      try {
+        const updateGlobal = docClient.send(
+          new UpdateCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${userId}` },
+            UpdateExpression:
+              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+              "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+              "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+              "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+              "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
+            ExpressionAttributeValues: {
+              ":zero": 0,
+              ":pts": pts,
+              ":corr": isCorrect ? 1 : 0,
+              ":incorr": isCorrect ? 0 : 1,
+              ":one": 1,
+              ":uname": displayName,
+              ":uavatar": avatar,
+              ":uemail": authUser?.email || "",
+              ":now": now,
+              ":entity": "QUIZ_LEADERBOARD",
+              ":uid": userId,
+            },
+          })
+        );
+
+        const updateQuiz = docClient.send(
+          new UpdateCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: `QUIZ_LEADERBOARD#${id}`, sk: `USER#${userId}` },
+            UpdateExpression:
+              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+              "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+              "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+              "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+              "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid, quizId = :qid",
+            ExpressionAttributeValues: {
+              ":zero": 0,
+              ":pts": pts,
+              ":corr": isCorrect ? 1 : 0,
+              ":incorr": isCorrect ? 0 : 1,
+              ":one": 1,
+              ":uname": displayName,
+              ":uavatar": avatar,
+              ":uemail": authUser?.email || "",
+              ":now": now,
+              ":entity": "QUIZ_LEADERBOARD",
+              ":uid": userId,
+              ":qid": id,
+            },
+          })
+        );
+
+        await Promise.all([updateGlobal, updateQuiz]);
+      } catch (lbDynErr) {
+        console.warn("DynamoDB quiz leaderboard update notice:", lbDynErr);
+      }
+
+      // 2. Firestore: Update quiz_leaderboard collection
+      if (db) {
+        try {
+          const colName = getFirestoreCollection("quiz_leaderboard");
+          const incData = {
+            userId,
+            userName: displayName,
+            userAvatar: avatar,
+            userEmail: authUser?.email || "",
+            totalPoints: FieldValue.increment(pts),
+            correctCount: FieldValue.increment(isCorrect ? 1 : 0),
+            incorrectCount: FieldValue.increment(isCorrect ? 0 : 1),
+            totalAnswered: FieldValue.increment(1),
+            lastAnsweredAt: now,
+            updatedAt: now,
+          };
+          await Promise.all([
+            db.collection(colName).doc(userId).set(incData, { merge: true }),
+            db.collection(colName).doc(`${userId}_${id}`).set({ ...incData, quizId: id }, { merge: true }),
+            colName !== "quiz_leaderboard"
+              ? db.collection("quiz_leaderboard").doc(userId).set(incData, { merge: true })
+              : Promise.resolve(),
+          ]);
+        } catch (lbFbErr) {
+          console.warn("Firestore quiz leaderboard update notice:", lbFbErr);
+        }
       }
     }
 

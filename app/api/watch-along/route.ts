@@ -5,6 +5,7 @@ import cloudinary from "@/lib/cloudinary";
 import { getUserSessionAndRole } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
 
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest) {
     try {
       const scanRes = await docClient.send(
         new ScanCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           FilterExpression: "sk = :skMeta",
           ExpressionAttributeValues: {
             ":skMeta": "ROOM#META",
@@ -94,7 +95,7 @@ export async function GET(req: NextRequest) {
 
     // 2. Fallback to Firestore if no rooms in DynamoDB
     if (roomsData.length === 0) {
-      let query: FirebaseFirestore.Query = db.collection("watchAlongRooms");
+      let query: FirebaseFirestore.Query = db.collection(getFirestoreCollection("watchAlongRooms"));
       if (isLiveFilter === "true") {
         query = query.where("isLive", "==", true);
       }
@@ -126,7 +127,7 @@ export async function GET(req: NextRequest) {
           try {
             const mGet = await docClient.send(
               new GetCommand({
-                TableName: "SportsData",
+                TableName: TABLES.SportsData,
                 Key: { entityId: `MATCH#${mId}`, sk: "MATCH#META" },
               })
             );
@@ -139,7 +140,7 @@ export async function GET(req: NextRequest) {
           }
 
           try {
-            const matchDoc = await db.collection("watchAlongMatches").doc(mId).get();
+            const matchDoc = await db.collection(getFirestoreCollection("watchAlongMatches")).doc(mId).get();
             if (matchDoc.exists) {
               matchesMap.set(mId, { id: matchDoc.id, ...matchDoc.data() } as LiveMatch);
             }
@@ -268,14 +269,14 @@ export async function POST(req: NextRequest) {
       };
 
       await dualWrite({
-        tableName: "SportsData",
+        tableName: TABLES.SportsData,
         dynamoItem: {
           entityId: `MATCH#${matchId}`,
           sk: "MATCH#META",
           id: matchId,
           ...matchData,
         },
-        firestoreRef: db.collection("watchAlongMatches").doc(matchId),
+        firestoreRef: db.collection(getFirestoreCollection("watchAlongMatches")).doc(matchId),
         firestoreData: matchData,
       });
 
@@ -311,14 +312,14 @@ export async function POST(req: NextRequest) {
 
     // Primary write to DynamoDB RealTimeChat + dual-write to Firestore
     await dualWrite({
-      tableName: "RealTimeChat",
+      tableName: TABLES.RealTimeChat,
       dynamoItem: {
         roomId: `ROOM#${roomId}`,
         sk: "ROOM#META",
         ...roomData,
         isActive: String(isActive),
       },
-      firestoreRef: db.collection("watchAlongRooms").doc(roomId),
+      firestoreRef: db.collection(getFirestoreCollection("watchAlongRooms")).doc(roomId),
       firestoreData: roomData,
     });
 

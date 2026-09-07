@@ -382,16 +382,26 @@ export default function AddRoarForm() {
       try {
         const res = await axios.get(`/api/roar/rooms/${roomIdToEdit}`);
         const r = res.data.room;
+        if (!r) throw new Error('Room not found');
         setName(r.name || '');
         setIcon(r.icon || '⚽');
         setSport(r.sport || 'cricket');
         setDescription(r.description || '');
-        setIsActive(r.isActive !== false);
-        setScheduledStartTime(
-          r.scheduledStartTime
-            ? new Date(r.scheduledStartTime).toISOString().slice(0, 16)
-            : ''
-        );
+        setIsActive(r.isActive !== false && r.isActive !== 'false');
+        if (r.scheduledStartTime) {
+          try {
+            const d = new Date(Number(r.scheduledStartTime));
+            if (!isNaN(d.getTime())) {
+              const pad = (n: number) => String(n).padStart(2, '0');
+              const localIso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+              setScheduledStartTime(localIso);
+            }
+          } catch {
+            setScheduledStartTime('');
+          }
+        } else {
+          setScheduledStartTime('');
+        }
         setScore(r.score || '');
         setScoreSubtitle(r.scoreSubtitle || '');
         setSelectedMatchId(r.matchId || '');
@@ -443,75 +453,6 @@ export default function AddRoarForm() {
     setChannels(newChannels);
   };
 
-  // const handleSubmit = async (e: React.FormEvent) => {
-  //   e.preventDefault();
-  //   if (!name.trim()) return;
-
-  //   setSaving(true);
-  //   try {
-  //     const scheduledTimeMs = scheduledStartTime ? new Date(scheduledStartTime).getTime() : undefined;
-
-  //     // Create the room
-  //     const roomResponse = await axios.post('/api/roar/rooms', {
-  //       name: name.trim(),
-  //       icon,
-  //       sport,
-  //       description: description.trim(),
-  //       isActive,
-  //       scheduledStartTime: scheduledTimeMs,
-  //       score: score.trim(),
-  //       scoreSubtitle: scoreSubtitle.trim(),
-  //       createWatchAlong,
-  //       matchId: selectedMatchId || undefined,
-  //       botConfig: selectedBots,
-  //       isTestingRoom,
-  //     });
-
-  //     const roomId = roomResponse.data.roomId;
-
-  //     // Create channels ONLY if enabled and there are channels
-  //     if (enableChannels && roomId && channels.length > 0) {
-  //       await Promise.all(
-  //         channels.map((channel, index) =>
-  //           axios.post(`/api/roar/rooms/${roomId}/channels`, {
-  //             name: channel.name,
-  //             slug: channel.slug,
-  //             icon: channel.icon,
-  //             order: index,
-  //             isActive: channel.isActive,
-  //           })
-  //         )
-  //       );
-  //     }
-
-  //     // Save bot affiliations in background
-  //     for (const botId of Object.keys(rememberBots)) {
-  //       if (rememberBots[botId] && selectedBots[botId]) {
-  //         const team = (selectedBots[botId] as any).team;
-  //         if (team) {
-  //           axios.post('/api/roar/bots', {
-  //             botId,
-  //             affiliations: { [sport]: team }
-  //           }).catch(err => console.error("Failed to save bot affiliation", err));
-  //         }
-  //       }
-  //     }
-
-  //     if (createWatchAlong) {
-  //       router.push('/admin/watchalong-management/watchalong-list');
-  //     } else {
-  //       router.push('/admin/roar-management/roar-list');
-  //     }
-  //   } catch (error: any) {
-  //     console.error('Failed to create show', error);
-  //     const errorMsg = error.response?.data?.error || error.message || 'Unknown error';
-  //     alert('Failed to create show: ' + errorMsg);
-  //   } finally {
-  //     setSaving(false);
-  //   }
-  // };
-
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
@@ -536,12 +477,8 @@ export default function AddRoarForm() {
       if (imageFile) fd.append('image', imageFile);
 
       const roomResponse = isEditMode
-        ? await axios.put(`/api/roar/rooms/${roomIdToEdit}`, fd, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        })
-        : await axios.post('/api/roar/rooms', fd, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        });
+        ? await axios.put(`/api/roar/rooms/${roomIdToEdit}`, fd)
+        : await axios.post('/api/roar/rooms', fd);
 
       const roomId = isEditMode ? roomIdToEdit! : roomResponse.data.roomId;
 
@@ -572,11 +509,6 @@ export default function AddRoarForm() {
         }
       }
       router.push('/admin/roar-management/roar-list');
-      // if (createWatchAlong) {
-      //   router.push('/admin/watchalong-management/watchalong-list');
-      // } else {
-      //   router.push('/admin/roar-management/roar-list');
-      // }
     } catch (error: any) {
       console.error(`Failed to ${isEditMode ? 'update' : 'create'} show`, error);
       const errorMsg = error.response?.data?.error || error.message || 'Unknown error';

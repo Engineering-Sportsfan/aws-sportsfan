@@ -4,6 +4,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUserSessionAndRole } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "SportsData",
+          TableName: TABLES.SportsData,
           Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
         })
       );
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
 
     // 2. Fallback to Firestore
     if (!matchData) {
-      const doc = await db.collection("watchAlongMatches").doc(id).get();
+      const doc = await db.collection(getFirestoreCollection("watchAlongMatches")).doc(id).get();
       if (!doc.exists) {
         return NextResponse.json({ success: false, message: "Match not found" }, { status: 404 });
       }
@@ -85,7 +86,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "SportsData",
+          TableName: TABLES.SportsData,
           Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
         })
       );
@@ -95,7 +96,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     if (!existingData) {
-      const docRef = db.collection("watchAlongMatches").doc(id);
+      const docRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
       const existing = await docRef.get();
       if (!existing.exists) {
         return NextResponse.json({ success: false, message: "Match not found" }, { status: 404 });
@@ -126,13 +127,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     };
 
     await dualWrite({
-      tableName: "SportsData",
+      tableName: TABLES.SportsData,
       dynamoItem: {
         entityId: `MATCH#${id}`,
         sk: "MATCH#META",
         ...finalMatch,
       },
-      firestoreRef: db.collection("watchAlongMatches").doc(id),
+      firestoreRef: db.collection(getFirestoreCollection("watchAlongMatches")).doc(id),
       firestoreData: updates,
     });
 
@@ -172,7 +173,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     try {
       await docClient.send(
         new DeleteCommand({
-          TableName: "SportsData",
+          TableName: TABLES.SportsData,
           Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
         })
       );
@@ -182,7 +183,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
     // 2. Delete from Firestore
     try {
-      await db.collection("watchAlongMatches").doc(id).delete();
+      await db.collection(getFirestoreCollection("watchAlongMatches")).doc(id).delete();
     } catch (e) {
       console.warn("[watch-along/matches/[id] DELETE] Firestore notice:", e);
     }
