@@ -5,6 +5,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getUserSessionAndRole, isAuthorizedForMatch } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
 
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     try {
       const qRes = await docClient.send(
         new QueryCommand({
-          TableName: "GamificationAndWallet",
+          TableName: TABLES.GamificationAndWallet,
           KeyConditionExpression: "userId = :uId AND begins_with(sk, :skPrefix)",
           ExpressionAttributeValues: {
             ":uId": `MATCH#${id}`,
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 
     // 2. Fallback to Firestore
     if (predictions.length === 0) {
-      const matchRef = db.collection("watchAlongMatches").doc(id);
+      const matchRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
       let query: FirebaseFirestore.Query = matchRef
         .collection("predictions")
         .orderBy("createdAt", "desc");
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     const body = await req.json();
     const { action } = body;
 
-    const matchRef = db.collection("watchAlongMatches").doc(id);
+    const matchRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
 
     // ── CREATE ──
     if (action === "create") {
@@ -149,7 +150,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       };
 
       await dualWrite({
-        tableName: "GamificationAndWallet",
+        tableName: TABLES.GamificationAndWallet,
         dynamoItem: {
           userId: `MATCH#${id}`,
           sk: `PREDICTION#${predictionId}`,
@@ -177,7 +178,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       try {
         const getRes = await docClient.send(
           new GetCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Key: { userId: `MATCH#${id}`, sk: `PREDICTION#${predictionId}` },
           })
         );
@@ -210,7 +211,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       try {
         const vCheck = await docClient.send(
           new GetCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Key: { userId: `MATCH#${id}`, sk: `PREDICTION_VOTE#${predictionId}#${userId}` },
           })
         );
@@ -231,7 +232,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
       // Record vote in DynamoDB & Firestore
       await dualWrite({
-        tableName: "GamificationAndWallet",
+        tableName: TABLES.GamificationAndWallet,
         dynamoItem: {
           userId: `MATCH#${id}`,
           sk: `PREDICTION_VOTE#${predictionId}#${userId}`,
@@ -251,7 +252,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       try {
         await docClient.send(
           new UpdateCommand({
-            TableName: "GamificationAndWallet",
+            TableName: TABLES.GamificationAndWallet,
             Key: { userId: `MATCH#${id}`, sk: `PREDICTION#${predictionId}` },
             UpdateExpression: "SET votes = :v, totalVotes = :tv, updatedAt = :now",
             ExpressionAttributeValues: {
@@ -336,7 +337,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     try {
       await docClient.send(
         new UpdateCommand({
-          TableName: "GamificationAndWallet",
+          TableName: TABLES.GamificationAndWallet,
           Key: { userId: `MATCH#${id}`, sk: `PREDICTION#${predictionId}` },
           UpdateExpression: "SET isOpen = :op, updatedAt = :now",
           ExpressionAttributeValues: {
@@ -351,7 +352,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 
     // 2. Mirror in Firestore
     try {
-      const matchRef = db.collection("watchAlongMatches").doc(id);
+      const matchRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
       await matchRef.collection("predictions").doc(predictionId).update({
         isOpen,
         updatedAt: now,

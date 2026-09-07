@@ -4,6 +4,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUserSessionAndRole } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
 
@@ -21,7 +22,7 @@ export async function GET() {
     try {
       const scanRes = await docClient.send(
         new ScanCommand({
-          TableName: "SportsData",
+          TableName: TABLES.SportsData,
           FilterExpression: "sk = :skMeta AND (begins_with(entityId, :matchPrefix) OR begins_with(entityId, :watchPrefix))",
           ExpressionAttributeValues: {
             ":skMeta": "MATCH#META",
@@ -45,7 +46,7 @@ export async function GET() {
     // 2. Fallback to Firestore
     if (matches.length === 0) {
       const snapshot = await db
-        .collection("watchAlongMatches")
+        .collection(getFirestoreCollection("watchAlongMatches"))
         .orderBy("createdAt", "desc")
         .get();
 
@@ -122,13 +123,13 @@ export async function POST(req: NextRequest) {
     };
 
     await dualWrite({
-      tableName: "SportsData",
+      tableName: TABLES.SportsData,
       dynamoItem: {
         entityId: `MATCH#${matchId}`,
         sk: "MATCH#META",
         ...matchData,
       },
-      firestoreRef: db.collection("watchAlongMatches").doc(matchId),
+      firestoreRef: db.collection(getFirestoreCollection("watchAlongMatches")).doc(matchId),
       firestoreData: matchData,
     });
 

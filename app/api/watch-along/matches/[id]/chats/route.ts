@@ -4,6 +4,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUserSessionAndRole, isAuthorizedForMatch } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
 
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 
       const qRes = await docClient.send(
         new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: keyCond,
           ExpressionAttributeValues: exprVals,
           ScanIndexForward: false, // latest first
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 
     // 2. Fallback to Firestore
     if (chats.length === 0) {
-      let query: FirebaseFirestore.Query = db.collection("watchAlongMatches").doc(id)
+      let query: FirebaseFirestore.Query = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id)
         .collection("chats")
         .orderBy("createdAt", "desc");
 
@@ -120,13 +121,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     // Primary DynamoDB write + Firestore subcollection dual-write
     await dualWrite({
-      tableName: "RealTimeChat",
+      tableName: TABLES.RealTimeChat,
       dynamoItem: {
         roomId: `ROOM#watchalong_${id}`,
         sk: `MSG#${now}#${chatId}`,
         ...chatData,
       },
-      firestoreRef: db.collection("watchAlongMatches").doc(id).collection("chats").doc(chatId),
+      firestoreRef: db.collection(getFirestoreCollection("watchAlongMatches")).doc(id).collection("chats").doc(chatId),
       firestoreData: chatData,
     });
 
@@ -171,7 +172,7 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
       // Find SK matching chatId
       const qRes = await docClient.send(
         new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :rId",
           ExpressionAttributeValues: {
             ":rId": `ROOM#watchalong_${id}`,
@@ -183,7 +184,7 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
         if (itemToDelete) {
           await docClient.send(
             new DeleteCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               Key: {
                 roomId: itemToDelete.roomId,
                 sk: itemToDelete.sk,
@@ -198,7 +199,7 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
 
     // 2. Delete from Firestore
     try {
-      await db.collection("watchAlongMatches").doc(id).collection("chats").doc(chatId).delete();
+      await db.collection(getFirestoreCollection("watchAlongMatches")).doc(id).collection("chats").doc(chatId).delete();
     } catch (e) {
       console.warn("[match chat DELETE] Firestore notice:", e);
     }

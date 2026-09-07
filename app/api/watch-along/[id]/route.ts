@@ -5,6 +5,7 @@ import cloudinary from "@/lib/cloudinary";
 import { getUserSessionAndRole } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: {
             roomId: `ROOM#${id}`,
             sk: "ROOM#META",
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
 
     // 2. Fallback to Firestore
     if (!roomData) {
-      const doc = await db.collection("watchAlongRooms").doc(id).get();
+      const doc = await db.collection(getFirestoreCollection("watchAlongRooms")).doc(id).get();
       if (!doc.exists) {
         return NextResponse.json(
           { success: false, message: "Room not found" },
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest) {
       try {
         const mGet = await docClient.send(
           new GetCommand({
-            TableName: "SportsData",
+            TableName: TABLES.SportsData,
             Key: { entityId: `MATCH#${roomData.liveMatchId}`, sk: "MATCH#META" },
           })
         );
@@ -80,7 +81,7 @@ export async function GET(req: NextRequest) {
       if (!liveMatch) {
         try {
           const matchDoc = await db
-            .collection("watchAlongMatches")
+            .collection(getFirestoreCollection("watchAlongMatches"))
             .doc(roomData.liveMatchId)
             .get();
           if (matchDoc.exists) {
@@ -129,7 +130,7 @@ export async function PUT(req: NextRequest) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
         })
       );
@@ -139,7 +140,7 @@ export async function PUT(req: NextRequest) {
     }
 
     if (!existingData) {
-      const docRef = db.collection("watchAlongRooms").doc(id);
+      const docRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(id);
       const existing = await docRef.get();
       if (!existing.exists) {
         return NextResponse.json(
@@ -254,14 +255,14 @@ export async function PUT(req: NextRequest) {
     };
 
     await dualWrite({
-      tableName: "RealTimeChat",
+      tableName: TABLES.RealTimeChat,
       dynamoItem: {
         roomId: `ROOM#${id}`,
         sk: "ROOM#META",
         ...finalData,
          isActive: String(finalData.isActive),
       },
-      firestoreRef: db.collection("watchAlongRooms").doc(id),
+      firestoreRef: db.collection(getFirestoreCollection("watchAlongRooms")).doc(id),
       firestoreData: updates,
     });
 
@@ -308,7 +309,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
         })
       );
@@ -318,7 +319,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     if (!existingData) {
-      const docRef = db.collection("watchAlongRooms").doc(id);
+      const docRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(id);
       const existing = await docRef.get();
       if (!existing.exists) {
         return NextResponse.json(
@@ -346,7 +347,7 @@ export async function DELETE(req: NextRequest) {
     try {
       await docClient.send(
         new DeleteCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: {
             roomId: `ROOM#${id}`,
             sk: "ROOM#META",
@@ -359,7 +360,7 @@ export async function DELETE(req: NextRequest) {
 
     // 2. Delete from Firestore
     try {
-      const docRef = db.collection("watchAlongRooms").doc(id);
+      const docRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(id);
       const chatsSnap = await docRef.collection("chats").get();
       const batch = db.batch();
       chatsSnap.docs.forEach((chatDoc) => batch.delete(chatDoc.ref));
