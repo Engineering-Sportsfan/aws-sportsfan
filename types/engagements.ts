@@ -23,12 +23,39 @@ export interface QuizOption {
   text: string; // e.g. "29"
 }
 
-export interface QuizPayload {
+export interface QuizQuestion {
+  id: string;
   question: string;
   options: QuizOption[];
-  correctOptionId: string; // "B"
-  pointsReward: number; // e.g. 50
+  correctOptionId: string; // "A", "B", "C", "D"
+  pointsReward?: number; // e.g. 50
   explanation?: string; // e.g. "Correct: 29"
+}
+
+export interface QuizPayload {
+  question?: string;
+  options?: QuizOption[];
+  correctOptionId?: string; // "B"
+  pointsReward?: number; // e.g. 50
+  explanation?: string; // e.g. "Correct: 29"
+  startTime?: number;
+  scheduledStartTime?: number;
+  frequencyMinutes?: number; // e.g. 10 (unlocks a new question every 10 mins)
+  questions?: QuizQuestion[];
+}
+
+export interface QuizLeaderboardEntry {
+  rank: number;
+  userId: string;
+  userName: string;
+  userAvatar?: string;
+  userEmail?: string;
+  totalPoints: number;
+  correctCount: number;
+  incorrectCount: number;
+  totalAnswered: number;
+  accuracy?: string;
+  lastAnsweredAt?: number;
 }
 
 // ─── 3. Poll ───────────────────────────────────────────────────────────────
@@ -71,7 +98,7 @@ export interface EngagementItem {
   tags?: string[]; // e.g. ["FAN BATTLE", "TRENDING"] or ["QUIZ", "50 PTS"]
   sport?: string; // "cricket" | "football" | "athletics" | "general"
   status: EngagementStatus;
-  
+
   // Specific data payloads
   fanBattleData?: FanBattlePayload;
   quizData?: QuizPayload;
