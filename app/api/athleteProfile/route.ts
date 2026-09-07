@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 
 export async function GET() {
   try {
@@ -10,7 +11,7 @@ export async function GET() {
 
     do {
       const command = new ScanCommand({
-        TableName: "SportsData",
+        TableName: TABLES.SportsData,
 
         FilterExpression:
           "sk = :sk AND begins_with(entityId, :entityPrefix)",
