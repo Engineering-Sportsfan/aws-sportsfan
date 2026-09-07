@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 
 export async function GET(
   request: Request,
@@ -10,7 +11,7 @@ export async function GET(
     const { athleteProfileId } = await params;
 
     const command = new GetCommand({
-      TableName: "SportsData",
+      TableName: TABLES.SportsData,
       Key: {
         entityId: `ATHLETE#${athleteProfileId}`,
         sk: "PROFILE#META",
@@ -22,7 +23,7 @@ export async function GET(
     if (!response.Item) {
       // Fallback: Check if it is a Club in MS_Clubs
       const clubCommand = new GetCommand({
-        TableName: "MS_Clubs",
+        TableName: TABLES.MS_Clubs,
         Key: {
           entityId: `CLUB#${athleteProfileId}`,
           sk: "CLUB#META",
@@ -37,7 +38,7 @@ export async function GET(
           const QueryCommand = (await import("@aws-sdk/lib-dynamodb")).QueryCommand;
           stintsResponse = await docClient.send(
             new QueryCommand({
-              TableName: "MS_Transactions",
+              TableName: TABLES.MS_Transactions,
               KeyConditionExpression: "entityId = :e",
               ExpressionAttributeValues: { ":e": `CLUB#${athleteProfileId}` },
             })
