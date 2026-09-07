@@ -212,6 +212,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { docClient as ddb } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import {
   GetCommand,
   QueryCommand,
@@ -220,8 +221,8 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { assemblePlayerDocument } from "@/lib/assemblePlayerDocument";
 
-const MS_PLAYERS_TABLE = process.env.MS_PLAYERS_TABLE || "MS_Players";
-const MS_TRANSACTIONS_TABLE = process.env.MS_TRANSACTIONS_TABLE || "MS_Transactions";
+const MS_PLAYERS_TABLE = TABLES.MS_Players;
+const MS_TRANSACTIONS_TABLE = TABLES.MS_Transactions;
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -230,35 +231,76 @@ type RouteParams = { params: Promise<{ id: string }> };
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const entityId = `PLAYER#${id}`;
+    const tournamentParam = request.nextUrl.searchParams.get("tournament");
+    const entityCandidates = [`PLAYER#${id}`, `ATHLETE#${id}`, id];
 
-    const profileResult = await ddb.send(
-      new GetCommand({
-        TableName: MS_PLAYERS_TABLE,
-        Key: { entityId, sk: "PROFILE#META" },
-      })
-    );
+    let profileItem: Record<string, any> | null = null;
+    let resolvedEntityId = `PLAYER#${id}`;
 
-    if (!profileResult.Item) {
+    for (const entId of entityCandidates) {
+      // 1. Try exact PROFILE#META first
+      try {
+        const getRes = await ddb.send(
+          new GetCommand({
+            TableName: MS_PLAYERS_TABLE,
+            Key: { entityId: entId, sk: "PROFILE#META" },
+          })
+        );
+        if (getRes.Item) {
+          profileItem = getRes.Item;
+          resolvedEntityId = entId;
+          break;
+        }
+      } catch {}
+
+      // 2. Query for items where sk begins_with PROFILE#META (e.g. PROFILE#META#IPL, PROFILE#META#T20I)
+      try {
+        const qRes = await ddb.send(
+          new QueryCommand({
+            TableName: MS_PLAYERS_TABLE,
+            KeyConditionExpression: "entityId = :entityId AND begins_with(sk, :skPrefix)",
+            ExpressionAttributeValues: {
+              ":entityId": entId,
+              ":skPrefix": "PROFILE#META",
+            },
+          })
+        );
+
+        if (qRes.Items && qRes.Items.length > 0) {
+          resolvedEntityId = entId;
+          if (tournamentParam) {
+            const matched = qRes.Items.find(
+              (item: any) =>
+                (item.tournament || "").toLowerCase() === tournamentParam.toLowerCase() ||
+                item.sk === `PROFILE#META#${tournamentParam}`
+            );
+            profileItem = matched || qRes.Items[0];
+          } else {
+            profileItem = qRes.Items[0];
+          }
+          break;
+        }
+      } catch {}
+    }
+
+    if (!profileItem) {
       return NextResponse.json({ error: "Player not found" }, { status: 404 });
     }
 
-    // All AFFIL#<sportId>#<levelFormatId>#<format>#STATS rows for this
-    // player — one Query by entityId, same fetch pattern documented for
-    // the wider multi-sport schema.
+    // All AFFIL#<sportId>#<levelFormatId>#<format>#STATS rows for this player
     const statsResult = await ddb.send(
       new QueryCommand({
         TableName: MS_TRANSACTIONS_TABLE,
         KeyConditionExpression: "entityId = :entityId AND begins_with(sk, :prefix)",
         ExpressionAttributeValues: {
-          ":entityId": entityId,
+          ":entityId": resolvedEntityId,
           ":prefix": "AFFIL#",
         },
       })
     );
 
     return NextResponse.json(
-      assemblePlayerDocument(profileResult.Item as any, (statsResult.Items || []) as any, {
+      assemblePlayerDocument(profileItem as any, (statsResult.Items || []) as any, {
         levelFormatId: request.nextUrl.searchParams.get("levelFormatId") ?? undefined,
       })
     );
@@ -292,8 +334,30 @@ const UPDATABLE_FIELDS = [
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const entityId = `PLAYER#${id}`;
     const body = await request.json();
+
+    const entityCandidates = [`PLAYER#${id}`, `ATHLETE#${id}`, id];
+    let resolvedEntityId = `PLAYER#${id}`;
+    let resolvedSk = body.sk || "PROFILE#META";
+
+    if (!body.sk) {
+      for (const entId of entityCandidates) {
+        try {
+          const qRes = await ddb.send(
+            new QueryCommand({
+              TableName: MS_PLAYERS_TABLE,
+              KeyConditionExpression: "entityId = :e AND begins_with(sk, :sk)",
+              ExpressionAttributeValues: { ":e": entId, ":sk": "PROFILE#META" },
+            })
+          );
+          if (qRes.Items && qRes.Items.length > 0) {
+            resolvedEntityId = entId;
+            resolvedSk = qRes.Items[0].sk;
+            break;
+          }
+        } catch {}
+      }
+    }
 
     const updates = Object.entries(body).filter(([key]) =>
       UPDATABLE_FIELDS.includes(key)
@@ -323,7 +387,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const result = await ddb.send(
       new UpdateCommand({
         TableName: MS_PLAYERS_TABLE,
-        Key: { entityId, sk: "PROFILE#META" },
+        Key: { entityId: resolvedEntityId, sk: resolvedSk },
         UpdateExpression: `SET ${setClauses.join(", ")}`,
         ExpressionAttributeNames: expressionNames,
         ExpressionAttributeValues: expressionValues,
@@ -350,36 +414,63 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const entityId = `PLAYER#${id}`;
+    const entityCandidates = [`PLAYER#${id}`, `ATHLETE#${id}`, id];
 
-    const statsResult = await ddb.send(
-      new QueryCommand({
-        TableName: MS_TRANSACTIONS_TABLE,
-        KeyConditionExpression: "entityId = :entityId AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":entityId": entityId,
-          ":prefix": "AFFIL#",
-        },
-      })
-    );
-
-    await Promise.all(
-      (statsResult.Items || []).map((item: Record<string, unknown>) =>
-        ddb.send(
-          new DeleteCommand({
+    for (const entId of entityCandidates) {
+      // Delete from MS_TRANSACTIONS_TABLE
+      try {
+        const statsResult = await ddb.send(
+          new QueryCommand({
             TableName: MS_TRANSACTIONS_TABLE,
-            Key: { entityId: item.entityId, sk: item.sk },
+            KeyConditionExpression: "entityId = :entityId AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":entityId": entId,
+              ":prefix": "AFFIL#",
+            },
           })
-        )
-      )
-    );
+        );
 
-    await ddb.send(
-      new DeleteCommand({
-        TableName: MS_PLAYERS_TABLE,
-        Key: { entityId, sk: "PROFILE#META" },
-      })
-    );
+        if (statsResult.Items && statsResult.Items.length > 0) {
+          await Promise.all(
+            statsResult.Items.map((item: Record<string, unknown>) =>
+              ddb.send(
+                new DeleteCommand({
+                  TableName: MS_TRANSACTIONS_TABLE,
+                  Key: { entityId: item.entityId, sk: item.sk },
+                })
+              )
+            )
+          );
+        }
+      } catch {}
+
+      // Delete from MS_PLAYERS_TABLE
+      try {
+        const playerItemsRes = await ddb.send(
+          new QueryCommand({
+            TableName: MS_PLAYERS_TABLE,
+            KeyConditionExpression: "entityId = :entityId AND begins_with(sk, :skPrefix)",
+            ExpressionAttributeValues: {
+              ":entityId": entId,
+              ":skPrefix": "PROFILE#META",
+            },
+          })
+        );
+
+        if (playerItemsRes.Items && playerItemsRes.Items.length > 0) {
+          await Promise.all(
+            playerItemsRes.Items.map((item: Record<string, unknown>) =>
+              ddb.send(
+                new DeleteCommand({
+                  TableName: MS_PLAYERS_TABLE,
+                  Key: { entityId: item.entityId, sk: item.sk },
+                })
+              )
+            )
+          );
+        }
+      } catch {}
+    }
 
     return NextResponse.json({ deleted: true, id });
   } catch (error) {

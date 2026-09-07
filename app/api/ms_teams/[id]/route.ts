@@ -5,6 +5,7 @@
 // DELETE -> delete the team's MS_Clubs row + all its MS_Transactions rows
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import {
   GetCommand,
   QueryCommand,
@@ -15,8 +16,8 @@ import {
 
 export const dynamic = "force-dynamic";
 
-const CLUBS_TABLE = "MS_Clubs";
-const TRANSACTIONS_TABLE = "MS_Transactions";
+const CLUBS_TABLE = TABLES.MS_Clubs;
+const TRANSACTIONS_TABLE = TABLES.MS_Transactions;
 
 function clubEntityId(teamId: string) {
   return teamId.startsWith("CLUB#") ? teamId : `CLUB#${teamId}`;
