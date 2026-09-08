@@ -1,3 +1,44 @@
+// import type { NextConfig } from 'next';
+
+// const nextConfig: NextConfig = {
+//   env: {
+//     APP_ENV: process.env.APP_ENV || process.env.NEXT_PUBLIC_APP_ENV || (process.env.AWS_BRANCH === "develop" ? "dev" : process.env.AWS_BRANCH === "release" ? "release" : "prod"),
+//     NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV || process.env.APP_ENV || (process.env.AWS_BRANCH === "develop" ? "dev" : process.env.AWS_BRANCH === "release" ? "release" : "prod"),
+//   },
+//   eslint: {
+//     ignoreDuringBuilds: true,
+//   },
+//   typescript: {
+//     ignoreBuildErrors: true,
+//   },
+//   serverExternalPackages: ["firebase-admin"],
+//   async headers() {
+//     return [
+      
+//       {
+//         source: "/Content/Drops/:path*",
+//         headers: [
+//           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+//         ],
+//       },
+//       {
+//         // Apply these headers to all API routes to fix the CORS error
+//         source: "/api/:path*",
+//         headers: [
+//           { key: "Access-Control-Allow-Credentials", value: "true" },
+//           { key: "Access-Control-Allow-Origin", value: process.env.NEXT_PUBLIC_FRONTEND_URL || "https://sportsfan-frontend.vercel.app" }, 
+//           { key: "Access-Control-Allow-Methods", value: "GET,OPTIONS,PATCH,DELETE,POST,PUT" },
+//           { key: "Access-Control-Allow-Headers", value: "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version" },
+//         ],
+//       },
+//     ];
+//   },
+// };
+
+// export default nextConfig;
+
+
+
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
@@ -14,7 +55,6 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["firebase-admin"],
   async headers() {
     return [
-      
       {
         source: "/Content/Drops/:path*",
         headers: [
@@ -26,9 +66,19 @@ const nextConfig: NextConfig = {
         source: "/api/:path*",
         headers: [
           { key: "Access-Control-Allow-Credentials", value: "true" },
-          { key: "Access-Control-Allow-Origin", value: process.env.NEXT_PUBLIC_FRONTEND_URL || "https://sportsfan-frontend.vercel.app" }, 
+          { key: "Access-Control-Allow-Origin", value: process.env.NEXT_PUBLIC_FRONTEND_URL || "https://sportsfan-frontend.vercel.app" },
           { key: "Access-Control-Allow-Methods", value: "GET,OPTIONS,PATCH,DELETE,POST,PUT" },
           { key: "Access-Control-Allow-Headers", value: "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version" },
+        ],
+      },
+      {
+        // Override: the public RSVP form on sportsfan360.com calls this specific route
+        source: "/api/invite-waitlist",
+        headers: [
+          { key: "Access-Control-Allow-Credentials", value: "true" },
+          { key: "Access-Control-Allow-Origin", value: "https://sportsfan360.com" },
+          { key: "Access-Control-Allow-Methods", value: "POST,OPTIONS" },
+          { key: "Access-Control-Allow-Headers", value: "Content-Type" },
         ],
       },
     ];

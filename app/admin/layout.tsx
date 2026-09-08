@@ -602,9 +602,24 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Invite Waitlist", icon: "📨", badge: "RSVP", badgeBg: "#8b5cf6",
+        children: [
+          { href: "/admin/invite-waitlist", label: "Waitlist Registrations" },
+        ],
+      },
+      {
         label: "Points & Rewards", icon: "🪙",
         children: [
           { href: "/admin/points-management", label: "Points & Rules Config" },
+        ],
+      },
+      {
+        label: "Master Profiles", icon: "🏆", badge: "NEW", badgeBg: "#2ea043",
+        children: [
+          { href: "/admin/master-profiles", label: "Profiles Hub (All)" },
+          { href: "/admin/master-profiles?type=athlete", label: "Athletes Directory" },
+          { href: "/admin/master-profiles?type=player", label: "Players Directory" },
+          { href: "/admin/master-profiles?type=team", label: "Teams Directory" },
         ],
       },
     ],
