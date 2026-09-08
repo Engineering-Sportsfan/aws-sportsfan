@@ -197,7 +197,8 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const limit = parseInt(searchParams.get("limit") || "50", 10);
+    const limitParam = searchParams.get("limit");
+    const limit = limitParam ? parseInt(limitParam, 10) : 500;
     const id = searchParams.get("id");
 
     // Single user lookup
@@ -232,18 +233,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: "User not found in waiting list" }, { status: 404 });
     }
 
-    // List all users from 'userwaitinglist'
+    // List all users from 'userwaitinglist' (with pagination loop for full directory)
     let users: any[] = [];
     try {
-      const scanRes = await docClient.send(
-        new ScanCommand({
-          TableName: TABLE_NAME,
-          Limit: limit,
-        })
-      );
-      if (scanRes.Items && scanRes.Items.length > 0) {
-        users = scanRes.Items;
-      }
+      let ExclusiveStartKey: Record<string, any> | undefined;
+      do {
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: TABLE_NAME,
+            Limit: Math.min(limit, 250),
+            ExclusiveStartKey,
+          })
+        );
+        if (scanRes.Items && scanRes.Items.length > 0) {
+          users.push(...scanRes.Items);
+        }
+        ExclusiveStartKey = scanRes.LastEvaluatedKey;
+        if (users.length >= limit) break;
+      } while (ExclusiveStartKey);
     } catch (e) {
       console.warn(`[userwaitinglist GET list] DynamoDB notice:`, e);
     }
@@ -259,13 +266,55 @@ export async function GET(req: NextRequest) {
 
     users.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    return NextResponse.json({
-      success: true,
-      count: users.length,
-      users,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        count: users.length,
+        users,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to fetch waiting list";
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Missing record ID" }, { status: 400 });
+    }
+
+    // 1. Delete from DynamoDB userwaitinglist
+    try {
+      await docClient.send(
+        new DeleteCommand({
+          TableName: TABLE_NAME,
+          Key: { id },
+        })
+      );
+    } catch (dynErr) {
+      console.warn("[invite-waitlist DELETE] DynamoDB notice:", dynErr);
+    }
+
+    // 2. Also delete from Firestore if exists
+    if (db) {
+      try {
+        await db.collection("userwaitinglist").doc(id).delete();
+      } catch (fsErr) {
+        console.warn("[invite-waitlist DELETE] Firestore notice:", fsErr);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Waitlist record deleted successfully",
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to delete waitlist record";
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

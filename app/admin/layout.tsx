@@ -602,6 +602,12 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Invite Waitlist", icon: "📨", badge: "RSVP", badgeBg: "#8b5cf6",
+        children: [
+          { href: "/admin/invite-waitlist", label: "Waitlist Registrations" },
+        ],
+      },
+      {
         label: "Points & Rewards", icon: "🪙",
         children: [
           { href: "/admin/points-management", label: "Points & Rules Config" },
