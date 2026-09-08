@@ -251,6 +251,12 @@ async function handleUpdateOrAction(
     let views: string | undefined;
     let tags: string[] | undefined;
     let imageUrl: string | undefined;
+    let isScheduled: boolean | undefined;
+    let scheduledAt: number | undefined;
+    let scheduledTimeMs: number | undefined;
+    let day: string | undefined;
+    let time: string | undefined;
+    let timeMs: number | undefined;
 
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
@@ -259,6 +265,20 @@ async function handleUpdateOrAction(
       readTime = (formData.get("readTime") as string) || undefined;
       author = (formData.get("author") as string) || undefined;
       views = (formData.get("views") as string) || undefined;
+
+      const isSchedStr = formData.get("isScheduled") as string | null;
+      if (isSchedStr !== null) isScheduled = isSchedStr === "true";
+      const schedAtStr =
+        (formData.get("scheduledAt") as string | null) ||
+        (formData.get("scheduledTimeMs") as string | null);
+      if (schedAtStr) {
+        scheduledAt = Number(schedAtStr);
+        scheduledTimeMs = scheduledAt;
+      }
+      day = (formData.get("day") as string) || undefined;
+      time = (formData.get("time") as string) || undefined;
+      const timeMsStr = formData.get("timeMs") as string | null;
+      if (timeMsStr) timeMs = Number(timeMsStr);
 
       const descriptionRaw = formData.get("description") as string | null;
       if (descriptionRaw) {
@@ -293,6 +313,14 @@ async function handleUpdateOrAction(
       body = await req.json().catch(() => ({}));
       ({ badge, title, description, readTime, author, views, tags } = body);
       imageUrl = body.image;
+      if (body.isScheduled !== undefined) isScheduled = body.isScheduled === true || body.isScheduled === "true";
+      if (body.scheduledAt) {
+        scheduledAt = Number(body.scheduledAt);
+        scheduledTimeMs = scheduledAt;
+      }
+      day = body.day;
+      time = body.time;
+      if (body.timeMs) timeMs = Number(body.timeMs);
     }
 
     const cleanId = rawId.replace(/^(ARTICLE|NEWS)#/, "").trim();
@@ -507,6 +535,23 @@ async function handleUpdateOrAction(
     if (body.likedBy !== undefined) updates.likedBy = body.likedBy;
     if (body.viewCount !== undefined) updates.viewCount = Number(body.viewCount);
 
+    if (isScheduled !== undefined) {
+      updates.isScheduled = isScheduled;
+      if (isScheduled && scheduledAt) {
+        updates.scheduledAt = scheduledAt;
+        updates.scheduledTimeMs = scheduledAt;
+        updates.timeMs = scheduledAt;
+        if (day) updates.day = day;
+        if (time) updates.time = time;
+      } else if (!isScheduled) {
+        updates.scheduledAt = 0;
+        updates.scheduledTimeMs = 0;
+        if (timeMs) updates.timeMs = timeMs;
+        if (day) updates.day = day;
+        if (time) updates.time = time;
+      }
+    }
+
     // 1. Update in DynamoDB
     for (const cand of candidates) {
       try {
@@ -569,6 +614,30 @@ async function handleUpdateOrAction(
             if (updates.viewCount !== undefined) {
               updateExprParts.push("viewCount = :vc");
               exprVals[":vc"] = updates.viewCount;
+            }
+            if (updates.isScheduled !== undefined) {
+              updateExprParts.push("isScheduled = :isSched");
+              exprVals[":isSched"] = updates.isScheduled;
+            }
+            if (updates.scheduledAt !== undefined) {
+              updateExprParts.push("scheduledAt = :schedAt");
+              exprVals[":schedAt"] = updates.scheduledAt;
+            }
+            if (updates.scheduledTimeMs !== undefined) {
+              updateExprParts.push("scheduledTimeMs = :schedTimeMs");
+              exprVals[":schedTimeMs"] = updates.scheduledTimeMs;
+            }
+            if (updates.day !== undefined) {
+              updateExprParts.push("day = :day");
+              exprVals[":day"] = updates.day;
+            }
+            if (updates.time !== undefined) {
+              updateExprParts.push("time = :time");
+              exprVals[":time"] = updates.time;
+            }
+            if (updates.timeMs !== undefined) {
+              updateExprParts.push("timeMs = :timeMs");
+              exprVals[":timeMs"] = updates.timeMs;
             }
 
             await docClient.send(
