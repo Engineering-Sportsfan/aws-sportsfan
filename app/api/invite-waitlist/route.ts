@@ -27,6 +27,19 @@ export interface UserWaitingListRecord {
 // Table name resolution
 const TABLE_NAME = (TABLES as Record<string, string>)["userwaitinglist"] || "userwaitinglist";
 
+// CORS: the RSVP form is hosted as static HTML on sportsfan360.com, while this
+// API route lives on a separate deployment — every response (including the
+// preflight) needs these headers or the browser blocks the request.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "https://sportsfan360.com",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -49,28 +62,28 @@ export async function POST(req: NextRequest) {
     if (!resolvedName) {
       return NextResponse.json(
         { success: false, error: "Name is required" },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       );
     }
 
     if (!resolvedEmail || !resolvedEmail.includes("@")) {
       return NextResponse.json(
         { success: false, error: "A valid Email ID is required" },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       );
     }
 
     if (!resolvedPhone) {
       return NextResponse.json(
         { success: false, error: "Phone number is required" },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       );
     }
 
     if (!resolvedLocation) {
       return NextResponse.json(
         { success: false, error: "Location is required" },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       );
     }
 
@@ -172,12 +185,12 @@ export async function POST(req: NextRequest) {
           timestamp: fillTimestamp,
         },
       },
-      { status: 201 }
+      { status: 201, headers: CORS_HEADERS }
     );
   } catch (error: unknown) {
     console.error("Error in POST /api/invite-waitlist:", error);
     const message = error instanceof Error ? error.message : "Failed to register user to waiting list";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return NextResponse.json({ success: false, error: message }, { status: 500, headers: CORS_HEADERS });
   }
 }
 
