@@ -607,6 +607,15 @@ const FULL_NAV: NavGroup[] = [
           { href: "/admin/points-management", label: "Points & Rules Config" },
         ],
       },
+      {
+        label: "Master Profiles", icon: "🏆", badge: "NEW", badgeBg: "#2ea043",
+        children: [
+          { href: "/admin/master-profiles", label: "Profiles Hub (All)" },
+          { href: "/admin/master-profiles?type=athlete", label: "Athletes Directory" },
+          { href: "/admin/master-profiles?type=player", label: "Players Directory" },
+          { href: "/admin/master-profiles?type=team", label: "Teams Directory" },
+        ],
+      },
     ],
   },
   {
