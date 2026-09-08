@@ -33,6 +33,8 @@ export const TABLES = {
   SocialAndContent: `SocialAndContent${suffix}`,
   SportsData: `SportsData${suffix}`,
   StoreAndCommerce: `StoreAndCommerce${suffix}`,
+  userwaitinglist: `userwaitinglist${suffix}`,
+  "userwaitinglist": `userwaitinglist${suffix}`,
 } as const;
 
 export type TableKey = keyof typeof TABLES;

@@ -214,25 +214,24 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 200);
     const badge = searchParams.get("badge");
     const includeScheduled = searchParams.get("includeScheduled") === "true";
+    const scheduledOnly = searchParams.get("scheduledOnly") === "true";
+    const userParam = (searchParams.get("userId") || searchParams.get("user") || "").trim().toLowerCase();
+    const emailParam = (searchParams.get("email") || searchParams.get("userEmail") || "").trim().toLowerCase();
+    const authorParam = (searchParams.get("author") || "").trim().toLowerCase();
 
     let articles: Array<Record<string, unknown>> = [];
 
     // 1. Scan DynamoDB SocialAndContent table
     try {
-      // let filterExpression = "(begins_with(contentId, :aPrefix) OR begins_with(contentId, :nPrefix))";
-      // const expressionAttributeValues: Record<string, unknown> = {
-      //   ":aPrefix": "ARTICLE#",
-      //   ":nPrefix": "NEWS#",
-      // };
       let filterExpression =
-  "(begins_with(contentId, :aPrefix) OR begins_with(contentId, :nPrefix)) " +
-  "AND (begins_with(sk, :askPrefix) OR begins_with(sk, :nskPrefix))";
-const expressionAttributeValues: Record<string, unknown> = {
-  ":aPrefix": "ARTICLE#",
-  ":nPrefix": "NEWS#",
-  ":askPrefix": "ARTICLE#",
-  ":nskPrefix": "NEWS#",
-};
+        "(begins_with(contentId, :aPrefix) OR begins_with(contentId, :nPrefix)) " +
+        "AND (begins_with(sk, :askPrefix) OR begins_with(sk, :nskPrefix))";
+      const expressionAttributeValues: Record<string, unknown> = {
+        ":aPrefix": "ARTICLE#",
+        ":nPrefix": "NEWS#",
+        ":askPrefix": "ARTICLE#",
+        ":nskPrefix": "NEWS#",
+      };
 
       if (badge && ["FEATURE", "ANALYSIS", "OPINION", "NEWS"].includes(badge)) {
         filterExpression += " AND badge = :bd";
@@ -260,24 +259,58 @@ const expressionAttributeValues: Record<string, unknown> = {
 
       if (items.length > 0) {
         const nowMs = Date.now();
-        articles = items
-          .filter((item) => {
-            if (includeScheduled) return true;
-            const itemScheduled = item.isScheduled === true || item.isScheduled === "true";
-            const schedTime = Number(item.scheduledAt) || Number(item.scheduledTimeMs);
-            if (itemScheduled || (schedTime && schedTime > 0)) {
-              if (schedTime && schedTime > nowMs) {
-                return false; // Future scheduled article — hide
+        if (scheduledOnly) {
+          articles = items
+            .filter((item) => {
+              const itemScheduled = item.isScheduled === true || item.isScheduled === "true";
+              const schedTime = Number(item.scheduledAt) || Number(item.scheduledTimeMs);
+              const isFutureSched = itemScheduled || (schedTime && schedTime > nowMs);
+              if (!isFutureSched || !schedTime || schedTime <= nowMs) {
+                return false;
               }
-            }
-            return true;
-          })
-          .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
-          .slice(0, limit)
-          .map((item) => ({
-            id: (item.contentId as string)?.replace(/^(ARTICLE|NEWS)#/, "") || item.articleId || item.id,
-            ...item,
-          }));
+
+              if (userParam || emailParam || authorParam) {
+                const itemUserId = String(item.userId || "").toLowerCase();
+                const itemEmail = String(item.email || "").toLowerCase();
+                const itemAuthor = String(item.author || "").toLowerCase();
+                const matches =
+                  (userParam && (itemUserId === userParam || itemEmail === userParam || itemAuthor === userParam)) ||
+                  (emailParam && (itemEmail === emailParam || itemUserId === emailParam)) ||
+                  (authorParam && itemAuthor === authorParam);
+                if (!matches) return false;
+              }
+              return true;
+            })
+            .sort((a, b) => {
+              const aTime = Number(a.scheduledAt || a.scheduledTimeMs || a.timeMs || 0);
+              const bTime = Number(b.scheduledAt || b.scheduledTimeMs || b.timeMs || 0);
+              return aTime - bTime;
+            })
+            .slice(0, limit)
+            .map((item) => ({
+              id: (item.contentId as string)?.replace(/^(ARTICLE|NEWS)#/, "") || item.articleId || item.id,
+              ...item,
+            }));
+        } else {
+          articles = items
+            .filter((item) => {
+              if (includeScheduled) return true;
+              const itemScheduled = item.isScheduled === true || item.isScheduled === "true";
+              const schedTime = Number(item.scheduledAt) || Number(item.scheduledTimeMs);
+              if (itemScheduled || (schedTime && schedTime > 0)) {
+                if (schedTime && schedTime > nowMs) {
+                  return false; // Future scheduled article — hide
+                }
+              }
+              return true;
+            })
+            .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
+            .slice(0, limit)
+            .map((item) => ({
+              id: (item.contentId as string)?.replace(/^(ARTICLE|NEWS)#/, "") || item.articleId || item.id,
+              ...item,
+            }));
+        }
       }
     } catch (dynErr) {
       console.warn("DynamoDB articles scan notice:", dynErr);
@@ -299,6 +332,25 @@ const expressionAttributeValues: Record<string, unknown> = {
             ...doc.data(),
           }))
           .filter((item: any) => {
+            if (scheduledOnly) {
+              const itemScheduled = item.isScheduled === true || item.isScheduled === "true";
+              const schedTime = Number(item.scheduledAt) || Number(item.scheduledTimeMs);
+              const isFutureSched = itemScheduled || (schedTime && schedTime > nowMs);
+              if (!isFutureSched || !schedTime || schedTime <= nowMs) {
+                return false;
+              }
+              if (userParam || emailParam || authorParam) {
+                const itemUserId = String(item.userId || "").toLowerCase();
+                const itemEmail = String(item.email || "").toLowerCase();
+                const itemAuthor = String(item.author || "").toLowerCase();
+                const matches =
+                  (userParam && (itemUserId === userParam || itemEmail === userParam || itemAuthor === userParam)) ||
+                  (emailParam && (itemEmail === emailParam || itemUserId === emailParam)) ||
+                  (authorParam && itemAuthor === authorParam);
+                if (!matches) return false;
+              }
+              return true;
+            }
             if (includeScheduled) return true;
             const itemScheduled = item.isScheduled === true || item.isScheduled === "true";
             const schedTime = Number(item.scheduledAt) || Number(item.scheduledTimeMs);
@@ -309,6 +361,14 @@ const expressionAttributeValues: Record<string, unknown> = {
             }
             return true;
           });
+
+        if (scheduledOnly) {
+          articles.sort((a: any, b: any) => {
+            const aTime = Number(a.scheduledAt || a.scheduledTimeMs || a.timeMs || 0);
+            const bTime = Number(b.scheduledAt || b.scheduledTimeMs || b.timeMs || 0);
+            return aTime - bTime;
+          });
+        }
       } catch (fbErr) {
         console.warn("Firebase articles fallback notice:", fbErr);
       }
