@@ -36,6 +36,10 @@ export interface WaitlistRecord {
   phoneNumber?: string;
   phone?: string;
   location: string;
+  institution?: string;
+  university?: string;
+  referBy?: string;
+  referredBy?: string;
   timestamp: string;
   createdAt: number;
   eventName?: string;
@@ -154,6 +158,8 @@ function InviteWaitlistContent() {
         const email = (r.email || "").toLowerCase();
         const phone = (r.phoneNumber || r.phone || "").toLowerCase();
         const loc = (r.location || "").toLowerCase();
+        const inst = (r.institution || r.university || "").toLowerCase();
+        const ref = (r.referBy || r.referredBy || "").toLowerCase();
         const event = (r.eventName || "").toLowerCase();
         const id = (r.id || "").toLowerCase();
         return (
@@ -161,6 +167,8 @@ function InviteWaitlistContent() {
           email.includes(q) ||
           phone.includes(q) ||
           loc.includes(q) ||
+          inst.includes(q) ||
+          ref.includes(q) ||
           event.includes(q) ||
           id.includes(q)
         );
@@ -224,6 +232,8 @@ function InviteWaitlistContent() {
         const email = r.email || "–";
         const name = r.fullName || r.name || "–";
         const location = r.location || "–";
+        const institution = r.institution || r.university || "–";
+        const referBy = r.referBy || r.referredBy || "–";
         const event = r.eventName || "SportsFan360 Event";
         const status = (r.status || "waitlisted").toUpperCase();
         const displayDate = formatDisplayDate(r.createdAt || r.timestamp);
@@ -238,6 +248,8 @@ function InviteWaitlistContent() {
           "Email Address": email,
           "Phone Number": phone,
           "Location / City": location,
+          "Institution / University": institution,
+          "Refer By": referBy,
           "Event": event,
           "Status": status,
           "Registration Date (IST)": displayDate,
@@ -257,6 +269,8 @@ function InviteWaitlistContent() {
         { wch: 32 }, // Email Address
         { wch: 18 }, // Phone Number
         { wch: 20 }, // Location
+        { wch: 26 }, // Institution / University
+        { wch: 20 }, // Refer By
         { wch: 22 }, // Event
         { wch: 14 }, // Status
         { wch: 25 }, // Registration Date (IST)
@@ -763,6 +777,18 @@ function InviteWaitlistContent() {
                   <span className="text-gray-400 block mb-1">Status:</span>
                   <span className="text-emerald-400 font-bold uppercase">
                     {selectedRecord.status || "Waitlisted"}
+                  </span>
+                </div>
+                <div className="p-3 bg-[#0d1117] rounded-lg border border-[#21262d]">
+                  <span className="text-gray-400 block mb-1">Institution / University:</span>
+                  <span className="text-white">
+                    {selectedRecord.institution || selectedRecord.university || "–"}
+                  </span>
+                </div>
+                <div className="p-3 bg-[#0d1117] rounded-lg border border-[#21262d]">
+                  <span className="text-gray-400 block mb-1">Refer By:</span>
+                  <span className="text-white">
+                    {selectedRecord.referBy || selectedRecord.referredBy || "–"}
                   </span>
                 </div>
                 <div className="p-3 bg-[#0d1117] rounded-lg border border-[#21262d] col-span-2">

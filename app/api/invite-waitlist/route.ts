@@ -17,6 +17,10 @@ export interface UserWaitingListRecord {
   phoneNumber: string;
   phone: string;
   location: string;
+  institution?: string;
+  university?: string;
+  referBy?: string;
+  referredBy?: string;
   timestamp: string;
   createdAt: number;
   eventName?: string;
@@ -50,6 +54,10 @@ export async function POST(req: NextRequest) {
       phone,
       phoneNumber,
       location,
+      institution,
+      university,
+      referBy,
+      referredBy,
       timestamp,
     } = body || {};
 
@@ -57,6 +65,8 @@ export async function POST(req: NextRequest) {
     const resolvedEmail = (email || "").toString().trim().toLowerCase();
     const resolvedPhone = (phone || phoneNumber || "").toString().trim();
     const resolvedLocation = (location || "").toString().trim();
+    const resolvedInstitution = (institution || university || "").toString().trim();
+    const resolvedReferBy = (referBy || referredBy || "").toString().trim();
     const fillTimestamp = timestamp ? timestamp.toString() : new Date().toISOString();
 
     if (!resolvedName) {
@@ -98,6 +108,10 @@ export async function POST(req: NextRequest) {
       phoneNumber: resolvedPhone,
       phone: resolvedPhone,
       location: resolvedLocation,
+      institution: resolvedInstitution || undefined,
+      university: resolvedInstitution || undefined,
+      referBy: resolvedReferBy || undefined,
+      referredBy: resolvedReferBy || undefined,
       timestamp: fillTimestamp,
       createdAt: now,
       eventName: "SportsFan360 Event",
@@ -182,6 +196,8 @@ export async function POST(req: NextRequest) {
           email: resolvedEmail,
           phoneNumber: resolvedPhone,
           location: resolvedLocation,
+          institution: resolvedInstitution,
+          referBy: resolvedReferBy,
           timestamp: fillTimestamp,
         },
       },
