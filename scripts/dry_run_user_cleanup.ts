@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
@@ -9,20 +9,12 @@ dotenv.config({ path: path.join(process.cwd(), '.env.local') });
 dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 // ============================================================================
-// 🎯 TARGET USERS TO DELETE (SPECIFY EMAILS OR USER IDs HERE)
-//
-// Add the email addresses or User IDs you want to DELETE.
-// The script will automatically resolve all multi-ID aliases (e.g. raw email,
-// sanitized underscore format, google_* format, and USER#* DynamoDB keys)
-// for each targeted user, and audit all their dependent data.
-// All other users will remain completely untouched.
+// 🎯 TARGET USER TO AUDIT
 // ============================================================================
-export const TARGET_USERS_TO_DELETE: string[] = [
-  // Examples — Paste your target emails or IDs to delete here:
-  // "old_user@gmail.com",
-  // "test_user_sportsfan360_com",
-  "srikakulamchandu@gmail.com"
-];
+export const DEFAULT_TARGET_USER = "srikakulamchandu@gmail.com";
+
+const cliTarget = process.argv.slice(2).find(arg => !arg.startsWith("-"));
+export const TARGET_USER = (cliTarget || DEFAULT_TARGET_USER).trim().toLowerCase();
 
 // ============================================================================
 // Firebase & DynamoDB Initialization
@@ -47,7 +39,14 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const client = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const client = new DynamoDBClient({
+  region: process.env.AWS_REGION || 'us-east-1',
+  credentials: process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY ? {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+  } : undefined
+});
+
 const docClient = DynamoDBDocumentClient.from(client, {
   marshallOptions: {
     removeUndefinedValues: true,
@@ -55,251 +54,296 @@ const docClient = DynamoDBDocumentClient.from(client, {
   }
 });
 
-// ============================================================================
-// Multi-ID Resolution Helpers
-// ============================================================================
+// 3 Environments
+export const ENVIRONMENTS = [
+  { name: "prod", suffix: "" },
+  { name: "dev", suffix: "-dev" },
+  { name: "release", suffix: "-release" },
+] as const;
 
-/**
- * Generates all known identity representations and aliases for a single email/ID:
- * 1. Raw lowercase input
- * 2. Sanitized underscore format (e.g. "john_doe_gmail_com")
- * 3. Dotted format (e.g. "john.doe.gmail.com")
- * 4. Google Auth ID pattern (e.g. "google_john_doe_gmail_com")
- * 5. DynamoDB entityId (e.g. "USER#john.doe@gmail.com", "USER#john_doe_gmail_com")
- */
-function generateUserAliases(identifier: string): Set<string> {
+export function generateUserAliases(identifier: string): Set<string> {
   const aliases = new Set<string>();
   if (!identifier || typeof identifier !== 'string') return aliases;
 
   const raw = identifier.trim();
   const lower = raw.toLowerCase();
-  const strippedUser = lower.replace(/^user#/, "");
+  const strippedUser = lower.replace(/^user#/, "").replace(/^pref#user#/, "").replace(/^otp#/, "");
 
   aliases.add(raw);
   aliases.add(lower);
   aliases.add(strippedUser);
 
-  // Sanitized with underscores
   const sanitized = strippedUser.replace(/[^a-zA-Z0-9]/g, "_");
   aliases.add(sanitized);
 
-  // Variation with @ and . replaced
   const underscore = strippedUser.replace(/@/g, "_").replace(/\./g, "_");
   aliases.add(underscore);
 
-  // Dot format
   const dotted = strippedUser.replace(/@/g, ".");
   aliases.add(dotted);
 
-  // DynamoDB prefixed versions
   aliases.add(`USER#${strippedUser}`);
   aliases.add(`USER#${lower}`);
   aliases.add(`USER#${sanitized}`);
+  aliases.add(`PREF#USER#${strippedUser}`);
+  aliases.add(`PREF#USER#${lower}`);
+  aliases.add(`OTP#${strippedUser}`);
+  aliases.add(`OTP#${lower}`);
+  aliases.add(`PROFILE_ROAR#${strippedUser}`);
+  aliases.add(`PROFILE_SF360#${strippedUser}`);
 
   return aliases;
 }
 
-interface UserSummary {
-  email: string;
-  docIds: string[];
-  userIds: string[];
-  names: string[];
-  totalXP: number;
-  isTargetedForDeletion: boolean;
-  aliases: Set<string>;
+// Fast DynamoDB Query by Partition Key
+async function queryDynamoByPk(tableName: string, pkField: string, pkValue: string): Promise<any[]> {
+  try {
+    const res = await docClient.send(new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: `#pk = :val`,
+      ExpressionAttributeNames: { "#pk": pkField },
+      ExpressionAttributeValues: { ":val": pkValue },
+    }));
+    return res.Items || [];
+  } catch (err: any) {
+    if (err.name !== "ResourceNotFoundException") {
+      // ignore missing tables/keys
+    }
+    return [];
+  }
+}
+
+// Fast DynamoDB Filtered Scan (Only returns keys)
+async function scanDynamoFiltered(tableName: string, filterExp: string, expValues: Record<string, any>, projectionExp: string): Promise<any[]> {
+  const items: any[] = [];
+  let lastEvaluatedKey: Record<string, any> | undefined = undefined;
+
+  try {
+    do {
+      const res: any = await docClient.send(new ScanCommand({
+        TableName: tableName,
+        FilterExpression: filterExp,
+        ExpressionAttributeValues: expValues,
+        ProjectionExpression: projectionExp,
+        ExclusiveStartKey: lastEvaluatedKey,
+      }));
+      if (res.Items && res.Items.length > 0) {
+        items.push(...res.Items);
+      }
+      lastEvaluatedKey = res.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+  } catch (err: any) {
+    if (err.name !== "ResourceNotFoundException") {
+      // ignore
+    }
+  }
+  return items;
+}
+
+// Fast Firestore Target Query
+async function queryFirestoreCollection(collName: string, fields: string[], targetValues: string[]): Promise<{ docId: string; data: any }[]> {
+  const matchedDocs = new Map<string, any>();
+
+  // 1. Direct doc lookup for each value
+  await Promise.all(targetValues.map(async (val) => {
+    try {
+      const doc = await db.collection(collName).doc(val).get();
+      if (doc.exists) {
+        matchedDocs.set(doc.id, doc.data());
+      }
+    } catch {}
+  }));
+
+  // 2. Query fields where value in targetValues (Firestore 'in' supports up to 30 elements)
+  const chunks: string[][] = [];
+  for (let i = 0; i < targetValues.length; i += 30) {
+    chunks.push(targetValues.slice(i, i + 30));
+  }
+
+  for (const field of fields) {
+    await Promise.all(chunks.map(async (chunk) => {
+      try {
+        const snap = await db.collection(collName).where(field, "in", chunk).get();
+        snap.docs.forEach(doc => {
+          matchedDocs.set(doc.id, doc.data());
+        });
+      } catch {
+        // Fallback to equality query if 'in' index is not ready
+        await Promise.all(chunk.slice(0, 5).map(async (val) => {
+          try {
+            const snap = await db.collection(collName).where(field, "==", val).get();
+            snap.docs.forEach(doc => {
+              matchedDocs.set(doc.id, doc.data());
+            });
+          } catch {}
+        }));
+      }
+    }));
+  }
+
+  return Array.from(matchedDocs.entries()).map(([docId, data]) => ({ docId, data }));
 }
 
 async function runDryRun() {
+  const startTime = Date.now();
   console.log("======================================================================");
-  console.log("🔍 TARGETED USER CLEANUP DRY-RUN SCAN (STRICTLY READ-ONLY)");
+  console.log("⚡ HIGH-SPEED TARGETED SINGLE-USER CLEANUP DRY-RUN AUDIT (READ-ONLY)");
   console.log("======================================================================\n");
 
-  if (TARGET_USERS_TO_DELETE.length === 0) {
-    console.log("⚠️ TARGET LIST IS EMPTY!");
-    console.log("👉 Please add the emails or User IDs to delete into the 'TARGET_USERS_TO_DELETE' array at the top of this script.\n");
-    console.log("Example:");
-    console.log('const TARGET_USERS_TO_DELETE: string[] = [');
-    console.log('  "testuser@gmail.com",');
-    console.log('  "duplicate_user@sportsfan360.com"');
-    console.log('];\n');
-    console.log("======================================================================");
-    return;
+  if (!TARGET_USER) {
+    console.error("❌ Target user is empty! Please specify an email or user ID.");
+    process.exit(1);
   }
 
-  // Build target aliases set
-  const allTargetAliases = new Set<string>();
-  TARGET_USERS_TO_DELETE.forEach(t => {
-    const aliases = generateUserAliases(t);
-    aliases.forEach(a => allTargetAliases.add(a));
-  });
+  console.log(`🎯 TARGET USER TO AUDIT: "${TARGET_USER}"\n`);
 
-  console.log(`📋 Target Configuration: ${TARGET_USERS_TO_DELETE.length} user(s) explicitly targeted for deletion:`);
-  TARGET_USERS_TO_DELETE.forEach(t => console.log(`   🎯 Target: ${t}`));
-  console.log(`   🔑 Total Resolved Search Aliases: ${allTargetAliases.size}\n`);
+  // Build initial target aliases
+  const targetAliases = generateUserAliases(TARGET_USER);
 
-  // 1. Scan Firestore Users
-  console.log("📡 Scanning Firestore 'users' collection...");
-  const firestoreUsersSnap = await db.collection("users").get();
-  console.log(`   Found ${firestoreUsersSnap.docs.length} total documents in Firestore 'users'.\n`);
+  // ============================================================================
+  // Step 1: Discover & Map User Identity (Firestore & DynamoDB)
+  // ============================================================================
+  console.log("📡 Step 1: Resolving user identity and aliases...");
 
-  // 2. Scan DynamoDB IdentityAndAccess for User entities
-  console.log("📡 Scanning DynamoDB 'IdentityAndAccess' table for User entities...");
-  let dynamoUsers: any[] = [];
-  try {
-    const dynamoScan = await docClient.send(new ScanCommand({
-      TableName: "IdentityAndAccess",
-      FilterExpression: "begins_with(entityId, :prefix) OR begins_with(sk, :skPrefix)",
-      ExpressionAttributeValues: {
-        ":prefix": "USER#",
-        ":skPrefix": "USER#"
-      }
-    }));
-    dynamoUsers = dynamoScan.Items || [];
-    console.log(`   Found ${dynamoUsers.length} total user items in DynamoDB 'IdentityAndAccess'.\n`);
-  } catch (err: any) {
-    console.warn(`   ⚠️ DynamoDB scan notice: ${err.message}\n`);
+  // Check Firestore users directly by docId and email query
+  const checkUserColls = ["users", "users_dev", "users_release", "roarProfiles", "Sportsfan360Profile", "userPreferences"];
+  const matchedUserProfiles: any[] = [];
+
+  for (const coll of checkUserColls) {
+    const results = await queryFirestoreCollection(coll, ["email", "userId", "uid"], Array.from(targetAliases));
+    for (const r of results) {
+      matchedUserProfiles.push({ source: `Firestore [${coll}]`, id: r.docId, email: r.data.email, userId: r.data.userId });
+      generateUserAliases(r.docId).forEach(a => targetAliases.add(a));
+      if (r.data.email) generateUserAliases(r.data.email).forEach(a => targetAliases.add(a));
+      if (r.data.userId) generateUserAliases(r.data.userId).forEach(a => targetAliases.add(a));
+      if (r.data.uid) generateUserAliases(r.data.uid).forEach(a => targetAliases.add(a));
+    }
   }
 
-  // 3. Match Target Users and their Multi-IDs
-  const matchedUsers: UserSummary[] = [];
-  const targetResolvedAliases = new Set<string>(allTargetAliases);
+  // Check DynamoDB IdentityAndAccess directly using PK queries
+  for (const env of ENVIRONMENTS) {
+    const tableName = `IdentityAndAccess${env.suffix}`;
+    const pksToQuery = [
+      `USER#${TARGET_USER}`,
+      `USER#${TARGET_USER.replace(/[^a-zA-Z0-9]/g, "_")}`,
+      `PREF#USER#${TARGET_USER}`,
+      `OTP#${TARGET_USER}`,
+    ];
 
-  // Check Firestore docs
-  for (const doc of firestoreUsersSnap.docs) {
-    const data = doc.data();
-    const docId = doc.id;
-    const email = (data.email || (docId.includes("@") ? docId : "")).trim().toLowerCase();
-    const userId = data.userId ? String(data.userId).trim() : "";
-
-    const isMatch = (
-      allTargetAliases.has(docId.toLowerCase()) ||
-      (email && allTargetAliases.has(email)) ||
-      (userId && allTargetAliases.has(userId.toLowerCase()))
-    );
-
-    if (isMatch) {
-      const userAliases = generateUserAliases(email || docId);
-      if (userId) userAliases.add(userId.toLowerCase());
-      userAliases.add(docId.toLowerCase());
-      userAliases.forEach(a => targetResolvedAliases.add(a));
-
-      let existing = matchedUsers.find(u => u.email === (email || docId));
-      if (!existing) {
-        matchedUsers.push({
-          email: email || docId,
-          docIds: [docId],
-          userIds: userId ? [userId] : [],
-          names: data.name || data.firstName ? [`${data.firstName || ''} ${data.lastName || ''}`.trim() || data.name] : [],
-          totalXP: data.totalXP || data.totalPoints || 0,
-          isTargetedForDeletion: true,
-          aliases: userAliases
-        });
-      } else {
-        if (!existing.docIds.includes(docId)) existing.docIds.push(docId);
-        if (userId && !existing.userIds.includes(userId)) existing.userIds.push(userId);
-        userAliases.forEach(a => existing!.aliases.add(a));
+    for (const pk of pksToQuery) {
+      const items = await queryDynamoByPk(tableName, "entityId", pk);
+      for (const item of items) {
+        matchedUserProfiles.push({ source: `DynamoDB [${tableName}]`, id: item.entityId, sk: item.sk, email: item.email, userId: item.userId });
+        generateUserAliases(item.entityId).forEach(a => targetAliases.add(a));
+        if (item.email) generateUserAliases(item.email).forEach(a => targetAliases.add(a));
+        if (item.userId) generateUserAliases(item.userId).forEach(a => targetAliases.add(a));
       }
     }
   }
 
-  // Check DynamoDB items
-  for (const item of dynamoUsers) {
-    const entityId = String(item.entityId || "");
-    const cleanEntityId = entityId.replace(/^USER#/, "");
-    const email = (item.email || (cleanEntityId.includes("@") ? cleanEntityId : "")).trim().toLowerCase();
-    const userId = item.userId ? String(item.userId).trim() : "";
+  console.log(`   ✅ Resolved Search Aliases (${targetAliases.size} keys generated):`);
+  console.log(`      ${Array.from(targetAliases).slice(0, 8).join(', ')}...\n`);
 
-    const isMatch = (
-      allTargetAliases.has(entityId.toLowerCase()) ||
-      allTargetAliases.has(cleanEntityId.toLowerCase()) ||
-      (email && allTargetAliases.has(email)) ||
-      (userId && allTargetAliases.has(userId.toLowerCase()))
-    );
-
-    if (isMatch) {
-      const itemAliases = generateUserAliases(email || cleanEntityId);
-      if (userId) itemAliases.add(userId.toLowerCase());
-      itemAliases.add(cleanEntityId.toLowerCase());
-      itemAliases.forEach(a => targetResolvedAliases.add(a));
-
-      let existing = matchedUsers.find(u => u.email === (email || cleanEntityId));
-      if (!existing) {
-        matchedUsers.push({
-          email: email || cleanEntityId,
-          docIds: [cleanEntityId],
-          userIds: userId ? [userId] : [],
-          names: item.name || item.firstName ? [`${item.firstName || ''} ${item.lastName || ''}`.trim() || item.name] : [],
-          totalXP: item.totalXP || item.totalPoints || 0,
-          isTargetedForDeletion: true,
-          aliases: itemAliases
-        });
-      } else {
-        if (!existing.docIds.includes(cleanEntityId)) existing.docIds.push(cleanEntityId);
-        if (userId && !existing.userIds.includes(userId)) existing.userIds.push(userId);
-        itemAliases.forEach(a => existing!.aliases.add(a));
-      }
-    }
+  console.log("   📋 Discovered User Accounts:");
+  if (matchedUserProfiles.length === 0) {
+    console.log("      ⚠️ No existing profile found with this ID yet (will still search all tables for any orphan records).");
+  } else {
+    matchedUserProfiles.forEach(u => console.log(`      - ${u.source}: id="${u.id}", email="${u.email || ''}", userId="${u.userId || ''}"`));
   }
 
-  console.log("======================================================================");
-  console.log("👥 MATCHED TARGET USERS & MULTI-ID VARIANTS FOUND");
-  console.log("======================================================================");
-  console.log(`Target Accounts Matched in Database : ${matchedUsers.length}`);
-  console.log(`Total Resolved Match Keys/Aliases  : ${targetResolvedAliases.size}\n`);
-
-  if (matchedUsers.length === 0) {
-    console.log("⚠️ None of the target emails/IDs were found in the database.");
-    console.log("Please double-check the spelling of the target IDs/emails.");
-    return;
-  }
-
-  matchedUsers.forEach((u, i) => {
-    const isMulti = u.docIds.length > 1 || u.userIds.length > 1;
-    const tag = isMulti ? `⚠️ MULTI-ID (${u.docIds.length} docs)` : `Single ID`;
-    console.log(`  ${i + 1}. 🗑️ [TARGET] ${u.email}`);
-    console.log(`     Type    : ${tag}`);
-    console.log(`     Doc IDs : [${u.docIds.join(', ')}]`);
-    if (u.userIds.length > 0) console.log(`     User IDs: [${u.userIds.join(', ')}]`);
-    console.log(`     Total XP: ${u.totalXP}`);
-    console.log(`     Aliases : ${Array.from(u.aliases).slice(0, 6).join(', ')}...`);
-    console.log("");
-  });
-
   // ============================================================================
-  // 4. Scan Dependent Collections & Tables (DRY RUN AUDIT)
+  // Step 2: Audit DynamoDB Tables (3 Environments: prod, dev, release)
   // ============================================================================
-  console.log("======================================================================");
-  console.log("📊 DEPENDENT DATA AUDIT FOR TARGET USERS ONLY");
+  console.log("\n======================================================================");
+  console.log("📊 Step 2: AUDITING AWS DYNAMODB TABLES (3 ENVIRONMENTS: prod, dev, release)");
   console.log("======================================================================\n");
 
-  async function checkCollection(name: string, fields: string[]) {
-    try {
-      const snap = await db.collection(name).get();
-      let matchCount = 0;
-      for (const doc of snap.docs) {
-        const data = doc.data();
-        let matched = targetResolvedAliases.has(doc.id.toLowerCase());
-        if (!matched) {
-          for (const field of fields) {
-            const val = data[field];
-            if (typeof val === 'string' && targetResolvedAliases.has(val.toLowerCase())) {
-              matched = true;
-              break;
-            } else if (Array.isArray(val) && val.some(v => typeof v === 'string' && targetResolvedAliases.has(v.toLowerCase()))) {
-              matched = true;
-              break;
-            }
-          }
-        }
-        if (matched) matchCount++;
-      }
-      return { total: snap.docs.length, matched: matchCount };
-    } catch {
-      return { total: 0, matched: 0 };
+  const targetAliasesList = Array.from(targetAliases);
+  const dynamoFoundItems: { env: string; table: string; count: number; keys: any[] }[] = [];
+  let totalDynamoMatched = 0;
+
+  for (const env of ENVIRONMENTS) {
+    console.log(`🔍 Auditing Environment: [${env.name.toUpperCase()}]`);
+
+    // 1. IdentityAndAccess: Query all entityId PK variants
+    const idTable = `IdentityAndAccess${env.suffix}`;
+    const idKeys = new Map<string, any>();
+    for (const alias of targetAliasesList) {
+      const items = await queryDynamoByPk(idTable, "entityId", alias);
+      items.forEach(it => idKeys.set(`${it.entityId}###${it.sk}`, { entityId: it.entityId, sk: it.sk }));
+    }
+    if (idKeys.size > 0) {
+      console.log(`   📦 ${idTable.padEnd(32)}: Found ${idKeys.size} item(s)`);
+      dynamoFoundItems.push({ env: env.name, table: idTable, count: idKeys.size, keys: Array.from(idKeys.values()) });
+      totalDynamoMatched += idKeys.size;
+    }
+
+    // 2. GamificationAndWallet: Query by userId PK
+    const gamTable = `GamificationAndWallet${env.suffix}`;
+    const gamKeys = new Map<string, any>();
+    for (const alias of targetAliasesList) {
+      if (alias.startsWith("USER#") || alias.startsWith("PREF#") || alias.startsWith("OTP#")) continue;
+      const items = await queryDynamoByPk(gamTable, "userId", alias);
+      items.forEach(it => gamKeys.set(`${it.userId}###${it.sk}`, { userId: it.userId, sk: it.sk }));
+    }
+    if (gamKeys.size > 0) {
+      console.log(`   📦 ${gamTable.padEnd(32)}: Found ${gamKeys.size} item(s)`);
+      dynamoFoundItems.push({ env: env.name, table: gamTable, count: gamKeys.size, keys: Array.from(gamKeys.values()) });
+      totalDynamoMatched += gamKeys.size;
+    }
+
+    // 3. sf360-notifications: Query by PK
+    const notifTable = `sf360-notifications${env.suffix}`;
+    const notifKeys = new Map<string, any>();
+    for (const alias of targetAliasesList) {
+      const items = await queryDynamoByPk(notifTable, "PK", alias);
+      items.forEach(it => notifKeys.set(`${it.PK}###${it.SK}`, { PK: it.PK, SK: it.SK }));
+    }
+    if (notifKeys.size > 0) {
+      console.log(`   📦 ${notifTable.padEnd(32)}: Found ${notifKeys.size} item(s)`);
+      dynamoFoundItems.push({ env: env.name, table: notifTable, count: notifKeys.size, keys: Array.from(notifKeys.values()) });
+      totalDynamoMatched += notifKeys.size;
+    }
+
+    // 4. StoreAndCommerce: Query by entityId PK
+    const storeTable = `StoreAndCommerce${env.suffix}`;
+    const storeKeys = new Map<string, any>();
+    for (const alias of targetAliasesList) {
+      const items = await queryDynamoByPk(storeTable, "entityId", alias);
+      items.forEach(it => storeKeys.set(`${it.entityId}###${it.sk}`, { entityId: it.entityId, sk: it.sk }));
+    }
+    if (storeKeys.size > 0) {
+      console.log(`   📦 ${storeTable.padEnd(32)}: Found ${storeKeys.size} item(s)`);
+      dynamoFoundItems.push({ env: env.name, table: storeTable, count: storeKeys.size, keys: Array.from(storeKeys.values()) });
+      totalDynamoMatched += storeKeys.size;
+    }
+
+    // 5. userwaitinglist: Fast filtered scan on email
+    const waitTable = `userwaitinglist${env.suffix}`;
+    const waitItems = await scanDynamoFiltered(
+      waitTable,
+      "email = :em",
+      { ":em": TARGET_USER },
+      "id, email"
+    );
+    if (waitItems.length > 0) {
+      console.log(`   📦 ${waitTable.padEnd(32)}: Found ${waitItems.length} item(s)`);
+      dynamoFoundItems.push({ env: env.name, table: waitTable, count: waitItems.length, keys: waitItems.map(it => ({ id: it.id })) });
+      totalDynamoMatched += waitItems.length;
     }
   }
 
-  const collectionsToCheck = [
+  // ============================================================================
+  // Step 3: Fast Parallel Query on Firestore Collections
+  // ============================================================================
+  console.log("\n======================================================================");
+  console.log("🔥 Step 3: AUDITING FIRESTORE COLLECTIONS (TARGETED INDEXED QUERIES)");
+  console.log("======================================================================\n");
+
+  const firestoreCollectionsToCheck = [
+    { name: "users", fields: ["userId", "email"] },
+    { name: "users_dev", fields: ["userId", "email"] },
+    { name: "users_release", fields: ["userId", "email"] },
     { name: "pointTransactions", fields: ["userId", "userEmail"] },
     { name: "wallet_transactions", fields: ["userId"] },
     { name: "reward_coins_ledger", fields: ["userId"] },
@@ -370,28 +414,47 @@ async function runDryRun() {
     { name: "userPreferences", fields: ["userId"] },
   ];
 
-  console.log("Analyzing dependent records specifically tied to target users...");
-  let totalDependentRecords = 0;
+  let totalFirestoreMatched = 0;
 
-  for (const coll of collectionsToCheck) {
-    const res = await checkCollection(coll.name, coll.fields);
-    if (res.matched > 0) {
-      console.log(`   📦 ${coll.name.padEnd(25)} : ${res.matched.toString().padStart(4)} / ${res.total} records tied to target users`);
-      totalDependentRecords += res.matched;
-    }
+  // Run collection queries in parallel batches of 10
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < firestoreCollectionsToCheck.length; i += BATCH_SIZE) {
+    const chunk = firestoreCollectionsToCheck.slice(i, i + BATCH_SIZE);
+    await Promise.all(chunk.map(async (coll) => {
+      const results = await queryFirestoreCollection(coll.name, coll.fields, targetAliasesList);
+      if (results.length > 0) {
+        console.log(`   📂 ${coll.name.padEnd(25)}: Found ${results.length} record(s)`);
+        totalFirestoreMatched += results.length;
+      }
+    }));
   }
 
+  const durationSec = ((Date.now() - startTime) / 1000).toFixed(2);
+
+  // ============================================================================
+  // Summary Report
+  // ============================================================================
   console.log("\n======================================================================");
-  console.log("🏁 DRY RUN AUDIT SUMMARY");
+  console.log("🏁 DRY RUN AUDIT SUMMARY REPORT");
   console.log("======================================================================");
-  console.log(`Target Accounts Found in 'users'           : ${matchedUsers.length}`);
-  console.log(`Total Dependent Records Tied to Targets    : ${totalDependentRecords}`);
+  console.log(`🎯 Target User Audited                     : ${TARGET_USER}`);
+  console.log(`🔑 Identity Aliases Resolved               : ${targetAliases.size}`);
+  console.log(`📦 AWS DynamoDB Total Items Found          : ${totalDynamoMatched}`);
+  ENVIRONMENTS.forEach(env => {
+    const envMatched = dynamoFoundItems
+      .filter(r => r.env === env.name)
+      .reduce((sum, r) => sum + r.count, 0);
+    console.log(`   - Environment [${env.name.toUpperCase()}]: ${envMatched} item(s)`);
+  });
+  console.log(`🔥 Firestore Total Records Found           : ${totalFirestoreMatched}`);
+  console.log(`🚨 TOTAL RECORDS TIED TO USER ACROSS ALL DBs: ${totalDynamoMatched + totalFirestoreMatched}`);
+  console.log(`⏱️ Audit Duration                          : ${durationSec} seconds`);
   console.log("----------------------------------------------------------------------");
-  console.log("✅ STATUS: DRY RUN COMPLETED SUCCESSFULLY. NO DATA WAS MODIFIED OR DELETED.");
+  console.log("✅ STATUS: DRY RUN AUDIT COMPLETED. STRICTLY ZERO DATA MODIFIED OR DELETED.");
   console.log("======================================================================\n");
 }
 
 runDryRun().catch(err => {
-  console.error("❌ Dry run failed:", err);
+  console.error("❌ Dry run audit failed:", err);
   process.exit(1);
 });

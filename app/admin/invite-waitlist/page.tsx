@@ -26,6 +26,10 @@ import {
   Check,
   ArrowUpDown,
   Smartphone,
+  UserCheck,
+  UserX,
+  XCircle,
+  Send,
 } from "lucide-react";
 
 export interface WaitlistRecord {
@@ -113,6 +117,69 @@ function InviteWaitlistContent() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
 
+  // Status Filter ("all" | "waitlisted" | "accepted" | "rejected")
+  const [selectedStatus, setSelectedStatus] = useState<"all" | "waitlisted" | "accepted" | "rejected">("all");
+
+  // Action processing state
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [processingAction, setProcessingAction] = useState<"accept" | "reject" | null>(null);
+  const [statusFeedback, setStatusFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // Accept / Reject handler with automatic email dispatch
+  const handleStatusAction = async (record: WaitlistRecord, action: "accept" | "reject") => {
+    try {
+      setProcessingId(record.id);
+      setProcessingAction(action);
+      const res = await axios.patch("/api/invite-waitlist", {
+        id: record.id,
+        action,
+      });
+
+      if (res.data.success) {
+        // Update local state immediately
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === record.id
+              ? { ...r, status: res.data.status, emailSent: res.data.emailSent ?? r.emailSent }
+              : r
+          )
+        );
+
+        if (selectedRecord && selectedRecord.id === record.id) {
+          setSelectedRecord((prev) =>
+            prev ? { ...prev, status: res.data.status, emailSent: res.data.emailSent ?? prev.emailSent } : null
+          );
+        }
+
+        setStatusFeedback({
+          type: "success",
+          message:
+            res.data.message ||
+            (action === "accept"
+              ? `Accepted ${record.fullName || record.name} and sent Flip LIVE invite email!`
+              : `Waitlist request for ${record.fullName || record.name} rejected.`),
+        });
+        setTimeout(() => setStatusFeedback(null), 5000);
+      } else {
+        setStatusFeedback({
+          type: "error",
+          message: res.data.error || "Action failed",
+        });
+        setTimeout(() => setStatusFeedback(null), 5000);
+      }
+    } catch (err: any) {
+      console.error("Status action failed:", err);
+      setStatusFeedback({
+        type: "error",
+        message: err.response?.data?.error || err.message || "Failed to update waitlist status",
+      });
+      setTimeout(() => setStatusFeedback(null), 5000);
+    } finally {
+      setProcessingId(null);
+      setProcessingAction(null);
+    }
+  };
+
   useEffect(() => {
     fetchWaitlist();
   }, []);
@@ -174,6 +241,14 @@ function InviteWaitlistContent() {
       );
     }
 
+    // Status filter
+    if (selectedStatus !== "all") {
+      list = list.filter((r) => {
+        const st = (r.status || "waitlisted").toLowerCase();
+        return st === selectedStatus;
+      });
+    }
+
     // Sorting
     list.sort((a, b) => {
       if (sortBy === "name") {
@@ -196,16 +271,27 @@ function InviteWaitlistContent() {
     const oneDayMs = 24 * 60 * 60 * 1000;
 
     let todaySignups = 0;
+    let acceptedCount = 0;
+    let waitlistedCount = 0;
+    let rejectedCount = 0;
+
     records.forEach((r) => {
       const time = Number(r.createdAt) || (r.timestamp ? Date.parse(r.timestamp) : 0);
       if (now - time <= oneDayMs) {
         todaySignups++;
       }
+      const st = (r.status || "waitlisted").toLowerCase();
+      if (st === "accepted") acceptedCount++;
+      else if (st === "rejected") rejectedCount++;
+      else waitlistedCount++;
     });
 
     return {
       total,
       todaySignups,
+      acceptedCount,
+      waitlistedCount,
+      rejectedCount,
       uniqueLocationsCount: uniqueLocations.length,
     };
   }, [records, uniqueLocations]);
@@ -372,36 +458,68 @@ function InviteWaitlistContent() {
         </div>
       )}
 
+      {/* ── Status Feedback Alert ─────────────────────────────────────────── */}
+      {statusFeedback && (
+        <div
+          className={`mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-medium animate-in fade-in slide-in-from-top-2 duration-200 ${
+            statusFeedback.type === "success"
+              ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-300"
+              : "bg-rose-950/40 border-rose-500/40 text-rose-300"
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            {statusFeedback.type === "success" ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span className="font-semibold">{statusFeedback.message}</span>
+          </div>
+          <button
+            onClick={() => setStatusFeedback(null)}
+            className="text-gray-400 hover:text-white transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* ── Metrics Cards ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 my-6">
         {/* Total Submissions */}
         <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-4 flex flex-col justify-between hover:border-gray-600 transition-colors">
           <div className="flex items-center justify-between text-xs text-gray-400">
-            <span>Total Waitlist RSVPs</span>
+            <span>Total RSVPs</span>
             <Users className="w-4 h-4 text-blue-400" />
           </div>
           <div className="text-2xl font-bold text-white mt-2">{metrics.total}</div>
           <div className="text-[11px] text-gray-500 mt-1">Live submissions stored in AWS DynamoDB</div>
         </div>
 
-        {/* Today's Registrations */}
-        <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-4 flex flex-col justify-between hover:border-emerald-500/50 transition-colors">
+        {/* Accepted Count */}
+        <div
+          onClick={() => setSelectedStatus("accepted")}
+          className="bg-[#161b22] border border-emerald-500/30 hover:border-emerald-400 rounded-xl p-4 flex flex-col justify-between transition-colors cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs text-emerald-400 font-semibold">
-            <span>Last 24 Hours</span>
-            <Sparkles className="w-4 h-4 text-emerald-400" />
+            <span>Accepted & Invited</span>
+            <UserCheck className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold text-white mt-2">+{metrics.todaySignups}</div>
-          <div className="text-[11px] text-emerald-400/70 mt-1">New registrations in past day</div>
+          <div className="text-2xl font-bold text-white mt-2">{metrics.acceptedCount}</div>
+          <div className="text-[11px] text-emerald-400/70 mt-1">Flip LIVE invitation emails sent</div>
         </div>
 
-        {/* Unique Locations */}
-        <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-4 flex flex-col justify-between hover:border-purple-500/50 transition-colors">
+        {/* Pending / Waitlisted */}
+        <div
+          onClick={() => setSelectedStatus("waitlisted")}
+          className="bg-[#161b22] border border-purple-500/30 hover:border-purple-400 rounded-xl p-4 flex flex-col justify-between transition-colors cursor-pointer"
+        >
           <div className="flex items-center justify-between text-xs text-purple-400 font-semibold">
-            <span>Locations Represented</span>
-            <MapPin className="w-4 h-4 text-purple-400" />
+            <span>Awaiting Review</span>
+            <Clock className="w-4 h-4 text-purple-400" />
           </div>
-          <div className="text-2xl font-bold text-white mt-2">{metrics.uniqueLocationsCount}</div>
-          <div className="text-[11px] text-purple-300/70 mt-1">Distinct cities / states</div>
+          <div className="text-2xl font-bold text-white mt-2">{metrics.waitlistedCount}</div>
+          <div className="text-[11px] text-purple-300/70 mt-1">Pending approval on waitlist</div>
         </div>
 
         {/* Excel Export Quick Card */}
@@ -446,6 +564,21 @@ function InviteWaitlistContent() {
             )}
           </div>
 
+          {/* Status Filter Dropdown */}
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value as any)}
+              className="bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+            >
+              <option value="all">All Statuses ({records.length})</option>
+              <option value="waitlisted">Waitlisted ({metrics.waitlistedCount})</option>
+              <option value="accepted">Accepted ({metrics.acceptedCount})</option>
+              <option value="rejected">Rejected ({metrics.rejectedCount})</option>
+            </select>
+          </div>
+
           {/* Location Dropdown */}
           <div className="flex items-center gap-2">
             <Filter className="w-3.5 h-3.5 text-gray-400 shrink-0" />
@@ -479,13 +612,21 @@ function InviteWaitlistContent() {
         </div>
 
         {/* Active Filter Chips */}
-        {(searchQuery || selectedLocation !== "all") && (
+        {(searchQuery || selectedLocation !== "all" || selectedStatus !== "all") && (
           <div className="flex items-center gap-2 pt-2 border-t border-[#21262d] text-xs text-gray-400">
             <span>Filtering by:</span>
             {searchQuery && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[11px]">
                 Search: "{searchQuery}"
                 <button onClick={() => setSearchQuery("")} className="hover:text-white">
+                  ×
+                </button>
+              </span>
+            )}
+            {selectedStatus !== "all" && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[11px]">
+                Status: {selectedStatus.toUpperCase()}
+                <button onClick={() => setSelectedStatus("all")} className="hover:text-white">
                   ×
                 </button>
               </span>
@@ -502,6 +643,7 @@ function InviteWaitlistContent() {
               onClick={() => {
                 setSearchQuery("");
                 setSelectedLocation("all");
+                setSelectedStatus("all");
               }}
               className="text-xs text-gray-500 hover:text-gray-300 ml-auto underline"
             >
@@ -655,15 +797,79 @@ function InviteWaitlistContent() {
 
                       {/* Status */}
                       <td className="px-4 py-3.5 text-center whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                          <ShieldCheck className="w-3 h-3 text-purple-400" />
-                          {(item.status || "Waitlisted").toUpperCase()}
-                        </span>
+                        {item.status?.toLowerCase() === "accepted" ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                            ACCEPTED
+                          </span>
+                        ) : item.status?.toLowerCase() === "rejected" ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                            <XCircle className="w-3 h-3 text-rose-400" />
+                            REJECTED
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                            <Clock className="w-3 h-3 text-purple-400" />
+                            WAITLISTED
+                          </span>
+                        )}
                       </td>
 
                       {/* Actions */}
                       <td className="px-4 py-3.5 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
+                          {/* Accept Button */}
+                          {item.status?.toLowerCase() === "accepted" ? (
+                            <button
+                              onClick={() => handleStatusAction(item, "accept")}
+                              disabled={processingId === item.id}
+                              className="flex items-center gap-1 px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                              title="User is already accepted. Click to re-send Flip LIVE invitation email."
+                            >
+                              {processingId === item.id && processingAction === "accept" ? (
+                                <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
+                              ) : (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              )}
+                              <span>Accepted</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleStatusAction(item, "accept")}
+                              disabled={processingId === item.id}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold rounded-lg text-xs shadow-sm shadow-emerald-950/40 border border-emerald-400/30 transition cursor-pointer disabled:opacity-50"
+                              title="Accept user and send Flip LIVE invitation email"
+                            >
+                              {processingId === item.id && processingAction === "accept" ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <UserCheck className="w-3.5 h-3.5" />
+                              )}
+                              <span>Accept</span>
+                            </button>
+                          )}
+
+                          {/* Reject Button */}
+                          {item.status?.toLowerCase() === "rejected" ? (
+                            <span className="text-[11px] text-rose-400/70 font-semibold px-2 py-1">
+                              Rejected
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleStatusAction(item, "reject")}
+                              disabled={processingId === item.id}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                              title="Reject user"
+                            >
+                              {processingId === item.id && processingAction === "reject" ? (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <UserX className="w-3.5 h-3.5" />
+                              )}
+                              <span>Reject</span>
+                            </button>
+                          )}
+
                           {/* View details */}
                           <button
                             onClick={() => setSelectedRecord(item)}
@@ -796,24 +1002,73 @@ function InviteWaitlistContent() {
             </div>
 
             {/* Modal Footer */}
-            <div className="flex items-center justify-between px-6 py-4 border-t border-[#21262d] bg-[#0d1117]">
-              <button
-                onClick={() => {
-                  const jsonStr = JSON.stringify(selectedRecord, null, 2);
-                  navigator.clipboard.writeText(jsonStr);
-                  alert("Copied record JSON to clipboard!");
-                }}
-                className="px-3.5 py-1.5 bg-[#21262d] hover:bg-[#30363d] text-gray-300 rounded-lg text-xs transition-colors flex items-center gap-1.5"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>Copy JSON</span>
-              </button>
-              <button
-                onClick={() => setSelectedRecord(null)}
-                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-colors"
-              >
-                Close
-              </button>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-t border-[#21262d] bg-[#0d1117]">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                {/* Accept Button inside modal */}
+                {selectedRecord.status?.toLowerCase() !== "accepted" ? (
+                  <button
+                    onClick={() => handleStatusAction(selectedRecord, "accept")}
+                    disabled={processingId === selectedRecord.id}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-xs transition cursor-pointer disabled:opacity-50"
+                  >
+                    {processingId === selectedRecord.id && processingAction === "accept" ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <UserCheck className="w-3.5 h-3.5" />
+                    )}
+                    <span>Accept &amp; Send Invite</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleStatusAction(selectedRecord, "accept")}
+                    disabled={processingId === selectedRecord.id}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 font-semibold rounded-lg text-xs transition cursor-pointer disabled:opacity-50"
+                  >
+                    {processingId === selectedRecord.id && processingAction === "accept" ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Send className="w-3.5 h-3.5" />
+                    )}
+                    <span>Resend Flip LIVE Invite</span>
+                  </button>
+                )}
+
+                {/* Reject Button inside modal */}
+                {selectedRecord.status?.toLowerCase() !== "rejected" && (
+                  <button
+                    onClick={() => handleStatusAction(selectedRecord, "reject")}
+                    disabled={processingId === selectedRecord.id}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                  >
+                    {processingId === selectedRecord.id && processingAction === "reject" ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <UserX className="w-3.5 h-3.5" />
+                    )}
+                    <span>Reject</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  onClick={() => {
+                    const jsonStr = JSON.stringify(selectedRecord, null, 2);
+                    navigator.clipboard.writeText(jsonStr);
+                    alert("Copied record JSON to clipboard!");
+                  }}
+                  className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] text-gray-300 rounded-lg text-xs transition-colors flex items-center gap-1.5"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy JSON</span>
+                </button>
+                <button
+                  onClick={() => setSelectedRecord(null)}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-colors"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
