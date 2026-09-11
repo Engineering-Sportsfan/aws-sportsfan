@@ -132,7 +132,7 @@ async function scanDynamoFiltered(tableName: string, filterExp: string, expValue
       }
       lastEvaluatedKey = res.LastEvaluatedKey;
     } while (lastEvaluatedKey);
-  } catch {}
+  } catch { }
   return items;
 }
 
@@ -171,7 +171,7 @@ async function batchDeleteDynamoItems(tableName: string, keys: Record<string, an
         }
       } catch {
         // Fallback to single deletes
-        await Promise.all(chunk.map(k => docClient.send(new DeleteCommand({ TableName: tableName, Key: k })).catch(() => {})));
+        await Promise.all(chunk.map(k => docClient.send(new DeleteCommand({ TableName: tableName, Key: k })).catch(() => { })));
         requestItems = null;
       }
     }
@@ -207,7 +207,7 @@ async function queryFirestoreDocRefs(collName: string, fields: string[], targetV
       if (doc.exists) {
         docRefs.set(doc.id, doc.ref);
       }
-    } catch {}
+    } catch { }
   }));
 
   // 2. Query fields
@@ -230,7 +230,7 @@ async function queryFirestoreDocRefs(collName: string, fields: string[], targetV
             snap.docs.forEach(doc => {
               docRefs.set(doc.id, doc.ref);
             });
-          } catch {}
+          } catch { }
         }));
       }
     }));

@@ -50,6 +50,7 @@ interface FlipLinePost {
   channel?: string;
   content: string;
   time?: string;
+  timeMs?: number;
   likes: number;
   comments?: any[];
   image?: string;
@@ -65,6 +66,7 @@ const CHANNELS = [
   { id: "football", label: "Football", emoji: "⚽", desc: "Football fixture takes & live drops" },
   { id: "athletics", label: "Athletics", emoji: "🏃", desc: "Track, field & championship updates" },
   { id: "general", label: "General", emoji: "💬", desc: "Community banter with no sports restriction" },
+  { id: "experts", label: "Experts", emoji: "🌟", desc: "Verified insights, tactical analysis & expert takes" },
 ];
 
 const SUGGESTED_HASHTAGS: Record<string, string[]> = {
@@ -72,13 +74,33 @@ const SUGGESTED_HASHTAGS: Record<string, string[]> = {
   football: ["#Football", "#BlueTigers", "#INDvJPN", "#Chhetri", "#GoalOfTheDay"],
   athletics: ["#Athletics", "#NeerajChopra", "#AsianGames", "#GoldMedal"],
   general: ["#General", "#SportsFan", "#Community", "#WeekendBanter", "#HotTakes"],
+  experts: ["#ExpertsCorner", "#ProAnalysis", "#TacticalBreakdown", "#InsiderTake", "#MatchStrategy"],
 };
 
 export default function FlipLineManagementPage() {
   const [bots, setBots] = useState<BotProfile[]>([]);
   const [selectedBotId, setSelectedBotId] = useState<string>("bot_kabir_sharma");
-  const [selectedChannel, setSelectedChannel] = useState<string>("cricket");
+  const [selectedChannels, setSelectedChannels] = useState<string[]>(["cricket"]);
   const [mediaMode, setMediaMode] = useState<"text" | "text_image" | "image_only" | "video">("text");
+
+  const toggleChannel = (channelId: string) => {
+    setSelectedChannels((prev) => {
+      if (prev.includes(channelId)) {
+        if (prev.length === 1) return prev; // Keep at least one channel selected
+        return prev.filter((id) => id !== channelId);
+      } else {
+        return [...prev, channelId];
+      }
+    });
+  };
+
+  const handleSelectAllChannels = () => {
+    if (selectedChannels.length === CHANNELS.length) {
+      setSelectedChannels([CHANNELS[0].id]);
+    } else {
+      setSelectedChannels(CHANNELS.map((c) => c.id));
+    }
+  };
 
   // Post form state
   const [content, setContent] = useState<string>("");
@@ -209,7 +231,9 @@ export default function FlipLineManagementPage() {
 
       const formData = new FormData();
       formData.append("botId", activeBot.id);
-      formData.append("channel", selectedChannel);
+      formData.append("channel", selectedChannels[0] || "general");
+      formData.append("channels", JSON.stringify(selectedChannels));
+      selectedChannels.forEach((ch) => formData.append("selectedChannels", ch));
       formData.append("content", content.trim());
       formData.append("fomoCount", String(fomoCount));
 
@@ -224,9 +248,12 @@ export default function FlipLineManagementPage() {
 
       const data = await res.json();
       if (data.success) {
+        const channelLabels = selectedChannels
+          .map((ch) => CHANNELS.find((c) => c.id === ch)?.label || ch)
+          .join(", ");
         setStatusMsg({
           type: "success",
-          text: `🎉 Successfully published verified post as ${activeBot.name}!`,
+          text: `🎉 Successfully published verified post to ${selectedChannels.length} channel(s) (${channelLabels}) as ${activeBot.name}!`,
         });
         setContent("");
         clearMedia();
@@ -427,7 +454,7 @@ export default function FlipLineManagementPage() {
             {loadingBots ? (
               <div className="py-4 text-center text-sm text-[#8b949e]">Loading bot profiles...</div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                 {bots.map((bot) => {
                   const isSelected = selectedBotId === bot.id;
                   return (
@@ -435,17 +462,16 @@ export default function FlipLineManagementPage() {
                       key={bot.id}
                       type="button"
                       onClick={() => setSelectedBotId(bot.id)}
-                      className={`relative flex flex-col items-center p-3.5 rounded-xl border text-center transition-all ${
-                        isSelected
+                      className={`relative flex flex-col items-center p-3.5 rounded-xl border text-center transition-all ${isSelected
                           ? "bg-indigo-950/40 border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg shadow-indigo-500/10"
                           : "bg-[#0d1117] border-[#30363d] hover:border-[#8b949e]/50 hover:bg-[#1f242c]"
-                      }`}
+                        }`}
                     >
                       <div className="relative mb-2">
                         <img
                           src={bot.photoUrl}
                           alt={bot.name}
-                          className="w-13 h-13 rounded-full object-cover border-2 border-indigo-400/50 shadow-md"
+                          className="w-13 h-13 rounded-full object-cover border-2 border-indigo-400/50 shadow-md bg-[#161b22]"
                         />
                         <span className="absolute -bottom-1 -right-1 bg-blue-500 text-white rounded-full p-0.5 shadow">
                           <CheckCircle2 className="w-3.5 h-3.5 fill-blue-500 text-white" />
@@ -455,9 +481,15 @@ export default function FlipLineManagementPage() {
                         {bot.name}
                       </div>
                       <div className="text-[11px] text-[#8b949e]">{bot.handle}</div>
-                      <div className="mt-1 text-[10px] text-indigo-400 font-medium px-1.5 py-0.5 bg-indigo-500/10 rounded-md">
-                        {bot.badge || "Verified"}
-                      </div>
+                      {bot.badge ? (
+                        <div className="mt-1 text-[10px] text-indigo-400 font-medium px-1.5 py-0.5 bg-indigo-500/10 rounded-md">
+                          {bot.badge}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-[10px] text-emerald-400 font-medium px-1.5 py-0.5 bg-emerald-500/10 rounded-md">
+                          Official
+                        </div>
+                      )}
                     </button>
                   );
                 })}
@@ -467,24 +499,52 @@ export default function FlipLineManagementPage() {
 
           {/* 2. Channel Selector */}
           <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-5 shadow-xl">
-            <label className="block text-xs font-semibold uppercase tracking-wider text-[#8b949e] mb-3">
-              2. Select Channel (Topic Isolation)
-            </label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#8b949e]">
+                  2. Target Channels (Multi-Select Supported)
+                </label>
+                <p className="text-[11px] text-[#8b949e]">
+                  Choose one or multiple channels. Your post will be published to each selected feed.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAllChannels}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-[#21262d] hover:bg-[#30363d] text-indigo-300 hover:text-indigo-200 border border-[#30363d] font-medium transition-colors cursor-pointer"
+                >
+                  {selectedChannels.length === CHANNELS.length ? "Reset to Cricket" : "Select All Channels"}
+                </button>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-medium">
+                  {selectedChannels.length}/{CHANNELS.length} selected
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               {CHANNELS.map((ch) => {
-                const isSelected = selectedChannel === ch.id;
+                const isSelected = selectedChannels.includes(ch.id);
                 return (
                   <button
                     key={ch.id}
                     type="button"
-                    onClick={() => setSelectedChannel(ch.id)}
-                    className={`p-3 rounded-xl border flex flex-col text-left transition-all ${
-                      isSelected
-                        ? "bg-blue-950/40 border-blue-500 ring-2 ring-blue-500/30 text-white"
+                    onClick={() => toggleChannel(ch.id)}
+                    className={`p-3 rounded-xl border flex flex-col text-left transition-all relative cursor-pointer ${isSelected
+                        ? "bg-blue-950/40 border-blue-500 ring-2 ring-blue-500/30 text-white shadow-md shadow-blue-500/10"
                         : "bg-[#0d1117] border-[#30363d] hover:border-[#8b949e]/50 text-[#8b949e] hover:text-white"
-                    }`}
+                      }`}
                   >
-                    <span className="text-xl mb-1">{ch.emoji}</span>
+                    <div className="flex items-center justify-between w-full mb-1">
+                      <span className="text-xl">{ch.emoji}</span>
+                      <span
+                        className={`w-5 h-5 rounded-md flex items-center justify-center text-xs font-bold border transition-colors ${isSelected
+                            ? "bg-blue-500 border-blue-400 text-white shadow"
+                            : "border-[#30363d] bg-[#21262d] text-transparent"
+                          }`}
+                      >
+                        ✓
+                      </span>
+                    </div>
                     <span className="font-semibold text-sm text-white">{ch.label}</span>
                     <span className="text-[11px] text-[#8b949e] line-clamp-1 mt-0.5">{ch.desc}</span>
                   </button>
@@ -503,11 +563,10 @@ export default function FlipLineManagementPage() {
                 <button
                   type="button"
                   onClick={() => setMediaMode("text")}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                    mediaMode === "text"
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${mediaMode === "text"
                       ? "bg-indigo-600 text-white shadow-md"
                       : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
-                  }`}
+                    }`}
                 >
                   <FileText className="w-3.5 h-3.5" />
                   Text Only
@@ -515,11 +574,10 @@ export default function FlipLineManagementPage() {
                 <button
                   type="button"
                   onClick={() => setMediaMode("text_image")}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                    mediaMode === "text_image"
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${mediaMode === "text_image"
                       ? "bg-indigo-600 text-white shadow-md"
                       : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
-                  }`}
+                    }`}
                 >
                   <ImageIcon className="w-3.5 h-3.5" />
                   Text + Image
@@ -527,11 +585,10 @@ export default function FlipLineManagementPage() {
                 <button
                   type="button"
                   onClick={() => setMediaMode("image_only")}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                    mediaMode === "image_only"
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${mediaMode === "image_only"
                       ? "bg-indigo-600 text-white shadow-md"
                       : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
-                  }`}
+                    }`}
                 >
                   <ImageIcon className="w-3.5 h-3.5" />
                   Image Only
@@ -539,11 +596,10 @@ export default function FlipLineManagementPage() {
                 <button
                   type="button"
                   onClick={() => setMediaMode("video")}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                    mediaMode === "video"
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${mediaMode === "video"
                       ? "bg-indigo-600 text-white shadow-md"
                       : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
-                  }`}
+                    }`}
                 >
                   <Video className="w-3.5 h-3.5" />
                   Video Post
@@ -561,19 +617,19 @@ export default function FlipLineManagementPage() {
                   rows={4}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  placeholder={`Write post on behalf of ${activeBot?.name || "Bot"} in #${selectedChannel}...`}
+                  placeholder={`Write post on behalf of ${activeBot?.name || "Bot"} in #${selectedChannels.join(", #")}...`}
                   className="w-full bg-[#0d1117] border border-[#30363d] focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-3.5 text-sm text-white placeholder-[#8b949e]/60 transition-all outline-none"
                 />
 
                 {/* Hashtag suggestions */}
                 <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
                   <span className="text-[11px] text-[#8b949e]">Suggested tags:</span>
-                  {(SUGGESTED_HASHTAGS[selectedChannel] || []).map((tag) => (
+                  {Array.from(new Set(selectedChannels.flatMap((ch) => SUGGESTED_HASHTAGS[ch] || []))).map((tag) => (
                     <button
                       key={tag}
                       type="button"
                       onClick={() => handleAddHashtag(tag)}
-                      className="text-[11px] bg-[#21262d] hover:bg-indigo-950 hover:text-indigo-300 hover:border-indigo-500/50 border border-[#30363d] text-[#c9d1d9] px-2 py-0.5 rounded-md transition-colors"
+                      className="text-[11px] bg-[#21262d] hover:bg-indigo-950 hover:text-indigo-300 hover:border-indigo-500/50 border border-[#30363d] text-[#c9d1d9] px-2 py-0.5 rounded-md transition-colors cursor-pointer"
                     >
                       {tag}
                     </button>
@@ -630,7 +686,7 @@ export default function FlipLineManagementPage() {
                       Click to upload {mediaMode === "video" ? "MP4/WebM video" : "PNG/JPG image"}
                     </span>
                     <span className="text-[11px] text-[#8b949e] mt-0.5">
-                      Max file size: {mediaMode === "video" ? "100 MB" : "10 MB"}
+                      Formats: {mediaMode === "video" ? "MP4, WebM, MOV video" : "PNG, JPG, WebP image"} (No file size limit)
                     </span>
                   </div>
                 )}
@@ -647,11 +703,10 @@ export default function FlipLineManagementPage() {
             {/* Submit Notification Status */}
             {statusMsg && (
               <div
-                className={`p-3.5 rounded-xl border text-xs font-medium ${
-                  statusMsg.type === "success"
+                className={`p-3.5 rounded-xl border text-xs font-medium ${statusMsg.type === "success"
                     ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
                     : "bg-rose-950/40 border-rose-500/50 text-rose-300"
-                }`}
+                  }`}
               >
                 {statusMsg.text}
               </div>
@@ -666,12 +721,12 @@ export default function FlipLineManagementPage() {
               {isSubmitting ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  Publishing as {activeBot?.name || "Bot"}...
+                  Publishing to {selectedChannels.length} channel{selectedChannels.length > 1 ? "s" : ""} as {activeBot?.name || "Bot"}...
                 </>
               ) : (
                 <>
                   <Send className="w-4 h-4" />
-                  Publish Verified Post as {activeBot?.name || "Bot"}
+                  Publish Verified Post to {selectedChannels.length} Channel{selectedChannels.length > 1 ? "s" : ""} as {activeBot?.name || "Bot"}
                 </>
               )}
             </button>
@@ -717,9 +772,19 @@ export default function FlipLineManagementPage() {
                   </div>
                 </div>
 
-                <div className="text-xs font-semibold px-2 py-1 bg-[#21262d] border border-[#30363d] rounded-lg text-[#c9d1d9] flex items-center gap-1">
-                  <span>{CHANNELS.find((c) => c.id === selectedChannel)?.emoji}</span>
-                  <span className="capitalize">{selectedChannel}</span>
+                <div className="flex flex-wrap items-center gap-1 justify-end max-w-[200px]">
+                  {selectedChannels.map((chId) => {
+                    const chMeta = CHANNELS.find((c) => c.id === chId);
+                    return (
+                      <span
+                        key={chId}
+                        className="text-xs font-semibold px-2 py-0.5 bg-[#21262d] border border-[#30363d] rounded-lg text-[#c9d1d9] flex items-center gap-1"
+                      >
+                        <span>{chMeta?.emoji}</span>
+                        <span className="capitalize">{chMeta?.label || chId}</span>
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -786,10 +851,11 @@ export default function FlipLineManagementPage() {
               className="bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
             >
               <option value="all">All Channels</option>
-              <option value="cricket">🏏 Cricket</option>
-              <option value="football">⚽ Football</option>
-              <option value="athletics">🏃 Athletics</option>
-              <option value="general">💬 General</option>
+              {CHANNELS.map((ch) => (
+                <option key={ch.id} value={ch.id}>
+                  {ch.emoji} {ch.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -896,7 +962,7 @@ export default function FlipLineManagementPage() {
                 <label className="block text-xs font-semibold uppercase tracking-wider text-[#8b949e] mb-2">
                   Select Channel / Sport
                 </label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
                   {CHANNELS.map((ch) => {
                     const isSelected = editChannel === ch.id;
                     return (
@@ -904,11 +970,10 @@ export default function FlipLineManagementPage() {
                         type="button"
                         key={ch.id}
                         onClick={() => setEditChannel(ch.id)}
-                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                          isSelected
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${isSelected
                             ? "bg-indigo-950/40 border-indigo-500 text-white shadow-lg shadow-indigo-500/10"
                             : "bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#8b949e]"
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center gap-1.5 font-bold text-xs">
                           <span>{ch.emoji}</span>
@@ -1053,11 +1118,10 @@ export default function FlipLineManagementPage() {
               {/* Status Message */}
               {editStatusMsg && (
                 <div
-                  className={`p-3 rounded-xl border text-xs font-medium ${
-                    editStatusMsg.type === "success"
+                  className={`p-3 rounded-xl border text-xs font-medium ${editStatusMsg.type === "success"
                       ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
                       : "bg-rose-950/40 border-rose-500/50 text-rose-300"
-                  }`}
+                    }`}
                 >
                   {editStatusMsg.text}
                 </div>

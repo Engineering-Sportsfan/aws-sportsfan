@@ -151,7 +151,7 @@ async function queryFirestoreCollection(collName: string, fields: string[], targ
       if (doc.exists) {
         matchedDocs.set(doc.id, doc.data());
       }
-    } catch {}
+    } catch { }
   }));
 
   // 2. Query fields where value in targetValues (Firestore 'in' supports up to 30 elements)
@@ -175,7 +175,7 @@ async function queryFirestoreCollection(collName: string, fields: string[], targ
             snap.docs.forEach(doc => {
               matchedDocs.set(doc.id, doc.data());
             });
-          } catch {}
+          } catch { }
         }));
       }
     }));

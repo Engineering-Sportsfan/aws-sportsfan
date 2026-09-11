@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { logUserActivity } from "@/lib/logUserActivity";
 import jwt from "jsonwebtoken";
 
 export async function POST(req: NextRequest) {
@@ -41,6 +42,20 @@ export async function POST(req: NextRequest) {
         { error: "Your admin account is disabled." },
         { status: 403 }
       );
+    }
+
+    // Record admin google login activity date-wise
+    try {
+      await logUserActivity({
+        req,
+        email: adminUser.email,
+        userId: adminUser.userId || adminUser.email.replace(/[^a-zA-Z0-9]/g, "_"),
+        userName: `${adminUser.firstName} ${adminUser.lastName}`.trim() || adminUser.email.split("@")[0],
+        action: "login",
+        metadata: { role: adminUser.role ?? "admin", type: "admin", provider: "google" },
+      });
+    } catch (logErr) {
+      console.warn("Admin google login activity logging notice:", logErr);
     }
 
     const token = jwt.sign(

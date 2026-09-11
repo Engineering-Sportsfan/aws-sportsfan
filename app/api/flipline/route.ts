@@ -85,6 +85,7 @@ export interface FlipLineCard {
   isScheduled?: boolean;
   scheduledAt?: number;
   scheduledTimeMs?: number;
+  poll?: any;
 }
 
 const SPORT_META: Record<string, { emoji: string; label: string; defaultScore?: FlipLineScoreChip }> = {
@@ -707,7 +708,7 @@ export async function POST(req: NextRequest) {
     if (pollRaw) {
       try {
         poll = JSON.parse(pollRaw);
-      } catch {}
+      } catch { }
     }
 
     const isScheduledStr = formData.get("isScheduled") as string | null;
@@ -1291,7 +1292,7 @@ export async function PUT(req: NextRequest) {
       if (pollRaw) {
         try {
           poll = JSON.parse(pollRaw);
-        } catch {}
+        } catch { }
       }
 
       const existingImage = formData.get("existingImage") as string | null;
@@ -1421,7 +1422,7 @@ export async function DELETE(req: NextRequest) {
       const body = await req.json();
       if (body.sk) sk = body.sk;
       if (body.roomId) roomId = body.roomId;
-    } catch {}
+    } catch { }
 
     if (!sk) {
       return NextResponse.json({ success: false, error: "Missing 'sk' parameter" }, { status: 400 });
