@@ -127,13 +127,61 @@ export async function GET(
         return NextResponse.json(mappedClub);
       }
 
+      // Fallback 2: Check if it is a Player/Athlete in MS_PLAYERS_TABLE
+      const entityCandidates = [
+        `ATHLETE#${athleteProfileId}`,
+        `PLAYER#${athleteProfileId}`,
+        athleteProfileId,
+      ];
+      let playerProfile = null;
+      let resolvedPlayerEntityId = `PLAYER#${athleteProfileId}`;
+
+      for (const entId of entityCandidates) {
+        try {
+          const pCmd = new GetCommand({
+            TableName: TABLES.MS_Players,
+            Key: { entityId: entId, sk: "PROFILE#META" },
+          });
+          const pRes = await docClient.send(pCmd);
+          if (pRes.Item) {
+            playerProfile = pRes.Item;
+            resolvedPlayerEntityId = entId;
+            break;
+          }
+        } catch {}
+      }
+
+      if (playerProfile) {
+        let playerStats: any[] = [];
+        try {
+          const { QueryCommand } = await import("@aws-sdk/lib-dynamodb");
+          const statsRes = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.MS_Transactions,
+              KeyConditionExpression: "entityId = :entityId AND begins_with(sk, :prefix)",
+              ExpressionAttributeValues: {
+                ":entityId": resolvedPlayerEntityId,
+                ":prefix": "AFFIL#",
+              },
+            })
+          );
+          playerStats = statsRes.Items || [];
+        } catch {}
+
+        const { assemblePlayerDocument } = await import("@/lib/assemblePlayerDocument");
+        return NextResponse.json(
+          assemblePlayerDocument(playerProfile as any, playerStats as any)
+        );
+      }
+
       return NextResponse.json(
         { message: "Profile not found" },
         { status: 404 }
       );
     }
 
-    return NextResponse.json(response.Item);
+    const { assemblePlayerDocument } = await import("@/lib/assemblePlayerDocument");
+    return NextResponse.json(assemblePlayerDocument(response.Item as any, []));
   } catch (error: any) {
     console.error("Error fetching athlete:", error);
 
