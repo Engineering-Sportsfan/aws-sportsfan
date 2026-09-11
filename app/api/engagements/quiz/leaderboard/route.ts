@@ -9,6 +9,7 @@ import {
   PutCommand,
   QueryCommand,
   UpdateCommand,
+  DeleteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
@@ -468,3 +469,127 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+// ─── DELETE /api/engagements/quiz/leaderboard ─────────────────────────────────
+// Deletes all user records in quiz leaderboard from DynamoDB and Firestore
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const quizId = searchParams.get("quizId");
+
+    let deletedCount = 0;
+
+    // 1. Delete Global and Quiz-specific leaderboard records in DynamoDB
+    const partitions = quizId
+      ? [`QUIZ_LEADERBOARD#${quizId}`, "QUIZ_LEADERBOARD#GLOBAL"]
+      : ["QUIZ_LEADERBOARD#GLOBAL"];
+
+    for (const partitionKey of partitions) {
+      try {
+        const queryRes = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.SocialAndContent,
+            KeyConditionExpression: "contentId = :cid",
+            ExpressionAttributeValues: { ":cid": partitionKey },
+          })
+        );
+        if (queryRes.Items) {
+          for (const it of queryRes.Items) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: TABLES.SocialAndContent,
+                Key: { contentId: it.contentId, sk: it.sk },
+              })
+            );
+            deletedCount++;
+          }
+        }
+      } catch (err) {
+        console.warn(`[Delete Leaderboard] Query failed for ${partitionKey}:`, err);
+      }
+    }
+
+    // 2. If global deletion, scan and delete all QUIZ_LEADERBOARD# items
+    if (!quizId) {
+      let lastKey: any = undefined;
+      do {
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: TABLES.SocialAndContent,
+            FilterExpression: "begins_with(contentId, :pfx)",
+            ExpressionAttributeValues: { ":pfx": "QUIZ_LEADERBOARD#" },
+            ExclusiveStartKey: lastKey,
+          })
+        );
+        if (scanRes.Items) {
+          for (const it of scanRes.Items) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: TABLES.SocialAndContent,
+                Key: { contentId: it.contentId, sk: it.sk },
+              })
+            );
+            deletedCount++;
+          }
+        }
+        lastKey = scanRes.LastEvaluatedKey;
+      } while (lastKey);
+
+      // Also delete any quiz votes so past answers don't repopulate the leaderboard
+      let voteKey: any = undefined;
+      do {
+        const voteRes = await docClient.send(
+          new ScanCommand({
+            TableName: TABLES.SocialAndContent,
+            FilterExpression: "begins_with(contentId, :engPfx) AND begins_with(sk, :votePfx)",
+            ExpressionAttributeValues: { ":engPfx": "ENGAGEMENT#", ":votePfx": "VOTE#" },
+            ExclusiveStartKey: voteKey,
+          })
+        );
+        if (voteRes.Items) {
+          for (const v of voteRes.Items) {
+            if (v.type === "quiz" || Number(v.pointsAwarded || 0) > 0) {
+              await docClient.send(
+                new DeleteCommand({
+                  TableName: TABLES.SocialAndContent,
+                  Key: { contentId: v.contentId, sk: v.sk },
+                })
+              );
+              deletedCount++;
+            }
+          }
+        }
+        voteKey = voteRes.LastEvaluatedKey;
+      } while (voteKey);
+    }
+
+    // 3. Delete Firestore quiz_leaderboard collection documents
+    if (db) {
+      try {
+        const collections = [getFirestoreCollection("quiz_leaderboard"), "quiz_leaderboard"];
+        const seenCol = new Set<string>();
+        for (const col of collections) {
+          if (seenCol.has(col)) continue;
+          seenCol.add(col);
+          const snap = await db.collection(col).get();
+          for (const doc of snap.docs) {
+            await doc.ref.delete();
+          }
+        }
+      } catch (fbErr) {
+        console.warn("[Delete Leaderboard] Firestore delete notice:", fbErr);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Successfully deleted all user records from quiz leaderboard in DynamoDB and Firestore",
+      deletedCount,
+    });
+  } catch (error: unknown) {
+    console.error("DELETE /api/engagements/quiz/leaderboard error:", error);
+    const msg = error instanceof Error ? error.message : "Failed to delete leaderboard records";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+

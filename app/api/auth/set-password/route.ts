@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { dualWrite } from "@/lib/dualWrite";
 import bcrypt from "bcryptjs";
 import { GetCommand, QueryCommand, UpdateCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
     try {
       const otpRes = await docClient.send(
         new GetCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId: `OTP#${cleanEmail}`, sk: "OTP#ACTIVE" },
         })
       );
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
     try {
       const emailQuery = await docClient.send(
         new QueryCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           IndexName: "email-index",
           KeyConditionExpression: "email = :e",
           ExpressionAttributeValues: { ":e": cleanEmail },
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest) {
       try {
         const directGet = await docClient.send(
           new GetCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" },
           })
         );
@@ -146,7 +147,7 @@ export async function POST(req: NextRequest) {
     try {
       await docClient.send(
         new DeleteCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId: `OTP#${cleanEmail}`, sk: "OTP#ACTIVE" },
         })
       );

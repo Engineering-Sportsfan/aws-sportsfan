@@ -483,3 +483,212 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }
+
+// ─── PUT / PATCH: Update an Existing FlipLong Video ──────────────────────────
+export async function PUT(req: NextRequest) {
+  try {
+    const contentType = req.headers.get("content-type") || "";
+
+    let id: string | undefined;
+    let title: string | undefined;
+    let description: string | string[] | undefined;
+    let author: string | undefined;
+    let userId: string | undefined;
+    let email: string | undefined;
+    let authorPhoto: string | undefined;
+    let sport: string | undefined;
+    let isScheduled: boolean | undefined;
+    let scheduledAt: number | undefined;
+    let day: string | undefined;
+    let time: string | undefined;
+    let timeMs: number | undefined;
+    let customDuration: string | undefined;
+
+    let mediaResult: UploadedMediaResult | null = null;
+    let videoUrl: string | undefined;
+    let thumbnailUrl: string | undefined;
+
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await req.formData();
+      id = (formData.get("id") as string) || (formData.get("videoId") as string) || undefined;
+      title = (formData.get("title") as string) || undefined;
+
+      const descRaw = formData.get("description") as string | null;
+      if (descRaw !== null) {
+        try {
+          description = JSON.parse(descRaw);
+        } catch {
+          description = descRaw;
+        }
+      }
+
+      author = (formData.get("author") as string) || undefined;
+      userId = (formData.get("userId") as string) || undefined;
+      email = (formData.get("email") as string) || undefined;
+      authorPhoto = (formData.get("authorPhoto") as string) || undefined;
+      sport = (formData.get("sport") as string) || undefined;
+
+      const isScheduledStr = formData.get("isScheduled") as string | null;
+      if (isScheduledStr !== null) {
+        isScheduled = isScheduledStr === "true";
+      }
+
+      const scheduledAtStr =
+        (formData.get("scheduledAt") as string | null) ||
+        (formData.get("scheduledTimeMs") as string | null);
+      if (scheduledAtStr) scheduledAt = Number(scheduledAtStr);
+
+      day = (formData.get("day") as string) || undefined;
+      time = (formData.get("time") as string) || undefined;
+      const timeMsStr = formData.get("timeMs") as string | null;
+      if (timeMsStr) timeMs = Number(timeMsStr);
+
+      customDuration = (formData.get("duration") as string | null) || undefined;
+      videoUrl = (formData.get("videoUrl") as string | null) || (formData.get("url") as string | null) || undefined;
+      thumbnailUrl = (formData.get("thumbnailUrl") as string | null) || undefined;
+
+      const file = (formData.get("file") as File | null) || (formData.get("video") as File | null);
+      if (file && file.size > 0) {
+        mediaResult = await uploadVideoFile(file, title);
+      }
+    } else {
+      const body = await req.json();
+      id = body.id || body.videoId;
+      title = body.title;
+      description = body.description;
+      author = body.author;
+      userId = body.userId;
+      email = body.email;
+      authorPhoto = body.authorPhoto;
+      sport = body.sport;
+      customDuration = body.duration;
+      videoUrl = body.videoUrl || body.url || body.mediaUrl;
+      thumbnailUrl = body.thumbnailUrl;
+      if (body.isScheduled !== undefined) {
+        isScheduled = body.isScheduled === true || body.isScheduled === "true";
+      }
+      if (body.scheduledAt || body.scheduledTimeMs) {
+        scheduledAt = Number(body.scheduledAt || body.scheduledTimeMs);
+      }
+      day = body.day;
+      time = body.time;
+      if (body.timeMs) timeMs = Number(body.timeMs);
+    }
+
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Video ID is required for update" }, { status: 400 });
+    }
+
+    const cleanId = id.replace(/^(VIDEO|FLIPLONG)#/, "").trim();
+
+    // 1. Fetch existing item from DynamoDB
+    let existingItem: any = null;
+    let existingSk: string | null = null;
+
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: TABLES.RealTimeChat,
+          KeyConditionExpression: "roomId = :r AND begins_with(sk, :skPrefix)",
+          ExpressionAttributeValues: {
+            ":r": ROOM_ID,
+            ":skPrefix": "VIDEO#",
+          },
+        })
+      );
+
+      if (qRes.Items && qRes.Items.length > 0) {
+        for (const it of qRes.Items) {
+          if (it.id === cleanId || it.videoId === cleanId || (it.sk as string)?.includes(cleanId)) {
+            existingItem = it;
+            existingSk = it.sk;
+            break;
+          }
+        }
+      }
+    } catch (dynErr) {
+      console.warn("DynamoDB flipLong update fetch notice:", dynErr);
+    }
+
+    // Fallback to Firestore if needed
+    if (!existingItem && db) {
+      try {
+        const docSnap = await db.collection(getFirestoreCollection("flipLongVideos")).doc(cleanId).get();
+        if (docSnap.exists) {
+          existingItem = { id: docSnap.id, ...docSnap.data() };
+        }
+      } catch (fbErr) {
+        console.warn("Firestore flipLong update fetch notice:", fbErr);
+      }
+    }
+
+    if (!existingItem) {
+      return NextResponse.json({ success: false, error: "Video not found" }, { status: 404 });
+    }
+
+    const now = Date.now();
+    const finalUrl = mediaResult?.url || videoUrl || existingItem.url || existingItem.videoUrl || "";
+    const finalThumbnail = mediaResult?.thumbnailUrl || thumbnailUrl || existingItem.thumbnailUrl || "";
+    const finalDuration = customDuration || mediaResult?.duration || existingItem.duration || "0:00";
+    const finalDurationSeconds = mediaResult?.durationSeconds || existingItem.durationSeconds || 0;
+
+    const resolvedScheduledAt = scheduledAt !== undefined ? scheduledAt : existingItem.scheduledAt;
+    const resolvedIsScheduled = isScheduled !== undefined ? isScheduled : existingItem.isScheduled;
+
+    const updatedVideo = {
+      ...existingItem,
+      id: cleanId,
+      videoId: cleanId,
+      title: title !== undefined ? title.trim() : existingItem.title,
+      description:
+        description !== undefined
+          ? typeof description === "string"
+            ? description.trim()
+            : description
+          : existingItem.description,
+      url: finalUrl,
+      mediaUrl: finalUrl,
+      videoUrl: finalUrl,
+      thumbnailUrl: finalThumbnail,
+      duration: finalDuration,
+      durationSeconds: finalDurationSeconds,
+      format: mediaResult?.format || existingItem.format || "mp4",
+      sport: sport !== undefined ? sport.toLowerCase() : existingItem.sport || "general",
+      author: author !== undefined ? author.trim() : existingItem.author,
+      authorPhoto: authorPhoto !== undefined ? authorPhoto : existingItem.authorPhoto,
+      userId: userId !== undefined ? userId : existingItem.userId,
+      email: email !== undefined ? email : existingItem.email,
+      isScheduled: resolvedIsScheduled,
+      ...(resolvedScheduledAt ? { scheduledAt: resolvedScheduledAt, scheduledTimeMs: resolvedScheduledAt } : {}),
+      ...(day !== undefined ? { day } : existingItem.day ? { day: existingItem.day } : {}),
+      ...(time !== undefined ? { time } : existingItem.time ? { time: existingItem.time } : {}),
+      timeMs: timeMs !== undefined ? timeMs : existingItem.timeMs || now,
+      updatedAt: now,
+    };
+
+    const targetSk = existingSk || existingItem.sk || `VIDEO#${existingItem.createdAt || now}#${cleanId}`;
+
+    const dynamoItem = {
+      roomId: ROOM_ID,
+      sk: targetSk,
+      entityId: `FLIPLONG#${cleanId}`,
+      contentId: `VIDEO#${cleanId}`,
+      ...updatedVideo,
+    };
+
+    await dualWrite("flipLongVideos", cleanId, TABLES.RealTimeChat, dynamoItem);
+
+    return NextResponse.json({
+      success: true,
+      message: "FlipLONG video updated successfully",
+      video: updatedVideo,
+    });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "Unexpected error updating FlipLONG video";
+    console.error("Error updating FlipLONG video:", error);
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
+export const PATCH = PUT;
+
