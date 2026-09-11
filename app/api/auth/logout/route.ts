@@ -1,6 +1,7 @@
 // app/api/auth/logout/route.ts — Robust Logout & User Activity Logging
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
+import { auth } from "@/lib/auth.config";
 import { logUserActivity } from "@/lib/logUserActivity";
 import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
@@ -32,7 +33,20 @@ async function resolveUserFromRequest(req: NextRequest): Promise<{
       userName = body.userName || body.name || body.user?.name || "";
       if (body.role) role = body.role;
     }
-  } catch {}
+  } catch { }
+
+  // 1.5. Check NextAuth active session
+  if (!email) {
+    try {
+      const session = await auth();
+      if (session?.user?.email) {
+        email = session.user.email;
+        if (!userName) userName = session.user.name || "";
+        if (!userId) userId = (session.user as any).userId || email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
+        if ((session.user as any).role) role = (session.user as any).role;
+      }
+    } catch { }
+  }
 
   // 2. Check Query Parameters (for GET/POST)
   if (!email || !userId) {
@@ -63,17 +77,19 @@ async function resolveUserFromRequest(req: NextRequest): Promise<{
     try {
       const decoded: any = jwt.decode(token);
       if (decoded && typeof decoded === "object") {
-        if (!email && decoded.email) email = decoded.email;
-        if (!userId && (decoded.userId || decoded.id || decoded.sub)) {
-          userId = decoded.userId || decoded.id || decoded.sub;
-        }
-        if (!userName && (decoded.name || decoded.userName)) {
-          userName = decoded.name || decoded.userName;
-        }
-        if (decoded.role) role = decoded.role;
+        const decodedEmail = decoded.email || decoded.dbUser?.email || decoded.user?.email;
+        if (!email && decodedEmail) email = decodedEmail;
+
+        const decodedUserId = decoded.userId || decoded.dbUser?.userId || decoded.user?.id || decoded.id || decoded.sub;
+        if (!userId && decodedUserId) userId = decodedUserId;
+
+        const decodedName = decoded.name || decoded.userName || (decoded.dbUser?.firstName ? `${decoded.dbUser.firstName} ${decoded.dbUser.lastName || ""}`.trim() : (decoded.user?.name || ""));
+        if (!userName && decodedName) userName = decodedName;
+
+        if (decoded.role || decoded.dbUser?.role) role = decoded.role || decoded.dbUser?.role;
         if (email && userId) break;
       }
-    } catch {}
+    } catch { }
   }
 
   // 5. If we have userId but no email, lookup in DynamoDB / Firestore
@@ -91,7 +107,7 @@ async function resolveUserFromRequest(req: NextRequest): Promise<{
         if (!userName) userName = uRes.Item.name || `${uRes.Item.firstName || ""} ${uRes.Item.lastName || ""}`.trim();
         if (uRes.Item.role) role = uRes.Item.role;
       }
-    } catch {}
+    } catch { }
 
     if (!email) {
       try {
@@ -100,7 +116,7 @@ async function resolveUserFromRequest(req: NextRequest): Promise<{
           email = uDoc.data()?.email;
           if (!userName) userName = uDoc.data()?.name || "";
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -152,6 +168,11 @@ async function handleLogout(req: NextRequest) {
     success: true,
     message: "Logged out successfully",
   });
+
+  // Explicitly prevent browser & CDN caching of any state
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
 
   const cookiesToClear = [
     "token",

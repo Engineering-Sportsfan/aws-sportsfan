@@ -105,10 +105,11 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { logUserActivity } from "@/lib/logUserActivity";
 
 // Helper for consistent user ID
 function generateConsistentUserId(email: string): string {
-    return email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
+  return email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
 }
 
 console.log("RUNTIME CHECK - GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID ? "PRESENT" : "MISSING")
@@ -117,7 +118,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
   providers: [
     GoogleProvider({
-      clientId:     process.env.GOOGLE_CLIENT_ID!,
+      clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
   ],
@@ -190,19 +191,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
           await dualWrite("users", cleanEmail, "IdentityAndAccess", dynamoUserItem);
           console.log(`[DynamoDB Auth] ⚡ SUCCESS: NextAuth Google created new user in DynamoDB -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
+
+          // Log signup activity date-wise
+          try {
+            await logUserActivity({
+              email: cleanEmail,
+              userId: consistentUserId,
+              userName: `${firstName} ${lastName}`.trim() || cleanEmail.split("@")[0],
+              action: "signup",
+              metadata: { provider: "google", authMethod: "oauth" },
+            });
+          } catch (logErr) {
+            console.warn("Failed to log google signup activity:", logErr);
+          }
         } else {
           if (existingData.status === "disabled") return false;
-          
+
           // Update existing user
           const updateData: Record<string, unknown> = {
             lastLoginAt: Date.now(),
             updatedAt: Date.now(),
           };
-          
+
           if (existingData.userId && existingData.userId.startsWith("google_")) {
             updateData.userId = consistentUserId;
           }
-          
+
           // Add Google as auth provider if not already
           const authProviders = existingData.authProviders || {};
           if (!authProviders.google) {
@@ -211,7 +225,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               google: true
             };
           }
-          
+
           const updatedDynamoUser = {
             ...existingData,
             ...updateData
@@ -219,6 +233,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
           await dualWrite("users", cleanEmail, "IdentityAndAccess", updatedDynamoUser);
           console.log(`[DynamoDB Auth] ⚡ SUCCESS: NextAuth Google linked & updated existing user in DynamoDB -> entityId: [USER#${cleanEmail}]`);
+
+          // Log login activity date-wise
+          try {
+            await logUserActivity({
+              email: cleanEmail,
+              userId: existingData.userId || consistentUserId,
+              userName: `${existingData.firstName || firstName || ""} ${existingData.lastName || lastName || ""}`.trim() || cleanEmail.split("@")[0],
+              action: "login",
+              metadata: { provider: "google", authMethod: "oauth" },
+            });
+          } catch (logErr) {
+            console.warn("Failed to log google login activity:", logErr);
+          }
         }
         return true;
       } catch (error) {
@@ -258,15 +285,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
 
           if (exists && data) {
-            token.role   = data.role   ?? "user";
+            token.role = data.role ?? "user";
             token.status = data.status ?? "active";
             token.dbUser = {
-              email:     data.email,
+              email: data.email,
               firstName: data.firstName,
-              lastName:  data.lastName,
-              role:      data.role   ?? "user",
-              status:    data.status ?? "active",
-              userId:    data.userId,
+              lastName: data.lastName,
+              role: data.role ?? "user",
+              status: data.status ?? "active",
+              userId: data.userId,
             };
           }
         } catch (error) {
@@ -287,9 +314,34 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
 
+  events: {
+    async signOut(message: any) {
+      try {
+        const token = message?.token;
+        const session = message?.session;
+        const email = token?.email || token?.dbUser?.email || session?.user?.email;
+        const userId = token?.userId || token?.dbUser?.userId || (email ? email.replace(/[^a-zA-Z0-9]/g, "_") : "");
+        const userName = token?.name || token?.dbUser?.firstName || session?.user?.name || (email ? email.split("@")[0] : "User");
+
+        if (email) {
+          await logUserActivity({
+            email,
+            userId,
+            userName,
+            action: "logout",
+            metadata: { provider: "nextauth_event" },
+          });
+          console.log(`[NextAuth Event] 🚪 SUCCESS: Logged signOut event for [${email}]`);
+        }
+      } catch (err) {
+        console.warn("NextAuth signOut event logging error:", err);
+      }
+    },
+  },
+
   pages: {
     signIn: "/admin/login",
-    error:  "/admin/login",
+    error: "/admin/login",
   },
 
   session: { strategy: "jwt" },

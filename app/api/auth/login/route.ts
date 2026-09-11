@@ -192,6 +192,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
@@ -236,7 +237,7 @@ export async function POST(req: NextRequest) {
     try {
       const emailQuery = await docClient.send(
         new QueryCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           IndexName: "email-index",
           KeyConditionExpression: "email = :e",
           ExpressionAttributeValues: { ":e": cleanEmail },
@@ -258,7 +259,7 @@ export async function POST(req: NextRequest) {
     try {
       const directGet = await docClient.send(
         new GetCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" },
         })
       );
@@ -378,7 +379,7 @@ export async function POST(req: NextRequest) {
     try {
       await docClient.send(
         new UpdateCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: {
             entityId: (user.entityId as string) || `USER#${cleanEmail}`,
             sk: (user.sk as string) || "USER#META",
