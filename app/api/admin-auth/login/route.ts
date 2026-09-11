@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
+import { logUserActivity } from "@/lib/logUserActivity";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -25,7 +27,7 @@ export async function POST(req: NextRequest) {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId: `ADMIN#${email.toLowerCase()}`, sk: "ADMIN#META" },
         })
       );
@@ -67,6 +69,20 @@ export async function POST(req: NextRequest) {
     }
 
     const requiresPasswordChange = adminUser.isFirstLogin === true;
+
+    // Record admin login activity date-wise
+    try {
+      await logUserActivity({
+        req,
+        email: adminUser.email,
+        userId: adminUser.userId || adminUser.email.replace(/[^a-zA-Z0-9]/g, "_"),
+        userName: `${adminUser.firstName} ${adminUser.lastName}`.trim() || adminUser.email.split("@")[0],
+        action: "login",
+        metadata: { role: adminUser.role ?? "admin", type: "admin" },
+      });
+    } catch (logErr) {
+      console.warn("Admin login activity logging notice:", logErr);
+    }
 
     const token = jwt.sign(
       {

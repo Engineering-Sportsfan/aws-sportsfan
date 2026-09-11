@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { GetCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { VerifyOtpRequest } from "@/types/auth";
 import { logAuthIssue } from "@/lib/logAuthIssue";
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
     try {
       const otpRes = await docClient.send(
         new GetCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: {
             entityId: `OTP#${cleanEmail}`,
             sk: "OTP#ACTIVE",
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
       try {
         await docClient.send(
           new DeleteCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `OTP#${cleanEmail}`, sk: "OTP#ACTIVE" },
           })
         );
@@ -110,7 +111,7 @@ export async function POST(req: NextRequest) {
     try {
       await docClient.send(
         new UpdateCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: {
             entityId: `OTP#${cleanEmail}`,
             sk: "OTP#ACTIVE",
@@ -144,7 +145,7 @@ export async function POST(req: NextRequest) {
     try {
       await docClient.send(
         new UpdateCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: {
             entityId: `USER#${cleanEmail}`,
             sk: "USER#META",

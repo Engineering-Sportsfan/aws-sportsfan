@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import cloudinary from "@/lib/cloudinary";
-import { PutCommand, QueryCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand, UpdateCommand, GetCommand, DeleteCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +85,7 @@ export interface FlipLineCard {
   isScheduled?: boolean;
   scheduledAt?: number;
   scheduledTimeMs?: number;
+  poll?: any;
 }
 
 const SPORT_META: Record<string, { emoji: string; label: string; defaultScore?: FlipLineScoreChip }> = {
@@ -414,11 +415,15 @@ const uploadToCloudinary = (
   });
 };
 
-// ─── GET: Fetch FlipLine Cards (Supports channel/sport filtering) ─────────────
+// ─── GET: Fetch FlipLine Cards (Supports channel/sport and scheduledOnly filtering) ─────────────
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const channelParam = (searchParams.get("channel") || searchParams.get("sport") || "").trim().toLowerCase();
+    const scheduledOnly = searchParams.get("scheduledOnly") === "true";
+    const userParam = (searchParams.get("userId") || searchParams.get("user") || "").trim().toLowerCase();
+    const emailParam = (searchParams.get("email") || searchParams.get("userEmail") || "").trim().toLowerCase();
+    const authorParam = (searchParams.get("author") || "").trim().toLowerCase();
 
     const res = await docClient.send(
       new QueryCommand({
@@ -429,13 +434,13 @@ export async function GET(req: NextRequest) {
           ":skPrefix": "CARD#",
         },
         ScanIndexForward: false,
-        Limit: 50,
+        Limit: scheduledOnly ? 200 : 50,
       })
     );
 
     let cards = (res.Items as FlipLineCard[]) || [];
 
-    if (cards.length === 0) {
+    if (cards.length === 0 && !scheduledOnly) {
       console.log("FlipLine cards empty in DynamoDB, auto-seeding default cards...");
       const putPromises = SEED_CARDS.map(async (card) => {
         const item = {
@@ -467,6 +472,52 @@ export async function GET(req: NextRequest) {
       likedBy: Array.isArray(card.likedBy) ? card.likedBy : [],
     }));
 
+    const now = Date.now();
+
+    // If fetching user's pending scheduled posts only:
+    if (scheduledOnly) {
+      const scheduledPosts = cards.filter((card) => {
+        const scheduledTime = Number(card.scheduledAt) || Number(card.scheduledTimeMs);
+        const isScheduledPost =
+          card.isScheduled === true ||
+          String(card.isScheduled) === "true" ||
+          (scheduledTime && scheduledTime > now);
+
+        if (!isScheduledPost || !scheduledTime || scheduledTime <= now) {
+          return false; // Not a future scheduled post
+        }
+
+        // Filter by user ownership if user param provided
+        if (userParam || emailParam || authorParam) {
+          const cardUserId = (card.userId || "").toLowerCase();
+          const cardEmail = (card.email || "").toLowerCase();
+          const cardAuthor = (card.author || "").toLowerCase();
+          const cardHandle = (card.handle || "").toLowerCase();
+
+          const matchesUser =
+            (userParam && (cardUserId === userParam || cardAuthor === userParam || cardEmail === userParam)) ||
+            (emailParam && (cardEmail === emailParam || cardUserId === emailParam)) ||
+            (authorParam && (cardAuthor === authorParam || cardHandle.includes(authorParam)));
+
+          if (!matchesUser) return false;
+        }
+
+        return true;
+      });
+
+      // Sort scheduled posts by publish time ascending (soonest first)
+      scheduledPosts.sort((a, b) => {
+        const aTime = Number(a.scheduledAt || a.scheduledTimeMs || a.timeMs || 0);
+        const bTime = Number(b.scheduledAt || b.scheduledTimeMs || b.timeMs || 0);
+        return aTime - bTime;
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: scheduledPosts,
+      });
+    }
+
     // Filter by channel/sport if specified and not 'all'
     if (channelParam && channelParam !== "all") {
       cards = cards.filter((card) => {
@@ -477,7 +528,6 @@ export async function GET(req: NextRequest) {
     }
 
     // Filter out posts scheduled for a future time (not yet arrived)
-    const now = Date.now();
     cards = cards.filter((card) => {
       const scheduledTime = Number(card.scheduledAt) || Number(card.scheduledTimeMs);
       if (card.isScheduled || (scheduledTime && scheduledTime > 0)) {
@@ -618,10 +668,15 @@ export async function POST(req: NextRequest) {
     let imageUrl = "";
     let videoUrl = "";
 
-    for (const file of mediaFiles) {
-      if (!file || file.size === 0) continue;
+    const existingImage = formData.get("existingImage") as string | null;
+    const existingVideo = formData.get("existingVideo") as string | null;
+    if (existingImage) imageUrl = existingImage;
+    if (existingVideo) videoUrl = existingVideo;
 
-      const isVideo = file.type.startsWith("video/");
+    for (const file of mediaFiles) {
+      if (!file || typeof file !== "object" || !file.size || file.size === 0) continue;
+
+      const isVideo = file.type?.startsWith("video/") || /\.(mp4|mov|webm|m4v|mkv|avi)$/i.test(file.name);
 
       if (isVideo && file.size > 4.5 * 1024 * 1024) {
         return NextResponse.json(
@@ -646,6 +701,14 @@ export async function POST(req: NextRequest) {
       } else {
         imageUrl = uploadRes.secure_url;
       }
+    }
+
+    const pollRaw = formData.get("poll") as string | null;
+    let poll: any = undefined;
+    if (pollRaw) {
+      try {
+        poll = JSON.parse(pollRaw);
+      } catch { }
     }
 
     const isScheduledStr = formData.get("isScheduled") as string | null;
@@ -686,6 +749,7 @@ export async function POST(req: NextRequest) {
       comments: [],
       isKey,
       tags,
+      ...(poll ? { poll } : {}),
 
       scoreChip:
         sport === "general"
@@ -1096,5 +1160,288 @@ async function handleFlipLineAction(body: any) {
     });
   }
 
+  // 9. Delete an entire Post / Card
+  if (action === "delete_post" || action === "delete_card") {
+    const roomId = body.roomId || "FLIPLINE#ALL";
+    await docClient.send(
+      new DeleteCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId, sk },
+      })
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: "Post deleted successfully",
+      sk,
+    });
+  }
+
+  // 10. Update an existing Post / Card
+  if (action === "update_post" || action === "edit_post") {
+    const roomId = body.roomId || "FLIPLINE#ALL";
+    const { content, sport, isScheduled, scheduledAt, day, time, timeMs, poll, image, videoUrl } = body;
+
+    const cardRes = await docClient.send(
+      new GetCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId, sk },
+      })
+    );
+    const existingCard = cardRes.Item as FlipLineCard | undefined;
+    if (!existingCard) {
+      return NextResponse.json({ success: false, error: "Post not found" }, { status: 404 });
+    }
+
+    const updatedCard: FlipLineCard = {
+      ...existingCard,
+      content: content !== undefined ? content.trim() : existingCard.content,
+      sport: sport || existingCard.sport,
+      channel: sport || existingCard.channel,
+      tags: typeof content === "string" ? content.match(/#[a-zA-Z0-9_]+/g) || [] : existingCard.tags,
+    };
+
+    if (sport && SPORT_META[sport.toLowerCase()]) {
+      const meta = SPORT_META[sport.toLowerCase()];
+      updatedCard.sportEmoji = meta.emoji;
+      updatedCard.sportLabel = meta.label;
+    }
+
+    if (isScheduled !== undefined) {
+      const isSched = isScheduled === true || String(isScheduled) === "true";
+      updatedCard.isScheduled = isSched;
+      const schedTime = scheduledAt ? Number(scheduledAt) : (body.scheduledTimeMs ? Number(body.scheduledTimeMs) : undefined);
+      if (isSched && schedTime) {
+        updatedCard.scheduledAt = schedTime;
+        updatedCard.scheduledTimeMs = schedTime;
+        updatedCard.timeMs = schedTime;
+        if (day) updatedCard.day = day;
+        if (time) updatedCard.time = time;
+      } else if (!isSched) {
+        updatedCard.scheduledAt = undefined;
+        updatedCard.scheduledTimeMs = undefined;
+        if (timeMs) updatedCard.timeMs = Number(timeMs);
+        if (day) updatedCard.day = day;
+        if (time) updatedCard.time = time;
+      }
+    }
+
+    if (poll) updatedCard.poll = poll;
+    if (image) {
+      updatedCard.image = image;
+      updatedCard.hasAttachedImage = true;
+      updatedCard.mediaType = "image";
+    }
+    if (videoUrl) {
+      updatedCard.videoUrl = videoUrl;
+      updatedCard.hasAttachedVideo = true;
+      updatedCard.mediaType = "video";
+    }
+
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLES.RealTimeChat,
+        Item: updatedCard,
+      })
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: "Post updated successfully",
+      data: updatedCard,
+    });
+  }
+
   return NextResponse.json({ success: false, error: `Unsupported action: '${action}'` }, { status: 400 });
+}
+
+// ─── PUT: Update FlipLine Post ───────────────────────────────────────────────
+export async function PUT(req: NextRequest) {
+  try {
+    const contentType = req.headers.get("content-type") || "";
+    let sk = "";
+    let roomId = "FLIPLINE#ALL";
+    let content: string | undefined;
+    let sport: string | undefined;
+    let isScheduled: boolean | undefined;
+    let scheduledAt: number | undefined;
+    let day: string | undefined;
+    let time: string | undefined;
+    let timeMs: number | undefined;
+    let poll: any;
+    let newImageUrl: string | undefined;
+    let newVideoUrl: string | undefined;
+
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await req.formData();
+      sk = (formData.get("sk") as string) || "";
+      roomId = (formData.get("roomId") as string) || "FLIPLINE#ALL";
+      content = (formData.get("content") as string) || undefined;
+      sport = (formData.get("sport") as string) || undefined;
+      const isSchedStr = formData.get("isScheduled") as string | null;
+      if (isSchedStr !== null) isScheduled = isSchedStr === "true";
+      const schedAtStr =
+        (formData.get("scheduledAt") as string | null) ||
+        (formData.get("scheduledTimeMs") as string | null);
+      if (schedAtStr) scheduledAt = Number(schedAtStr);
+      day = (formData.get("day") as string) || undefined;
+      time = (formData.get("time") as string) || undefined;
+      const timeMsStr = formData.get("timeMs") as string | null;
+      if (timeMsStr) timeMs = Number(timeMsStr);
+      const pollRaw = formData.get("poll") as string | null;
+      if (pollRaw) {
+        try {
+          poll = JSON.parse(pollRaw);
+        } catch { }
+      }
+
+      const existingImage = formData.get("existingImage") as string | null;
+      const existingVideo = formData.get("existingVideo") as string | null;
+      if (existingImage) newImageUrl = existingImage;
+      if (existingVideo) newVideoUrl = existingVideo;
+
+      const mediaFiles = formData.getAll("media") as File[];
+      for (const file of mediaFiles) {
+        if (file && typeof file === "object" && file.size > 0) {
+          const isVideo =
+            file.type?.startsWith("video/") || /\.(mp4|mov|webm|m4v|mkv|avi)$/i.test(file.name);
+          const isImage =
+            file.type?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(file.name);
+          const bytes = await file.arrayBuffer();
+          const buffer = Buffer.from(bytes);
+          const uploadRes = await uploadToCloudinary(
+            buffer,
+            isVideo ? "video" : "image"
+          );
+          if (isVideo) {
+            newVideoUrl = uploadRes.secure_url;
+          } else if (isImage) {
+            newImageUrl = uploadRes.secure_url;
+          }
+        }
+      }
+    } else {
+      const body = await req.json();
+      sk = body.sk || "";
+      roomId = body.roomId || "FLIPLINE#ALL";
+      content = body.content;
+      sport = body.sport;
+      if (body.isScheduled !== undefined) isScheduled = body.isScheduled === true || body.isScheduled === "true";
+      if (body.scheduledAt) scheduledAt = Number(body.scheduledAt);
+      day = body.day;
+      time = body.time;
+      if (body.timeMs) timeMs = Number(body.timeMs);
+      poll = body.poll;
+      newImageUrl = body.image;
+      newVideoUrl = body.videoUrl;
+    }
+
+    if (!sk) {
+      return NextResponse.json({ success: false, error: "Missing 'sk' parameter" }, { status: 400 });
+    }
+
+    const cardRes = await docClient.send(
+      new GetCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId, sk },
+      })
+    );
+    const existingCard = cardRes.Item as FlipLineCard | undefined;
+    if (!existingCard) {
+      return NextResponse.json({ success: false, error: "Post not found" }, { status: 404 });
+    }
+
+    const updatedCard: FlipLineCard = {
+      ...existingCard,
+      content: content !== undefined ? content.trim() : existingCard.content,
+      sport: sport || existingCard.sport,
+      channel: sport || existingCard.channel,
+      tags: typeof content === "string" ? content.match(/#[a-zA-Z0-9_]+/g) || [] : existingCard.tags,
+    };
+
+    if (sport && SPORT_META[sport.toLowerCase()]) {
+      const meta = SPORT_META[sport.toLowerCase()];
+      updatedCard.sportEmoji = meta.emoji;
+      updatedCard.sportLabel = meta.label;
+    }
+
+    if (isScheduled !== undefined) {
+      updatedCard.isScheduled = isScheduled;
+      if (isScheduled && scheduledAt) {
+        updatedCard.scheduledAt = scheduledAt;
+        updatedCard.scheduledTimeMs = scheduledAt;
+        updatedCard.timeMs = scheduledAt;
+        if (day) updatedCard.day = day;
+        if (time) updatedCard.time = time;
+      } else if (!isScheduled) {
+        updatedCard.scheduledAt = undefined;
+        updatedCard.scheduledTimeMs = undefined;
+        if (timeMs) updatedCard.timeMs = timeMs;
+        if (day) updatedCard.day = day;
+        if (time) updatedCard.time = time;
+      }
+    }
+
+    if (poll) {
+      updatedCard.poll = poll;
+    }
+
+    if (newImageUrl) {
+      updatedCard.image = newImageUrl;
+      updatedCard.hasAttachedImage = true;
+      updatedCard.mediaType = "image";
+    }
+    if (newVideoUrl) {
+      updatedCard.videoUrl = newVideoUrl;
+      updatedCard.hasAttachedVideo = true;
+      updatedCard.mediaType = "video";
+    }
+
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLES.RealTimeChat,
+        Item: updatedCard,
+      })
+    );
+
+    return NextResponse.json({ success: true, message: "Post updated successfully", data: updatedCard });
+  } catch (error) {
+    console.error("Failed to update FlipLine post:", error);
+    return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
+  }
+}
+
+// ─── DELETE: Delete FlipLine Post ───────────────────────────────────────────
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    let sk = searchParams.get("sk") || "";
+    let roomId = searchParams.get("roomId") || "FLIPLINE#ALL";
+
+    try {
+      const body = await req.json();
+      if (body.sk) sk = body.sk;
+      if (body.roomId) roomId = body.roomId;
+    } catch { }
+
+    if (!sk) {
+      return NextResponse.json({ success: false, error: "Missing 'sk' parameter" }, { status: 400 });
+    }
+
+    await docClient.send(
+      new DeleteCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId, sk },
+      })
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: "Post deleted successfully",
+      sk,
+    });
+  } catch (error) {
+    console.error("Failed to delete FlipLine post:", error);
+    return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
+  }
 }

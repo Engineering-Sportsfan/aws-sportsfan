@@ -283,6 +283,61 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       } catch {}
     }
 
+    // Enrich or fallback with SportsData table (for medalData, consistencyData, etc.)
+    for (const entId of entityCandidates) {
+      try {
+        const sdRes = await ddb.send(
+          new GetCommand({
+            TableName: TABLES.SportsData,
+            Key: { entityId: entId, sk: "PROFILE#META" },
+          })
+        );
+        if (sdRes.Item) {
+          if (!profileItem) {
+            profileItem = sdRes.Item;
+            resolvedEntityId = entId;
+          } else {
+            profileItem = {
+              ...sdRes.Item,
+              ...profileItem,
+              medalData: sdRes.Item.medalData ?? profileItem.medalData,
+              consistencyData: sdRes.Item.consistencyData ?? profileItem.consistencyData,
+              seasonalData: sdRes.Item.seasonalData ?? profileItem.seasonalData,
+              record_highlight: sdRes.Item.record_highlight ?? profileItem.record_highlight,
+              analytics: {
+                ...(sdRes.Item.analytics || {}),
+                ...(profileItem.analytics || {}),
+                medalData: sdRes.Item.medalData ?? sdRes.Item.analytics?.medalData ?? profileItem.analytics?.medalData,
+                consistencyData: sdRes.Item.consistencyData ?? sdRes.Item.analytics?.consistencyData ?? profileItem.analytics?.consistencyData,
+                seasonalData: sdRes.Item.seasonalData ?? sdRes.Item.analytics?.seasonalData ?? profileItem.analytics?.seasonalData,
+              },
+            };
+          }
+          break;
+        }
+      } catch {}
+
+      if (!profileItem) {
+        try {
+          const qRes = await ddb.send(
+            new QueryCommand({
+              TableName: TABLES.SportsData,
+              KeyConditionExpression: "entityId = :entityId AND begins_with(sk, :skPrefix)",
+              ExpressionAttributeValues: {
+                ":entityId": entId,
+                ":skPrefix": "PROFILE#META",
+              },
+            })
+          );
+          if (qRes.Items && qRes.Items.length > 0) {
+            profileItem = qRes.Items[0];
+            resolvedEntityId = entId;
+            break;
+          }
+        } catch {}
+      }
+    }
+
     if (!profileItem) {
       return NextResponse.json({ error: "Player not found" }, { status: 404 });
     }

@@ -548,7 +548,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
-import { useSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 
 const plexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["300", "400", "500", "600"] });
 const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"] });
@@ -602,9 +602,24 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Invite Waitlist", icon: "📨", badge: "RSVP", badgeBg: "#8b5cf6",
+        children: [
+          { href: "/admin/invite-waitlist", label: "Waitlist Registrations" },
+        ],
+      },
+      {
         label: "Points & Rewards", icon: "🪙",
         children: [
           { href: "/admin/points-management", label: "Points & Rules Config" },
+        ],
+      },
+      {
+        label: "Master Profiles", icon: "🏆", badge: "NEW", badgeBg: "#2ea043",
+        children: [
+          { href: "/admin/master-profiles", label: "Profiles Hub (All)" },
+          { href: "/admin/master-profiles?type=athlete", label: "Athletes Directory" },
+          { href: "/admin/master-profiles?type=player", label: "Players Directory" },
+          { href: "/admin/master-profiles?type=team", label: "Teams Directory" },
         ],
       },
     ],
@@ -651,6 +666,12 @@ const FULL_NAV: NavGroup[] = [
         children: [
           { href: "/admin/flipline-management", label: "⚡ Bot Post Creator" },
           { href: "/admin/fliplineAdminManagement/list", label: "FlipLine Admins" },
+        ],
+      },
+      {
+        label: "FlipLONG Videos", icon: "🎬", badge: "VIDEOS", badgeBg: "#e11d48",
+        children: [
+          { href: "/admin/fliplong-management", label: "FlipLONG Video Hub" },
         ],
       },
       {
@@ -932,6 +953,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const toggleMenu = (label: string) =>
     setOpenMenus(p => ({ ...p, [label]: !p[label] }));
+
+  const handleLogout = async () => {
+    try {
+      const email = session?.user?.email || "";
+      const name = session?.user?.name || "";
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name }),
+      }).catch(() => {});
+      await fetch("/api/admin-auth/logout", { method: "POST" }).catch(() => {});
+      await signOut({ redirect: false }).catch(() => {});
+    } catch (e) {
+      console.warn("Logout error:", e);
+    } finally {
+      window.location.href = "/admin";
+    }
+  };
 
   // Fetch pending auth issues count
   const fetchAuthIssuesCount = async () => {
@@ -1286,6 +1325,56 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           🔒 Restricted Access - Limited Modules
         </div>
       )}
+
+      {/* Sidebar Footer with Logged In User & Logout */}
+      <div style={{
+        padding: "10px 14px",
+        borderTop: "1px solid #21282f",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "#161b22",
+        flexShrink: 0,
+        gap: 8,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden", flex: 1 }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: "50%",
+            background: "linear-gradient(135deg, #1f6feb, #388bfd)",
+            display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0
+          }}>
+            {(session?.user?.name || session?.user?.email || "AD").slice(0, 2).toUpperCase()}
+          </div>
+          <div style={{ overflow: "hidden", lineHeight: 1.2 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#e6edf3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {session?.user?.name || "Admin"}
+            </div>
+            <div style={{ fontSize: 10, color: "#7d8590", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {session?.user?.email || "Online"}
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={handleLogout}
+          title="Log out of console"
+          style={{
+            background: "rgba(218, 54, 51, 0.15)",
+            border: "1px solid rgba(218, 54, 51, 0.4)",
+            color: "#f85149",
+            borderRadius: 6,
+            padding: "4px 8px",
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            flexShrink: 0,
+          }}
+        >
+          <span>🚪</span> Logout
+        </button>
+      </div>
     </>
   );
 
@@ -1459,12 +1548,36 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <div style={{ position: "absolute", top: 2, right: 2, background: "#f85149", color: "#fff", fontSize: 9, fontWeight: 600, width: 14, height: 14, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>8</div>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
-                  background: "linear-gradient(135deg,#1f6feb,#388bfd)",
-                  display: "grid", placeItems: "center", fontSize: 12, fontWeight: 600, color: "#fff"
-                }}>AD</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div
+                  title={session?.user?.email || "Admin"}
+                  style={{
+                    width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+                    background: "linear-gradient(135deg,#1f6feb,#388bfd)",
+                    display: "grid", placeItems: "center", fontSize: 12, fontWeight: 600, color: "#fff"
+                  }}
+                >
+                  {(session?.user?.name || session?.user?.email || "AD").slice(0, 2).toUpperCase()}
+                </div>
+                <button
+                  onClick={handleLogout}
+                  title="Sign out of account"
+                  style={{
+                    background: "rgba(218, 54, 51, 0.12)",
+                    border: "1px solid rgba(218, 54, 51, 0.35)",
+                    color: "#f85149",
+                    borderRadius: 6,
+                    padding: "4px 10px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <span>🚪</span> Logout
+                </button>
               </div>
             </div>
           </div>

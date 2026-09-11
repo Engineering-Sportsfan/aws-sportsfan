@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { dualWrite } from "@/lib/dualWrite";
 import { logUserActivity } from "@/lib/logUserActivity";
 import jwt from "jsonwebtoken";
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     try {
       const emailQuery = await docClient.send(
         new QueryCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           IndexName: "email-index",
           KeyConditionExpression: "email = :e",
           ExpressionAttributeValues: { ":e": cleanEmail },
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
       try {
         const directGet = await docClient.send(
           new GetCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" },
           })
         );
@@ -139,7 +140,7 @@ export async function POST(req: NextRequest) {
       try {
         await docClient.send(
           new UpdateCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: {
               entityId: (existingUser.entityId as string) || `USER#${cleanEmail}`,
               sk: (existingUser.sk as string) || "USER#META",

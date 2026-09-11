@@ -142,6 +142,20 @@ function formatDateAndTime(now: Date): { date: string; time: string } {
   return { date: dateStr, time: timeStr };
 }
 
+// Deduplication cache: prevents duplicate activity logs triggered within 4 seconds
+// (e.g. NextAuth double-invoking signIn callback during OAuth redirect handshake, or React StrictMode re-renders)
+const recentActivityMap = new Map<string, { timestamp: number; record: UserActivityRecord }>();
+
+function pruneRecentActivityMap(currentTimestamp: number) {
+  if (recentActivityMap.size > 200) {
+    for (const [k, v] of recentActivityMap.entries()) {
+      if (currentTimestamp - v.timestamp > 30000) {
+        recentActivityMap.delete(k);
+      }
+    }
+  }
+}
+
 /**
  * Logs a user activity (Login, Logout, Signup) date-wise in DynamoDB & Firestore.
  * Every single login creates an individual record with exact timestamp, IP, and location.
@@ -165,6 +179,15 @@ export async function logUserActivity({
 
   const now = new Date();
   const timestamp = now.getTime();
+  const cacheKey = `${cleanEmail}_${action.toUpperCase()}`;
+
+  // ── Deduplication: Skip identical action for the same user within 4 seconds ──
+  const recent = recentActivityMap.get(cacheKey);
+  if (recent && (timestamp - recent.timestamp < 4000)) {
+    console.log(`[User Activity] ⏳ Dedup: Ignored duplicate ${action.toUpperCase()} for [${cleanEmail}] within 4s (${timestamp - recent.timestamp}ms difference)`);
+    return recent.record;
+  }
+
   const { date, time } = formatDateAndTime(now);
 
   const ip = providedIp || extractIp(req);
@@ -194,6 +217,10 @@ export async function logUserActivity({
     metadata,
     createdAt: timestamp,
   };
+
+  // Cache to prevent duplicate double-invocations in next 4s
+  recentActivityMap.set(cacheKey, { timestamp, record });
+  pruneRecentActivityMap(timestamp);
 
   // 1. Store in DynamoDB IdentityAndAccess
   try {
