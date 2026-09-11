@@ -221,14 +221,17 @@ export default function CricketArticleViewPage({
             <div className="space-y-3.5">
               {article.description && Array.isArray(article.description) && article.description.length > 0 ? (
                 article.description.map((para, idx) => (
-                  <p key={idx} className="text-sm text-[#c9d1d9] leading-relaxed bg-[#0d1117]/50 p-3 rounded-lg border border-[#21262d]/50">
-                    {para}
-                  </p>
+                  <div
+                    key={idx}
+                    className="text-sm text-[#c9d1d9] leading-relaxed bg-[#0d1117]/50 p-3.5 rounded-lg border border-[#21262d]/50 [&_strong]:font-bold [&_strong]:text-white [&_em]:italic [&_em]:text-gray-300 [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-white [&_h2]:text-base [&_h2]:font-bold [&_h2]:text-white [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-white [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_blockquote]:border-l-2 [&_blockquote]:border-blue-500 [&_blockquote]:pl-3 [&_blockquote]:italic [&_a]:text-blue-400 [&_a]:underline"
+                    dangerouslySetInnerHTML={{ __html: para }}
+                  />
                 ))
               ) : typeof article.description === "string" && article.description ? (
-                <p className="text-sm text-[#c9d1d9] leading-relaxed bg-[#0d1117]/50 p-3 rounded-lg border border-[#21262d]/50">
-                  {article.description}
-                </p>
+                <div
+                  className="text-sm text-[#c9d1d9] leading-relaxed bg-[#0d1117]/50 p-3.5 rounded-lg border border-[#21262d]/50 [&_strong]:font-bold [&_strong]:text-white [&_em]:italic [&_em]:text-gray-300 [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-white [&_h2]:text-base [&_h2]:font-bold [&_h2]:text-white [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-white [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_blockquote]:border-l-2 [&_blockquote]:border-blue-500 [&_blockquote]:pl-3 [&_blockquote]:italic [&_a]:text-blue-400 [&_a]:underline"
+                  dangerouslySetInnerHTML={{ __html: article.description }}
+                />
               ) : (
                 <p className="text-sm text-[#7d8590] italic">No description content provided.</p>
               )}

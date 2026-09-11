@@ -1,9 +1,36 @@
 "use client";
 
 import axios from "axios";
+import dynamicImport from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Plus, Trash2, GripVertical, Image as ImageIcon, ArrowLeft, Check, Film, X } from "lucide-react";
+
+const RichTextEditor = dynamicImport(
+  () => import("./Richtexteditor").then((mod) => mod.RichTextEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-36 bg-[#161b22] border border-gray-700/80 rounded-xl p-4 animate-pulse flex items-center justify-center text-gray-500 text-xs">
+        Loading CKEditor...
+      </div>
+    ),
+  }
+);
+
+const isParagraphEmpty = (html: string) => {
+  if (!html || !html.trim()) return true;
+  if (
+    html.includes("<img") ||
+    html.includes("<iframe") ||
+    html.includes("<table") ||
+    html.includes("<figure")
+  ) {
+    return false;
+  }
+  const plain = html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+  return plain.length === 0;
+};
 
 type BadgeType = "FEATURE" | "ANALYSIS" | "OPINION" | "NEWS";
 
@@ -167,7 +194,7 @@ export default function CricketArticleForm({
     }
 
     const nonEmptyDescriptions = form.description.filter(
-      (p) => p.trim() !== ""
+      (p) => !isParagraphEmpty(p)
     );
 
     if (nonEmptyDescriptions.length === 0) {
@@ -257,7 +284,7 @@ export default function CricketArticleForm({
         existingImage.toLowerCase().includes("/video/"));
 
   // Count non-empty paragraphs
-  const nonEmptyCount = form.description.filter((p) => p.trim() !== "").length;
+  const nonEmptyCount = form.description.filter((p) => !isParagraphEmpty(p)).length;
 
   if (fetchingArticle) {
     return (
@@ -475,12 +502,11 @@ export default function CricketArticleForm({
                   </div>
                 </div>
 
-                <textarea
+                <RichTextEditor
                   value={paragraph}
-                  onChange={(e) => handleDescriptionChange(index, e.target.value)}
+                  onChange={(val) => handleDescriptionChange(index, val)}
                   placeholder={`Write or paste content for paragraph ${index + 1}...`}
-                  rows={4}
-                  className="w-full bg-[#161b22] border border-gray-700 rounded-lg p-3 text-white placeholder:text-gray-500 text-sm focus:outline-none focus:border-blue-500 leading-relaxed resize-y"
+                  minHeight={150}
                 />
               </div>
             ))}
