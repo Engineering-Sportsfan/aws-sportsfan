@@ -1,10 +1,13 @@
 function resolveEnv(): string {
   const explicit = (process.env.APP_ENV || process.env.NEXT_PUBLIC_APP_ENV || "").toLowerCase().trim();
-  if (explicit && explicit !== "prod" && explicit !== "production") {
-    return explicit;
-  }
-  if (explicit === "prod" || explicit === "production") {
+  if (explicit === "prod" || explicit === "production" || explicit === "main") {
     return "prod";
+  }
+  if (explicit === "develop") {
+    return "dev";
+  }
+  if (explicit) {
+    return explicit;
   }
 
   // AWS Amplify automatic branch environment detection

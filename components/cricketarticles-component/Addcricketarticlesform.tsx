@@ -12,7 +12,7 @@ const RichTextEditor = dynamicImport(
     ssr: false,
     loading: () => (
       <div className="w-full h-36 bg-[#161b22] border border-gray-700/80 rounded-xl p-4 animate-pulse flex items-center justify-center text-gray-500 text-xs">
-        Loading CKEditor...
+        Loading Editor...
       </div>
     ),
   }
