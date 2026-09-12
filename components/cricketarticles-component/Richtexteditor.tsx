@@ -102,7 +102,7 @@ export function RichTextEditor({
       localStorage.setItem(draftKey.current, localValue || "");
       setSaveStatus("Saved");
       setTimeout(() => setSaveStatus(null), 2000);
-    } catch {}
+    } catch { }
   }, [localValue]);
 
   const restoreDraft = useCallback(() => {
@@ -118,7 +118,7 @@ export function RichTextEditor({
         setSaveStatus("Restored");
         setTimeout(() => setSaveStatus(null), 2000);
       }
-    } catch {}
+    } catch { }
   }, [onChange]);
 
   const executeCommand = useCallback((commandName: string, options?: { value?: string }) => {
