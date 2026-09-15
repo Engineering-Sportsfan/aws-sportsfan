@@ -23,6 +23,11 @@ import {
   CheckSquare,
   Square,
   Sparkles,
+  Plus,
+  Code2,
+  Sliders,
+  Activity,
+  Info,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -95,8 +100,10 @@ function MasterProfilesContent() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Edit form fields
+  // Edit modal tabs and fields
+  const [editModalTab, setEditModalTab] = useState<"general" | "details" | "custom" | "raw">("general");
   const [editForm, setEditForm] = useState({
+    // Core info
     name: "",
     sport: "",
     country: "",
@@ -105,6 +112,28 @@ function MasterProfilesContent() {
     about: "",
     isVerified: false,
     fanImpactScore: 0,
+    // Player / Athlete fields
+    role: "",
+    battingStyle: "",
+    bowlingStyle: "",
+    format: "",
+    gender: "",
+    jerseyNumber: "",
+    isCaptain: false,
+    dateOfBirth: "",
+    birthPlace: "",
+    heightCm: "",
+    testCaps: "",
+    // Team fields
+    shortName: "",
+    homeGround: "",
+    coach: "",
+    captain: "",
+    founded: "",
+    // Dynamic custom fields (Key-Value)
+    customFields: [] as Array<{ key: string; value: string }>,
+    // Raw JSON string
+    rawJsonText: "",
   });
 
   useEffect(() => {
@@ -471,6 +500,101 @@ function MasterProfilesContent() {
   // Open Edit Modal
   const openEditModal = (p: MasterProfile) => {
     setEditProfile(p);
+    setEditModalTab(p.type === "team" ? "details" : "general");
+
+    const raw = p.raw || {};
+    const stats = p.stats || {};
+    const overview = p.overview || {};
+
+    // Standard recognized keys to avoid duplicating into custom fields
+    const knownKeys = new Set([
+      "id",
+      "playerId",
+      "athleteId",
+      "team_id",
+      "entityId",
+      "sk",
+      "type",
+      "source",
+      "tableOrCollection",
+      "name",
+      "fullName",
+      "sport",
+      "sportId",
+      "country",
+      "team",
+      "clubName",
+      "teamName",
+      "currentClubId",
+      "image",
+      "profileImage",
+      "logoUrl",
+      "teamPhotoUrl",
+      "about",
+      "bio",
+      "welcomeMessage",
+      "isVerified",
+      "fanImpactScore",
+      "role",
+      "battingStyle",
+      "bowlingStyle",
+      "format",
+      "gender",
+      "jerseyNumber",
+      "jersey",
+      "isCaptain",
+      "dateOfBirth",
+      "dob",
+      "birthPlace",
+      "heightCm",
+      "height",
+      "testCaps",
+      "caps",
+      "shortName",
+      "homeGround",
+      "coach",
+      "headCoach",
+      "captain",
+      "founded",
+      "stats",
+      "overview",
+      "raw",
+      "createdAt",
+      "updatedAt",
+      "pk",
+      "GSI1PK",
+      "GSI1SK",
+    ]);
+
+    const extractedCustom: Array<{ key: string; value: string }> = [];
+
+    // Extract from stats
+    for (const [k, v] of Object.entries(stats)) {
+      if (!knownKeys.has(k) && v !== undefined && v !== null && typeof v !== "object") {
+        extractedCustom.push({ key: k, value: String(v) });
+      }
+    }
+    // Extract from overview
+    for (const [k, v] of Object.entries(overview)) {
+      if (!knownKeys.has(k) && v !== undefined && v !== null && typeof v !== "object" && !extractedCustom.some((c) => c.key === k)) {
+        extractedCustom.push({ key: k, value: String(v) });
+      }
+    }
+    // Extract from raw
+    for (const [k, v] of Object.entries(raw)) {
+      if (!knownKeys.has(k) && v !== undefined && v !== null && typeof v !== "object" && !extractedCustom.some((c) => c.key === k)) {
+        extractedCustom.push({ key: k, value: String(v) });
+      }
+    }
+
+    // Full JSON payload representation for raw editor
+    const completeObject = {
+      ...raw,
+      ...p,
+      stats: { ...(p.stats || {}) },
+      overview: { ...(p.overview || {}) },
+    };
+
     setEditForm({
       name: p.name || "",
       sport: p.sport || "",
@@ -480,6 +604,24 @@ function MasterProfilesContent() {
       about: p.about || "",
       isVerified: Boolean(p.isVerified),
       fanImpactScore: p.fanImpactScore || 0,
+      role: stats.role || raw.role || "",
+      battingStyle: stats.battingStyle || raw.battingStyle || "",
+      bowlingStyle: stats.bowlingStyle || raw.bowlingStyle || "",
+      format: stats.format || raw.format || "",
+      gender: stats.gender || raw.gender || "",
+      jerseyNumber: stats.jerseyNumber || raw.jerseyNumber || raw.jersey || "",
+      isCaptain: Boolean(stats.isCaptain || raw.isCaptain),
+      dateOfBirth: stats.dateOfBirth || raw.dateOfBirth || raw.dob || "",
+      birthPlace: stats.birthPlace || raw.birthPlace || "",
+      heightCm: stats.heightCm || raw.heightCm || raw.height || "",
+      testCaps: stats.testCaps || raw.testCaps || raw.caps || "",
+      shortName: stats.shortName || raw.shortName || "",
+      homeGround: stats.homeGround || raw.homeGround || "",
+      coach: stats.headCoach || stats.coach || raw.headCoach || raw.coach || "",
+      captain: stats.captain || raw.captain || "",
+      founded: stats.founded || raw.founded || "",
+      customFields: extractedCustom,
+      rawJsonText: JSON.stringify(completeObject, null, 2),
     });
   };
 
@@ -488,18 +630,90 @@ function MasterProfilesContent() {
     if (!editProfile) return;
     try {
       setSavingEdit(true);
-      const payload = {
-        id: editProfile.id,
-        originalId: editProfile.originalId,
-        entityId: editProfile.entityId,
-        sk: editProfile.sk,
-        type: editProfile.type,
-        source: editProfile.source,
-        tableOrCollection: editProfile.tableOrCollection,
-        ...editForm,
-        stats: editProfile.stats,
-        overview: editProfile.overview,
-      };
+
+      let payload: any;
+
+      if (editModalTab === "raw") {
+        // Parse from Raw JSON tab
+        try {
+          const parsed = JSON.parse(editForm.rawJsonText);
+          payload = {
+            id: editProfile.id,
+            originalId: editProfile.originalId,
+            entityId: editProfile.entityId,
+            sk: editProfile.sk,
+            type: editProfile.type,
+            source: editProfile.source,
+            tableOrCollection: editProfile.tableOrCollection,
+            ...parsed,
+          };
+        } catch (jsonErr: any) {
+          alert("Invalid JSON format: " + jsonErr.message);
+          setSavingEdit(false);
+          return;
+        }
+      } else {
+        // Build payload from structured tabs
+        const filteredCustom = editForm.customFields.filter(
+          (cf) => cf.key && cf.key.trim().length > 0
+        );
+
+        payload = {
+          id: editProfile.id,
+          originalId: editProfile.originalId,
+          entityId: editProfile.entityId,
+          sk: editProfile.sk,
+          type: editProfile.type,
+          source: editProfile.source,
+          tableOrCollection: editProfile.tableOrCollection,
+          name: editForm.name,
+          sport: editForm.sport,
+          country: editForm.country,
+          team: editForm.team,
+          image: editForm.image,
+          about: editForm.about,
+          isVerified: editForm.isVerified,
+          fanImpactScore: Number(editForm.fanImpactScore) || 0,
+          role: editForm.role,
+          battingStyle: editForm.battingStyle,
+          bowlingStyle: editForm.bowlingStyle,
+          format: editForm.format,
+          gender: editForm.gender,
+          jerseyNumber: editForm.jerseyNumber,
+          isCaptain: editForm.isCaptain,
+          dateOfBirth: editForm.dateOfBirth,
+          birthPlace: editForm.birthPlace,
+          heightCm: editForm.heightCm,
+          testCaps: editForm.testCaps,
+          shortName: editForm.shortName,
+          homeGround: editForm.homeGround,
+          coach: editForm.coach,
+          captain: editForm.captain,
+          founded: editForm.founded,
+          customFields: filteredCustom,
+          stats: {
+            ...(editProfile.stats || {}),
+            role: editForm.role,
+            battingStyle: editForm.battingStyle,
+            bowlingStyle: editForm.bowlingStyle,
+            format: editForm.format,
+            gender: editForm.gender,
+            jerseyNumber: editForm.jerseyNumber,
+            isCaptain: editForm.isCaptain,
+            dateOfBirth: editForm.dateOfBirth,
+            birthPlace: editForm.birthPlace,
+            heightCm: editForm.heightCm,
+            testCaps: editForm.testCaps,
+            shortName: editForm.shortName,
+            homeGround: editForm.homeGround,
+            headCoach: editForm.coach,
+            coach: editForm.coach,
+            captain: editForm.captain,
+            founded: editForm.founded,
+          },
+          overview: editProfile.overview,
+        };
+      }
 
       const res = await axios.put("/api/admin/master-profiles", payload);
       if (res.data.success) {
@@ -1260,112 +1474,509 @@ function MasterProfilesContent() {
 
       {/* ── MODAL: Edit Profile ────────────────────────────────────────────── */}
       {editProfile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-[#161b22] border border-[#30363d] rounded-2xl w-full max-w-xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="bg-[#161b22] border border-[#30363d] rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in duration-150">
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[#21262d]">
-              <div className="flex items-center gap-2">
-                <Pencil className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-base font-bold text-white">Edit Profile: {editProfile.name}</h3>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#21262d] bg-[#0d1117]">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                  <Pencil className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white truncate max-w-sm sm:max-w-md">
+                      Edit Profile: {editProfile.name}
+                    </h3>
+                    {getTypeBadge(editProfile.type)}
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-gray-400 mt-0.5 font-mono">
+                    <span>ID: {editProfile.id}</span>
+                    <span>•</span>
+                    <span className="text-emerald-400">{editProfile.tableOrCollection}</span>
+                  </div>
+                </div>
               </div>
               <button
                 onClick={() => setEditProfile(null)}
-                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-gray-800"
+                className="text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-gray-800 transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Modal Form */}
-            <div className="p-6 overflow-y-auto space-y-4 text-xs">
-              <div>
-                <label className="block text-gray-400 mb-1 font-semibold">Name *</label>
-                <input
-                  type="text"
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                  required
-                />
-              </div>
+            {/* Modal Navigation Tabs */}
+            <div className="flex border-b border-[#21262d] bg-[#12161d] px-6 gap-2 pt-2 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setEditModalTab("general")}
+                className={`flex items-center gap-1.5 pb-2.5 px-3 border-b-2 transition-colors ${
+                  editModalTab === "general"
+                    ? "border-emerald-500 text-emerald-400 font-semibold"
+                    : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                General Info
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditModalTab("details")}
+                className={`flex items-center gap-1.5 pb-2.5 px-3 border-b-2 transition-colors ${
+                  editModalTab === "details"
+                    ? "border-emerald-500 text-emerald-400 font-semibold"
+                    : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5" />
+                {editProfile.type === "team" ? "Team Specs" : "Player Specs"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditModalTab("custom")}
+                className={`flex items-center gap-1.5 pb-2.5 px-3 border-b-2 transition-colors ${
+                  editModalTab === "custom"
+                    ? "border-emerald-500 text-emerald-400 font-semibold"
+                    : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Custom Fields ({editForm.customFields.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditModalTab("raw")}
+                className={`flex items-center gap-1.5 pb-2.5 px-3 border-b-2 transition-colors ${
+                  editModalTab === "raw"
+                    ? "border-emerald-500 text-emerald-400 font-semibold"
+                    : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <Code2 className="w-3.5 h-3.5" />
+                Raw JSON
+              </button>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-gray-400 mb-1 font-semibold">Sport</label>
-                  <input
-                    type="text"
-                    value={editForm.sport}
-                    onChange={(e) => setEditForm({ ...editForm, sport: e.target.value })}
-                    className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-400 mb-1 font-semibold">Country</label>
-                  <input
-                    type="text"
-                    value={editForm.country}
-                    onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
-                    className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-gray-400 mb-1 font-semibold">Team / Club Affiliation</label>
-                <input
-                  type="text"
-                  value={editForm.team}
-                  onChange={(e) => setEditForm({ ...editForm, team: e.target.value })}
-                  className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-400 mb-1 font-semibold">Image / Avatar URL</label>
-                <input
-                  type="text"
-                  value={editForm.image}
-                  onChange={(e) => setEditForm({ ...editForm, image: e.target.value })}
-                  className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                  placeholder="https://..."
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-400 mb-1 font-semibold">Bio / About</label>
-                <textarea
-                  rows={3}
-                  value={editForm.about}
-                  onChange={(e) => setEditForm({ ...editForm, about: e.target.value })}
-                  className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                  placeholder="Profile description..."
-                />
-              </div>
-
-              {editProfile.type === "athlete" && (
-                <div className="grid grid-cols-2 gap-3 pt-2">
+            {/* Modal Form Body */}
+            <div className="p-6 overflow-y-auto space-y-4 text-xs flex-1">
+              {/* TAB 1: General Info */}
+              {editModalTab === "general" && (
+                <div className="space-y-4">
                   <div>
-                    <label className="block text-gray-400 mb-1 font-semibold">Fan Impact Score</label>
+                    <label className="block text-gray-400 mb-1 font-semibold">Full Name *</label>
                     <input
-                      type="number"
-                      value={editForm.fanImpactScore}
-                      onChange={(e) =>
-                        setEditForm({ ...editForm, fanImpactScore: Number(e.target.value) })
-                      }
-                      className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                      type="text"
+                      value={editForm.name}
+                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                      required
                     />
                   </div>
-                  <div className="flex items-center gap-2 pt-6">
-                    <input
-                      type="checkbox"
-                      id="verified"
-                      checked={editForm.isVerified}
-                      onChange={(e) => setEditForm({ ...editForm, isVerified: e.target.checked })}
-                      className="rounded bg-gray-900 border-gray-600 text-blue-600"
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-semibold">Sport</label>
+                      <input
+                        type="text"
+                        value={editForm.sport}
+                        onChange={(e) => setEditForm({ ...editForm, sport: e.target.value })}
+                        className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                        placeholder="e.g. Cricket, Football"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-semibold">Country / Nationality</label>
+                      <input
+                        type="text"
+                        value={editForm.country}
+                        onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
+                        className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                        placeholder="e.g. India, Australia"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-semibold">
+                        Team / Club Affiliation
+                      </label>
+                      <input
+                        type="text"
+                        value={editForm.team}
+                        onChange={(e) => setEditForm({ ...editForm, team: e.target.value })}
+                        className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                        placeholder="e.g. Royal Challengers Bengaluru"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-semibold">
+                        Image / Avatar URL
+                      </label>
+                      <input
+                        type="text"
+                        value={editForm.image}
+                        onChange={(e) => setEditForm({ ...editForm, image: e.target.value })}
+                        className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                        placeholder="https://..."
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-gray-400 mb-1 font-semibold">Bio / About</label>
+                    <textarea
+                      rows={3}
+                      value={editForm.about}
+                      onChange={(e) => setEditForm({ ...editForm, about: e.target.value })}
+                      className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                      placeholder="Brief description or athlete biography..."
                     />
-                    <label htmlFor="verified" className="text-gray-300 font-semibold cursor-pointer">
-                      Verified Athlete
-                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <div>
+                      <label className="block text-gray-400 mb-1 font-semibold">Fan Impact Score</label>
+                      <input
+                        type="number"
+                        value={editForm.fanImpactScore}
+                        onChange={(e) =>
+                          setEditForm({ ...editForm, fanImpactScore: Number(e.target.value) })
+                        }
+                        className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 pt-6">
+                      <input
+                        type="checkbox"
+                        id="verified"
+                        checked={editForm.isVerified}
+                        onChange={(e) => setEditForm({ ...editForm, isVerified: e.target.checked })}
+                        className="rounded bg-gray-900 border-gray-600 text-emerald-500 focus:ring-0 w-4 h-4"
+                      />
+                      <label htmlFor="verified" className="text-gray-300 font-semibold cursor-pointer">
+                        Verified Official Profile
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: Sports & Details */}
+              {editModalTab === "details" && (
+                <div className="space-y-4">
+                  {editProfile.type === "team" ? (
+                    <>
+                      <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg flex items-center gap-2 text-purple-300">
+                        <Info className="w-4 h-4 shrink-0" />
+                        <span>Team & Club operational attributes stored in database specs.</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Short Name / Code</label>
+                          <input
+                            type="text"
+                            value={editForm.shortName}
+                            onChange={(e) => setEditForm({ ...editForm, shortName: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. RCB, MI, CSK"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Home Ground / Stadium</label>
+                          <input
+                            type="text"
+                            value={editForm.homeGround}
+                            onChange={(e) => setEditForm({ ...editForm, homeGround: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. M. Chinnaswamy Stadium"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Head Coach</label>
+                          <input
+                            type="text"
+                            value={editForm.coach}
+                            onChange={(e) => setEditForm({ ...editForm, coach: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. Andy Flower"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Team Captain</label>
+                          <input
+                            type="text"
+                            value={editForm.captain}
+                            onChange={(e) => setEditForm({ ...editForm, captain: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. Faf du Plessis"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-gray-400 mb-1 font-semibold">Founded Year</label>
+                        <input
+                          type="text"
+                          value={editForm.founded}
+                          onChange={(e) => setEditForm({ ...editForm, founded: e.target.value })}
+                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                          placeholder="e.g. 2008"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg flex items-center gap-2 text-blue-300">
+                        <Info className="w-4 h-4 shrink-0" />
+                        <span>Athletic attributes, batting/bowling styles, and physical metrics.</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Playing Role</label>
+                          <input
+                            type="text"
+                            value={editForm.role}
+                            onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. Top-order batter, All-rounder"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Jersey Number</label>
+                          <input
+                            type="text"
+                            value={editForm.jerseyNumber}
+                            onChange={(e) => setEditForm({ ...editForm, jerseyNumber: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. 18, 7"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Batting Style</label>
+                          <input
+                            type="text"
+                            value={editForm.battingStyle}
+                            onChange={(e) => setEditForm({ ...editForm, battingStyle: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. Right-hand bat, Left-hand bat"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Bowling Style</label>
+                          <input
+                            type="text"
+                            value={editForm.bowlingStyle}
+                            onChange={(e) => setEditForm({ ...editForm, bowlingStyle: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. Right-arm medium, Leg-break googly"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Primary Format</label>
+                          <input
+                            type="text"
+                            value={editForm.format}
+                            onChange={(e) => setEditForm({ ...editForm, format: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. T20, ODI, Test, All"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Gender</label>
+                          <input
+                            type="text"
+                            value={editForm.gender}
+                            onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. Male, Female"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Date of Birth</label>
+                          <input
+                            type="text"
+                            value={editForm.dateOfBirth}
+                            onChange={(e) => setEditForm({ ...editForm, dateOfBirth: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="YYYY-MM-DD or readable date"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Birth Place</label>
+                          <input
+                            type="text"
+                            value={editForm.birthPlace}
+                            onChange={(e) => setEditForm({ ...editForm, birthPlace: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. Delhi, Ranchi"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Height (cm)</label>
+                          <input
+                            type="text"
+                            value={editForm.heightCm}
+                            onChange={(e) => setEditForm({ ...editForm, heightCm: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. 175"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">Caps / Matches</label>
+                          <input
+                            type="text"
+                            value={editForm.testCaps}
+                            onChange={(e) => setEditForm({ ...editForm, testCaps: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. 113 Tests, 292 ODIs"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="isCaptain"
+                          checked={editForm.isCaptain}
+                          onChange={(e) => setEditForm({ ...editForm, isCaptain: e.target.checked })}
+                          className="rounded bg-gray-900 border-gray-600 text-emerald-500 focus:ring-0 w-4 h-4"
+                        />
+                        <label htmlFor="isCaptain" className="text-gray-300 font-semibold cursor-pointer">
+                          Captain / Leadership Flag
+                        </label>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: Custom Fields */}
+              {editModalTab === "custom" && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#21262d] rounded-lg">
+                    <div>
+                      <h4 className="text-white font-semibold text-xs">Dynamic Custom Attributes</h4>
+                      <p className="text-[11px] text-gray-400">
+                        Add any sports statistics, social links, or custom properties.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditForm({
+                          ...editForm,
+                          customFields: [...editForm.customFields, { key: "", value: "" }],
+                        })
+                      }
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Field
+                    </button>
+                  </div>
+
+                  {editForm.customFields.length === 0 ? (
+                    <div className="text-center py-8 border border-dashed border-[#21262d] rounded-xl text-gray-500">
+                      No custom fields attached yet. Click "Add Field" to inject arbitrary attributes.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {editForm.customFields.map((cf, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder="Field Key (e.g. strikeRate, instagram)"
+                            value={cf.key}
+                            onChange={(e) => {
+                              const updated = [...editForm.customFields];
+                              updated[idx].key = e.target.value;
+                              setEditForm({ ...editForm, customFields: updated });
+                            }}
+                            className="w-1/3 bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white font-mono focus:outline-none focus:border-emerald-500"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Value (e.g. 142.8, @username)"
+                            value={cf.value}
+                            onChange={(e) => {
+                              const updated = [...editForm.customFields];
+                              updated[idx].value = e.target.value;
+                              setEditForm({ ...editForm, customFields: updated });
+                            }}
+                            className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = editForm.customFields.filter((_, i) => i !== idx);
+                              setEditForm({ ...editForm, customFields: updated });
+                            }}
+                            className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                            title="Remove field"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 4: Raw JSON */}
+              {editModalTab === "raw" && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-300">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>
+                        Power Editor: Directly edit all profile keys in JSON format. Saving will merge this payload.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          const parsed = JSON.parse(editForm.rawJsonText);
+                          setEditForm({
+                            ...editForm,
+                            rawJsonText: JSON.stringify(parsed, null, 2),
+                          });
+                        } catch (err: any) {
+                          alert("Cannot format invalid JSON: " + err.message);
+                        }
+                      }}
+                      className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-[11px] font-semibold border border-gray-700 transition-colors shrink-0"
+                    >
+                      Prettify JSON
+                    </button>
+                  </div>
+
+                  <div>
+                    <textarea
+                      rows={14}
+                      value={editForm.rawJsonText}
+                      onChange={(e) => setEditForm({ ...editForm, rawJsonText: e.target.value })}
+                      className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg p-3 text-emerald-400 font-mono text-[11px] focus:outline-none focus:border-emerald-500 leading-relaxed"
+                      spellCheck={false}
+                    />
                   </div>
                 </div>
               )}
@@ -1379,14 +1990,19 @@ function MasterProfilesContent() {
               >
                 Cancel
               </button>
-              <button
-                onClick={handleSaveEdit}
-                disabled={savingEdit}
-                className="flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-xs transition-colors"
-              >
-                {savingEdit ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
-                Save Changes
-              </button>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-gray-500 hidden sm:inline font-mono">
+                  Mode: {editModalTab.toUpperCase()}
+                </span>
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={savingEdit}
+                  className="flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg text-xs transition-colors shadow-lg shadow-emerald-900/20"
+                >
+                  {savingEdit ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                  Save Changes
+                </button>
+              </div>
             </div>
           </div>
         </div>
