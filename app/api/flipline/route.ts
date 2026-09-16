@@ -463,9 +463,10 @@ export async function GET(req: NextRequest) {
       cards = seededItems.sort((a, b) => b.timeMs - a.timeMs);
     }
 
-    // Ensure all returned cards have properly structured comments array, likedBy array, and channel
+    // Ensure all returned cards have properly structured comments array, likedBy array, clean author, and channel
     cards = cards.map((card) => ({
       ...card,
+      author: (card.author || "").replace(/\s*\(SF360\)/gi, "").trim(),
       channel: card.channel || card.sport || "general",
       comments: Array.isArray(card.comments) ? card.comments : [],
       likes: typeof card.likes === "number" ? card.likes : 0,
