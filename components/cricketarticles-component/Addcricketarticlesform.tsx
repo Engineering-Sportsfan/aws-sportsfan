@@ -94,7 +94,7 @@ export default function CricketArticleForm({
     const fetchArticle = async () => {
       setFetchingArticle(true);
       try {
-        const res = await axios.get(`/api/cricket-articles/${articleIdToEdit}`);
+        const res = await axios.get(`/api/cricket-articles/${encodeURIComponent(articleIdToEdit)}`);
         const article = res.data.article;
 
         if (article) {
@@ -220,7 +220,7 @@ export default function CricketArticleForm({
         formData.append("file", image);
 
         if (articleIdToEdit) {
-          res = await axios.put(`/api/cricket-articles/${articleIdToEdit}`, formData);
+          res = await axios.put(`/api/cricket-articles/${encodeURIComponent(articleIdToEdit)}`, formData);
         } else {
           res = await axios.post("/api/cricket-articles", formData);
         }
@@ -238,7 +238,7 @@ export default function CricketArticleForm({
         };
 
         if (articleIdToEdit) {
-          res = await axios.put(`/api/cricket-articles/${articleIdToEdit}`, payload);
+          res = await axios.put(`/api/cricket-articles/${encodeURIComponent(articleIdToEdit)}`, payload);
         } else {
           res = await axios.post("/api/cricket-articles", payload);
         }

@@ -513,16 +513,17 @@ async function handleUpdateOrAction(
     }
 
     // ── CASE 3: STANDARD ARTICLE EDIT / UPDATE ────────────────────────────────
+    const normalizedBadge = badge ? (badge.toUpperCase().trim() as BadgeType) : undefined;
     const validBadges: BadgeType[] = ["FEATURE", "ANALYSIS", "OPINION", "NEWS"];
-    if (badge && !validBadges.includes(badge as BadgeType)) {
-      return NextResponse.json({ error: "Invalid badge type" }, { status: 400 });
+    if (normalizedBadge && !validBadges.includes(normalizedBadge)) {
+      return NextResponse.json({ error: "Invalid badge type. Must be FEATURE, ANALYSIS, OPINION, or NEWS" }, { status: 400 });
     }
 
     const updates: Record<string, unknown> = {
       updatedAt: now,
     };
 
-    if (badge !== undefined) updates.badge = badge;
+    if (normalizedBadge !== undefined) updates.badge = normalizedBadge;
     if (title !== undefined) updates.title = title.trim();
     if (author !== undefined) updates.author = author.trim();
     if (description !== undefined) updates.description = description;
@@ -552,7 +553,8 @@ async function handleUpdateOrAction(
       }
     }
 
-    // 1. Update in DynamoDB
+    // 1. Update in DynamoDB (using ExpressionAttributeNames to avoid reserved keyword collisions like 'views', 'day', 'time')
+    let updatedDynamoCount = 0;
     for (const cand of candidates) {
       try {
         const qRes = await docClient.send(
@@ -564,79 +566,103 @@ async function handleUpdateOrAction(
         );
         if (qRes.Items && qRes.Items.length > 0) {
           for (const item of qRes.Items) {
-            const updateExprParts: string[] = ["updatedAt = :u"];
+            const skStr = String(item.sk || "");
+            if (skStr.startsWith("LIKE#") || skStr.startsWith("COMMENT#")) {
+              continue;
+            }
+
+            const exprNames: Record<string, string> = { "#u": "updatedAt" };
+            const updateExprParts: string[] = ["#u = :u"];
             const exprVals: Record<string, unknown> = { ":u": updates.updatedAt };
 
             if (updates.title !== undefined) {
-              updateExprParts.push("title = :t");
+              exprNames["#t"] = "title";
+              updateExprParts.push("#t = :t");
               exprVals[":t"] = updates.title;
             }
             if (updates.badge !== undefined) {
-              updateExprParts.push("badge = :b");
+              exprNames["#b"] = "badge";
+              updateExprParts.push("#b = :b");
               exprVals[":b"] = updates.badge;
             }
             if (updates.author !== undefined) {
-              updateExprParts.push("author = :a");
+              exprNames["#a"] = "author";
+              updateExprParts.push("#a = :a");
               exprVals[":a"] = updates.author;
             }
             if (updates.description !== undefined) {
-              updateExprParts.push("description = :d");
+              exprNames["#d"] = "description";
+              updateExprParts.push("#d = :d");
               exprVals[":d"] = updates.description;
             }
             if (updates.readTime !== undefined) {
-              updateExprParts.push("readTime = :rt");
+              exprNames["#rt"] = "readTime";
+              updateExprParts.push("#rt = :rt");
               exprVals[":rt"] = updates.readTime;
             }
             if (updates.views !== undefined) {
-              updateExprParts.push("views = :v");
+              exprNames["#v"] = "views";
+              updateExprParts.push("#v = :v");
               exprVals[":v"] = updates.views;
             }
             if (updates.image !== undefined) {
-              updateExprParts.push("image = :img");
+              exprNames["#img"] = "image";
+              updateExprParts.push("#img = :img");
               exprVals[":img"] = updates.image;
             }
             if (updates.tags !== undefined) {
-              updateExprParts.push("tags = :tags");
+              exprNames["#tags"] = "tags";
+              updateExprParts.push("#tags = :tags");
               exprVals[":tags"] = updates.tags;
             }
             if (updates.likes !== undefined) {
-              updateExprParts.push("likes = :l");
+              exprNames["#l"] = "likes";
+              updateExprParts.push("#l = :l");
               exprVals[":l"] = updates.likes;
             }
             if (updates.likeCount !== undefined) {
-              updateExprParts.push("likeCount = :lc");
+              exprNames["#lc"] = "likeCount";
+              updateExprParts.push("#lc = :lc");
               exprVals[":lc"] = updates.likeCount;
             }
             if (updates.likedBy !== undefined) {
-              updateExprParts.push("likedBy = :lb");
+              exprNames["#lb"] = "likedBy";
+              updateExprParts.push("#lb = :lb");
               exprVals[":lb"] = updates.likedBy;
             }
             if (updates.viewCount !== undefined) {
-              updateExprParts.push("viewCount = :vc");
+              exprNames["#vc"] = "viewCount";
+              updateExprParts.push("#vc = :vc");
               exprVals[":vc"] = updates.viewCount;
             }
             if (updates.isScheduled !== undefined) {
-              updateExprParts.push("isScheduled = :isSched");
+              exprNames["#isSched"] = "isScheduled";
+              updateExprParts.push("#isSched = :isSched");
               exprVals[":isSched"] = updates.isScheduled;
             }
             if (updates.scheduledAt !== undefined) {
-              updateExprParts.push("scheduledAt = :schedAt");
+              exprNames["#schedAt"] = "scheduledAt";
+              updateExprParts.push("#schedAt = :schedAt");
               exprVals[":schedAt"] = updates.scheduledAt;
             }
             if (updates.scheduledTimeMs !== undefined) {
-              updateExprParts.push("scheduledTimeMs = :schedTimeMs");
+              exprNames["#schedTimeMs"] = "scheduledTimeMs";
+              updateExprParts.push("#schedTimeMs = :schedTimeMs");
               exprVals[":schedTimeMs"] = updates.scheduledTimeMs;
             }
             if (updates.day !== undefined) {
-              updateExprParts.push("day = :day");
+              exprNames["#day"] = "day";
+              updateExprParts.push("#day = :day");
               exprVals[":day"] = updates.day;
             }
             if (updates.time !== undefined) {
-              updateExprParts.push("time = :time");
+              exprNames["#time"] = "time";
+              updateExprParts.push("#time = :time");
               exprVals[":time"] = updates.time;
             }
             if (updates.timeMs !== undefined) {
-              updateExprParts.push("timeMs = :timeMs");
+              exprNames["#timeMs"] = "timeMs";
+              updateExprParts.push("#timeMs = :timeMs");
               exprVals[":timeMs"] = updates.timeMs;
             }
 
@@ -648,9 +674,11 @@ async function handleUpdateOrAction(
                   sk: item.sk as string,
                 },
                 UpdateExpression: `SET ${updateExprParts.join(", ")}`,
+                ExpressionAttributeNames: exprNames,
                 ExpressionAttributeValues: exprVals,
               })
             );
+            updatedDynamoCount++;
           }
         }
       } catch (dynErr) {
@@ -658,16 +686,54 @@ async function handleUpdateOrAction(
       }
     }
 
-    // 2. Update in Firebase
+    // Fallback: If no item was found in DynamoDB to update, write/upsert it
+    if (updatedDynamoCount === 0) {
+      try {
+        const newDynamoItem = {
+          contentId: `ARTICLE#${cleanId}`,
+          sk: `ARTICLE#${now}`,
+          articleId: cleanId,
+          id: cleanId,
+          badge: normalizedBadge || "NEWS",
+          title: title || "Untitled Article",
+          author: author || "SportsFan Staff",
+          description: description || [],
+          readTime: readTime || "5 min read",
+          views: views || "0 views",
+          image: imageUrl || "",
+          tags: tags || [],
+          createdAt: now,
+          updatedAt: now,
+          ...updates,
+        };
+        await docClient.send(
+          new PutCommand({
+            TableName: TABLES.SocialAndContent,
+            Item: newDynamoItem,
+          })
+        );
+      } catch (putErr) {
+        console.warn("DynamoDB article upsert notice:", putErr);
+      }
+    }
+
+    // 2. Update in Firebase (clean any undefined values so Firestore doesn't reject)
     const collections = Array.from(
       new Set([getFirestoreCollection("cricketArticles"), "cricketArticles"])
     );
 
+    const cleanFirebaseUpdates: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined) {
+        cleanFirebaseUpdates[key] = value;
+      }
+    }
+
     for (const col of collections) {
       try {
-        await db.collection(col).doc(cleanId).set(updates, { merge: true });
+        await db.collection(col).doc(cleanId).set(cleanFirebaseUpdates, { merge: true });
         if (rawId !== cleanId) {
-          await db.collection(col).doc(rawId).set(updates, { merge: true });
+          await db.collection(col).doc(rawId).set(cleanFirebaseUpdates, { merge: true });
         }
       } catch (fbErr) {
         console.warn(`Firebase article update [${col}] notice:`, fbErr);
@@ -677,6 +743,10 @@ async function handleUpdateOrAction(
     return NextResponse.json({
       success: true,
       message: "Article updated successfully",
+      article: {
+        id: cleanId,
+        ...updates,
+      },
       updates,
     });
   } catch (error: unknown) {
