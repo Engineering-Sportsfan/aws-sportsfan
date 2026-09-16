@@ -102,7 +102,10 @@ export async function GET(req: NextRequest) {
       })
     );
 
-    let cards = res.Items || [];
+    let cards = (res.Items || []).map((c: any) => ({
+      ...c,
+      author: (c.author || "").replace(/\s*\(SF360\)/gi, "").trim(),
+    }));
 
     if (channel && channel !== "all") {
       cards = cards.filter(
@@ -144,7 +147,7 @@ export async function POST(req: NextRequest) {
       botId = body.botId || "";
       if (Array.isArray(body.channels) && body.channels.length > 0) {
         channels = body.channels.map((c: any) => String(c).trim().toLowerCase()).filter(Boolean);
-      } else if (typeof body.channels === "string" && body.channels.trim()) {
+      } else if (typeof body.channels === "string" && body.channels) {
         try {
           const parsed = JSON.parse(body.channels);
           if (Array.isArray(parsed)) {
@@ -263,8 +266,8 @@ export async function POST(req: NextRequest) {
         time: timeStr,
         timeMs,
 
-        // Bot author details with Verified status
-        author: isSF360 ? "SportsFan360" : `${bot.name} (SF360)`,
+        // Bot author details with Verified status (no (SF360) suffix)
+        author: isSF360 ? "SportsFan360" : (bot.name || "").replace(/\s*\(SF360\)/gi, "").trim(),
         handle: bot.handle,
         adminPhoto: bot.photoUrl,
         authorPhoto: bot.photoUrl,

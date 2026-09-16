@@ -763,7 +763,7 @@ export default function FlipLineManagementPage() {
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-sm text-white">{activeBot?.displayName || "Kabir Sharma (SF360)"}</span>
+                      <span className="font-bold text-sm text-white">{activeBot?.displayName?.replace(/\s*\(SF360\)/gi, "") || activeBot?.name || "Kabir Sharma"}</span>
                       <span className="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1.5 py-0.2 rounded font-semibold">
                         VERIFIED
                       </span>
