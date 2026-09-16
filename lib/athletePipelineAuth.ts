@@ -1,9 +1,20 @@
-// Config for the Python athlete pipeline service (sportsfan360-sentiment on
-// Render). Same convention as app/api/ask-ai/route.ts's PYTHON_AI_URL/KEY —
-// base URL and key both come from env, sent as the x-api-key header.
+// Config for the Python athlete pipeline service (sportsfan360-sentiment).
+// Follows the same convention as dolly/ask-ai routes:
+// Reads ATHLETE_PIPELINE_URL and ATHLETE_PIPELINE_KEY from environment variables,
+// returning null if not configured so callers can respond with 500 cleanly.
 export function getAthletePipelineConfig(): { baseUrl: string; apiKey: string } | null {
-  const baseUrl = process.env.ATHLETE_PIPELINE_URL;
-  const apiKey = process.env.ATHLETE_PIPELINE_KEY;
-  if (!baseUrl) return null;
-  return { baseUrl, apiKey: apiKey ?? "" };
-}
+  const rawUrl = process.env.ATHLETE_PIPELINE_URL;
+  if (!rawUrl || !rawUrl.trim()) {
+    return null;
+  }
+
+  let baseUrl = rawUrl.trim().replace(/^["']|["']$/g, "").replace(/\/+$/, "");
+  const apiKey = (process.env.ATHLETE_PIPELINE_KEY || "").trim().replace(/^["']|["']$/g, "");
+
+  // Prevent Windows Node.js fetch ECONNREFUSED on IPv6 [::1] when using localhost
+  if (baseUrl.includes("localhost")) {
+    baseUrl = baseUrl.replace("localhost", "127.0.0.1");
+  }
+
+  return { baseUrl, apiKey };
+}
