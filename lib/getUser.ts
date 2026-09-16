@@ -1,14 +1,74 @@
-//lib/getUser.ts
-
 import { NextRequest } from "next/server";
 import jwt from "jsonwebtoken";
 import { auth } from "@/lib/auth.config";
+import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
+import { dualWrite } from "@/lib/dualWrite";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export interface AuthUser {
   userId: string;
   email: string;
   name: string;
   role: string;
+}
+
+const verifiedUserCache = new Set<string>();
+
+/**
+ * Safe JIT Provisioning:
+ * Checks if authenticated user has a record in DynamoDB (IdentityAndAccess).
+ * If missing, automatically creates it without overwriting any existing users.
+ */
+async function ensureUserProvisioned(user: AuthUser) {
+  if (!user.email) return;
+  const cleanEmail = user.email.trim().toLowerCase();
+  if (verifiedUserCache.has(cleanEmail)) return;
+
+  try {
+    const directGet = await docClient.send(
+      new GetCommand({
+        TableName: TABLES.IdentityAndAccess,
+        Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" },
+      })
+    );
+
+    if (directGet.Item) {
+      verifiedUserCache.add(cleanEmail);
+      return;
+    }
+
+    const now = Date.now();
+    const nameParts = (user.name || "").trim().split(" ");
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ") || "";
+    const username = user.name?.trim() || cleanEmail.split("@")[0];
+
+    const dynamoItem = {
+      entityId: `USER#${cleanEmail}`,
+      sk: "USER#META",
+      email: cleanEmail,
+      userId: user.userId,
+      firstName,
+      lastName,
+      username,
+      role: user.role || "user",
+      status: "active",
+      isVerified: true,
+      authProviders: { google: true, emailPassword: false },
+      totalPoints: 0,
+      pointsBreakdown: {},
+      createdAt: now,
+      updatedAt: now,
+      lastLoginAt: now,
+    };
+
+    await dualWrite("users", cleanEmail, TABLES.IdentityAndAccess, dynamoItem);
+    console.log(`[JIT Provisioning] ⚡ Auto-provisioned missing user in DynamoDB (${TABLES.IdentityAndAccess}) -> USER#${cleanEmail}`);
+    verifiedUserCache.add(cleanEmail);
+  } catch (err: any) {
+    console.warn(`[JIT Provisioning] Notice for ${cleanEmail}:`, err?.message || err);
+  }
 }
 
 export async function getUser(req: NextRequest): Promise<AuthUser | null> {
@@ -26,12 +86,14 @@ export async function getUser(req: NextRequest): Promise<AuthUser | null> {
       const userId =
         payload.userId ?? payload.uid ?? payload.id ?? payload.email;
       if (userId && payload.email) {
-        return {
+        const user: AuthUser = {
           userId,
           email: payload.email,
           name: payload.name ?? "",
           role: payload.role ?? "user",
         };
+        await ensureUserProvisioned(user);
+        return user;
       }
     } catch {
       /* fall through */
@@ -53,12 +115,14 @@ export async function getUser(req: NextRequest): Promise<AuthUser | null> {
       const userId =
         payload.userId ?? payload.uid ?? payload.id ?? payload.email;
       if (userId && payload.email) {
-        return {
+        const user: AuthUser = {
           userId,
           email: payload.email,
           name: payload.name ?? "",
           role: payload.role ?? "user",
         };
+        await ensureUserProvisioned(user);
+        return user;
       }
     } catch {
       /* invalid */
@@ -79,16 +143,17 @@ export async function getUser(req: NextRequest): Promise<AuthUser | null> {
         lastName?: string;
       };
       const email = dbUser.email;
-      // const userId = dbUser.userId || email;
       const userId = dbUser.userId || email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
 
       if (email) {
-        return {
+        const user: AuthUser = {
           userId,
           email,
           name: dbUser.name || `${dbUser.firstName ?? ""} ${dbUser.lastName ?? ""}`.trim() || "",
           role: dbUser.role || "user",
         };
+        await ensureUserProvisioned(user);
+        return user;
       }
     }
   } catch (err) {

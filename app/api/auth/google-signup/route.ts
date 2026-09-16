@@ -106,8 +106,8 @@ export async function POST(req: NextRequest) {
         ...newUser,
       };
 
-      await dualWrite("users", cleanEmail, "IdentityAndAccess", dynamoItem);
-      console.log(`[DynamoDB Auth] ⚡ SUCCESS: Google signup created user in DynamoDB -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
+      await dualWrite("users", cleanEmail, TABLES.IdentityAndAccess, dynamoItem);
+      console.log(`[DynamoDB Auth] ⚡ SUCCESS: Google signup created user in DynamoDB (${TABLES.IdentityAndAccess}) -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
     } else {
       // ── Update Existing User ──────────────────────────────────────────────
       if (existingUser.status === "disabled") {

@@ -140,8 +140,8 @@ export async function POST(req: NextRequest) {
       ...finalUserData,
     };
 
-    await dualWrite("users", cleanEmail, "IdentityAndAccess", dynamoUserItem);
-    console.log(`[DynamoDB Auth] ⚡ SUCCESS: User document officially created/updated in DynamoDB -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
+    await dualWrite("users", cleanEmail, TABLES.IdentityAndAccess, dynamoUserItem);
+    console.log(`[DynamoDB Auth] ⚡ SUCCESS: User document officially created/updated in DynamoDB (${TABLES.IdentityAndAccess}) -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
 
     // 4. Clean up used OTP record
     try {

@@ -1,0 +1,238 @@
+[
+  {
+    "source": "Firestore room/presence",
+    "id": "Dinod Imanjith",
+    "username": "Dinod Imanjith",
+    "action": "Room presence | RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "PRESENCE#dinodimanjith404@gmail.com",
+    "timestamp": 1789042123382,
+    "timeFormatted": "10/9/2026, 5:38:43 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "dinodimanjith404@gmail.com",
+    "email": "dinodimanjith404@gmail.com",
+    "username": "dinodimanjith404",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "JOINED#dinodimanjith404@gmail.com",
+    "timestamp": 1789042123311,
+    "timeFormatted": "10/9/2026, 5:38:43 pm IST"
+  },
+  {
+    "source": "User Activity Log",
+    "id": "runes.flounce-1m@icloud.com",
+    "email": "runes.flounce-1m@icloud.com",
+    "username": "runes.flounce-1m",
+    "action": "Logged In / Active: signup | Logged In / Active: login",
+    "details": "Aisha Ahluwalia",
+    "timestamp": 1789039104833,
+    "timeFormatted": "10/9/2026, 4:48:24 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "mairaghosh@gmail.com",
+    "email": "mairaghosh@gmail.com",
+    "username": "mairaghosh",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41) | Logged In / Active: signup | Logged In / Active: login",
+    "details": "JOINED#mairaghosh@gmail.com; Maira  Ghosh",
+    "timestamp": 1789039081901,
+    "timeFormatted": "10/9/2026, 4:48:01 pm IST"
+  },
+  {
+    "source": "User Activity Log",
+    "id": "nandikagupta11@gmail.com",
+    "email": "nandikagupta11@gmail.com",
+    "username": "nandikagupta11",
+    "action": "Logged In / Active: signup",
+    "details": "Nandika Gupta",
+    "timestamp": 1789039072212,
+    "timeFormatted": "10/9/2026, 4:47:52 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "rahul.yadav@sportsfan360.com",
+    "email": "rahul.yadav@sportsfan360.com",
+    "username": "rahul.yadav",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "Right now we only provide feature of answering quiz; Yes",
+    "timestamp": 1789038852507,
+    "timeFormatted": "10/9/2026, 4:44:12 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "malvikaseh@gmail.com",
+    "email": "malvikaseh@gmail.com",
+    "username": "malvikaseh",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "How to quiz; Nice panel.",
+    "timestamp": 1789038838689,
+    "timeFormatted": "10/9/2026, 4:43:58 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "dinod.withanawasam@sportsfan360.com",
+    "email": "dinod.withanawasam@sportsfan360.com",
+    "username": "dinod.withanawasam",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "JOINED#dinod.withanawasam@sportsfan360.com",
+    "timestamp": 1789037749975,
+    "timeFormatted": "10/9/2026, 4:25:49 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "jignesh@sportsfan360.com",
+    "email": "jignesh@sportsfan360.com",
+    "username": "jignesh",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41) | Logged In / Active: login",
+    "details": "Participants, we will taking your questions. Pls share your Questions here.; Jignesh B",
+    "timestamp": 1789037507412,
+    "timeFormatted": "10/9/2026, 4:21:47 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "jignesh_jignesh_sportsfan360_com",
+    "username": "jignesh_jignesh_sportsfan360_com",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "JOINED#jignesh_jignesh_sportsfan360_com",
+    "timestamp": 1789037378642,
+    "timeFormatted": "10/9/2026, 4:19:38 pm IST"
+  },
+  {
+    "source": "Auth Issues (Blocked at Login)",
+    "id": "ishita.malik28@ssss.edu.in",
+    "email": "ishita.malik28@ssss.edu.in",
+    "username": "ishita.malik28",
+    "action": "Hit Auth Error: User account not verified (OTP pending)",
+    "details": "/api/auth/login",
+    "timestamp": 1789037302119,
+    "timeFormatted": "10/9/2026, 4:18:22 pm IST"
+  },
+  {
+    "source": "User Activity Log",
+    "id": "amieyrakhoslla@gmail.com",
+    "email": "amieyrakhoslla@gmail.com",
+    "username": "amieyrakhoslla",
+    "action": "Logged In / Active: signup | Logged In / Active: login",
+    "details": "Amieyra Khoslla",
+    "timestamp": 1789036911489,
+    "timeFormatted": "10/9/2026, 4:11:51 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "albrain.antony@gmail.com",
+    "email": "albrain.antony@gmail.com",
+    "username": "albrain.antony",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "JOINED#albrain.antony@gmail.com",
+    "timestamp": 1789036899800,
+    "timeFormatted": "10/9/2026, 4:11:39 pm IST"
+  },
+  {
+    "source": "Auth Issues (Blocked at Login)",
+    "id": "bandeep.sharma28@ssss.edu.in",
+    "email": "bandeep.sharma28@ssss.edu.in",
+    "username": "bandeep.sharma28",
+    "action": "Hit Auth Error: User account not found in database",
+    "details": "/api/auth/login",
+    "timestamp": 1789036787814,
+    "timeFormatted": "10/9/2026, 4:09:47 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "shashank.kamat28@ssss.edu.in",
+    "email": "shashank.kamat28@ssss.edu.in",
+    "username": "shashank.kamat28",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41) | Logged In / Active: signup | Logged In / Active: login",
+    "details": "JOINED#shashank.kamat28@ssss.edu.in; Shashank Kamat",
+    "timestamp": 1789036614865,
+    "timeFormatted": "10/9/2026, 4:06:54 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "deshmukh.tushar@gmail.com",
+    "email": "deshmukh.tushar@gmail.com",
+    "username": "deshmukh.tushar",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "JOINED#deshmukh.tushar@gmail.com",
+    "timestamp": 1789036527996,
+    "timeFormatted": "10/9/2026, 4:05:27 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "mohit.goyal28@ssss.edu.in",
+    "email": "mohit.goyal28@ssss.edu.in",
+    "username": "mohit.goyal28",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41) | Logged In / Active: signup | Logged In / Active: login",
+    "details": "JOINED#mohit.goyal28@ssss.edu.in; Mohit GOYAL",
+    "timestamp": 1789036473980,
+    "timeFormatted": "10/9/2026, 4:04:33 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "rahul_yadav_sportsfan360_com",
+    "username": "rahul_yadav_sportsfan360_com",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "JOINED#rahul_yadav_sportsfan360_com",
+    "timestamp": 1789036464174,
+    "timeFormatted": "10/9/2026, 4:04:24 pm IST"
+  },
+  {
+    "source": "User Activity Log",
+    "id": "neha.krishna28@ssss.edu.in",
+    "email": "neha.krishna28@ssss.edu.in",
+    "username": "neha.krishna28",
+    "action": "Logged In / Active: signup | Logged In / Active: login",
+    "details": "Neha  Krishna",
+    "timestamp": 1789036446574,
+    "timeFormatted": "10/9/2026, 4:04:06 pm IST"
+  },
+  {
+    "source": "User Activity Log",
+    "id": "rivin.chettiyedath28@ssss.edu.in",
+    "email": "rivin.chettiyedath28@ssss.edu.in",
+    "username": "rivin.chettiyedath28",
+    "action": "Logged In / Active: signup | Logged In / Active: login",
+    "details": "Rivin Rijesh",
+    "timestamp": 1789036386945,
+    "timeFormatted": "10/9/2026, 4:03:06 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "augastaya.sharma28@ssss.edu.in",
+    "email": "augastaya.sharma28@ssss.edu.in",
+    "username": "augastaya.sharma28",
+    "action": "RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41) | Logged In / Active: signup | Logged In / Active: login",
+    "details": "JOINED#augastaya.sharma28@ssss.edu.in; Augastaya Sharma",
+    "timestamp": 1789036240839,
+    "timeFormatted": "10/9/2026, 4:00:40 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "tushar.deshmukh@sportsfan360.com",
+    "email": "tushar.deshmukh@sportsfan360.com",
+    "username": "tushar.deshmukh",
+    "action": "Active in chat during Event Window (ROOM#f98700fb-18e5-417f-851a-c4c681175348)",
+    "details": "Hello",
+    "timestamp": 1789031767810,
+    "timeFormatted": "10/9/2026, 2:46:07 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "chandu_srikakulam_sportsfan360_com",
+    "username": "chandu_srikakulam_sportsfan360_com",
+    "action": "Active in chat during Event Window (ROOM#f98700fb-18e5-417f-851a-c4c681175348) | RealTimeChat: Joined/Chatted in WatchAlong (ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41)",
+    "details": "JOINED#chandu_srikakulam_sportsfan360_com",
+    "timestamp": 1789031762033,
+    "timeFormatted": "10/9/2026, 2:46:02 pm IST"
+  },
+  {
+    "source": "DynamoDB RealTimeChat",
+    "id": "OTP#tushar.deshmukh@sportsfan360.com",
+    "email": "OTP#tushar.deshmukh@sportsfan360.com",
+    "username": "OTP#tushar.deshmukh",
+    "action": "Active in chat during Event Window (ROOM#f98700fb-18e5-417f-851a-c4c681175348)",
+    "details": "JOINED#OTP#tushar.deshmukh@sportsfan360.com",
+    "timestamp": 1789031755922,
+    "timeFormatted": "10/9/2026, 2:45:55 pm IST"
+  }
+]
