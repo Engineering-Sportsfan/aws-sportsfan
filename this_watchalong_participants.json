@@ -1,0 +1,1829 @@
+[
+  {
+    "identifier": "jignesh@sportsfan360.com",
+    "name": "Jignesh B",
+    "email": "jignesh@sportsfan360.com",
+    "username": "Jignesh B",
+    "userId": "jignesh_jignesh_sportsfan360_com",
+    "inProdDynamo": true,
+    "inDevDynamo": true,
+    "exactSessionActivities": [
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"Participants, we will taking your questions. Pls share your Questions here.\"",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037507412,
+        "timeFormatted": "10/9/2026, 4:21:47 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"Participants, we will taking your questions. Pls share your Questions here.\"",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037507412,
+        "timeFormatted": "10/9/2026, 4:21:47 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  },
+  {
+    "identifier": "augastaya.sharma28@ssss.edu.in",
+    "name": "augastaya.sharma28",
+    "email": "augastaya.sharma28@ssss.edu.in",
+    "username": "augastaya.sharma28",
+    "userId": "augastaya_sharma28_ssss_edu_in",
+    "inProdDynamo": true,
+    "inDevDynamo": false,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037516210,
+        "timeFormatted": "10/9/2026, 4:21:56 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037516210,
+        "timeFormatted": "10/9/2026, 4:21:56 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": true
+  },
+  {
+    "identifier": "mairaghosh@gmail.com",
+    "name": "mairaghosh",
+    "email": "mairaghosh@gmail.com",
+    "username": "mairaghosh",
+    "userId": "mairaghosh_gmail_com",
+    "inProdDynamo": true,
+    "inDevDynamo": false,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789040009861,
+        "timeFormatted": "10/9/2026, 5:03:29 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789040009861,
+        "timeFormatted": "10/9/2026, 5:03:29 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": true
+  },
+  {
+    "identifier": "mohit.goyal28@ssss.edu.in",
+    "name": "mohit.goyal28",
+    "email": "mohit.goyal28@ssss.edu.in",
+    "username": "mohit.goyal28",
+    "userId": "mohit_goyal28_ssss_edu_in",
+    "inProdDynamo": true,
+    "inDevDynamo": false,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037003115,
+        "timeFormatted": "10/9/2026, 4:13:23 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037003115,
+        "timeFormatted": "10/9/2026, 4:13:23 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": true
+  },
+  {
+    "identifier": "dinodimanjith404@gmail.com",
+    "name": "Dinod Imanjith",
+    "email": "dinodimanjith404@gmail.com",
+    "username": "Dinod Imanjith",
+    "userId": "dinodimanjith404_gmail_com",
+    "inProdDynamo": true,
+    "inDevDynamo": true,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789042123311,
+        "timeFormatted": "10/9/2026, 5:38:43 pm IST"
+      },
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789042123382,
+        "timeFormatted": "10/9/2026, 5:38:43 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789042123311,
+        "timeFormatted": "10/9/2026, 5:38:43 pm IST"
+      },
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789042123382,
+        "timeFormatted": "10/9/2026, 5:38:43 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  },
+  {
+    "identifier": "deshmukh.tushar@gmail.com",
+    "name": "Tushar Deshmukh (UXExpert)",
+    "email": "deshmukh.tushar@gmail.com",
+    "username": "Tushar Deshmukh (UXExpert)",
+    "userId": "deshmukh_tushar_gmail_com",
+    "inProdDynamo": true,
+    "inDevDynamo": true,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789036527996,
+        "timeFormatted": "10/9/2026, 4:05:27 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789036527996,
+        "timeFormatted": "10/9/2026, 4:05:27 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": true
+  },
+  {
+    "identifier": "albrain.antony@gmail.com",
+    "name": "Albrain A",
+    "email": "albrain.antony@gmail.com",
+    "username": "Albrain A",
+    "userId": "albrain_antony_gmail_com",
+    "inProdDynamo": true,
+    "inDevDynamo": true,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789036899800,
+        "timeFormatted": "10/9/2026, 4:11:39 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789036899800,
+        "timeFormatted": "10/9/2026, 4:11:39 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  },
+  {
+    "identifier": "shashank.kamat28@ssss.edu.in",
+    "name": "shashank.kamat28",
+    "email": "shashank.kamat28@ssss.edu.in",
+    "username": "shashank.kamat28",
+    "userId": "shashank_kamat28_ssss_edu_in",
+    "inProdDynamo": true,
+    "inDevDynamo": false,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789036858928,
+        "timeFormatted": "10/9/2026, 4:10:58 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789036858928,
+        "timeFormatted": "10/9/2026, 4:10:58 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": true
+  },
+  {
+    "identifier": "rahul.yadav@sportsfan360.com",
+    "name": "rahul.yadav",
+    "email": "rahul.yadav@sportsfan360.com",
+    "username": "rahul.yadav",
+    "userId": "rahul_yadav_sportsfan360_com",
+    "inProdDynamo": true,
+    "inDevDynamo": true,
+    "exactSessionActivities": [
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"Yes\"",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789038852507,
+        "timeFormatted": "10/9/2026, 4:44:12 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"Yes\"",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789038852507,
+        "timeFormatted": "10/9/2026, 4:44:12 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  },
+  {
+    "identifier": "dinod.withanawasam@sportsfan360.com",
+    "name": "dinod",
+    "email": "dinod.withanawasam@sportsfan360.com",
+    "username": "dinod",
+    "userId": "dinod_withanawasam_sportsfan360_com",
+    "inProdDynamo": true,
+    "inDevDynamo": true,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037749975,
+        "timeFormatted": "10/9/2026, 4:25:49 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037749975,
+        "timeFormatted": "10/9/2026, 4:25:49 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  },
+  {
+    "identifier": "chandu_srikakulam_sportsfan360_com",
+    "name": "chandu_srikakulam_sportsfan360_com",
+    "email": null,
+    "username": "chandu_srikakulam_sportsfan360_com",
+    "userId": "chandu_srikakulam_sportsfan360_com",
+    "inProdDynamo": false,
+    "inDevDynamo": true,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037130494,
+        "timeFormatted": "10/9/2026, 4:15:30 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037130494,
+        "timeFormatted": "10/9/2026, 4:15:30 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  },
+  {
+    "identifier": "rahul_yadav_sportsfan360_com",
+    "name": "rahul_yadav_sportsfan360_com",
+    "email": null,
+    "username": "rahul_yadav_sportsfan360_com",
+    "userId": "rahul_yadav_sportsfan360_com",
+    "inProdDynamo": false,
+    "inDevDynamo": true,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789036464174,
+        "timeFormatted": "10/9/2026, 4:04:24 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789036464174,
+        "timeFormatted": "10/9/2026, 4:04:24 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": true
+  },
+  {
+    "identifier": "system",
+    "name": "System",
+    "email": null,
+    "username": "System",
+    "userId": "System",
+    "inProdDynamo": false,
+    "inDevDynamo": false,
+    "exactSessionActivities": [
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789035653476,
+        "timeFormatted": "10/9/2026, 3:50:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038153281,
+        "timeFormatted": "10/9/2026, 4:32:33 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038157588,
+        "timeFormatted": "10/9/2026, 4:32:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038157746,
+        "timeFormatted": "10/9/2026, 4:32:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038157922,
+        "timeFormatted": "10/9/2026, 4:32:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038157981,
+        "timeFormatted": "10/9/2026, 4:32:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158161,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158512,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158642,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158791,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158848,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038159085,
+        "timeFormatted": "10/9/2026, 4:32:39 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038159318,
+        "timeFormatted": "10/9/2026, 4:32:39 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038163757,
+        "timeFormatted": "10/9/2026, 4:32:43 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164519,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164558,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164715,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164815,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164856,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038165034,
+        "timeFormatted": "10/9/2026, 4:32:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038165200,
+        "timeFormatted": "10/9/2026, 4:32:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038165378,
+        "timeFormatted": "10/9/2026, 4:32:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038165521,
+        "timeFormatted": "10/9/2026, 4:32:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038169634,
+        "timeFormatted": "10/9/2026, 4:32:49 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038170761,
+        "timeFormatted": "10/9/2026, 4:32:50 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038170970,
+        "timeFormatted": "10/9/2026, 4:32:50 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171159,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171273,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171443,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171595,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171752,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171872,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038172050,
+        "timeFormatted": "10/9/2026, 4:32:52 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038172214,
+        "timeFormatted": "10/9/2026, 4:32:52 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038172367,
+        "timeFormatted": "10/9/2026, 4:32:52 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173045,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173205,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173277,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173381,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173513,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173679,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173862,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038174045,
+        "timeFormatted": "10/9/2026, 4:32:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038174179,
+        "timeFormatted": "10/9/2026, 4:32:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038174337,
+        "timeFormatted": "10/9/2026, 4:32:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038174438,
+        "timeFormatted": "10/9/2026, 4:32:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038177711,
+        "timeFormatted": "10/9/2026, 4:32:57 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038178102,
+        "timeFormatted": "10/9/2026, 4:32:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038178150,
+        "timeFormatted": "10/9/2026, 4:32:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038178590,
+        "timeFormatted": "10/9/2026, 4:32:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038466170,
+        "timeFormatted": "10/9/2026, 4:37:46 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789039691008,
+        "timeFormatted": "10/9/2026, 4:58:11 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789040334756,
+        "timeFormatted": "10/9/2026, 5:08:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789040622275,
+        "timeFormatted": "10/9/2026, 5:13:42 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789041410088,
+        "timeFormatted": "10/9/2026, 5:26:50 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789041417103,
+        "timeFormatted": "10/9/2026, 5:26:57 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789041417574,
+        "timeFormatted": "10/9/2026, 5:26:57 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789041422448,
+        "timeFormatted": "10/9/2026, 5:27:02 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789042072254,
+        "timeFormatted": "10/9/2026, 5:37:52 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789042870278,
+        "timeFormatted": "10/9/2026, 5:51:10 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044371068,
+        "timeFormatted": "10/9/2026, 6:16:11 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044374581,
+        "timeFormatted": "10/9/2026, 6:16:14 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044375641,
+        "timeFormatted": "10/9/2026, 6:16:15 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044376252,
+        "timeFormatted": "10/9/2026, 6:16:16 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044380018,
+        "timeFormatted": "10/9/2026, 6:16:20 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044381225,
+        "timeFormatted": "10/9/2026, 6:16:21 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044382628,
+        "timeFormatted": "10/9/2026, 6:16:22 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044991080,
+        "timeFormatted": "10/9/2026, 6:26:31 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044996415,
+        "timeFormatted": "10/9/2026, 6:26:36 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789045499018,
+        "timeFormatted": "10/9/2026, 6:34:59 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789046155568,
+        "timeFormatted": "10/9/2026, 6:45:55 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789048161214,
+        "timeFormatted": "10/9/2026, 7:19:21 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789048162608,
+        "timeFormatted": "10/9/2026, 7:19:22 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789091428942,
+        "timeFormatted": "11/9/2026, 7:20:28 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789091429613,
+        "timeFormatted": "11/9/2026, 7:20:29 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789096919005,
+        "timeFormatted": "11/9/2026, 8:51:59 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789096921080,
+        "timeFormatted": "11/9/2026, 8:52:01 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789096922616,
+        "timeFormatted": "11/9/2026, 8:52:02 am IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:WICKET\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787572565148,
+        "timeFormatted": "24/8/2026, 5:26:05 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787579316193,
+        "timeFormatted": "24/8/2026, 7:18:36 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787579322130,
+        "timeFormatted": "24/8/2026, 7:18:42 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787579328044,
+        "timeFormatted": "24/8/2026, 7:18:48 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787651187971,
+        "timeFormatted": "25/8/2026, 3:16:27 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787651407710,
+        "timeFormatted": "25/8/2026, 3:20:07 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787653728616,
+        "timeFormatted": "25/8/2026, 3:58:48 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787653730020,
+        "timeFormatted": "25/8/2026, 3:58:50 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787653731621,
+        "timeFormatted": "25/8/2026, 3:58:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666023886,
+        "timeFormatted": "25/8/2026, 7:23:43 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666028711,
+        "timeFormatted": "25/8/2026, 7:23:48 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666073513,
+        "timeFormatted": "25/8/2026, 7:24:33 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666077219,
+        "timeFormatted": "25/8/2026, 7:24:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666110316,
+        "timeFormatted": "25/8/2026, 7:25:10 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666112266,
+        "timeFormatted": "25/8/2026, 7:25:12 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666113137,
+        "timeFormatted": "25/8/2026, 7:25:13 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666113312,
+        "timeFormatted": "25/8/2026, 7:25:13 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787666115213,
+        "timeFormatted": "25/8/2026, 7:25:15 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:WICKET\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787751193994,
+        "timeFormatted": "26/8/2026, 7:03:13 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787751767220,
+        "timeFormatted": "26/8/2026, 7:12:47 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1787751771551,
+        "timeFormatted": "26/8/2026, 7:12:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788426418156,
+        "timeFormatted": "3/9/2026, 2:36:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788426426368,
+        "timeFormatted": "3/9/2026, 2:37:06 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788426430162,
+        "timeFormatted": "3/9/2026, 2:37:10 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788426432795,
+        "timeFormatted": "3/9/2026, 2:37:12 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788426440851,
+        "timeFormatted": "3/9/2026, 2:37:20 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788426442908,
+        "timeFormatted": "3/9/2026, 2:37:22 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788426442930,
+        "timeFormatted": "3/9/2026, 2:37:22 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788769677445,
+        "timeFormatted": "7/9/2026, 1:57:57 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788769677571,
+        "timeFormatted": "7/9/2026, 1:57:57 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788769681031,
+        "timeFormatted": "7/9/2026, 1:58:01 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_6db2dc24-71f9-422e-b855-c925814f07b3",
+        "timestamp": 1788769681090,
+        "timeFormatted": "7/9/2026, 1:58:01 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789035653476,
+        "timeFormatted": "10/9/2026, 3:50:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038153281,
+        "timeFormatted": "10/9/2026, 4:32:33 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038157588,
+        "timeFormatted": "10/9/2026, 4:32:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038157746,
+        "timeFormatted": "10/9/2026, 4:32:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038157922,
+        "timeFormatted": "10/9/2026, 4:32:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038157981,
+        "timeFormatted": "10/9/2026, 4:32:37 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158161,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158512,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158642,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158791,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038158848,
+        "timeFormatted": "10/9/2026, 4:32:38 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038159085,
+        "timeFormatted": "10/9/2026, 4:32:39 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038159318,
+        "timeFormatted": "10/9/2026, 4:32:39 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038163757,
+        "timeFormatted": "10/9/2026, 4:32:43 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164519,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164558,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164715,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164815,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038164856,
+        "timeFormatted": "10/9/2026, 4:32:44 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038165034,
+        "timeFormatted": "10/9/2026, 4:32:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038165200,
+        "timeFormatted": "10/9/2026, 4:32:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038165378,
+        "timeFormatted": "10/9/2026, 4:32:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038165521,
+        "timeFormatted": "10/9/2026, 4:32:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038169634,
+        "timeFormatted": "10/9/2026, 4:32:49 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038170761,
+        "timeFormatted": "10/9/2026, 4:32:50 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038170970,
+        "timeFormatted": "10/9/2026, 4:32:50 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171159,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171273,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171443,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171595,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171752,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038171872,
+        "timeFormatted": "10/9/2026, 4:32:51 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038172050,
+        "timeFormatted": "10/9/2026, 4:32:52 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038172214,
+        "timeFormatted": "10/9/2026, 4:32:52 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038172367,
+        "timeFormatted": "10/9/2026, 4:32:52 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173045,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173205,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173277,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173381,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173513,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173679,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038173862,
+        "timeFormatted": "10/9/2026, 4:32:53 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038174045,
+        "timeFormatted": "10/9/2026, 4:32:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038174179,
+        "timeFormatted": "10/9/2026, 4:32:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038174337,
+        "timeFormatted": "10/9/2026, 4:32:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038174438,
+        "timeFormatted": "10/9/2026, 4:32:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038177711,
+        "timeFormatted": "10/9/2026, 4:32:57 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038178102,
+        "timeFormatted": "10/9/2026, 4:32:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038178150,
+        "timeFormatted": "10/9/2026, 4:32:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038178590,
+        "timeFormatted": "10/9/2026, 4:32:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789038466170,
+        "timeFormatted": "10/9/2026, 4:37:46 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789039691008,
+        "timeFormatted": "10/9/2026, 4:58:11 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789040334756,
+        "timeFormatted": "10/9/2026, 5:08:54 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789040622275,
+        "timeFormatted": "10/9/2026, 5:13:42 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789041410088,
+        "timeFormatted": "10/9/2026, 5:26:50 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789041417103,
+        "timeFormatted": "10/9/2026, 5:26:57 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789041417574,
+        "timeFormatted": "10/9/2026, 5:26:57 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789041422448,
+        "timeFormatted": "10/9/2026, 5:27:02 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789042072254,
+        "timeFormatted": "10/9/2026, 5:37:52 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789042870278,
+        "timeFormatted": "10/9/2026, 5:51:10 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044371068,
+        "timeFormatted": "10/9/2026, 6:16:11 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044374581,
+        "timeFormatted": "10/9/2026, 6:16:14 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044375641,
+        "timeFormatted": "10/9/2026, 6:16:15 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044376252,
+        "timeFormatted": "10/9/2026, 6:16:16 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044380018,
+        "timeFormatted": "10/9/2026, 6:16:20 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044381225,
+        "timeFormatted": "10/9/2026, 6:16:21 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044382628,
+        "timeFormatted": "10/9/2026, 6:16:22 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044991080,
+        "timeFormatted": "10/9/2026, 6:26:31 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789044996415,
+        "timeFormatted": "10/9/2026, 6:26:36 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789045499018,
+        "timeFormatted": "10/9/2026, 6:34:59 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789046155568,
+        "timeFormatted": "10/9/2026, 6:45:55 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789048161214,
+        "timeFormatted": "10/9/2026, 7:19:21 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789048162608,
+        "timeFormatted": "10/9/2026, 7:19:22 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789091428942,
+        "timeFormatted": "11/9/2026, 7:20:28 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789091429613,
+        "timeFormatted": "11/9/2026, 7:20:29 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789096919005,
+        "timeFormatted": "11/9/2026, 8:51:59 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789096921080,
+        "timeFormatted": "11/9/2026, 8:52:01 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_5bdac51d-b21b-4e2a-ba0e-aa81857dbc32",
+        "timestamp": 1789096922616,
+        "timeFormatted": "11/9/2026, 8:52:02 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787057649040,
+        "timeFormatted": "18/8/2026, 6:24:09 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787057651898,
+        "timeFormatted": "18/8/2026, 6:24:11 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787057653578,
+        "timeFormatted": "18/8/2026, 6:24:13 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:SIX\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787120055331,
+        "timeFormatted": "19/8/2026, 11:44:15 am IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787123141494,
+        "timeFormatted": "19/8/2026, 12:35:41 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787123143697,
+        "timeFormatted": "19/8/2026, 12:35:43 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787123145078,
+        "timeFormatted": "19/8/2026, 12:35:45 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:CLAP\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787123263917,
+        "timeFormatted": "19/8/2026, 12:37:43 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:HEART\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787124443031,
+        "timeFormatted": "19/8/2026, 12:57:23 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:FIRE\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787124466541,
+        "timeFormatted": "19/8/2026, 12:57:46 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"[SYSTEM_REACTION]:LINK COPIED\"",
+        "roomOrMatch": "ROOM#watchalong_d5fad0e5-c32d-4d16-b256-5b6735b661e1",
+        "timestamp": 1787127061053,
+        "timeFormatted": "19/8/2026, 1:41:01 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  },
+  {
+    "identifier": "jignesh_jignesh_sportsfan360_com",
+    "name": "jignesh_jignesh_sportsfan360_com",
+    "email": null,
+    "username": "jignesh_jignesh_sportsfan360_com",
+    "userId": "jignesh_jignesh_sportsfan360_com",
+    "inProdDynamo": false,
+    "inDevDynamo": false,
+    "exactSessionActivities": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037378642,
+        "timeFormatted": "10/9/2026, 4:19:38 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Joined WatchAlong (Did Nothing)",
+        "details": "Room: ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789037378642,
+        "timeFormatted": "10/9/2026, 4:19:38 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  },
+  {
+    "identifier": "malvikaseh@gmail.com",
+    "name": "malvikaseh",
+    "email": "malvikaseh@gmail.com",
+    "username": "malvikaseh",
+    "userId": "malvikaseh_gmail_com",
+    "inProdDynamo": false,
+    "inDevDynamo": false,
+    "exactSessionActivities": [
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"How to quiz\"",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789038838689,
+        "timeFormatted": "10/9/2026, 4:43:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"Nice panel.\"",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789039599039,
+        "timeFormatted": "10/9/2026, 4:56:39 pm IST"
+      }
+    ],
+    "allActivitiesInSession": [
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"How to quiz\"",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789038838689,
+        "timeFormatted": "10/9/2026, 4:43:58 pm IST"
+      },
+      {
+        "type": "Chatted in WatchAlong",
+        "details": "\"Nice panel.\"",
+        "roomOrMatch": "ROOM#73e9b219-3481-4e72-8033-a5d1bb64fe41",
+        "timestamp": 1789039599039,
+        "timeFormatted": "10/9/2026, 4:56:39 pm IST"
+      }
+    ],
+    "didNothingExceptJoin": false
+  }
+]
