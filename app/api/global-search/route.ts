@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -64,16 +65,10 @@ export async function GET(req: NextRequest) {
 
         // 1. Search DynamoDB
         try {
-            // Scan SportsData for players
+            // Scan SportsData for athletes & player home cards
             const sportsRes = await docClient.send(
-                // new ScanCommand({
-                //     TableName: "SportsData",
-                //     FilterExpression: "begins_with(entityId, :pfx)",
-                //     ExpressionAttributeValues: { ":pfx": "PLAYER_HOME#" },
-                //     Limit: 100,
-                // })
                 new ScanCommand({
-                    TableName: "SportsData",
+                    TableName: TABLES.SportsData || "SportsData",
                     FilterExpression: "begins_with(entityId, :pfx1) OR begins_with(entityId, :pfx2)",
                     ExpressionAttributeValues: { ":pfx1": "PLAYER_HOME#", ":pfx2": "ATHLETE#" },
                     Limit: 100,
@@ -85,19 +80,57 @@ export async function GET(req: NextRequest) {
                     const name = (item.playerName || item.name || "").toLowerCase();
                     const jersey = item.jerseyNumber ? String(item.jerseyNumber) : "";
                     if (name.includes(query) || (isJerseyNumber && jersey === query)) {
-                        const id = item.playerProfilesId || item.id || item.entityId;
-                        playersMap.set(id, {
+                        const rawId = item.playerProfilesId || item.athleteId || item.id || item.entityId;
+                        const cleanId = String(rawId).replace(/^(ATHLETE|PLAYER|PLAYER_HOME)#/, "");
+                        playersMap.set(cleanId, {
                             type: "player",
-                            id,
-                            playerProfilesId: item.playerProfilesId || id,
+                            id: cleanId,
+                            playerProfilesId: cleanId,
                             name: item.playerName || item.name,
-                            image: item.image || item.avatar || null,
+                            image: item.image || item.avatar || item.profileImage || null,
                             jerseyNumber: item.jerseyNumber || null,
-                            team: item.team || null,
-                            category: item.category || [],
+                            team: item.team || item.country || null,
+                            category: item.category || (item.sport ? [item.sport] : []),
                         });
                     }
                 }
+            }
+
+            // Scan MS_Players for cricket players (sk = "PROFILE#META")
+            try {
+                const msPlayersRes = await docClient.send(
+                    new ScanCommand({
+                        TableName: TABLES.MS_Players || "MS_Players",
+                        FilterExpression: "begins_with(entityId, :pPfx) AND sk = :pSk",
+                        ExpressionAttributeValues: { ":pPfx": "PLAYER#", ":pSk": "PROFILE#META" },
+                        Limit: 100,
+                    })
+                );
+
+                if (msPlayersRes.Items) {
+                    for (const item of msPlayersRes.Items) {
+                        const name = (item.name || item.playerName || "").toLowerCase();
+                        const jersey = item.jerseyNumber ? String(item.jerseyNumber) : "";
+                        if (name.includes(query) || (isJerseyNumber && jersey === query)) {
+                            const rawId = item.playerId || item.id || item.entityId;
+                            const cleanId = String(rawId).replace(/^PLAYER#/, "");
+                            if (!playersMap.has(cleanId)) {
+                                playersMap.set(cleanId, {
+                                    type: "player",
+                                    id: cleanId,
+                                    playerProfilesId: cleanId,
+                                    name: item.name || item.playerName,
+                                    image: item.profileImage || item.image || item.avatar || null,
+                                    jerseyNumber: item.jerseyNumber || null,
+                                    team: item.currentClubId || item.country || null,
+                                    category: item.sportId ? [item.sportId] : ["cricket"],
+                                });
+                            }
+                        }
+                    }
+                }
+            } catch (msErr) {
+                console.warn("[global-search MS_Players scan notice]:", msErr);
             }
 
             // Scan SocialAndContent for teams
