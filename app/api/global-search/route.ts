@@ -66,10 +66,16 @@ export async function GET(req: NextRequest) {
         try {
             // Scan SportsData for players
             const sportsRes = await docClient.send(
+                // new ScanCommand({
+                //     TableName: "SportsData",
+                //     FilterExpression: "begins_with(entityId, :pfx)",
+                //     ExpressionAttributeValues: { ":pfx": "PLAYER_HOME#" },
+                //     Limit: 100,
+                // })
                 new ScanCommand({
                     TableName: "SportsData",
-                    FilterExpression: "begins_with(entityId, :pfx)",
-                    ExpressionAttributeValues: { ":pfx": "PLAYER_HOME#" },
+                    FilterExpression: "begins_with(entityId, :pfx1) OR begins_with(entityId, :pfx2)",
+                    ExpressionAttributeValues: { ":pfx1": "PLAYER_HOME#", ":pfx2": "ATHLETE#" },
                     Limit: 100,
                 })
             );
@@ -167,7 +173,7 @@ export async function GET(req: NextRequest) {
                         });
                     }
                 }
-            } catch {}
+            } catch { }
         }
 
         if (teamsMap.size === 0 && db) {
@@ -186,7 +192,7 @@ export async function GET(req: NextRequest) {
                         });
                     }
                 }
-            } catch {}
+            } catch { }
         }
 
         if (usersMap.size === 0 && db) {
@@ -204,7 +210,7 @@ export async function GET(req: NextRequest) {
                         });
                     }
                 }
-            } catch {}
+            } catch { }
         }
 
         const players = Array.from(playersMap.values());

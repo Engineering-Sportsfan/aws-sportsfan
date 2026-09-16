@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
+import { docClient } from '@/lib/dynamodb';
+import { TABLES } from '@/lib/tableNames';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 
 // Use the exact secrets we configured on the EC2 server!
 const JITSI_APP_ID = "sportsfan_app";
@@ -48,6 +51,35 @@ export async function POST(req: Request) {
             algorithm: 'HS256',
             header: { kid: JITSI_APP_ID, alg: 'HS256' }
         } as any);
+
+        // Record attendee presence in DynamoDB RealTimeChat
+        try {
+            const cleanEmail = (userEmail || "").trim().toLowerCase();
+            const participantId = (cleanEmail || userName || "guest").replace(/[^a-zA-Z0-9]/g, "_");
+            const sanitizedRoom = roomName.startsWith("ROOM#") ? roomName : `ROOM#${roomName}`;
+            const now = Date.now();
+
+            await docClient.send(
+                new PutCommand({
+                    TableName: TABLES.RealTimeChat,
+                    Item: {
+                        roomId: sanitizedRoom,
+                        sk: `PRESENCE#${participantId}`,
+                        participantId,
+                        userName,
+                        userEmail: cleanEmail,
+                        avatarUrl: avatarUrl || "",
+                        role: role || "Viewer",
+                        isModerator,
+                        joinedAt: now,
+                        lastSeenAt: now,
+                        type: "watchalong_presence",
+                    }
+                })
+            );
+        } catch (presenceErr) {
+            console.warn("[WatchAlong Token] Presence logging notice:", presenceErr);
+        }
 
         return NextResponse.json({ success: true, token });
     } catch (error) {

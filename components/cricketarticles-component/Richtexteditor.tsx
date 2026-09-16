@@ -32,8 +32,14 @@ type EditorInstance = {
   editing?: {
     view?: {
       focus: () => void;
+      document?: any;
+      [key: string]: any;
     };
+    [key: string]: any;
   };
+  model?: any;
+  commands?: any;
+  [key: string]: any;
 };
 
 type CKEditorProps = {
@@ -74,6 +80,22 @@ export function RichTextEditor({
   const [charCount, setCharCount] = useState(0);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
+  const [activeStates, setActiveStates] = useState<{
+    bold: boolean;
+    italic: boolean;
+    heading: string;
+    bulletedList: boolean;
+    numberedList: boolean;
+    blockQuote: boolean;
+  }>({
+    bold: false,
+    italic: false,
+    heading: "",
+    bulletedList: false,
+    numberedList: false,
+    blockQuote: false,
+  });
+
   const draftKey = useRef<string | null>(null);
   useEffect(() => {
     try {
@@ -95,6 +117,46 @@ export function RichTextEditor({
     setCharCount(plain.length);
     setWordCount(plain ? plain.split(/\s+/).filter(Boolean).length : 0);
   }, [localValue, stripHtml]);
+
+  const updateActiveStates = useCallback(() => {
+    const editor = editorRef.current as any;
+    if (!editor || !editor.commands) return;
+
+    try {
+      const boldCmd = editor.commands.get("bold");
+      const italicCmd = editor.commands.get("italic");
+      const headingCmd = editor.commands.get("heading");
+      const bulletCmd = editor.commands.get("bulletedList");
+      const numberCmd = editor.commands.get("numberedList");
+      const quoteCmd = editor.commands.get("blockQuote");
+
+      const selection = editor.model?.document?.selection;
+      const isBold = Boolean(boldCmd?.value ?? (selection && selection.hasAttribute("bold")));
+      const isItalic = Boolean(italicCmd?.value ?? (selection && selection.hasAttribute("italic")));
+
+      let curHeading =
+        typeof headingCmd?.value === "string" && headingCmd.value !== "paragraph"
+          ? headingCmd.value
+          : "";
+      if (!curHeading && selection) {
+        const blocks = Array.from(selection.getSelectedBlocks()) as any[];
+        if (blocks.length > 0 && typeof blocks[0]?.name === "string" && blocks[0].name.startsWith("heading")) {
+          curHeading = blocks[0].name;
+        }
+      }
+
+      setActiveStates({
+        bold: isBold,
+        italic: isItalic,
+        heading: curHeading,
+        bulletedList: Boolean(bulletCmd?.value),
+        numberedList: Boolean(numberCmd?.value),
+        blockQuote: Boolean(quoteCmd?.value),
+      });
+    } catch (err) {
+      console.warn("Could not read active states:", err);
+    }
+  }, []);
 
   const saveDraft = useCallback(() => {
     if (!draftKey.current) return;
@@ -121,14 +183,176 @@ export function RichTextEditor({
     } catch { }
   }, [onChange]);
 
-  const executeCommand = useCallback((commandName: string, options?: { value?: string }) => {
-    if (!editorRef.current) return;
-    try {
-      editorRef.current.execute(commandName, options);
-    } catch (e) {
-      console.warn(`Command ${commandName} failed:`, e);
-    }
-  }, []);
+  // Execute inline formatting (bold, italic, list, blockquote, undo, redo)
+  const executeCommand = useCallback(
+    (commandName: string, options?: { value?: string }) => {
+      const editor = editorRef.current as any;
+      if (!editor) return;
+      try {
+        if (editor.editing?.view?.focus) {
+          editor.editing.view.focus();
+        }
+        editor.execute(commandName, options);
+        updateActiveStates();
+      } catch (e) {
+        console.warn(`Command ${commandName} failed:`, e);
+      }
+    },
+    [updateActiveStates]
+  );
+
+  // Smart Heading Command with toggle-off and auto-split for new headings
+  const executeHeading = useCallback(
+    (headingValue: "heading1" | "heading2" | "heading3") => {
+      const editor = editorRef.current as any;
+      if (!editor || !editor.model) return;
+
+      try {
+        if (editor.editing?.view?.focus) {
+          editor.editing.view.focus();
+        }
+
+        const model = editor.model;
+        const selection = model.document?.selection;
+        if (!selection) return;
+
+        const selectedBlocks = Array.from(selection.getSelectedBlocks()) as any[];
+        const currentBlock = selectedBlocks[0];
+
+        // 1. SELECTION IS COLLAPSED (CURSOR BLINKING, NO TEXT HIGHLIGHTED)
+        // Toggle-off / change-level only apply here — there's no partial-text
+        // ambiguity when nothing is highlighted, so it's safe to affect the whole block.
+        if (selection.isCollapsed) {
+          // TOGGLE OFF: cursor already sits inside this exact heading level
+          if (currentBlock && currentBlock.name === headingValue) {
+            model.change((writer: any) => {
+              writer.rename(currentBlock, "paragraph");
+            });
+            setTimeout(updateActiveStates, 10);
+            return;
+          }
+
+          // Cursor sits inside a different heading level -> just bump the level
+          if (currentBlock && currentBlock.name.startsWith("heading")) {
+            model.change((writer: any) => {
+              writer.rename(currentBlock, headingValue);
+            });
+            setTimeout(updateActiveStates, 10);
+            return;
+          }
+          if (!currentBlock) {
+            model.change((writer: any) => {
+              const newHeading = writer.createElement(headingValue);
+              model.insertContent(newHeading);
+            });
+            setTimeout(updateActiveStates, 10);
+            return;
+          }
+
+          // Check if current block has any text
+          let blockText = "";
+          for (const child of currentBlock.getChildren()) {
+            if (child.data) blockText += child.data;
+          }
+          const isEmpty = currentBlock.maxOffset === 0 || blockText.trim().length === 0;
+
+          if (isEmpty) {
+            // Line is completely empty: safely turn this line into the heading!
+            model.change((writer: any) => {
+              writer.rename(currentBlock, headingValue);
+            });
+            setTimeout(updateActiveStates, 10);
+            return;
+          }
+
+          // Line HAS text already typed: DO NOT convert existing text into heading!
+          // Insert a new heading line so what the user writes NEXT is a heading!
+          const cursorPos = selection.getFirstPosition();
+          const startPos = model.createPositionAt(currentBlock, "start");
+          const endPos = model.createPositionAt(currentBlock, "end");
+
+          if (cursorPos?.equals(startPos)) {
+            // Cursor at the beginning of the paragraph: insert heading before it
+            model.change((writer: any) => {
+              const newHeading = writer.createElement(headingValue);
+              writer.insert(newHeading, writer.createPositionBefore(currentBlock));
+              writer.setSelection(newHeading, 0);
+            });
+          } else if (cursorPos?.equals(endPos)) {
+            // Cursor at the end of the paragraph: insert heading after it
+            model.change((writer: any) => {
+              const newHeading = writer.createElement(headingValue);
+              writer.insert(newHeading, writer.createPositionAfter(currentBlock));
+              writer.setSelection(newHeading, 0);
+            });
+          } else {
+            // Cursor in the middle of text: split and insert heading between them
+            model.change((writer: any) => {
+              writer.split(cursorPos);
+              const newHeading = writer.createElement(headingValue);
+              writer.insert(newHeading, cursorPos);
+              writer.setSelection(newHeading, 0);
+            });
+          }
+
+          setTimeout(updateActiveStates, 10);
+          return;
+        }
+
+        // 3. TEXT IS HIGHLIGHTED (SELECTION NOT COLLAPSED)
+        // User highlighted specific text: only that text should become a heading!
+        if (selectedBlocks.length === 1 && currentBlock) {
+          const startPos = model.createPositionAt(currentBlock, "start");
+          const endPos = model.createPositionAt(currentBlock, "end");
+          const firstRange = selection.getFirstRange();
+
+          const isEntireBlockSelected =
+            firstRange.start.equals(startPos) && firstRange.end.equals(endPos);
+
+          if (isEntireBlockSelected) {
+            model.change((writer: any) => {
+              writer.rename(currentBlock, headingValue);
+            });
+            setTimeout(updateActiveStates, 10);
+            return;
+          }
+
+          // Only part of the text in the block is highlighted!
+          // Extract the highlighted text into its own heading block, leaving the remaining paragraph intact!
+          model.change((writer: any) => {
+            const selectedContent = model.getSelectedContent(selection);
+            const newHeading = writer.createElement(headingValue);
+
+            // Insert new heading block right after the current block
+            writer.insert(newHeading, writer.createPositionAfter(currentBlock));
+
+            for (const item of Array.from(selectedContent.getChildren())) {
+              writer.append(item, newHeading);
+            }
+
+            // Delete the highlighted selection from the original paragraph
+            model.deleteContent(selection);
+            writer.setSelection(newHeading, "in");
+          });
+
+          setTimeout(updateActiveStates, 10);
+          return;
+        }
+
+        // Multi-block selection fallback
+        model.change((writer: any) => {
+          for (const b of selectedBlocks) {
+            writer.rename(b, headingValue);
+          }
+        });
+        setTimeout(updateActiveStates, 10);
+      } catch (err) {
+        console.warn("executeHeading notice:", err);
+        setTimeout(updateActiveStates, 10);
+      }
+    },
+    [updateActiveStates]
+  );
 
   useEffect(() => {
     const id = setTimeout(() => saveDraft(), 3000);
@@ -156,60 +380,65 @@ export function RichTextEditor({
   return (
     <div className="rich-editor-wrapper">
       {/* Top Quick-Access Formatting Header */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-[#161b22] border-b border-[#21262d] flex-wrap">
-        <div className="flex items-center gap-1 flex-wrap">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-[#161b22] border-b border-[#21262d] flex-wrap select-none">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {/* Quick Bold & Italic */}
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => executeCommand("bold")}
-            className="format-btn"
+            className={`format-btn ${activeStates.bold ? "active" : ""}`}
             title="Bold (Ctrl+B)"
           >
-            <Bold size={14} className="stroke-[2.5]" />
+            <Bold size={13} className="stroke-[2.5]" />
             <span className="text-[11px] font-bold">Bold</span>
           </button>
 
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => executeCommand("italic")}
-            className="format-btn"
+            className={`format-btn ${activeStates.italic ? "active" : ""}`}
             title="Italic (Ctrl+I)"
           >
-            <Italic size={14} className="italic stroke-[2.5]" />
+            <Italic size={13} className="italic stroke-[2.5]" />
             <span className="text-[11px] italic font-semibold">Italic</span>
           </button>
 
           <div className="h-4 w-px bg-gray-700 mx-1" />
 
-          {/* Quick Headings */}
+          {/* Quick Headings with Active Indicators */}
           <button
             type="button"
-            onClick={() => executeCommand("heading", { value: "heading1" })}
-            className="format-btn"
-            title="Heading 1"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => executeHeading("heading1")}
+            className={`format-btn ${activeStates.heading === "heading1" ? "active active-h" : ""}`}
+            title="Heading 1 (Click again to revert to normal text)"
           >
-            <Heading1 size={14} />
-            <span className="text-[11px]">H1</span>
+            <Heading1 size={13} />
+            <span className="text-[11px] font-bold">H1</span>
           </button>
 
           <button
             type="button"
-            onClick={() => executeCommand("heading", { value: "heading2" })}
-            className="format-btn"
-            title="Heading 2"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => executeHeading("heading2")}
+            className={`format-btn ${activeStates.heading === "heading2" ? "active active-h" : ""}`}
+            title="Heading 2 (Click again to revert to normal text)"
           >
-            <Heading2 size={14} />
-            <span className="text-[11px]">H2</span>
+            <Heading2 size={13} />
+            <span className="text-[11px] font-bold">H2</span>
           </button>
 
           <button
             type="button"
-            onClick={() => executeCommand("heading", { value: "heading3" })}
-            className="format-btn"
-            title="Heading 3"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => executeHeading("heading3")}
+            className={`format-btn ${activeStates.heading === "heading3" ? "active active-h" : ""}`}
+            title="Heading 3 (Click again to revert to normal text)"
           >
-            <Heading3 size={14} />
-            <span className="text-[11px]">H3</span>
+            <Heading3 size={13} />
+            <span className="text-[11px] font-bold">H3</span>
           </button>
 
           <div className="h-4 w-px bg-gray-700 mx-1" />
@@ -217,29 +446,32 @@ export function RichTextEditor({
           {/* Lists & Quotes */}
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => executeCommand("bulletedList")}
-            className="format-btn"
+            className={`format-btn ${activeStates.bulletedList ? "active" : ""}`}
             title="Bulleted List"
           >
-            <List size={14} />
+            <List size={13} />
           </button>
 
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => executeCommand("numberedList")}
-            className="format-btn"
+            className={`format-btn ${activeStates.numberedList ? "active" : ""}`}
             title="Numbered List"
           >
-            <ListOrdered size={14} />
+            <ListOrdered size={13} />
           </button>
 
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => executeCommand("blockQuote")}
-            className="format-btn"
+            className={`format-btn ${activeStates.blockQuote ? "active" : ""}`}
             title="Blockquote"
           >
-            <Quote size={14} />
+            <Quote size={13} />
           </button>
 
           <div className="h-4 w-px bg-gray-700 mx-1" />
@@ -247,6 +479,7 @@ export function RichTextEditor({
           {/* Undo / Redo */}
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => executeCommand("undo")}
             className="format-btn"
             title="Undo (Ctrl+Z)"
@@ -256,6 +489,7 @@ export function RichTextEditor({
 
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => executeCommand("redo")}
             className="format-btn"
             title="Redo (Ctrl+Y)"
@@ -268,6 +502,7 @@ export function RichTextEditor({
           {/* HTML / WYSIWYG Toggle */}
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => setShowSource((s) => !s)}
             className={`format-btn ${showSource ? "!bg-blue-600/30 !border-blue-500/50 !text-blue-300" : ""}`}
             title={showSource ? "Switch to Visual Editor" : "View HTML Source Code"}
@@ -362,12 +597,45 @@ export function RichTextEditor({
               editorRef.current = editor;
               editor.setData(localValue ?? "");
               lastSyncedValue.current = localValue ?? "";
+
+              // Synchronize active formatting states on cursor movement, typing, and attribute toggles
+              const modelDoc = editor.model?.document;
+              if (modelDoc) {
+                if (modelDoc.selection) {
+                  modelDoc.selection.on("change:range", () => updateActiveStates());
+                  modelDoc.selection.on("change:attribute", () => updateActiveStates());
+                }
+                modelDoc.on("change:data", () => updateActiveStates());
+              }
+
+              const viewDoc = editor.editing?.view?.document;
+              if (viewDoc) {
+                viewDoc.on("selectionChange", () => updateActiveStates());
+              }
+
+              // Intercept CKEditor's built-in heading command so dropdown selections also use smart heading
+              const headingCmd = editor.commands?.get("heading");
+              if (headingCmd) {
+                const origExec = headingCmd.execute.bind(headingCmd);
+                headingCmd.execute = (options?: { value?: string }) => {
+                  const val = options?.value;
+                  if (val && ["heading1", "heading2", "heading3"].includes(val)) {
+                    executeHeading(val as any);
+                  } else {
+                    origExec(options);
+                    setTimeout(updateActiveStates, 10);
+                  }
+                };
+              }
+
+              updateActiveStates();
             }}
             onChange={(_: unknown, editor: EditorInstance) => {
               const nextValue = editor.getData();
               lastSyncedValue.current = nextValue;
               setLocalValue(nextValue);
               onChange(nextValue);
+              updateActiveStates();
             }}
           />
         </div>
@@ -423,6 +691,24 @@ export function RichTextEditor({
 
         .format-btn:active {
           transform: translateY(1px);
+        }
+
+        /* Active highlight for Bold, Italic, Lists, Blockquote */
+        .format-btn.active {
+          background: #238636 !important;
+          border-color: #2ea043 !important;
+          color: #ffffff !important;
+          font-weight: 700 !important;
+          box-shadow: 0 0 8px rgba(46, 160, 67, 0.5) !important;
+        }
+
+        /* Active highlight for Headings (H1, H2, H3) */
+        .format-btn.active.active-h {
+          background: #1f6feb !important;
+          border-color: #388bfd !important;
+          color: #ffffff !important;
+          font-weight: 700 !important;
+          box-shadow: 0 0 8px rgba(56, 139, 253, 0.5) !important;
         }
 
         /* CKEditor Custom Dark Theme Styling */

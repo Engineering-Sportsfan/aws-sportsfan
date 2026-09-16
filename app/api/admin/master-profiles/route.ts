@@ -327,8 +327,30 @@ export async function PUT(req: NextRequest) {
       team,
       image,
       about,
+      role,
+      battingStyle,
+      bowlingStyle,
+      format,
+      gender,
+      jerseyNumber,
+      isCaptain,
       isVerified,
+      dateOfBirth,
+      birthPlace,
+      heightCm,
+      testCaps,
       fanImpactScore,
+      shortName,
+      homeGround,
+      coach,
+      captain,
+      founded,
+      stats,
+      overview,
+      customFields,
+      source,
+      tableOrCollection,
+      ...otherFields
     } = body;
 
     if (!id && !entityId) {
@@ -339,6 +361,18 @@ export async function PUT(req: NextRequest) {
     }
 
     const now = new Date().toISOString();
+
+    // Flatten customFields array if provided as [{ key, value }] into an object
+    const resolvedCustomFields: Record<string, any> = {};
+    if (Array.isArray(customFields)) {
+      for (const cf of customFields) {
+        if (cf && typeof cf.key === "string" && cf.key.trim()) {
+          resolvedCustomFields[cf.key.trim()] = cf.value;
+        }
+      }
+    } else if (customFields && typeof customFields === "object") {
+      Object.assign(resolvedCustomFields, customFields);
+    }
 
     if (type === "player") {
       const targetEntityId = entityId || `PLAYER#${id}`;
@@ -355,17 +389,38 @@ export async function PUT(req: NextRequest) {
       const existingItem = existing.Item || {};
       const updatedItem = {
         ...existingItem,
+        ...otherFields,
+        ...resolvedCustomFields,
         entityId: targetEntityId,
         sk: targetSk,
         playerId: id,
-        name: name ?? existingItem.name,
-        sportId: sport ?? existingItem.sportId ?? "cricket",
-        country: country ?? existingItem.country,
-        currentClubId: team ?? existingItem.currentClubId,
-        profileImage: image ?? existingItem.profileImage,
-        about: about ?? existingItem.about,
-        isVerified: Boolean(isVerified),
-        fanImpactScore: fanImpactScore ?? existingItem.fanImpactScore ?? 0,
+        name: name !== undefined ? name : (existingItem.name || existingItem.fullName),
+        fullName: name !== undefined ? name : (existingItem.fullName || existingItem.name),
+        sportId: sport !== undefined ? sport : (existingItem.sportId ?? existingItem.sport ?? "cricket"),
+        sport: sport !== undefined ? sport : (existingItem.sport ?? existingItem.sportId ?? "Cricket"),
+        country: country !== undefined ? country : existingItem.country,
+        currentClubId: team !== undefined ? team : existingItem.currentClubId,
+        team: team !== undefined ? team : (existingItem.team || existingItem.currentClubId),
+        clubName: team !== undefined ? team : existingItem.clubName,
+        profileImage: image !== undefined ? image : existingItem.profileImage,
+        image: image !== undefined ? image : (existingItem.image || existingItem.profileImage),
+        about: about !== undefined ? about : existingItem.about,
+        bio: about !== undefined ? about : (existingItem.bio || existingItem.about),
+        role: role !== undefined ? role : existingItem.role,
+        battingStyle: battingStyle !== undefined ? battingStyle : existingItem.battingStyle,
+        bowlingStyle: bowlingStyle !== undefined ? bowlingStyle : existingItem.bowlingStyle,
+        format: format !== undefined ? format : existingItem.format,
+        gender: gender !== undefined ? gender : existingItem.gender,
+        jerseyNumber: jerseyNumber !== undefined ? jerseyNumber : existingItem.jerseyNumber,
+        isCaptain: isCaptain !== undefined ? Boolean(isCaptain) : Boolean(existingItem.isCaptain),
+        isVerified: isVerified !== undefined ? Boolean(isVerified) : Boolean(existingItem.isVerified),
+        dateOfBirth: dateOfBirth !== undefined ? dateOfBirth : (existingItem.dateOfBirth || existingItem.dob),
+        birthPlace: birthPlace !== undefined ? birthPlace : existingItem.birthPlace,
+        heightCm: heightCm !== undefined ? heightCm : existingItem.heightCm,
+        testCaps: testCaps !== undefined ? testCaps : existingItem.testCaps,
+        fanImpactScore: fanImpactScore !== undefined ? Number(fanImpactScore) : (existingItem.fanImpactScore ?? 0),
+        stats: stats !== undefined ? stats : (existingItem.stats || {}),
+        overview: overview !== undefined ? overview : (existingItem.overview || {}),
         updatedAt: now,
       };
 
@@ -389,16 +444,29 @@ export async function PUT(req: NextRequest) {
       const existingItem = existing.Item || {};
       const updatedItem = {
         ...existingItem,
+        ...otherFields,
+        ...resolvedCustomFields,
         entityId: targetEntityId,
         sk: targetSk,
         team_id: id,
-        clubName: name ?? existingItem.clubName,
-        sportId: sport ?? existingItem.sportId ?? "cricket",
-        country: country ?? existingItem.country,
-        shortName: team ?? existingItem.shortName,
-        logoUrl: image ?? existingItem.logoUrl,
-        bio: about ?? existingItem.bio,
-        fanImpactScore: fanImpactScore ?? existingItem.fanImpactScore ?? 0,
+        clubName: name !== undefined ? name : existingItem.clubName,
+        name: name !== undefined ? name : (existingItem.name || existingItem.clubName),
+        sportId: sport !== undefined ? sport : (existingItem.sportId ?? "cricket"),
+        sport: sport !== undefined ? sport : (existingItem.sport ?? "Cricket"),
+        country: country !== undefined ? country : existingItem.country,
+        shortName: shortName !== undefined ? shortName : (team !== undefined ? team : existingItem.shortName),
+        homeGround: homeGround !== undefined ? homeGround : (existingItem.homeGround || existingItem.stadium),
+        coach: coach !== undefined ? coach : existingItem.coach,
+        captain: captain !== undefined ? captain : existingItem.captain,
+        founded: founded !== undefined ? founded : existingItem.founded,
+        logoUrl: image !== undefined ? image : (existingItem.logoUrl || existingItem.image),
+        image: image !== undefined ? image : (existingItem.image || existingItem.logoUrl),
+        bio: about !== undefined ? about : existingItem.bio,
+        about: about !== undefined ? about : (existingItem.about || existingItem.bio),
+        isVerified: isVerified !== undefined ? Boolean(isVerified) : Boolean(existingItem.isVerified),
+        fanImpactScore: fanImpactScore !== undefined ? Number(fanImpactScore) : (existingItem.fanImpactScore ?? 0),
+        stats: stats !== undefined ? stats : (existingItem.stats || {}),
+        overview: overview !== undefined ? overview : (existingItem.overview || {}),
         updatedAt: now,
       };
 
@@ -424,14 +492,31 @@ export async function PUT(req: NextRequest) {
           const existingItem = existing.Item;
           const updatedItem = {
             ...existingItem,
-            name: name ?? existingItem.name,
-            sport: sport ?? existingItem.sport,
-            country: country ?? existingItem.country,
-            team: team ?? existingItem.team,
-            profileImage: image ?? existingItem.profileImage,
-            about: about ?? existingItem.about,
+            ...otherFields,
+            ...resolvedCustomFields,
+            entityId: targetEntityId,
+            sk: targetSk,
+            athleteId: id,
+            id: id,
+            name: name !== undefined ? name : existingItem.name,
+            sport: sport !== undefined ? sport : (existingItem.sport || existingItem.discipline),
+            discipline: sport !== undefined ? sport : (existingItem.discipline || existingItem.sport),
+            country: country !== undefined ? country : existingItem.country,
+            team: team !== undefined ? team : existingItem.team,
+            profileImage: image !== undefined ? image : existingItem.profileImage,
+            image: image !== undefined ? image : (existingItem.image || existingItem.profileImage),
+            about: about !== undefined ? about : existingItem.about,
+            bio: about !== undefined ? about : (existingItem.bio || existingItem.about),
+            role: role !== undefined ? role : existingItem.role,
+            gender: gender !== undefined ? gender : existingItem.gender,
+            jerseyNumber: jerseyNumber !== undefined ? jerseyNumber : existingItem.jerseyNumber,
+            dateOfBirth: dateOfBirth !== undefined ? dateOfBirth : (existingItem.dateOfBirth || existingItem.dob),
+            birthPlace: birthPlace !== undefined ? birthPlace : existingItem.birthPlace,
+            heightCm: heightCm !== undefined ? heightCm : existingItem.heightCm,
             isVerified: Boolean(isVerified),
-            fanImpactScore: fanImpactScore ?? existingItem.fanImpactScore ?? 0,
+            fanImpactScore: fanImpactScore !== undefined ? Number(fanImpactScore) : (existingItem.fanImpactScore ?? 0),
+            stats: stats !== undefined ? stats : (existingItem.stats || {}),
+            overview: overview !== undefined ? overview : (existingItem.overview || {}),
             updatedAt: now,
           };
           await docClient.send(
@@ -450,15 +535,24 @@ export async function PUT(req: NextRequest) {
         const docRef = db.collection("athletesProfile").doc(id);
         const docSnap = await docRef.get();
         if (docSnap.exists) {
+          const fsData = docSnap.data() || {};
           await docRef.set(
             {
-              name,
-              sport,
-              country,
-              image,
-              about,
+              ...fsData,
+              ...otherFields,
+              ...resolvedCustomFields,
+              name: name !== undefined ? name : fsData.name,
+              sport: sport !== undefined ? sport : fsData.sport,
+              country: country !== undefined ? country : fsData.country,
+              team: team !== undefined ? team : fsData.team,
+              image: image !== undefined ? image : fsData.image,
+              about: about !== undefined ? about : fsData.about,
+              role: role !== undefined ? role : fsData.role,
+              gender: gender !== undefined ? gender : fsData.gender,
               isVerified: Boolean(isVerified),
-              fanImpactScore: Number(fanImpactScore) || 0,
+              fanImpactScore: fanImpactScore !== undefined ? Number(fanImpactScore) : (fsData.fanImpactScore ?? 0),
+              stats: stats !== undefined ? stats : (fsData.stats || {}),
+              overview: overview !== undefined ? overview : (fsData.overview || {}),
               updatedAt: Date.now(),
             },
             { merge: true }
@@ -577,13 +671,13 @@ export async function DELETE(req: NextRequest) {
               Key: { entityId, sk: "PROFILE#META" },
             })
           );
-        } catch {}
+        } catch { }
 
         // Also check Firestore
         if (id) {
           try {
             await db.collection("athletesProfile").doc(id).delete();
-          } catch {}
+          } catch { }
         }
       }
     }
