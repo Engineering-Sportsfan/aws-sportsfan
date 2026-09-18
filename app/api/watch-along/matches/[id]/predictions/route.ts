@@ -8,12 +8,15 @@ import { dualWrite } from "@/lib/dualWrite";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
+import { broadcastMatchEvent } from "@/lib/watchAlongEvents";
 
 export const dynamic = "force-dynamic";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
+
+const emptyFirestorePredictionsMatches = new Set<string>();
 
 /* ─────────────────────────────────────────────
    GET  /api/watch-along/matches/[id]/predictions
@@ -26,6 +29,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     const openOnly = searchParams.get("open") === "true";
 
     let predictions: any[] = [];
+    let ddbHasData = false;
+    let ddbSuccess = false;
 
     // 1. Query DynamoDB GamificationAndWallet
     try {
@@ -41,7 +46,10 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
         })
       );
 
+      ddbSuccess = true;
+
       if (qRes.Items && qRes.Items.length > 0) {
+        ddbHasData = true;
         let items = (qRes.Items as any[]).map((item) => ({
           id: (item.sk as string).replace(/^PREDICTION#/, "") || item.id,
           ...item,
@@ -58,8 +66,9 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       console.warn("[predictions GET] DynamoDB notice:", dynErr);
     }
 
-    // 2. Fallback to Firestore
-    if (predictions.length === 0) {
+    // 2. Fallback to Firestore:
+    // Only query Firestore if DynamoDB errored, or if DynamoDB has no items and Firestore wasn't already checked and found empty
+    if (!ddbHasData && (!ddbSuccess || !emptyFirestorePredictionsMatches.has(id))) {
       const matchRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
       let query: FirebaseFirestore.Query = matchRef
         .collection("predictions")
@@ -70,10 +79,14 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       }
 
       const snapshot = await query.get();
-      predictions = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      if (snapshot.empty) {
+        emptyFirestorePredictionsMatches.add(id);
+      } else {
+        predictions = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+      }
     }
 
     return NextResponse.json({
@@ -158,6 +171,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         },
         firestoreRef: matchRef.collection("predictions").doc(predictionId),
         firestoreData: predictionData,
+      });
+
+      emptyFirestorePredictionsMatches.delete(id);
+
+      broadcastMatchEvent(id, {
+        type: "NEW_PREDICTION",
+        prediction: predictionData,
       });
 
       return NextResponse.json({ success: true, prediction: predictionData });
@@ -277,6 +297,14 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         // ignore
       }
 
+      broadcastMatchEvent(id, {
+        type: "PREDICTION_VOTE",
+        predictionId,
+        option,
+        votes: updatedVotes,
+        totalVotes,
+      });
+
       return NextResponse.json({
         success: true,
         prediction: {
@@ -360,6 +388,12 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     } catch (e) {
       console.warn("[predictions PATCH] Firestore update notice:", e);
     }
+
+    broadcastMatchEvent(id, {
+      type: "PREDICTION_STATUS_CHANGED",
+      predictionId,
+      isOpen,
+    });
 
     return NextResponse.json({
       success: true,

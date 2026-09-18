@@ -1643,9 +1643,9 @@ export default function CreateWatchAlong({
               <TextInput label="Expert Name *" name="name" value={roomForm.name} onChange={handleRoomChange} placeholder="e.g. Harsha Bhogle" />
               <TextInput label="Role / Subtitle *" name="role" value={roomForm.role} onChange={handleRoomChange} placeholder="e.g. Cricket Commentary Legend" />
             </div>
-            <div className="mt-4">
-              <TextInput label="Host User ID / Email" name="hostUserId" value={roomForm.hostUserId || ""} onChange={handleRoomChange} placeholder="e.g. user_123 or user@gmail.com" />
-              <TextInput label="Co-Host User ID / Email" name="coHostUserId" value={roomForm.coHostUserId || ""} onChange={handleRoomChange} placeholder="e.g. cohost@gmail.com (gets host controls)" />
+            <div className="mt-4 space-y-3">
+              <TextInput label="Host User IDs / Emails (Comma-separated for multiple)" name="hostUserId" value={roomForm.hostUserId || ""} onChange={handleRoomChange} placeholder="e.g. host1@gmail.com, host2@gmail.com" />
+              <TextInput label="Co-Host User IDs / Emails (Comma-separated for multiple)" name="coHostUserId" value={roomForm.coHostUserId || ""} onChange={handleRoomChange} placeholder="e.g. cohost1@gmail.com, cohost2@gmail.com (gets host controls)" />
             </div>
             
             <div className="mt-4">

@@ -124,6 +124,7 @@ function MasterProfilesContent() {
     birthPlace: "",
     heightCm: "",
     testCaps: "",
+    worldRank: "",
     // Team fields
     shortName: "",
     homeGround: "",
@@ -615,6 +616,7 @@ function MasterProfilesContent() {
       birthPlace: stats.birthPlace || raw.birthPlace || "",
       heightCm: stats.heightCm || raw.heightCm || raw.height || "",
       testCaps: stats.testCaps || raw.testCaps || raw.caps || "",
+      worldRank: raw.analytics?.stats?.worldRank || raw.performance?.stats?.worldRank || raw.stats?.worldRank || stats.worldRank || "",
       shortName: stats.shortName || raw.shortName || "",
       homeGround: stats.homeGround || raw.homeGround || "",
       coach: stats.headCoach || stats.coach || raw.headCoach || raw.coach || "",
@@ -685,6 +687,7 @@ function MasterProfilesContent() {
           birthPlace: editForm.birthPlace,
           heightCm: editForm.heightCm,
           testCaps: editForm.testCaps,
+          worldRank: editForm.worldRank,
           shortName: editForm.shortName,
           homeGround: editForm.homeGround,
           coach: editForm.coach,
@@ -704,6 +707,7 @@ function MasterProfilesContent() {
             birthPlace: editForm.birthPlace,
             heightCm: editForm.heightCm,
             testCaps: editForm.testCaps,
+            worldRank: editForm.worldRank,
             shortName: editForm.shortName,
             homeGround: editForm.homeGround,
             headCoach: editForm.coach,
@@ -1846,6 +1850,19 @@ function MasterProfilesContent() {
                             onChange={(e) => setEditForm({ ...editForm, testCaps: e.target.value })}
                             className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
                             placeholder="e.g. 113 Tests, 292 ODIs"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-gray-400 mb-1 font-semibold">World Rank</label>
+                          <input
+                            type="text"
+                            value={editForm.worldRank}
+                            onChange={(e) => setEditForm({ ...editForm, worldRank: e.target.value })}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                            placeholder="e.g. 654, 150, #1"
                           />
                         </div>
                       </div>

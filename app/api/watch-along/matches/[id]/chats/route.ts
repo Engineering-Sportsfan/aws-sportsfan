@@ -7,6 +7,7 @@ import { dualWrite } from "@/lib/dualWrite";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
+import { broadcastMatchEvent } from "@/lib/watchAlongEvents";
 
 export const dynamic = "force-dynamic";
 
@@ -21,25 +22,27 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params;
     const { searchParams } = new URL(req.url);
-    const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 50);
+    const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "50") || 50, 1), 100);
     const since = searchParams.get("since");
 
     let chats: any[] = [];
+    let ddbSuccess = false;
 
     // 1. Try querying DynamoDB RealTimeChat
     try {
-      let keyCond = "roomId = :rId AND begins_with(sk, :msgPrefix)";
+      let keyCond: string;
       const exprVals: Record<string, any> = {
         ":rId": `ROOM#watchalong_${id}`,
-        ":msgPrefix": "MSG#",
       };
 
-      if (since) {
-        const sinceTs = parseInt(since);
-        if (!isNaN(sinceTs)) {
-          keyCond = "roomId = :rId AND sk > :sinceSk";
-          exprVals[":sinceSk"] = `MSG#${sinceTs}`;
-        }
+      const sinceTs = since ? parseInt(since) : NaN;
+      if (!isNaN(sinceTs)) {
+        keyCond = "roomId = :rId AND sk BETWEEN :sinceSk AND :maxSk";
+        exprVals[":sinceSk"] = `MSG#${sinceTs + 1}`;
+        exprVals[":maxSk"] = "MSG#\uffff";
+      } else {
+        keyCond = "roomId = :rId AND begins_with(sk, :msgPrefix)";
+        exprVals[":msgPrefix"] = "MSG#";
       }
 
       const qRes = await docClient.send(
@@ -51,6 +54,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
           Limit: limit,
         })
       );
+
+      ddbSuccess = true;
 
       if (qRes.Items && qRes.Items.length > 0) {
         chats = (qRes.Items as any[]).map((item) => ({
@@ -65,8 +70,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       console.warn("[match chat GET] DynamoDB notice:", dynErr);
     }
 
-    // 2. Fallback to Firestore
-    if (chats.length === 0) {
+    // 2. Fallback to Firestore (if DynamoDB errored or had no data on initial fetch)
+    if (!ddbSuccess || (!since && chats.length === 0)) {
       let query: FirebaseFirestore.Query = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id)
         .collection("chats")
         .orderBy("createdAt", "desc");
@@ -129,6 +134,11 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       },
       firestoreRef: db.collection(getFirestoreCollection("watchAlongMatches")).doc(id).collection("chats").doc(chatId),
       firestoreData: chatData,
+    });
+
+    broadcastMatchEvent(id, {
+      type: "NEW_CHAT",
+      chat: chatData,
     });
 
     return NextResponse.json({ success: true, chat: chatData });
@@ -203,6 +213,11 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
     } catch (e) {
       console.warn("[match chat DELETE] Firestore notice:", e);
     }
+
+    broadcastMatchEvent(id, {
+      type: "DELETE_CHAT",
+      chatId,
+    });
 
     return NextResponse.json({ success: true, message: "Chat deleted" });
   } catch (error) {
