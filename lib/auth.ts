@@ -169,20 +169,25 @@ export async function isAuthorizedForMatch(user: UserSession, matchId: string): 
     }
 
     if (foundRoom && roomData) {
-      // Allow both host and co-host (by user ID, email, or name)
+      // Allow multiple hosts and multiple co-hosts (by user ID, email, or name)
+      const hosts = roomData.hostUserId
+        ? roomData.hostUserId.split(",").map((id: string) => id.trim().toLowerCase())
+        : [];
       const coHosts = roomData.coHostUserId
         ? roomData.coHostUserId.split(",").map((id: string) => id.trim().toLowerCase())
         : [];
-      if (
-        roomData.hostUserId === user.userId ||
-        roomData.hostUserId === user.name ||
-        coHosts.some(
-          (id: string) =>
-            id === user.userId?.toLowerCase() ||
-            id === user.name?.toLowerCase() ||
-            id === user.email?.toLowerCase()
-        )
-      ) {
+
+      const userIdentifiers = [
+        user.userId?.toLowerCase(),
+        user.name?.toLowerCase(),
+        user.email?.toLowerCase(),
+      ].filter(Boolean);
+
+      const isHostOrCoHost = [...hosts, ...coHosts].some((assignedId: string) =>
+        userIdentifiers.includes(assignedId)
+      );
+
+      if (isHostOrCoHost) {
         return true;
       }
     }
