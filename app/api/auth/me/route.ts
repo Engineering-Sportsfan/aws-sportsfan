@@ -3,6 +3,7 @@ import { getAuthUser } from "@/lib/getAuthUser";
 import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
 import { TABLES } from "@/lib/tableNames";
+import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -72,10 +73,53 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    // If check was attempted and user does NOT exist in DB (account was cleaned/deleted):
-    // Forcefully invalidate the orphaned session and clear all cookies
+    // ── Self-Healing Auto-Creation ──────────────────────────────────────────
+    // If user has a valid JWT session token but their DB record is missing,
+    // auto-create it in DynamoDB & Firebase instead of kicking them out!
+    if (dbCheckAttempted && !exists && cleanEmail) {
+      console.log(`[/api/auth/me] ⚡ Auto-healing: Missing DB record for [${cleanEmail}]. Creating in DynamoDB...`);
+      const now = Date.now();
+      const consistentUserId = cleanUid || cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
+      const nameParts = (user.name ?? "").split(" ");
+      const firstName = nameParts[0] ?? "";
+      const lastName = nameParts.slice(1).join(" ") ?? "";
+
+      const newUserData = {
+        email: cleanEmail,
+        userId: consistentUserId,
+        firstName,
+        lastName,
+        name: user.name || cleanEmail.split("@")[0],
+        role: user.role || "user",
+        status: "active",
+        isVerified: true,
+        authProviders: { emailPassword: true, google: false },
+        totalPoints: 0,
+        pointsBreakdown: {},
+        createdAt: now,
+        updatedAt: now,
+        lastLoginAt: now,
+      };
+
+      const dynamoItem = {
+        entityId: `USER#${cleanEmail}`,
+        sk: "USER#META",
+        ...newUserData,
+      };
+
+      try {
+        await dualWrite("users", cleanEmail, TABLES.IdentityAndAccess, dynamoItem);
+        exists = true;
+        dbUser = newUserData;
+        console.log(`[/api/auth/me] ✅ Successfully auto-healed user record for [${cleanEmail}]`);
+      } catch (healErr) {
+        console.error("[/api/auth/me] Failed to auto-heal user record:", healErr);
+      }
+    }
+
+    // Only clear cookies if check was attempted, email is missing/invalid, and record truly cannot be resolved
     if (dbCheckAttempted && !exists) {
-      console.warn(`[/api/auth/me] ⚠️ Orphaned session detected for [${cleanEmail || cleanUid}]. User no longer exists in database. Clearing cookies.`);
+      console.warn(`[/api/auth/me] ⚠️ Unrecoverable session for [${cleanEmail || cleanUid}]. Clearing cookies.`);
       const response = NextResponse.json(
         {
           success: false,

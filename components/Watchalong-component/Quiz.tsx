@@ -42,13 +42,16 @@ const DEFAULT_FORM: QuizForm = {
 /* ─────────────────────────────────────────────
    Quiz Admin Panel
    Props: matchId → the watch-along match ID
+          roomId  → optional watch-along room ID
    ───────────────────────────────────────────── */
-export default function QuizAdminPanel({ matchId }: { matchId: string }) {
+export default function QuizAdminPanel({ matchId, roomId }: { matchId: string; roomId?: string }) {
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardScope, setLeaderboardScope] = useState<"room" | "global">("room");
   const [activeTab, setActiveTab] = useState<"questions" | "leaderboard">("questions");
   const [fetching, setFetching] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [form, setForm] = useState<QuizForm>(DEFAULT_FORM);
 
@@ -66,14 +69,41 @@ export default function QuizAdminPanel({ matchId }: { matchId: string }) {
   };
 
   /* ── Fetch leaderboard ── */
-  const fetchLeaderboard = async () => {
+  const fetchLeaderboard = async (scope: "room" | "global" = leaderboardScope) => {
     try {
-      const res = await axios.get(
-        `/api/watch-along/matches/${matchId}/quiz?leaderboard=true`
-      );
+      let url = `/api/watch-along/matches/${matchId}/quiz?leaderboard=true`;
+      if (scope === "global") {
+        url += "&global=true";
+      } else if (roomId) {
+        url += `&roomId=${encodeURIComponent(roomId)}`;
+      }
+      const res = await axios.get(url);
       if (res.data.success) setLeaderboard(res.data.leaderboard);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  /* ── Reset room leaderboard ── */
+  const handleResetRoomLeaderboard = async () => {
+    if (!confirm("Are you sure you want to reset this room's quiz leaderboard to 0?")) {
+      return;
+    }
+    setResetting(true);
+    try {
+      const res = await axios.post(`/api/watch-along/matches/${matchId}/quiz`, {
+        action: "reset_room_leaderboard",
+        roomId: roomId || matchId,
+      });
+      if (res.data.success) {
+        setLeaderboard([]);
+        alert("Room leaderboard reset to 0!");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error resetting room leaderboard");
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -82,8 +112,8 @@ export default function QuizAdminPanel({ matchId }: { matchId: string }) {
   }, [matchId]);
 
   useEffect(() => {
-    if (activeTab === "leaderboard") fetchLeaderboard();
-  }, [activeTab]);
+    if (activeTab === "leaderboard") fetchLeaderboard(leaderboardScope);
+  }, [activeTab, leaderboardScope]);
 
   /* ── Option helpers ── */
   const handleOptionChange = (index: number, value: string) => {
@@ -314,7 +344,7 @@ export default function QuizAdminPanel({ matchId }: { matchId: string }) {
               </button>
             ))}
             <button
-              onClick={activeTab === "questions" ? fetchQuestions : fetchLeaderboard}
+              onClick={() => (activeTab === "questions" ? fetchQuestions() : fetchLeaderboard())}
               className="ml-auto text-[10px] text-gray-500 hover:text-gray-300 bg-[#1a1a1a] border border-[#2a2a2a] px-3 py-1.5 rounded transition-all"
             >
               ↻ Refresh
@@ -399,36 +429,78 @@ export default function QuizAdminPanel({ matchId }: { matchId: string }) {
 
           {/* Leaderboard */}
           {activeTab === "leaderboard" && (
-            <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
-              {leaderboard.length === 0 ? (
-                <div className="p-8 text-center text-gray-600 text-sm">No scores yet</div>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#21262d] text-[10px] text-gray-500 uppercase tracking-widest">
-                      <th className="text-left px-4 py-3">Rank</th>
-                      <th className="text-left px-4 py-3">Player</th>
-                      <th className="text-right px-4 py-3">Points</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leaderboard.map((entry, i) => (
-                      <tr
-                        key={entry.userId}
-                        className="border-b border-[#21262d] last:border-0 hover:bg-[#1a1f29] transition-colors"
-                      >
-                        <td className="px-4 py-3 text-gray-500">
-                          {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}
-                        </td>
-                        <td className="px-4 py-3 text-white font-medium">{entry.displayName}</td>
-                        <td className="px-4 py-3 text-right text-blue-400 font-semibold">
-                          {entry.totalPoints.toLocaleString()}
-                        </td>
+            <div className="space-y-3">
+              {/* Leaderboard Scope Selector */}
+              <div className="flex items-center justify-between gap-2 bg-[#161b22] border border-[#21262d] rounded-lg p-3">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setLeaderboardScope("room")}
+                    className={`text-xs px-3 py-1.5 rounded font-medium transition-all ${
+                      leaderboardScope === "room"
+                        ? "bg-blue-600 text-white"
+                        : "bg-[#0d1117] text-gray-400 hover:text-white border border-gray-800"
+                    }`}
+                  >
+                    Room Leaderboard {roomId ? `(${roomId.slice(0, 8)}…)` : "(Starts at 0)"}
+                  </button>
+                  <button
+                    onClick={() => setLeaderboardScope("global")}
+                    className={`text-xs px-3 py-1.5 rounded font-medium transition-all ${
+                      leaderboardScope === "global"
+                        ? "bg-purple-600 text-white"
+                        : "bg-[#0d1117] text-gray-400 hover:text-white border border-gray-800"
+                    }`}
+                  >
+                    Global Platform Leaderboard
+                  </button>
+                </div>
+
+                {leaderboardScope === "room" && (
+                  <button
+                    onClick={handleResetRoomLeaderboard}
+                    disabled={resetting}
+                    className="text-xs px-3 py-1.5 rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 border border-red-800/50 transition-all font-medium disabled:opacity-50"
+                  >
+                    {resetting ? "Resetting…" : "Reset Room to 0"}
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
+                {leaderboard.length === 0 ? (
+                  <div className="p-8 text-center text-gray-600 text-sm">
+                    {leaderboardScope === "room"
+                      ? "No scores in this room yet (starts fresh at 0)."
+                      : "No global quiz scores recorded yet."}
+                  </div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[#21262d] text-[10px] text-gray-500 uppercase tracking-widest">
+                        <th className="text-left px-4 py-3">Rank</th>
+                        <th className="text-left px-4 py-3">Player</th>
+                        <th className="text-right px-4 py-3">Points</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+                    </thead>
+                    <tbody>
+                      {leaderboard.map((entry, i) => (
+                        <tr
+                          key={entry.userId}
+                          className="border-b border-[#21262d] last:border-0 hover:bg-[#1a1f29] transition-colors"
+                        >
+                          <td className="px-4 py-3 text-gray-500">
+                            {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}
+                          </td>
+                          <td className="px-4 py-3 text-white font-medium">{entry.displayName}</td>
+                          <td className="px-4 py-3 text-right text-blue-400 font-semibold">
+                            {entry.totalPoints.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
         </div>

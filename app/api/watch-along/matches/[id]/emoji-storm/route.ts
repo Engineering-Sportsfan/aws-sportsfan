@@ -6,6 +6,7 @@ import { getUserSessionAndRole, isAuthorizedForMatch } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { broadcastMatchEvent } from "@/lib/watchAlongEvents";
 
 export const dynamic = "force-dynamic";
 
@@ -156,6 +157,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     } catch (fsErr) {
       console.warn("[emoji-storm POST] Firestore mirror notice:", fsErr);
     }
+
+    broadcastMatchEvent(id, {
+      type: "EMOJI_STORM",
+      emojis: raw,
+      tally,
+    });
 
     return NextResponse.json({ success: true, reactions: tally });
   } catch (error) {

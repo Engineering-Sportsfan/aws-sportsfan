@@ -6,17 +6,22 @@ import { getUserSessionAndRole, isAuthorizedForMatch } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
-import { QueryCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { v4 as uuidv4 } from "uuid";
+import { broadcastMatchEvent } from "@/lib/watchAlongEvents";
 
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const emptyFirestoreQuizMatches = new Set<string>();
+
 /* ─────────────────────────────────────────────
    GET  /api/watch-along/matches/[id]/quiz
    Query: ?active=true       → only the active question
           ?leaderboard=true  → top 20 scorers
+          ?roomId=<roomId>   → room-isolated leaderboard (starts at 0)
+          ?global=true       → all-time cumulative platform leaderboard
 ───────────────────────────────────────────── */
 export async function GET(req: NextRequest, { params }: RouteContext) {
   try {
@@ -24,47 +29,93 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     const { searchParams } = new URL(req.url);
     const activeOnly = searchParams.get("active") === "true";
     const leaderboard = searchParams.get("leaderboard") === "true";
+    const isGlobal = searchParams.get("global") === "true";
+    const roomId = searchParams.get("roomId") || id;
 
     const matchRef = db.collection(getFirestoreCollection("watchAlongMatches")).doc(id);
 
     if (leaderboard) {
       let entries: any[] = [];
+      let lbDdbSuccess = false;
+      const targetPk = isGlobal ? "GLOBAL#QUIZ_LEADERBOARD" : `ROOM#${roomId}`;
+
       try {
         const qRes = await docClient.send(
           new QueryCommand({
             TableName: TABLES.GamificationAndWallet,
             KeyConditionExpression: "userId = :uId AND begins_with(sk, :skPrefix)",
             ExpressionAttributeValues: {
-              ":uId": `MATCH#${id}`,
+              ":uId": targetPk,
               ":skPrefix": "QUIZ_LEADERBOARD#",
             },
             Limit: 50,
           })
         );
+        lbDdbSuccess = true;
         if (qRes.Items && qRes.Items.length > 0) {
           entries = (qRes.Items as any[]).map((item) => ({
             userId: (item.sk as string).replace(/^QUIZ_LEADERBOARD#/, ""),
-            ...item,
+            displayName: item.displayName || "Fan Quizzer",
+            avatarUrl: item.avatarUrl || "",
+            totalPoints: Number(item.totalPoints || 0),
+            updatedAt: item.updatedAt,
+            roomId: item.roomId || (isGlobal ? undefined : roomId),
           }));
           entries.sort((a, b) => Number(b.totalPoints || 0) - Number(a.totalPoints || 0));
-          entries = entries.slice(0, 20);
+          entries = entries.slice(0, 20).map((entry, idx) => ({
+            ...entry,
+            rank: idx + 1,
+          }));
         }
       } catch (e) {
         console.warn("[quiz leaderboard GET] DynamoDB notice:", e);
       }
 
-      if (entries.length === 0) {
-        const lbSnap = await matchRef
-          .collection("quizLeaderboard")
-          .orderBy("totalPoints", "desc")
-          .limit(20)
-          .get();
-        entries = lbSnap.docs.map((doc) => ({ userId: doc.id, ...doc.data() }));
+      // Only fallback to Firestore if DynamoDB query itself failed (network/auth error)
+      if (!lbDdbSuccess) {
+        try {
+          if (isGlobal) {
+            const lbSnap = await db
+              .collection(getFirestoreCollection("quiz_leaderboard"))
+              .orderBy("totalPoints", "desc")
+              .limit(20)
+              .get();
+            entries = lbSnap.docs.map((doc, idx) => ({
+              userId: doc.id,
+              rank: idx + 1,
+              ...doc.data(),
+            }));
+          } else {
+            const lbSnap = await matchRef
+              .collection("rooms")
+              .doc(roomId)
+              .collection("quizLeaderboard")
+              .orderBy("totalPoints", "desc")
+              .limit(20)
+              .get();
+            entries = lbSnap.docs.map((doc, idx) => ({
+              userId: doc.id,
+              rank: idx + 1,
+              ...doc.data(),
+            }));
+          }
+        } catch (e) {
+          console.warn("[quiz leaderboard GET] Firestore fallback notice:", e);
+        }
       }
-      return NextResponse.json({ success: true, leaderboard: entries });
+
+      return NextResponse.json({
+        success: true,
+        leaderboard: entries,
+        scope: isGlobal ? "global" : "room",
+        roomId: isGlobal ? undefined : roomId,
+      });
     }
 
     let questions: any[] = [];
+    let ddbHasQuestions = false;
+    let ddbSuccess = false;
+
     try {
       const qRes = await docClient.send(
         new QueryCommand({
@@ -77,7 +128,10 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
           Limit: 50,
         })
       );
+      ddbSuccess = true;
+
       if (qRes.Items && qRes.Items.length > 0) {
+        ddbHasQuestions = true;
         let items = (qRes.Items as any[]).map((item) => {
           const { correctAnswer, ...safe } = item;
           void correctAnswer;
@@ -96,7 +150,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       console.warn("[quiz questions GET] DynamoDB notice:", e);
     }
 
-    if (questions.length === 0) {
+    // Only fallback to Firestore if DynamoDB errored or had 0 items AND Firestore wasn't already verified empty
+    if (!ddbHasQuestions && (!ddbSuccess || !emptyFirestoreQuizMatches.has(id))) {
       let query: FirebaseFirestore.Query = matchRef
         .collection("quizQuestions")
         .orderBy("createdAt", "desc");
@@ -107,12 +162,16 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
       }
 
       const snapshot = await query.get();
-      questions = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        const { correctAnswer, ...safe } = data;
-        void correctAnswer;
-        return { id: doc.id, ...safe };
-      });
+      if (snapshot.empty) {
+        emptyFirestoreQuizMatches.add(id);
+      } else {
+        questions = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          const { correctAnswer, ...safe } = data;
+          void correctAnswer;
+          return { id: doc.id, ...safe };
+        });
+      }
     }
 
     return NextResponse.json({ success: true, questions });
@@ -151,7 +210,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         );
       }
 
-      const { question, options, correctAnswer, timerSeconds = 15, points = 10 } = body;
+      const { question, options, correctAnswer, timerSeconds = 15, points = 10, roomId } = body;
 
       if (!question?.trim() || !Array.isArray(options) || options.length < 2 || !correctAnswer) {
         return NextResponse.json(
@@ -179,6 +238,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         opensAt: now,
         closesAt: now + timerSeconds * 1000,
         competing: 0,
+        roomId: roomId || null,
         createdAt: now,
         updatedAt: now,
       };
@@ -194,13 +254,23 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         firestoreData: questionData,
       });
 
+      emptyFirestoreQuizMatches.delete(id);
+
       const { correctAnswer: _ca, ...safeData } = questionData;
-      return NextResponse.json({ success: true, question: { ...safeData, id: questionId } });
+      const quizPayload = { ...safeData, id: questionId };
+
+      broadcastMatchEvent(id, {
+        type: "NEW_QUIZ",
+        quiz: quizPayload,
+      });
+
+      return NextResponse.json({ success: true, question: quizPayload });
     }
 
     // ── ANSWER ──
     if (action === "answer") {
-      const { questionId, option, userId, displayName } = body;
+      const { questionId, option, userId, displayName, roomId, avatarUrl } = body;
+      const effectiveRoomId = roomId || id;
 
       if (!questionId || !option || !userId) {
         return NextResponse.json(
@@ -254,13 +324,14 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       }
 
       const isCorrect = option === q.correctAnswer;
-      const earnedPoints = isCorrect ? q.points : 0;
+      const earnedPoints = isCorrect ? (q.points || 10) : 0;
       const now = Date.now();
 
       const answerData = {
         option,
         isCorrect,
         points: earnedPoints,
+        roomId: effectiveRoomId,
         answeredAt: now,
       };
 
@@ -303,34 +374,90 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       }
 
       if (isCorrect) {
-        // Update Leaderboard in DynamoDB
+        // 1. Update Room-Isolated Leaderboard in DynamoDB (starts at 0 for every unique room)
         try {
           await docClient.send(
             new UpdateCommand({
               TableName: TABLES.GamificationAndWallet,
-              Key: { userId: `MATCH#${id}`, sk: `QUIZ_LEADERBOARD#${userId}` },
-              UpdateExpression: "ADD totalPoints :pts SET displayName = :dn, updatedAt = :now",
+              Key: { userId: `ROOM#${effectiveRoomId}`, sk: `QUIZ_LEADERBOARD#${userId}` },
+              UpdateExpression: "ADD totalPoints :pts SET displayName = :dn, avatarUrl = :av, updatedAt = :now, roomId = :rid",
               ExpressionAttributeValues: {
                 ":pts": earnedPoints,
                 ":dn": displayName || userId,
+                ":av": avatarUrl || "",
+                ":now": now,
+                ":rid": effectiveRoomId,
+              },
+            })
+          );
+        } catch (e) {
+          console.warn("[quiz answer] Room leaderboard update notice:", e);
+        }
+
+        // 2. Update Global Cumulative Leaderboard in DynamoDB
+        try {
+          await docClient.send(
+            new UpdateCommand({
+              TableName: TABLES.GamificationAndWallet,
+              Key: { userId: "GLOBAL#QUIZ_LEADERBOARD", sk: `QUIZ_LEADERBOARD#${userId}` },
+              UpdateExpression: "ADD totalPoints :pts SET displayName = :dn, avatarUrl = :av, updatedAt = :now",
+              ExpressionAttributeValues: {
+                ":pts": earnedPoints,
+                ":dn": displayName || userId,
+                ":av": avatarUrl || "",
                 ":now": now,
               },
             })
           );
         } catch (e) {
-          // ignore
+          console.warn("[quiz answer] Global leaderboard update notice:", e);
         }
 
-        // Update in Firestore
+        // 3. Update in Firestore for dual-write compatibility
         try {
-          const lbRef = matchRef.collection("quizLeaderboard").doc(userId);
-          await lbRef.set(
-            { displayName: displayName || userId, totalPoints: FieldValue.increment(earnedPoints), updatedAt: now },
-            { merge: true }
-          );
+          // Room leaderboard collection
+          await matchRef
+            .collection("rooms")
+            .doc(effectiveRoomId)
+            .collection("quizLeaderboard")
+            .doc(userId)
+            .set(
+              {
+                displayName: displayName || userId,
+                avatarUrl: avatarUrl || "",
+                totalPoints: FieldValue.increment(earnedPoints),
+                updatedAt: now,
+                roomId: effectiveRoomId,
+              },
+              { merge: true }
+            );
+
+          // Global quiz leaderboard collection
+          await db
+            .collection(getFirestoreCollection("quiz_leaderboard"))
+            .doc(userId)
+            .set(
+              {
+                displayName: displayName || userId,
+                avatarUrl: avatarUrl || "",
+                totalPoints: FieldValue.increment(earnedPoints),
+                updatedAt: now,
+              },
+              { merge: true }
+            );
         } catch (e) {
           // ignore
         }
+
+        // 4. Real-time broadcast to room subscribers
+        broadcastMatchEvent(id, {
+          type: "QUIZ_LEADERBOARD_UPDATE",
+          roomId: effectiveRoomId,
+          userId,
+          displayName: displayName || userId,
+          avatarUrl: avatarUrl || "",
+          pointsEarned: earnedPoints,
+        });
       }
 
       return NextResponse.json({
@@ -338,11 +465,87 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         isCorrect,
         correctAnswer: q.correctAnswer,
         pointsEarned: earnedPoints,
+        roomId: effectiveRoomId,
       });
     }
 
+    // ── RESET ROOM LEADERBOARD ──
+    if (action === "reset_room_leaderboard") {
+      const user = await getUserSessionAndRole(req);
+      if (!user) {
+        return NextResponse.json(
+          { success: false, message: "Unauthorized - Authentication required" },
+          { status: 401 }
+        );
+      }
+
+      const isAuth = await isAuthorizedForMatch(user, id);
+      if (!isAuth) {
+        return NextResponse.json(
+          { success: false, message: "Forbidden - Insufficient permissions" },
+          { status: 403 }
+        );
+      }
+
+      const { roomId } = body;
+      const targetRoomId = roomId || id;
+
+      try {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.GamificationAndWallet,
+            KeyConditionExpression: "userId = :uId AND begins_with(sk, :skPrefix)",
+            ExpressionAttributeValues: {
+              ":uId": `ROOM#${targetRoomId}`,
+              ":skPrefix": "QUIZ_LEADERBOARD#",
+            },
+          })
+        );
+
+        if (qRes.Items && qRes.Items.length > 0) {
+          for (const item of qRes.Items) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: TABLES.GamificationAndWallet,
+                Key: { userId: item.userId, sk: item.sk },
+              })
+            );
+          }
+        }
+
+        try {
+          const roomLbDocs = await matchRef
+            .collection("rooms")
+            .doc(targetRoomId)
+            .collection("quizLeaderboard")
+            .get();
+          for (const d of roomLbDocs.docs) {
+            await d.ref.delete();
+          }
+        } catch {
+          // ignore
+        }
+
+        broadcastMatchEvent(id, {
+          type: "QUIZ_LEADERBOARD_RESET",
+          roomId: targetRoomId,
+        });
+
+        return NextResponse.json({
+          success: true,
+          message: `Leaderboard reset for room ${targetRoomId}`,
+        });
+      } catch (err) {
+        console.error("[quiz reset_room_leaderboard]", err);
+        return NextResponse.json(
+          { success: false, message: (err as Error).message },
+          { status: 500 }
+        );
+      }
+    }
+
     return NextResponse.json(
-      { success: false, message: "Invalid action. Use 'create' or 'answer'" },
+      { success: false, message: "Invalid action. Use 'create', 'answer', or 'reset_room_leaderboard'" },
       { status: 400 }
     );
   } catch (error) {
@@ -416,6 +619,13 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     } catch (e) {
       console.warn("[quiz PATCH] Firestore update notice:", e);
     }
+
+    broadcastMatchEvent(id, {
+      type: isActive ? "QUIZ_ACTIVATED" : "QUIZ_DEACTIVATED",
+      questionId,
+      isActive,
+      closesAt: isActive ? now + 15000 : null,
+    });
 
     return NextResponse.json({
       success: true,

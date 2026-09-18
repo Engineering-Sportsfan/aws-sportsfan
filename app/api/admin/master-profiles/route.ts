@@ -350,6 +350,9 @@ export async function PUT(req: NextRequest) {
       customFields,
       source,
       tableOrCollection,
+      worldRank,
+      analytics,
+      performance,
       ...otherFields
     } = body;
 
@@ -517,8 +520,27 @@ export async function PUT(req: NextRequest) {
             fanImpactScore: fanImpactScore !== undefined ? Number(fanImpactScore) : (existingItem.fanImpactScore ?? 0),
             stats: stats !== undefined ? stats : (existingItem.stats || {}),
             overview: overview !== undefined ? overview : (existingItem.overview || {}),
+            analytics: analytics !== undefined ? analytics : existingItem.analytics,
+            performance: performance !== undefined ? performance : existingItem.performance,
             updatedAt: now,
           };
+
+          if (worldRank !== undefined) {
+            const rankStr = String(worldRank).trim();
+            if (!updatedItem.analytics) updatedItem.analytics = {};
+            if (!updatedItem.analytics.stats) updatedItem.analytics.stats = {};
+            updatedItem.analytics.stats.worldRank = rankStr;
+
+            if (!updatedItem.performance) updatedItem.performance = {};
+            if (!updatedItem.performance.stats) updatedItem.performance.stats = {};
+            updatedItem.performance.stats.worldRank = rankStr;
+
+            if (!updatedItem.stats) updatedItem.stats = {};
+            if (typeof updatedItem.stats === "object") {
+              updatedItem.stats.worldRank = rankStr;
+            }
+          }
+
           await docClient.send(
             new PutCommand({
               TableName: TABLES.SportsData,

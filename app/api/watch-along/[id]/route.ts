@@ -6,7 +6,7 @@ import { getUserSessionAndRole } from "@/lib/auth";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
-import { GetCommand, DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, DeleteCommand, QueryCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +59,19 @@ export async function GET(req: NextRequest) {
         );
       }
       roomData = { id: doc.id, ...doc.data() };
+      // Lazy backfill into DynamoDB so future polling reads from DynamoDB in ~5ms
+      docClient
+        .send(
+          new PutCommand({
+            TableName: TABLES.RealTimeChat,
+            Item: {
+              roomId: `ROOM#${id}`,
+              sk: "ROOM#META",
+              ...roomData,
+            },
+          })
+        )
+        .catch(() => {});
     }
 
     // Fetch related live match
@@ -86,6 +99,19 @@ export async function GET(req: NextRequest) {
             .get();
           if (matchDoc.exists) {
             liveMatch = { id: matchDoc.id, ...matchDoc.data() };
+            // Lazy backfill into DynamoDB
+            docClient
+              .send(
+                new PutCommand({
+                  TableName: TABLES.SportsData,
+                  Item: {
+                    entityId: `MATCH#${roomData.liveMatchId}`,
+                    sk: "MATCH#META",
+                    ...liveMatch,
+                  },
+                })
+              )
+              .catch(() => {});
           }
         } catch (e) {
           // ignore
@@ -151,6 +177,16 @@ export async function PUT(req: NextRequest) {
       existingData = existing.data();
     }
 
+    const hosts = existingData?.hostUserId
+      ? existingData.hostUserId.split(",").map((hId: string) => hId.trim().toLowerCase())
+      : [];
+    const isHost = hosts.some(
+      (hId: string) =>
+        hId === user.userId?.toLowerCase() ||
+        hId === user.name?.toLowerCase() ||
+        hId === user.email?.toLowerCase()
+    );
+
     const coHosts = existingData?.coHostUserId
       ? existingData.coHostUserId.split(",").map((cId: string) => cId.trim().toLowerCase())
       : [];
@@ -161,21 +197,15 @@ export async function PUT(req: NextRequest) {
         cId === user.email?.toLowerCase()
     );
 
-    const isOwner = existingData?.hostUserId && (
-      existingData.hostUserId.toLowerCase() === user.userId?.toLowerCase() ||
-      existingData.hostUserId.toLowerCase() === user.name?.toLowerCase() ||
-      existingData.hostUserId.toLowerCase() === user.email?.toLowerCase()
-    );
-
     const authorizedRoles = ["super_admin", "admin", "host"];
-    if (!authorizedRoles.includes(user.role) && !isOwner && !isCoHost) {
+    if (!authorizedRoles.includes(user.role) && !isHost && !isCoHost) {
       return NextResponse.json(
         { success: false, message: "Forbidden - Insufficient permissions" },
         { status: 403 }
       );
     }
 
-    if (user.role === "host" && !isOwner && !isCoHost) {
+    if (user.role === "host" && !isHost && !isCoHost) {
       return NextResponse.json(
         { success: false, message: "Forbidden - You do not own this watchroom" },
         { status: 403 }
