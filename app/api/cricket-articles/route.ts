@@ -389,7 +389,10 @@ export async function GET(req: NextRequest) {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("Error fetching articles:", error);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json(
+      { success: true, articles: [], error: msg },
+      { status: 200, headers: { "Cache-Control": "no-store" } }
+    );
   }
 }
 
