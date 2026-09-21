@@ -65,23 +65,27 @@ export async function dualWrite(
       );
     }
 
-    // 2. Write to Firebase (Fallback/Sync)
-    if (firestoreRef) {
-      await firestoreRef.set(firestoreData || item, { merge: true });
-    } else if (collectionName && documentId) {
-      const firebaseData = { ...(firestoreData || item) };
-      delete firebaseData.entityId; // Clean up AWS-specific keys
-      delete firebaseData.sk;
-      delete firebaseData.GSI1PK;
-      delete firebaseData.GSI1SK;
+    // 2. Write to Firebase (Fallback/Sync — non-blocking so Firestore issues never fail DynamoDB)
+    try {
+      if (firestoreRef) {
+        await firestoreRef.set(firestoreData || item, { merge: true });
+      } else if (collectionName && documentId) {
+        const firebaseData = { ...(firestoreData || item) };
+        delete firebaseData.entityId; // Clean up AWS-specific keys
+        delete firebaseData.sk;
+        delete firebaseData.GSI1PK;
+        delete firebaseData.GSI1SK;
 
-      const targetCollection = getFirestoreCollection(collectionName);
-      await db.collection(targetCollection).doc(documentId).set(firebaseData, { merge: true });
+        const targetCollection = getFirestoreCollection(collectionName);
+        await db.collection(targetCollection).doc(documentId).set(firebaseData, { merge: true });
+      }
+    } catch (fbErr: any) {
+      console.warn(`[dualWrite] ⚠️ Firebase sync skipped/failed (Firestore inactive):`, fbErr?.message || fbErr);
     }
 
     return true;
   } catch (error) {
-    console.error(`❌ Dual-Write failed:`, error);
+    console.error(`❌ Dual-Write failed in DynamoDB:`, error);
     throw error;
   }
 }
@@ -117,7 +121,7 @@ export async function dualDelete(
       deleteKey = key;
     }
 
-    // 1. Delete from DynamoDB
+    // 1. Delete from DynamoDB (Primary)
     if (tableName && deleteKey) {
       await docClient.send(
         new DeleteCommand({
@@ -127,17 +131,21 @@ export async function dualDelete(
       );
     }
 
-    // 2. Delete from Firebase
-    if (firestoreRef) {
-      await firestoreRef.delete();
-    } else if (collectionName && documentId) {
-      const targetCollection = getFirestoreCollection(collectionName);
-      await db.collection(targetCollection).doc(documentId).delete();
+    // 2. Delete from Firebase (Fallback/Sync — non-blocking)
+    try {
+      if (firestoreRef) {
+        await firestoreRef.delete();
+      } else if (collectionName && documentId) {
+        const targetCollection = getFirestoreCollection(collectionName);
+        await db.collection(targetCollection).doc(documentId).delete();
+      }
+    } catch (fbErr: any) {
+      console.warn(`[dualDelete] ⚠️ Firebase delete skipped/failed (Firestore inactive):`, fbErr?.message || fbErr);
     }
 
     return true;
   } catch (error) {
-    console.error(`❌ Dual-Delete failed:`, error);
+    console.error(`❌ Dual-Delete failed in DynamoDB:`, error);
     throw error;
   }
 }

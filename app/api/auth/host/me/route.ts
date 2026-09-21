@@ -49,6 +49,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export async function GET(req: NextRequest) {
@@ -82,7 +83,7 @@ export async function GET(req: NextRequest) {
     try {
       const cleanEmail = decoded.email.toLowerCase().trim();
       const uRes = await docClient.send(new GetCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" }
       }));
       if (uRes.Item) {
