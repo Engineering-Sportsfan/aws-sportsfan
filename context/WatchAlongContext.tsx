@@ -69,6 +69,9 @@ export interface LeaderboardEntry {
   userId: string;
   displayName: string;
   totalPoints: number;
+  rank?: number;
+  avatarUrl?: string;
+  roomId?: string;
   updatedAt?: number;
 }
 
@@ -130,6 +133,8 @@ export interface QuizAnswerPayload {
   option: string;
   userId: string;
   displayName?: string;
+  roomId?: string;
+  avatarUrl?: string;
 }
 
 export interface SendEmojiPayload {
@@ -176,7 +181,8 @@ interface WatchAlongContextType {
 
   // Quiz methods
   fetchQuizQuestions: (matchId: string, activeOnly?: boolean) => Promise<void>;
-  fetchLeaderboard: (matchId: string) => Promise<void>;
+  fetchLeaderboard: (matchId: string, roomId?: string, isGlobal?: boolean) => Promise<void>;
+  resetRoomLeaderboard: (matchId: string, roomId: string) => Promise<boolean>;
   createQuizQuestion: (matchId: string, payload: CreateQuizPayload) => Promise<QuizQuestion | null>;
   submitQuizAnswer: (matchId: string, payload: QuizAnswerPayload) => Promise<{ isCorrect: boolean; pointsEarned: number; correctAnswer: string } | null>;
   toggleQuizQuestion: (matchId: string, questionId: string, isActive: boolean) => Promise<boolean>;
@@ -485,17 +491,45 @@ export const WatchAlongProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
-  const fetchLeaderboard = useCallback(async (matchId: string) => {
+  const fetchLeaderboard = useCallback(async (matchId: string, roomId?: string, isGlobal?: boolean) => {
     try {
       setLoading(true);
       setError(null);
-      const res = await axios.get(`/api/watch-along/matches/${matchId}/quiz?leaderboard=true`);
+      let url = `/api/watch-along/matches/${matchId}/quiz?leaderboard=true`;
+      if (isGlobal) {
+        url += "&global=true";
+      } else if (roomId) {
+        url += `&roomId=${encodeURIComponent(roomId)}`;
+      }
+      const res = await axios.get(url);
       if (res.data.success) {
         setLeaderboard(res.data.leaderboard);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch leaderboard");
       console.error("Fetch leaderboard error:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const resetRoomLeaderboard = useCallback(async (matchId: string, roomId: string): Promise<boolean> => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await axios.post(`/api/watch-along/matches/${matchId}/quiz`, {
+        action: "reset_room_leaderboard",
+        roomId,
+      });
+      if (res.data.success) {
+        setLeaderboard([]);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset room leaderboard");
+      console.error("Reset room leaderboard error:", err);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -532,7 +566,7 @@ export const WatchAlongProvider = ({ children }: { children: ReactNode }) => {
         ...payload,
       });
       if (res.data.success) {
-        await fetchLeaderboard(matchId);
+        await fetchLeaderboard(matchId, payload.roomId);
         return {
           isCorrect: res.data.isCorrect,
           pointsEarned: res.data.pointsEarned,
@@ -764,6 +798,7 @@ export const WatchAlongProvider = ({ children }: { children: ReactNode }) => {
         // Quiz methods
         fetchQuizQuestions,
         fetchLeaderboard,
+        resetRoomLeaderboard,
         createQuizQuestion,
         submitQuizAnswer,
         toggleQuizQuestion,

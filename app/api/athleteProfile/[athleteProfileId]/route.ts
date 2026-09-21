@@ -191,3 +191,92 @@ export async function GET(
     );
   }
 }
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ athleteProfileId: string }> }
+) {
+  try {
+    const { athleteProfileId } = await params;
+    const body = await request.json();
+    const { worldRank } = body;
+
+    // Check SportsData first
+    const getRes = await docClient.send(
+      new GetCommand({
+        TableName: TABLES.SportsData,
+        Key: { entityId: `ATHLETE#${athleteProfileId}`, sk: "PROFILE#META" },
+      })
+    );
+
+    let targetTable: string = TABLES.SportsData;
+    let currentItem = getRes.Item;
+
+    if (!currentItem) {
+      // Check MS_Players
+      const playerRes = await docClient.send(
+        new GetCommand({
+          TableName: TABLES.MS_Players,
+          Key: { entityId: `PLAYER#${athleteProfileId}`, sk: "PROFILE#META" },
+        })
+      );
+      if (playerRes.Item) {
+        targetTable = TABLES.MS_Players;
+        currentItem = playerRes.Item;
+      }
+    }
+
+    if (!currentItem) {
+      return NextResponse.json({ message: "Profile not found" }, { status: 404 });
+    }
+
+    const updatedItem = { ...currentItem };
+
+    if (worldRank !== undefined) {
+      const rankStr = String(worldRank).trim();
+
+      // Update in analytics.stats
+      if (!updatedItem.analytics) updatedItem.analytics = {};
+      if (!updatedItem.analytics.stats) updatedItem.analytics.stats = {};
+      updatedItem.analytics.stats.worldRank = rankStr;
+
+      // Update in performance.stats
+      if (!updatedItem.performance) updatedItem.performance = {};
+      if (!updatedItem.performance.stats) updatedItem.performance.stats = {};
+      updatedItem.performance.stats.worldRank = rankStr;
+
+      // Update in stats if present
+      if (updatedItem.stats && typeof updatedItem.stats === "object") {
+        updatedItem.stats.worldRank = rankStr;
+      }
+    }
+
+    // Also support any other arbitrary profile updates passed in the body
+    for (const [key, val] of Object.entries(body)) {
+      if (key !== "worldRank" && key !== "entityId" && key !== "sk") {
+        updatedItem[key] = val;
+      }
+    }
+
+    const { PutCommand } = await import("@aws-sdk/lib-dynamodb");
+    await docClient.send(
+      new PutCommand({
+        TableName: targetTable,
+        Item: updatedItem,
+      })
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: `Updated profile for ${athleteProfileId}`,
+      worldRank: updatedItem.analytics?.stats?.worldRank,
+      item: updatedItem,
+    });
+  } catch (error: any) {
+    console.error("Error updating athlete profile:", error);
+    return NextResponse.json(
+      { message: error?.message || "Internal Server Error", error: String(error) },
+      { status: 500 }
+    );
+  }
+}

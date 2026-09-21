@@ -268,15 +268,28 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
         if (qRes.Items && qRes.Items.length > 0) {
           resolvedEntityId = entId;
+
+          const availableTournaments = Array.from(
+            new Set(
+              qRes.Items.map((item: any) =>
+                item.tournament || item.sk.replace(/^PROFILE#META#?/, "")
+              ).filter(Boolean)
+            )
+          );
+
           if (tournamentParam) {
             const matched = qRes.Items.find(
               (item: any) =>
                 (item.tournament || "").toLowerCase() === tournamentParam.toLowerCase() ||
-                item.sk === `PROFILE#META#${tournamentParam}`
+                item.sk.toLowerCase() === `PROFILE#META#${tournamentParam}`.toLowerCase()
             );
-            profileItem = matched || qRes.Items[0];
+            profileItem = matched ? { ...matched } : { ...qRes.Items[0] };
           } else {
-            profileItem = qRes.Items[0];
+            profileItem = { ...qRes.Items[0] };
+          }
+
+          if (availableTournaments.length > 0) {
+            profileItem.availableTournaments = availableTournaments;
           }
           break;
         }
