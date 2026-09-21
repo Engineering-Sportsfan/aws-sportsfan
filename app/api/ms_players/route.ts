@@ -195,7 +195,9 @@ export async function GET(request: NextRequest) {
     // ms_teams/route.ts uses for MS_Clubs.
     // const filterClauses: string[] = ["sk = :sk"];
     // const expressionValues: Record<string, unknown> = { ":sk": "PROFILE#META" };
-        const filterClauses: string[] = ["begins_with(sk, :sk)"];
+    const tournament = searchParams.get("tournament");
+
+    const filterClauses: string[] = ["begins_with(sk, :sk)"];
     const expressionValues: Record<string, unknown> = { ":sk": "PROFILE#META" };
     const expressionNames: Record<string, string> = {};
 
@@ -221,6 +223,13 @@ export async function GET(request: NextRequest) {
       expressionValues[":nameContains"] = nameContains;
       expressionNames["#name"] = "name";
     }
+    if (tournament) {
+      const tUpper = tournament.toUpperCase();
+      filterClauses.push("(tournament = :tournament OR tournament = :tournamentUpper OR sk = :tournamentSk)");
+      expressionValues[":tournament"] = tournament;
+      expressionValues[":tournamentUpper"] = tUpper;
+      expressionValues[":tournamentSk"] = `PROFILE#META#${tUpper}`;
+    }
 
     const result = await ddb.send(
       new ScanCommand({
@@ -233,9 +242,11 @@ export async function GET(request: NextRequest) {
       })
     );
 
+    const validPlayers = (result.Items || []).filter((p: any) => p.status !== "rejected");
+
     return NextResponse.json({
-      players: result.Items || [],
-      count: result.Count || 0,
+      players: validPlayers,
+      count: validPlayers.length,
     });
   } catch (error) {
     console.error("GET /api/ms_players failed:", error);

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { dualWrite } from "@/lib/dualWrite";
 import { transporter } from "@/lib/mailer";
 import { GetCommand, QueryCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
     try {
       const emailQuery = await docClient.send(
         new QueryCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           IndexName: "email-index",
           KeyConditionExpression: "email = :e",
           ExpressionAttributeValues: { ":e": cleanEmail },
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
     try {
       await docClient.send(
         new PutCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Item: dynamoOtpItem,
         })
       );
