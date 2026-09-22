@@ -268,6 +268,8 @@ export async function GET(req: NextRequest) {
         correctPredictions: correctPredictionCount,
         actualUserId: resolvedUserId,
         badge: userData.badge ?? null,
+        university: userData.university ?? userData.institution ?? null,
+        institution: userData.institution ?? userData.university ?? null,
         favPlayer: userData.favPlayer ?? null,
         about: userData.about ?? null,
         avatarUrl: userData.avatarUrl ?? null,
@@ -322,6 +324,14 @@ export async function PATCH(req: NextRequest) {
 
     if (body.favPlayer !== undefined) {
       updates.favPlayer = String(body.favPlayer).trim().slice(0, 60);
+    }
+
+    if (body.university !== undefined) {
+      updates.university = String(body.university).trim().slice(0, 100);
+    }
+
+    if (body.institution !== undefined) {
+      updates.institution = String(body.institution).trim().slice(0, 100);
     }
 
     if (body.about !== undefined) {
