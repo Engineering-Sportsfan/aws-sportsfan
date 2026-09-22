@@ -4,6 +4,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { TABLES, getFirestoreCollection } from '../lib/tableNames';
 
 dotenv.config({ path: path.join(process.cwd(), '.env.local') });
 dotenv.config({ path: path.join(process.cwd(), '.env') });
@@ -44,7 +45,7 @@ async function migrate() {
   for (const type of CONFIG_TYPES) {
     try {
       console.log(`Fetching items for type: ${type} from Firestore...`);
-      const snap = await db.collection("roarOnboardingConfig").doc(type).collection("items").get();
+      const snap = await db.collection(getFirestoreCollection("roarOnboardingConfig")).doc(type).collection("items").get();
       console.log(`Found ${snap.docs.length} items in Firestore for ${type}`);
 
       for (const doc of snap.docs) {
@@ -61,7 +62,7 @@ async function migrate() {
 
         console.log(`Writing item ${itemId} (${itemData.label || itemData.name || "unnamed"}) to DynamoDB...`);
         await docClient.send(new PutCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Item: dynamoItem
         }));
       }

@@ -577,13 +577,34 @@ const FULL_NAV: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { href: "/admin/dashboard", icon: "▣", label: "Dashboard" },
       { href: "/admin/analytics", icon: "◈", label: "Analytics" },
+      { href: "/admin/dashboard", icon: "▣", label: "Dashboard" },
     ],
   },
   {
     label: "Management",
     items: [
+      {
+        label: "Invite Waitlist", icon: "📨", badge: "RSVP", badgeBg: "#8b5cf6",
+        children: [
+          { href: "/admin/invite-waitlist", label: "Waitlist Registrations" },
+        ],
+      },
+      {
+        label: "Master Profiles", icon: "🏆", badge: "NEW", badgeBg: "#2ea043",
+        children: [
+          { href: "/admin/master-profiles", label: "Profiles Hub (All)" },
+          { href: "/admin/master-profiles?type=athlete", label: "Athletes Directory" },
+          { href: "/admin/master-profiles?type=player", label: "Players Directory" },
+          { href: "/admin/master-profiles?type=team", label: "Teams Directory" },
+        ],
+      },
+      {
+        label: "Points & Rewards", icon: "🪙",
+        children: [
+          { href: "/admin/points-management", label: "Points & Rules Config" },
+        ],
+      },
       {
         label: "User Management", icon: "👥",
         children: [
@@ -601,64 +622,102 @@ const FULL_NAV: NavGroup[] = [
           { href: "/admin/users/auth-issues", label: "⚠️ Auth Issues Tracker" },
         ],
       },
-      {
-        label: "Invite Waitlist", icon: "📨", badge: "RSVP", badgeBg: "#8b5cf6",
-        children: [
-          { href: "/admin/invite-waitlist", label: "Waitlist Registrations" },
-        ],
-      },
-      {
-        label: "Points & Rewards", icon: "🪙",
-        children: [
-          { href: "/admin/points-management", label: "Points & Rules Config" },
-        ],
-      },
-      {
-        label: "Master Profiles", icon: "🏆", badge: "NEW", badgeBg: "#2ea043",
-        children: [
-          { href: "/admin/master-profiles", label: "Profiles Hub (All)" },
-          { href: "/admin/master-profiles?type=athlete", label: "Athletes Directory" },
-          { href: "/admin/master-profiles?type=player", label: "Players Directory" },
-          { href: "/admin/master-profiles?type=team", label: "Teams Directory" },
-        ],
-      },
     ],
   },
   {
     label: "Auth",
     items: [
-      { href: "/admin/otp-logs", icon: "⊡", label: "OTP Logs" },
       { href: "/admin/users/auth-issues", icon: "⚠️", label: "Auth Issues Tracker" },
+      { href: "/admin/otp-logs", icon: "⊡", label: "OTP Logs" },
     ],
   },
   {
     label: "Home Data Components",
     items: [
       {
-        label: "Store Management", icon: "◉",
+        label: "AI Bot Management",
+        icon: "🤖",
         children: [
-          { href: "/admin/store-management/category/list", label: "Categories" },
-          { href: "/admin/store-management/coach/list", label: "Coaches" },
-          { href: "/admin/store-management/event/list", label: "Events" },
-          { href: "/admin/store-management/experience/list", label: "Experiences" },
-          { href: "/admin/store-management/auction/list", label: "Auctions" },
-          { href: "/admin/store-management/athlete/list", label: "Athletes" },
-          { href: "/admin/store-management/merchandise/list", label: "Merchandise" },
-          { href: "/admin/store-management/brand/list", label: "Brands" },
-          { href: "/admin/store-management/digital/list", label: "Digital Products" },
-          { href: "/admin/store-management/membership/list", label: "Memberships" },
+          { href: "/admin/bot-management", label: "Bot Dashboard & Kill Switches" },
         ],
       },
-       {
+      {
+        label: "Athlete AI Pipeline", icon: "◉",
+        children: [
+          { href: "/admin/athlete-review-management/add-athlete", label: "Add / Re-check Athlete" },
+          { href: "/admin/athlete-review-management", label: "Review Queue" },
+        ],
+      },
+      {
+        label: "Athletes Management", icon: "◉",
+        children: [
+          { href: "/admin/athlete-management/list", label: "Athlete Profiles" },
+        ],
+      },
+      {
+        label: "Audio Content Screen", icon: "◉",
+        children: [
+          { href: "/admin/audiomessages-management", label: "Audio Messages List" },
+          { href: "/admin/audiodrops-management/", label: "Audio Request Drops List" },
+          { href: "/admin/audioplaylist-management/", label: "Audio List" },
+        ],
+      },
+      {
+        label: "Club Profiles", icon: "◉",
+        children: [
+          { href: "/admin/clubprofile-management/add-clubprofile", label: "Add Club Profile" },
+          { href: "/admin/clubprofile-management/clubprofile-list", label: "Club Profiles List" },
+        ],
+      },
+      {
+        label: "Comments Management", icon: "◉",
+        children: [
+          { href: "/admin/comments-management/comments-list", label: "All Comments" },
+        ],
+      },
+      { href: "/admin/content", icon: "◧", label: "Content / Posts" },
+      {
+        label: "Cricket Articles", icon: "◉",
+        children: [
+          { href: "/admin/cricketarticles-management/add-cricketarticles", label: "Add Cricket Article" },
+          { href: "/admin/cricketarticles-management/cricketarticles-list", label: "Cricket Articles List" },
+        ],
+      },
+      {
         label: "Cricket CDN Management", icon: "◉",
         children: [
           { href: "/admin/cricketmedia-management/cricket-media", label: "Cricket Media" },
         ],
       },
       {
-        label: "Orders Management", icon: "◉",
+        label: "Cricket Matches", icon: "◉",
         children: [
-          { href: "/admin/order-management/athlete-store", label: "Athlete Store" },
+          { href: "/admin/cricketmatches-management/add-cricketmatches", label: "Add Cricket Matches" },
+          { href: "/admin/cricketmatches-management/cricketmatches-list", label: "Cricket Matches List" },
+        ],
+      },
+      {
+        label: "Feed Engagements", icon: "⚡",
+        children: [
+          { href: "/admin/engagements-management", label: "⚡ All Engagements & Creator" },
+          { href: "/admin/fanbattle-management/add-fanbattle", label: "Add Fan Battle Quiz" },
+          { href: "/admin/fanbattle-management/fanbattle-list", label: "Fan Battle Quiz List" },
+          { href: "/admin/fanbattlearena-management/add-battlearena", label: "Add Fan Battle Arena" },
+          { href: "/admin/fanbattlearena-management/battlearena-list", label: "Fan Battle Arena List" },
+        ],
+      },
+      {
+        label: "FIFA Clubs", icon: "◉",
+        children: [
+          { href: "/admin/fifaclub-management/add-fifaclub", label: "Add FIFA Club" },
+          { href: "/admin/fifaclub-management/fifaclub-list", label: "FIFA Club List" },
+        ],
+      },
+      {
+        label: "FIFA Players Stats", icon: "◉",
+        children: [
+          { href: "/admin/fifaplayerstats-management/add-fifaplayerstats", label: "Add FIFA Players Stats" },
+          { href: "/admin/fifaplayerstats-management/fifaplayerstats-list", label: "FIFA Players Stats List" },
         ],
       },
       {
@@ -675,9 +734,125 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Athletes Management", icon: "◉",
+        label: "Focus Group Matches", icon: "◉",
         children: [
-          { href: "/admin/athlete-management/list", label: "Athlete Profiles" },
+          { href: "/admin/focusmatch-management/add-focusmatch", label: "Add Focus Match" },
+          { href: "/admin/focusmatch-management/focusmatch-list", label: "Matches List" },
+        ],
+      },
+      {
+        label: "Host Login Screen", icon: "◉",
+        children: [
+          { href: "/admin/hostloginscreen-management/add-hostroomlogin", label: "Add Host Login Form" },
+          { href: "/admin/hostloginscreen-management/hostroomlogin-list", label: "Host Members List" },
+        ],
+      },
+      {
+        label: "Host Screen", icon: "◉",
+        children: [
+          { href: "/admin/hostroom-management/add-hostroom", label: "Add Host Room" },
+          { href: "/admin/hostroom-management/hostroom-list", label: "Host Room List" },
+        ],
+      },
+      {
+        label: "IPL Pulse", icon: "◉",
+        children: [
+          { href: "/admin/spotlight-management/add-spotlight", label: "Add Spotlight" },
+          { href: "/admin/spotlight-management/spotlight-list", label: "Spotlight List" },
+          { href: "/admin/iplpulse-management", label: "IPL Pulse Reports" },
+        ],
+      },
+      {
+        label: "Onboarding", icon: "◉",
+        children: [
+          { href: "/admin/onboarding-management/add-onboarding", label: "Add Onboarding" },
+        ],
+      },
+      { href: "/admin/orders", icon: "◫", label: "Orders & Payments", badge: "8" },
+      {
+        label: "Orders Management", icon: "◉",
+        children: [
+          { href: "/admin/order-management/athlete-store", label: "Athlete Store" },
+        ],
+      },
+      {
+        label: "Player Profiles", icon: "◉",
+        children: [
+          { href: "/admin/playerprofile-management/add-playerprofile", label: "Add Player Profile" },
+          { href: "/admin/playerprofile-management/playerprofile-list", label: "Player Profiles List" },
+        ],
+      },
+      {
+        label: "Player Profiles Playlist", icon: "◉",
+        children: [
+          { href: "/admin/playerprofileplaylist-management/add-playerprofileplaylist", label: "Add Player Profiles Playlist" },
+          { href: "/admin/playerprofileplaylist-management/playerprofileplaylist-list", label: "Player Profiles Playlist" },
+        ],
+      },
+      {
+        label: "Players 360", icon: "◉",
+        children: [
+          { href: "/admin/player360-management/add-player360", label: "Add Player 360" },
+          { href: "/admin/player360-management/player360-list", label: "Player 360 List" },
+        ],
+      },
+      {
+        label: "Playlists Management", icon: "◉",
+        children: [
+          { href: "/admin/playlists-management/playlists-list", label: "All Playlists" },
+        ],
+      },
+      {
+        label: "Polls & Quizes",
+        icon: "◉",
+        children: [
+          { href: "/admin/polls-management/add-polls", label: "Add Poll" },
+          { href: "/admin/polls-management/polls-list", label: "Polls List" },
+        ],
+      },
+      {
+        label: "Post Reports Management", icon: "◉",
+        children: [
+          { href: "/admin/postreports-management", label: "All Post Reports" },
+        ],
+      },
+      {
+        label: "RoAR Management", icon: "◉",
+        children: [
+          { href: "/admin/roar-management/add-roar", label: "Add RoAR Show" },
+          { href: "/admin/roar-management/roar-list", label: "RoAR Show List" },
+          { href: "/admin/roar-management/posts-list", label: "RoAR Posts & Comments" },
+          { href: "/admin/roar-management/add-prediction", label: "Add RoAR Predictions" },
+          { href: "/admin/roar-management/add-trivia", label: "Add RoAR Trivia" },
+          { href: "/admin/roar-management/add-battle", label: "Add RoAR Battle" },
+        ],
+      },
+      {
+        label: "Sentiment Engine", icon: "◉",
+        children: [
+          { href: "/admin/sentiment-management", label: "Sentiment Dashboard" },
+        ],
+      },
+      {
+        label: "Sportsfan360 Profile", icon: "◉",
+        children: [
+          { href: "/admin/sportsfan360profile-management/add-sportsfan360", label: "Add Sportsfan360 Profile" },
+          { href: "/admin/sportsfan360profile-management/sportsfan360profile-list", label: "Sportsfan360 Profile List" },
+        ],
+      },
+      {
+        label: "Store Management", icon: "◉",
+        children: [
+          { href: "/admin/store-management/category/list", label: "Categories" },
+          { href: "/admin/store-management/coach/list", label: "Coaches" },
+          { href: "/admin/store-management/event/list", label: "Events" },
+          { href: "/admin/store-management/experience/list", label: "Experiences" },
+          { href: "/admin/store-management/auction/list", label: "Auctions" },
+          { href: "/admin/store-management/athlete/list", label: "Athletes" },
+          { href: "/admin/store-management/merchandise/list", label: "Merchandise" },
+          { href: "/admin/store-management/brand/list", label: "Brands" },
+          { href: "/admin/store-management/digital/list", label: "Digital Products" },
+          { href: "/admin/store-management/membership/list", label: "Memberships" },
         ],
       },
       {
@@ -695,27 +870,6 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Players 360", icon: "◉",
-        children: [
-          { href: "/admin/player360-management/add-player360", label: "Add Player 360" },
-          { href: "/admin/player360-management/player360-list", label: "Player 360 List" },
-        ],
-      },
-      {
-        label: "Cricket Articles", icon: "◉",
-        children: [
-          { href: "/admin/cricketarticles-management/add-cricketarticles", label: "Add Cricket Article" },
-          { href: "/admin/cricketarticles-management/cricketarticles-list", label: "Cricket Articles List" },
-        ],
-      },
-      {
-        label: "Club Profiles", icon: "◉",
-        children: [
-          { href: "/admin/clubprofile-management/add-clubprofile", label: "Add Club Profile" },
-          { href: "/admin/clubprofile-management/clubprofile-list", label: "Club Profiles List" },
-        ],
-      },
-      {
         label: "User Feedback", icon: "◉",
         children: [
           { href: "/admin/userfeedback-management/add-userfeedback", label: "Add User Feedback" },
@@ -723,24 +877,15 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Player Profiles", icon: "◉",
+        label: "User Preferences", icon: "◉",
         children: [
-          { href: "/admin/playerprofile-management/add-playerprofile", label: "Add Player Profile" },
-          { href: "/admin/playerprofile-management/playerprofile-list", label: "Player Profiles List" },
+          { href: "/admin/preferences-management", label: "Preferences List" },
         ],
       },
       {
-        label: "Player Profiles Playlist", icon: "◉",
+        label: "Video Messages Screen", icon: "◉",
         children: [
-          { href: "/admin/playerprofileplaylist-management/add-playerprofileplaylist", label: "Add Player Profiles Playlist" },
-          { href: "/admin/playerprofileplaylist-management/playerprofileplaylist-list", label: "Player Profiles Playlist" },
-        ],
-      },
-        {
-        label: "Onboarding", icon: "◉",
-        children: [
-          { href: "/admin/onboarding-management/add-onboarding", label: "Add Onboarding" },
-          
+          { href: "/admin/videodrops-management/videomessages", label: "Video Messages List" },
         ],
       },
       {
@@ -751,160 +896,12 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Focus Group Matches", icon: "◉",
-        children: [
-          { href: "/admin/focusmatch-management/add-focusmatch", label: "Add Focus Match" },
-          { href: "/admin/focusmatch-management/focusmatch-list", label: "Matches List" },
-        ],
-      },
-      {
-        label: "RoAR Management", icon: "◉",
-        children: [
-          { href: "/admin/roar-management/add-roar", label: "Add RoAR Show" },
-          { href: "/admin/roar-management/roar-list", label: "RoAR Show List" },
-          { href: "/admin/roar-management/posts-list", label: "RoAR Posts & Comments" },
-          { href: "/admin/roar-management/add-prediction", label: "Add RoAR Predictions" },
-          { href: "/admin/roar-management/add-trivia", label: "Add RoAR Trivia" },
-          { href: "/admin/roar-management/add-battle", label: "Add RoAR Battle" },
-        ],
-      },
-      {
-        label: "AI Bot Management",
-        icon: "🤖",
-        children: [
-          { href: "/admin/bot-management", label: "Bot Dashboard & Kill Switches" },
-        ],
-      },
-      {
-        label: "Polls & Quizes",
-        icon: "◉",
-        children: [
-          { href: "/admin/polls-management/add-polls", label: "Add Poll" },
-          { href: "/admin/polls-management/polls-list", label: "Polls List" },
-        ],
-      },
-      {
-        label: "Host Screen", icon: "◉",
-        children: [
-          { href: "/admin/hostroom-management/add-hostroom", label: "Add Host Room" },
-          { href: "/admin/hostroom-management/hostroom-list", label: "Host Room List" },
-        ],
-      },
-      {
-        label: "Host Login Screen", icon: "◉",
-        children: [
-          { href: "/admin/hostloginscreen-management/add-hostroomlogin", label: "Add Host Login Form" },
-          { href: "/admin/hostloginscreen-management/hostroomlogin-list", label: "Host Members List" },
-        ],
-      },
-      {
-        label: "Audio Content Screen", icon: "◉",
-        children: [
-          { href: "/admin/audiomessages-management", label: "Audio Messages List" },
-          { href: "/admin/audiodrops-management/", label: "Audio Request Drops List" },
-          { href: "/admin/audioplaylist-management/", label: "Audio List" },
-        ],
-      },
-      {
-        label: "Video Messages Screen", icon: "◉",
-        children: [
-          { href: "/admin/videodrops-management/videomessages", label: "Video Messages List" },
-        ],
-      },
-      {
-        label: "Cricket Matches", icon: "◉",
-        children: [
-          { href: "/admin/cricketmatches-management/add-cricketmatches", label: "Add Cricket Matches" },
-          { href: "/admin/cricketmatches-management/cricketmatches-list", label: "Cricket Matches List" },
-        ],
-      },
-    
-     
-       {
-        label: "FIFA Players Stats", icon: "◉",
-        children: [
-          { href: "/admin/fifaplayerstats-management/add-fifaplayerstats", label: "Add FIFA Players Stats" },
-          { href: "/admin/fifaplayerstats-management/fifaplayerstats-list", label: "FIFA Players Stats List" },
-        ],
-      },
-       {
-        label: "FIFA Clubs", icon: "◉",
-        children: [
-          { href: "/admin/fifaclub-management/add-fifaclub", label: "Add FIFA Club" },
-          { href: "/admin/fifaclub-management/fifaclub-list", label: "FIFA Club List" },
-        ],
-      },
-        {
         label: "WT20 Clubs", icon: "◉",
         children: [
           { href: "/admin/wt20club-management/add-wt20club", label: "Add WT20 Club" },
           { href: "/admin/wt20club-management/wt20club-list", label: "WT20 Club List" },
         ],
       },
-      {
-        label: "Feed Engagements", icon: "⚡",
-        children: [
-          { href: "/admin/engagements-management", label: "⚡ All Engagements & Creator" },
-          { href: "/admin/fanbattle-management/add-fanbattle", label: "Add Fan Battle Quiz" },
-          { href: "/admin/fanbattle-management/fanbattle-list", label: "Fan Battle Quiz List" },
-          { href: "/admin/fanbattlearena-management/add-battlearena", label: "Add Fan Battle Arena" },
-          { href: "/admin/fanbattlearena-management/battlearena-list", label: "Fan Battle Arena List" },
-        ],
-      },
-      {
-        label: "Comments Management", icon: "◉",
-        children: [
-          { href: "/admin/comments-management/comments-list", label: "All Comments" },
-        ],
-      },
-      {
-        label: "Post Reports Management", icon: "◉",
-        children: [
-          { href: "/admin/postreports-management", label: "All Post Reports" },
-        ],
-      },
-      {
-        label: "Playlists Management", icon: "◉",
-        children: [
-          { href: "/admin/playlists-management/playlists-list", label: "All Playlists" },
-        ],
-      },
-      {
-        label: "Sportsfan360 Profile", icon: "◉",
-        children: [
-          { href: "/admin/sportsfan360profile-management/add-sportsfan360", label: "Add Sportsfan360 Profile" },
-          { href: "/admin/sportsfan360profile-management/sportsfan360profile-list", label: "Sportsfan360 Profile List" },
-        ],
-      },
-      {
-        label: "User Preferences", icon: "◉",
-        children: [
-          { href: "/admin/preferences-management", label: "Preferences List" },
-        ],
-      },
-      {
-        label: "IPL Pulse", icon: "◉",
-        children: [
-          { href: "/admin/spotlight-management/add-spotlight", label: "Add Spotlight" },
-          { href: "/admin/spotlight-management/spotlight-list", label: "Spotlight List" },
-          { href: "/admin/iplpulse-management", label: "IPL Pulse Reports" },
-        ],
-      },
-      {
-        label: "Sentiment Engine", icon: "◉",
-        children: [
-          { href: "/admin/sentiment-management", label: "Sentiment Dashboard" },
-        ],
-      },
-       {
-        label: "Athlete AI Pipeline", icon: "◉",
-        children: [
-          { href: "/admin/athlete-review-management/add-athlete", label: "Add / Re-check Athlete" },
-          { href: "/admin/athlete-review-management", label: "Review Queue" },
-        ],
-      },
-      { href: "/admin/content", icon: "◧", label: "Content / Posts" },
-      { href: "/admin/orders", icon: "◫", label: "Orders & Payments", badge: "8" },
     ],
   },
   {

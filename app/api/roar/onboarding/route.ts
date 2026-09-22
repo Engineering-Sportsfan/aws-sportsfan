@@ -267,13 +267,14 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 
 // Same canonical resolution as /api/roar/profile/route.ts
 async function resolveUserDoc(userId: string, email: string) {
   // Try direct lookup from DynamoDB first
   try {
     const getRes = await docClient.send(new GetCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${userId}`, sk: "USER#META" }
     }));
     if (getRes.Item) {
@@ -287,7 +288,7 @@ async function resolveUserDoc(userId: string, email: string) {
   if (email && email !== userId) {
     try {
       const getRes = await docClient.send(new GetCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Key: { entityId: `USER#${email}`, sk: "USER#META" }
       }));
       if (getRes.Item) {
@@ -302,7 +303,7 @@ async function resolveUserDoc(userId: string, email: string) {
   if (email) {
     try {
       const emailRes = await docClient.send(new QueryCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         IndexName: "email-index",
         KeyConditionExpression: "email = :email",
         ExpressionAttributeValues: { ":email": email },
@@ -320,10 +321,10 @@ async function resolveUserDoc(userId: string, email: string) {
   }
 
   // Fallback to Firestore
-  let docRef = db.collection("users").doc(userId);
+  let docRef = db.collection(getFirestoreCollection("users")).doc(userId);
   let snap = await docRef.get();
   if (!snap.exists) {
-    docRef = db.collection("users").doc(email);
+    docRef = db.collection(getFirestoreCollection("users")).doc(email);
     snap = await docRef.get();
     if (!snap.exists) return null;
   }
@@ -344,6 +345,7 @@ export async function GET(req: NextRequest) {
     sports: data?.sports ?? [],
     followEntities: data?.followEntities ?? [],
     engagementPrefs: data?.engagementPrefs ?? [],
+    requestedSport: data?.requestedSport ?? null,
     onboardingCompleted: data?.onboardingCompleted ?? false,
   });
 }
@@ -356,17 +358,21 @@ export async function POST(req: NextRequest) {
   if (!resolved) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
   const body = await req.json();
-  const { sports, followEntities, engagementPrefs } = body as {
+  const { sports, followEntities, engagementPrefs, requestedSport } = body as {
     sports?: string[];
     followEntities?: string[];
     engagementPrefs?: string[];
+    requestedSport?: string;
   };
 
   const resolvedUserId = resolved.id;
-  const updates = {
+  const cleanRequestedSport = typeof requestedSport === "string" ? requestedSport.trim() : null;
+
+  const updates: Record<string, any> = {
     sports: sports ?? [],
     followEntities: followEntities ?? [],
     engagementPrefs: engagementPrefs ?? [],
+    requestedSport: cleanRequestedSport || (resolved.data?.requestedSport ?? null),
     onboardingCompleted: true,
     onboardingCompletedAt: Date.now(),
     email: user.email,
@@ -389,7 +395,7 @@ export async function POST(req: NextRequest) {
     updateExpression = updateExpression.slice(0, -1);
 
     await docClient.send(new UpdateCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
       UpdateExpression: updateExpression,
       ExpressionAttributeNames: expressionAttributeNames,
@@ -399,9 +405,24 @@ export async function POST(req: NextRequest) {
     console.warn("[onboarding POST] DynamoDB update failed:", dynErr);
   }
 
-  // 2. Sync to Firestore
+  // 2. Aggregate demand tracking (for admin insights)
+  if (cleanRequestedSport) {
+    try {
+      await docClient.send(new UpdateCommand({
+        TableName: TABLES.IdentityAndAccess,
+        Key: { entityId: "roarOnboardingDemand", sk: `DEMAND#${cleanRequestedSport}` },
+        UpdateExpression: "ADD #cnt :one SET #sport = :sport, #updatedAt = :now",
+        ExpressionAttributeNames: { "#cnt": "count", "#sport": "sport", "#updatedAt": "updatedAt" },
+        ExpressionAttributeValues: { ":one": 1, ":sport": cleanRequestedSport, ":now": Date.now() }
+      }));
+    } catch (demandErr) {
+      console.warn("[onboarding POST] Demand tracking notice:", demandErr);
+    }
+  }
+
+  // 3. Sync to Firestore
   try {
-    await db.collection("users").doc(resolvedUserId).set(updates, { merge: true });
+    await db.collection(getFirestoreCollection("users")).doc(resolvedUserId).set(updates, { merge: true });
   } catch (fsErr) {
     console.warn("[onboarding POST] Firestore fallback sync failed:", fsErr);
   }
@@ -417,10 +438,11 @@ export async function PATCH(req: NextRequest) {
   if (!resolved) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
   const body = await req.json();
-  const { sports, followEntities, engagementPrefs } = body as {
+  const { sports, followEntities, engagementPrefs, requestedSport } = body as {
     sports?: string[];
     followEntities?: string[];
     engagementPrefs?: string[];
+    requestedSport?: string;
   };
 
   const resolvedUserId = resolved.id;
@@ -428,6 +450,24 @@ export async function PATCH(req: NextRequest) {
   if (sports !== undefined) updates.sports = sports;
   if (followEntities !== undefined) updates.followEntities = followEntities;
   if (engagementPrefs !== undefined) updates.engagementPrefs = engagementPrefs;
+  if (requestedSport !== undefined) {
+    const cleanSport = typeof requestedSport === "string" ? requestedSport.trim() : null;
+    updates.requestedSport = cleanSport;
+
+    if (cleanSport && cleanSport !== resolved.data?.requestedSport) {
+      try {
+        await docClient.send(new UpdateCommand({
+          TableName: TABLES.IdentityAndAccess,
+          Key: { entityId: "roarOnboardingDemand", sk: `DEMAND#${cleanSport}` },
+          UpdateExpression: "ADD #cnt :one SET #sport = :sport, #updatedAt = :now",
+          ExpressionAttributeNames: { "#cnt": "count", "#sport": "sport", "#updatedAt": "updatedAt" },
+          ExpressionAttributeValues: { ":one": 1, ":sport": cleanSport, ":now": Date.now() }
+        }));
+      } catch (demandErr) {
+        console.warn("[onboarding PATCH] Demand tracking notice:", demandErr);
+      }
+    }
+  }
 
   // 1. Update in DynamoDB first
   try {
@@ -446,7 +486,7 @@ export async function PATCH(req: NextRequest) {
     updateExpression = updateExpression.slice(0, -1);
 
     await docClient.send(new UpdateCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
       UpdateExpression: updateExpression,
       ExpressionAttributeNames: expressionAttributeNames,
@@ -458,7 +498,7 @@ export async function PATCH(req: NextRequest) {
 
   // 2. Sync to Firestore
   try {
-    await db.collection("users").doc(resolvedUserId).set(updates, { merge: true });
+    await db.collection(getFirestoreCollection("users")).doc(resolvedUserId).set(updates, { merge: true });
   } catch (fsErr) {
     console.warn("[onboarding PATCH] Firestore fallback sync failed:", fsErr);
   }
@@ -467,7 +507,7 @@ export async function PATCH(req: NextRequest) {
   let finalData: any = null;
   try {
     const getRes = await docClient.send(new GetCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" }
     }));
     if (getRes.Item) {
@@ -479,7 +519,7 @@ export async function PATCH(req: NextRequest) {
 
   if (!finalData) {
     try {
-      const snap = await db.collection("users").doc(resolvedUserId).get();
+      const snap = await db.collection(getFirestoreCollection("users")).doc(resolvedUserId).get();
       if (snap.exists) {
         finalData = snap.data();
       }
@@ -493,6 +533,7 @@ export async function PATCH(req: NextRequest) {
     sports: finalData?.sports ?? [],
     followEntities: finalData?.followEntities ?? [],
     engagementPrefs: finalData?.engagementPrefs ?? [],
+    requestedSport: finalData?.requestedSport ?? null,
     onboardingCompleted: finalData?.onboardingCompleted ?? false,
   });
 }

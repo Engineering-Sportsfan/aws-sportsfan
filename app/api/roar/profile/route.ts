@@ -5,6 +5,7 @@ import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import type { Post } from "@/app/models/Post";
 import {
   getGlobalTier,
@@ -22,7 +23,7 @@ async function resolveUserDoc(userId: string, email: string) {
   // Try direct lookup from DynamoDB first
   try {
     const getRes = await docClient.send(new GetCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${userId}`, sk: "USER#META" }
     }));
     if (getRes.Item) {
@@ -36,7 +37,7 @@ async function resolveUserDoc(userId: string, email: string) {
   if (email && email !== userId) {
     try {
       const getRes = await docClient.send(new GetCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Key: { entityId: `USER#${email}`, sk: "USER#META" }
       }));
       if (getRes.Item) {
@@ -51,7 +52,7 @@ async function resolveUserDoc(userId: string, email: string) {
   if (email) {
     try {
       const emailRes = await docClient.send(new QueryCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         IndexName: "email-index",
         KeyConditionExpression: "email = :email",
         ExpressionAttributeValues: { ":email": email },
@@ -69,10 +70,10 @@ async function resolveUserDoc(userId: string, email: string) {
   }
 
   // Fallback to Firestore
-  let docRef = db.collection("users").doc(userId);
+  let docRef = db.collection(getFirestoreCollection("users")).doc(userId);
   let snap = await docRef.get();
   if (!snap.exists) {
-    docRef = db.collection("users").doc(email);
+    docRef = db.collection(getFirestoreCollection("users")).doc(email);
     snap = await docRef.get();
     if (!snap.exists) return null;
   }
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
       // Load profile details from DynamoDB first
       try {
         const getRes = await docClient.send(new GetCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" }
         }));
         if (getRes.Item) {
@@ -117,7 +118,7 @@ export async function GET(req: NextRequest) {
       }
 
       if (!userData) {
-        const snap = await db.collection("users").doc(resolvedUserId).get();
+        const snap = await db.collection(getFirestoreCollection("users")).doc(resolvedUserId).get();
         if (snap.exists) {
           userData = snap.data();
         }
@@ -396,7 +397,7 @@ export async function PATCH(req: NextRequest) {
       updateExpression = updateExpression.slice(0, -1);
 
       await docClient.send(new UpdateCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
         UpdateExpression: updateExpression,
         ExpressionAttributeNames: expressionAttributeNames,
@@ -408,7 +409,7 @@ export async function PATCH(req: NextRequest) {
 
     // 2. Sync to Firestore
     try {
-      await db.collection("users").doc(resolvedUserId).set(updates, { merge: true });
+      await db.collection(getFirestoreCollection("users")).doc(resolvedUserId).set(updates, { merge: true });
     } catch (fsErr) {
       console.warn("[profile PATCH] Firestore fallback update profile failed:", fsErr);
     }
