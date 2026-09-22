@@ -83,9 +83,16 @@ export async function GET(req: NextRequest) {
       if (res.Items) {
         leaderboard = res.Items.map((item, index) => ({
           rank: cursorId ? "?" : index + 1,
+          uid: item.userId.replace(/^USER#/, ""),
           userId: item.userId.replace(/^USER#/, ""),
-          userName: item.userName || "User",
+          username: item.userName || "Fan",
+          userName: item.userName || "Fan",
           userEmail: item.userEmail || "",
+          badge: item.badge || "Fan",
+          team: item.team || "Sports Fan",
+          accuracy: item.accuracy ?? 0,
+          predictions: item.predictions ?? item.predictionCount ?? 0,
+          reputationScore: item.reputationScore ?? item.points ?? item.totalPoints ?? 0,
           totalPoints: item.points ?? item.totalPoints ?? 0,
           lastUpdated: item.lastUpdated ?? now,
           ...(showBreakdown && { breakdown: item.breakdown ?? {} }),
@@ -106,8 +113,8 @@ export async function GET(req: NextRequest) {
     if (!fetchedFromDynamo) {
       try {
         const fields = showBreakdown
-          ? ["userId", "userName", "userEmail", "totalPoints", "breakdown", "lastUpdated"]
-          : ["userId", "userName", "userEmail", "totalPoints", "lastUpdated"];
+          ? ["userId", "userName", "userEmail", "totalPoints", "reputationScore", "badge", "team", "accuracy", "predictions", "breakdown", "lastUpdated"]
+          : ["userId", "userName", "userEmail", "totalPoints", "reputationScore", "badge", "team", "accuracy", "predictions", "lastUpdated"];
 
         let query = db
           .collection("globalLeaderboard")
@@ -128,9 +135,16 @@ export async function GET(req: NextRequest) {
           const d = doc.data();
           return {
             rank: cursorId ? "?" : index + 1,
+            uid: d.userId || doc.id,
             userId: d.userId || doc.id,
-            userName: d.userName || "User",
+            username: d.userName || "Fan",
+            userName: d.userName || "Fan",
             userEmail: d.userEmail || "",
+            badge: d.badge || "Fan",
+            team: d.team || "Sports Fan",
+            accuracy: d.accuracy ?? 0,
+            predictions: d.predictions ?? d.predictionCount ?? 0,
+            reputationScore: d.reputationScore ?? d.totalPoints ?? 0,
             totalPoints: d.totalPoints ?? 0,
             lastUpdated: d.lastUpdated ?? now,
             ...(showBreakdown && { breakdown: d.breakdown ?? {} }),
