@@ -13,18 +13,20 @@ export interface AwardEngagementPointsParams {
   userId: string;
   userEmail?: string;
   userName?: string;
-  action: "create" | "participate";
+  action: "create" | "participate" | "accuracy_bonus";
   engagementId: string;
   engagementType: string; // "quiz" | "poll" | "prediction" | "fan_battle"
   engagementTitle?: string;
   questionId?: string;
   quizPointsBonus?: number; // Additional points if quiz answer was correct
+  pointsBonus?: number; // Additional points for accuracy bonus (+10 points)
   metadata?: Record<string, any>;
 }
 
 /**
  * Awards points to a user for either creating an Arena Engagement or participating in one.
  * Base reward: +2 points for creating any engagement, +2 points for participating in any engagement.
+ * Correct poll/prediction outcomes reward +10 accuracy bonus points after the timer ends.
  * Quiz participation can include additional reward points if the answer was correct.
  */
 export async function awardEngagementPoints({
@@ -37,14 +39,16 @@ export async function awardEngagementPoints({
   engagementTitle,
   questionId,
   quizPointsBonus = 0,
+  pointsBonus = 0,
   metadata = {},
 }: AwardEngagementPointsParams): Promise<{ success: boolean; pointsAwarded: number }> {
   if (!userId) {
     return { success: false, pointsAwarded: 0 };
   }
 
-  const basePoints = action === "create" ? ENGAGEMENT_CREATION_POINTS : ENGAGEMENT_PARTICIPATION_POINTS;
-  const totalPointsToAward = basePoints + (quizPointsBonus > 0 ? quizPointsBonus : 0);
+  const isAccuracyBonus = action === "accuracy_bonus" || metadata?.reason === "CORRECT_PREDICTION_BONUS";
+  const basePoints = action === "create" ? ENGAGEMENT_CREATION_POINTS : isAccuracyBonus ? 10 : ENGAGEMENT_PARTICIPATION_POINTS;
+  const totalPointsToAward = isAccuracyBonus ? (pointsBonus > 0 ? pointsBonus : 10) : basePoints + (quizPointsBonus > 0 ? quizPointsBonus : 0);
   const now = Date.now();
 
   const cleanType = String(engagementType || "engagement").toLowerCase();
@@ -53,17 +57,23 @@ export async function awardEngagementPoints({
   const reason =
     action === "create"
       ? `ENGAGEMENT_CREATE_${cleanType.toUpperCase()}`
+      : isAccuracyBonus
+      ? `ENGAGEMENT_ACCURACY_BONUS_${cleanType.toUpperCase()}`
       : `ENGAGEMENT_PARTICIPATE_${cleanType.toUpperCase()}`;
 
   const cleanUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
   const transactionId =
     action === "create"
       ? `eng_create_${engagementId}_${cleanUserId}`
+      : isAccuracyBonus
+      ? `eng_accuracy_bonus_${engagementId}_${cleanUserId}`
       : `eng_vote_${engagementId}_${cleanUserId}${questionId ? `_${questionId}` : ""}`;
 
   const statement =
     action === "create"
       ? `Created ${formattedType}: "${engagementTitle || 'Arena Event'}" (+${basePoints} pts)`
+      : isAccuracyBonus
+      ? `Picked correct ${formattedType} outcome: "${engagementTitle || 'Arena Event'}" (+${totalPointsToAward} pts)`
       : quizPointsBonus > 0
       ? `Answered ${formattedType} correctly: "${engagementTitle || 'Arena Event'}" (+${totalPointsToAward} pts)`
       : `Participated in ${formattedType}: "${engagementTitle || 'Arena Event'}" (+${basePoints} pts)`;
@@ -216,6 +226,7 @@ export async function awardEngagementPoints({
             userName: resolvedName,
             userEmail: safeEmail,
             totalPoints: FieldValue.increment(totalPointsToAward),
+            correctCount: FieldValue.increment(isAccuracyBonus ? 1 : 0),
             lastAnsweredAt: now,
             updatedAt: now,
           }, { merge: true })
@@ -235,11 +246,13 @@ export async function awardEngagementPoints({
           Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${resolvedUserId}` },
           UpdateExpression:
             "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+            "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
             "userName = :uname, userEmail = :uemail, " +
             "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
           ExpressionAttributeValues: {
             ":zero": 0,
             ":pts": totalPointsToAward,
+            ":corr": isAccuracyBonus ? 1 : 0,
             ":uname": safeName,
             ":uemail": safeEmail,
             ":now": now,

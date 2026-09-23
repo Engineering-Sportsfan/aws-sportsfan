@@ -135,86 +135,180 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     const now = Date.now();
-    const expiresAt = engagementItem?.expiresAt || engagementItem?.pollData?.expiresAt || engagementItem?.predictionData?.expiresAt;
-    const isExpired = Boolean(expiresAt && now >= Number(expiresAt));
+    const startTime = Number(
+      engagementItem?.pollData?.startTime ||
+      engagementItem?.predictionData?.startTime ||
+      engagementItem?.startTime ||
+      engagementItem?.createdAt ||
+      0
+    );
+    const durationMins = Number(
+      engagementItem?.pollData?.durationMinutes ||
+      engagementItem?.pollData?.timerMinutes ||
+      engagementItem?.predictionData?.durationMinutes ||
+      engagementItem?.predictionData?.timerMinutes ||
+      (engagementItem?.type === "poll" ? 10 : engagementItem?.type === "prediction" ? 30 : 0)
+    );
+    const computedExpiresAt =
+      engagementItem?.expiresAt ||
+      engagementItem?.pollData?.expiresAt ||
+      engagementItem?.predictionData?.expiresAt ||
+      (startTime > 0 && durationMins > 0 ? startTime + durationMins * 60 * 1000 : null);
+    const isExpired = Boolean(computedExpiresAt && now >= Number(computedExpiresAt));
 
     let correctAnswer = "";
     let winningChoiceId = "";
     if (engagementItem?.type === "poll") {
-      correctAnswer = engagementItem.pollData?.correctAnswer || engagementItem.pollData?.answer || "";
+      correctAnswer =
+        engagementItem.pollData?.correctAnswer ||
+        engagementItem.pollData?.answer ||
+        engagementItem.correctAnswer ||
+        "";
     } else if (engagementItem?.type === "prediction") {
-      correctAnswer = engagementItem.predictionData?.correctAnswer || engagementItem.predictionData?.answer || "";
-      winningChoiceId = engagementItem.predictionData?.winningChoiceId || "";
+      correctAnswer =
+        engagementItem.predictionData?.correctAnswer ||
+        engagementItem.predictionData?.answer ||
+        engagementItem.correctAnswer ||
+        "";
+      winningChoiceId =
+        engagementItem.predictionData?.winningChoiceId ||
+        engagementItem.winningChoiceId ||
+        correctAnswer ||
+        "";
+    }
+
+    if (!voteItem && (searchParams.get("selectedOptionId") || searchParams.get("choice"))) {
+      const clientOpt = searchParams.get("selectedOptionId") || searchParams.get("choice");
+      voteItem = {
+        userId,
+        selectedOptionId: clientOpt,
+        votedAt: now,
+      };
     }
 
     let isCorrect: boolean | null = null;
     let wonBonusPoints = 0;
+    let newlyAwarded = false;
 
     if (voteItem && (engagementItem?.type === "poll" || engagementItem?.type === "prediction")) {
       const userChoice = String(voteItem.selectedOptionId || "").trim().toLowerCase();
       const leftText = String(engagementItem.predictionData?.leftChoice?.text || "").trim().toLowerCase();
+      const leftCode = String(engagementItem.predictionData?.leftChoice?.code || "").trim().toLowerCase();
       const rightText = String(engagementItem.predictionData?.rightChoice?.text || "").trim().toLowerCase();
+      const rightCode = String(engagementItem.predictionData?.rightChoice?.code || "").trim().toLowerCase();
       const winTarget = String(winningChoiceId || correctAnswer).trim().toLowerCase();
 
       if (engagementItem.type === "prediction") {
-        if (winTarget) {
-          isCorrect = Boolean(
-            (winTarget === "left" && (userChoice === "left" || userChoice === leftText)) ||
-            (winTarget === "right" && (userChoice === "right" || userChoice === rightText)) ||
-            (userChoice === winTarget) ||
-            (!!leftText && winTarget === leftText && (userChoice === "left" || userChoice === leftText)) ||
-            (!!rightText && winTarget === rightText && (userChoice === "right" || userChoice === rightText))
-          );
+        const isLeftWinning =
+          winTarget === "left" ||
+          (!!leftText && winTarget === leftText) ||
+          (!!leftCode && winTarget === leftCode) ||
+          (!!leftText && leftText.includes(winTarget) && winTarget.length > 2);
+
+        const isRightWinning =
+          winTarget === "right" ||
+          (!!rightText && winTarget === rightText) ||
+          (!!rightCode && winTarget === rightCode) ||
+          (!!rightText && rightText.includes(winTarget) && winTarget.length > 2);
+
+        const isUserLeft =
+          userChoice === "left" ||
+          (!!leftText && userChoice === leftText) ||
+          (!!leftCode && userChoice === leftCode);
+
+        const isUserRight =
+          userChoice === "right" ||
+          (!!rightText && userChoice === rightText) ||
+          (!!rightCode && userChoice === rightCode);
+
+        if (isLeftWinning && isUserLeft) {
+          isCorrect = true;
+        } else if (isRightWinning && isUserRight) {
+          isCorrect = true;
+        } else if (winTarget && userChoice === winTarget) {
+          isCorrect = true;
+        } else if (winTarget) {
+          isCorrect = false;
         }
       } else if (engagementItem.type === "poll") {
         if (correctAnswer) {
           const correctLower = String(correctAnswer).trim().toLowerCase();
-          isCorrect = userChoice === correctLower;
-          if (!isCorrect && engagementItem.pollData?.options) {
+          if (userChoice === correctLower) {
+            isCorrect = true;
+          } else if (engagementItem.pollData?.options) {
             const chosenOpt = engagementItem.pollData.options.find(
-              (o: any) => String(o.id).toLowerCase() === userChoice || String(o.text).trim().toLowerCase() === userChoice
+              (o: any) =>
+                String(o.id).trim().toLowerCase() === userChoice ||
+                String(o.text || o.label || "").trim().toLowerCase() === userChoice
             );
             const targetOpt = engagementItem.pollData.options.find(
-              (o: any) => String(o.id).toLowerCase() === correctLower || String(o.text).trim().toLowerCase() === correctLower
+              (o: any) =>
+                String(o.id).trim().toLowerCase() === correctLower ||
+                String(o.text || o.label || "").trim().toLowerCase() === correctLower ||
+                (o.text && correctLower && (
+                  String(o.text).toLowerCase().includes(correctLower) ||
+                  correctLower.includes(String(o.text).toLowerCase())
+                ))
             );
+
             if (chosenOpt && targetOpt && chosenOpt.id === targetOpt.id) {
               isCorrect = true;
+            } else if (chosenOpt && (
+              String(chosenOpt.id).toLowerCase() === correctLower ||
+              String(chosenOpt.text || chosenOpt.label || "").trim().toLowerCase() === correctLower
+            )) {
+              isCorrect = true;
+            } else if (chosenOpt?.isCorrect === true) {
+              isCorrect = true;
+            } else {
+              isCorrect = false;
             }
+          } else {
+            isCorrect = false;
           }
         }
       }
 
-      // If timer is expired and prediction was correct, award +10 points if not already awarded
+      // If timer is expired and outcome was correct, award +10 points if not already awarded
       if (isExpired && isCorrect && !voteItem.accuracyBonusAwarded) {
         try {
           const awardUid = voteItem.userId || userId;
-          await awardEngagementPoints({
+          const awardEmail = authUser?.email || (awardUid && awardUid.includes("@") ? awardUid : "");
+          const awardName = authUser?.name || "";
+
+          const ptsRes = await awardEngagementPoints({
             userId: awardUid,
-            userEmail: authUser?.email,
-            userName: authUser?.name,
-            action: "participate",
+            userEmail: awardEmail,
+            userName: awardName,
+            action: "accuracy_bonus",
             engagementId: id,
             engagementType: engagementItem.type,
             engagementTitle: engagementItem.title,
-            quizPointsBonus: 10,
+            pointsBonus: 10,
             metadata: {
               reason: "CORRECT_PREDICTION_BONUS",
               bonusPoints: 10,
+              type: engagementItem.type,
             },
           });
+
+          if (ptsRes.success) {
+            newlyAwarded = true;
+          }
 
           // Mark accuracyBonusAwarded = true in DynamoDB
           await docClient.send(
             new UpdateCommand({
               TableName: TABLES.SocialAndContent,
               Key: { contentId: `ENGAGEMENT#${id}`, sk: voteItem.sk || `VOTE#${awardUid}` },
-              UpdateExpression: "SET accuracyBonusAwarded = :t, isCorrect = :t, wonBonusPoints = :pts",
+              UpdateExpression: "SET accuracyBonusAwarded = :t, isCorrect = :t, wonBonusPoints = :pts, resolvedAt = :now",
               ExpressionAttributeValues: {
                 ":t": true,
                 ":pts": 10,
+                ":now": now,
               },
             })
-          );
+          ).catch((e) => console.warn("DDB accuracy bonus flag update notice:", e));
 
           // Mark in Firestore
           if (db) {
@@ -223,7 +317,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
               isCorrect: true,
               wonBonusPoints: 10,
               resolvedAt: now,
-            }, { merge: true });
+            }, { merge: true }).catch((e) => console.warn("Firestore accuracy bonus flag notice:", e));
           }
 
           voteItem.accuracyBonusAwarded = true;
@@ -243,9 +337,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       selectedOptionId: voteItem?.selectedOptionId || null,
       vote: voteItem,
       isExpired,
-      expiresAt: expiresAt || null,
+      expiresAt: computedExpiresAt || null,
       isCorrect,
+      accuracyBonusAwarded: Boolean(voteItem?.accuracyBonusAwarded),
       wonBonusPoints,
+      newlyAwarded,
       correctAnswer: correctAnswer || winningChoiceId || null,
       winningChoiceId: winningChoiceId || null,
     });
@@ -360,6 +456,150 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     if (existingVote) {
+      // If client is claiming accuracy bonus on an expired event
+      if (body.action === "claim_bonus" || body.claimBonus === true) {
+        let engagementItem: any = null;
+        try {
+          const getRes = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
+            })
+          );
+          if (getRes.Item) engagementItem = getRes.Item;
+        } catch { }
+        if (!engagementItem && db) {
+          const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
+          if (snap.exists) engagementItem = { id: snap.id, ...snap.data() };
+        }
+
+        const now = Date.now();
+        const startTime = Number(
+          engagementItem?.pollData?.startTime ||
+          engagementItem?.predictionData?.startTime ||
+          engagementItem?.startTime ||
+          engagementItem?.createdAt ||
+          0
+        );
+        const durationMins = Number(
+          engagementItem?.pollData?.durationMinutes ||
+          engagementItem?.pollData?.timerMinutes ||
+          engagementItem?.predictionData?.durationMinutes ||
+          engagementItem?.predictionData?.timerMinutes ||
+          (engagementItem?.type === "poll" ? 10 : engagementItem?.type === "prediction" ? 30 : 0)
+        );
+        const computedExpiresAt =
+          engagementItem?.expiresAt ||
+          engagementItem?.pollData?.expiresAt ||
+          engagementItem?.predictionData?.expiresAt ||
+          (startTime > 0 && durationMins > 0 ? startTime + durationMins * 60 * 1000 : null);
+        const isExpired = Boolean(computedExpiresAt && now >= Number(computedExpiresAt));
+
+        let isCorrect = false;
+        const correctAnswer =
+          engagementItem?.pollData?.correctAnswer ||
+          engagementItem?.pollData?.answer ||
+          engagementItem?.correctAnswer ||
+          "";
+        const winningChoiceId =
+          engagementItem?.predictionData?.winningChoiceId ||
+          engagementItem?.winningChoiceId ||
+          correctAnswer ||
+          "";
+
+        const userChoice = String(existingVote.selectedOptionId || selectedOptionId || "").trim().toLowerCase();
+
+        if (engagementItem?.type === "prediction") {
+          const winTarget = String(winningChoiceId || correctAnswer).trim().toLowerCase();
+          const leftText = String(engagementItem.predictionData?.leftChoice?.text || "").trim().toLowerCase();
+          const leftCode = String(engagementItem.predictionData?.leftChoice?.code || "").trim().toLowerCase();
+          const rightText = String(engagementItem.predictionData?.rightChoice?.text || "").trim().toLowerCase();
+          const rightCode = String(engagementItem.predictionData?.rightChoice?.code || "").trim().toLowerCase();
+
+          const isLeftWinning = winTarget === "left" || (!!leftText && winTarget === leftText) || (!!leftCode && winTarget === leftCode) || (!!leftText && leftText.includes(winTarget) && winTarget.length > 2);
+          const isRightWinning = winTarget === "right" || (!!rightText && winTarget === rightText) || (!!rightCode && winTarget === rightCode) || (!!rightText && rightText.includes(winTarget) && winTarget.length > 2);
+          const isUserLeft = userChoice === "left" || (!!leftText && userChoice === leftText) || (!!leftCode && userChoice === leftCode);
+          const isUserRight = userChoice === "right" || (!!rightText && userChoice === rightText) || (!!rightCode && userChoice === rightCode);
+
+          if (isLeftWinning && isUserLeft) isCorrect = true;
+          else if (isRightWinning && isUserRight) isCorrect = true;
+          else if (winTarget && userChoice === winTarget) isCorrect = true;
+        } else if (engagementItem?.type === "poll") {
+          const correctLower = String(correctAnswer).trim().toLowerCase();
+          if (userChoice === correctLower) {
+            isCorrect = true;
+          } else if (engagementItem.pollData?.options) {
+            const chosenOpt = engagementItem.pollData.options.find(
+              (o: any) => String(o.id).trim().toLowerCase() === userChoice || String(o.text || o.label || "").trim().toLowerCase() === userChoice
+            );
+            const targetOpt = engagementItem.pollData.options.find(
+              (o: any) => String(o.id).trim().toLowerCase() === correctLower || String(o.text || o.label || "").trim().toLowerCase() === correctLower || (o.text && correctLower && (String(o.text).toLowerCase().includes(correctLower) || correctLower.includes(String(o.text).toLowerCase())))
+            );
+            if (chosenOpt && targetOpt && chosenOpt.id === targetOpt.id) isCorrect = true;
+            else if (chosenOpt && (String(chosenOpt.id).toLowerCase() === correctLower || String(chosenOpt.text || chosenOpt.label || "").trim().toLowerCase() === correctLower)) isCorrect = true;
+            else if (chosenOpt?.isCorrect === true) isCorrect = true;
+          }
+        }
+
+        let newlyAwarded = false;
+        if (isExpired && isCorrect && !existingVote.accuracyBonusAwarded) {
+          try {
+            const awardUid = existingVote.userId || userId;
+            const awardEmail = authUser?.email || (awardUid && awardUid.includes("@") ? awardUid : "");
+            const ptsRes = await awardEngagementPoints({
+              userId: awardUid,
+              userEmail: awardEmail,
+              userName: authUser?.name || userName || "",
+              action: "accuracy_bonus",
+              engagementId: id,
+              engagementType: engagementItem.type,
+              engagementTitle: engagementItem.title,
+              pointsBonus: 10,
+              metadata: {
+                reason: "CORRECT_PREDICTION_BONUS",
+                bonusPoints: 10,
+                type: engagementItem.type,
+              },
+            });
+            if (ptsRes.success) newlyAwarded = true;
+
+            await docClient.send(
+              new UpdateCommand({
+                TableName: TABLES.SocialAndContent,
+                Key: { contentId: `ENGAGEMENT#${id}`, sk: existingVote.sk || `VOTE#${awardUid}` },
+                UpdateExpression: "SET accuracyBonusAwarded = :t, isCorrect = :t, wonBonusPoints = :pts, resolvedAt = :now",
+                ExpressionAttributeValues: { ":t": true, ":pts": 10, ":now": now },
+              })
+            ).catch(() => {});
+
+            if (db) {
+              await db.collection(getFirestoreCollection("user_engagements")).doc(`${awardUid}_${id}`).set({
+                accuracyBonusAwarded: true,
+                isCorrect: true,
+                wonBonusPoints: 10,
+                resolvedAt: now,
+              }, { merge: true }).catch(() => {});
+            }
+
+            existingVote.accuracyBonusAwarded = true;
+            existingVote.wonBonusPoints = 10;
+          } catch (e) {
+            console.warn("POST claim bonus error:", e);
+          }
+        }
+
+        return NextResponse.json({
+          success: true,
+          alreadyVoted: true,
+          isExpired,
+          isCorrect,
+          accuracyBonusAwarded: Boolean(existingVote.accuracyBonusAwarded),
+          wonBonusPoints: existingVote.wonBonusPoints || (isCorrect ? 10 : 0),
+          newlyAwarded,
+          selectedOptionId: existingVote.selectedOptionId,
+        });
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -548,8 +788,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     try {
       const awardRes = await awardEngagementPoints({
         userId,
-        userEmail: authUser?.email || body.userEmail || "",
-        userName: userName || authUser?.name || "",
+        userEmail: authUser?.email || body.userEmail || (userId.includes("@") ? userId : ""),
+        userName: userName || authUser?.name || body.userName || "",
         action: "participate",
         engagementId: id,
         engagementType: item.type,

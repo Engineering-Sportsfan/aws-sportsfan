@@ -15,6 +15,8 @@ export interface FanBattlePayload {
   leftCompetitor: Competitor;
   rightCompetitor: Competitor;
   totalVotes: number;
+  startTime?: number;
+  scheduledStartTime?: number;
 }
 
 // ─── 2. Quiz ───────────────────────────────────────────────────────────────
@@ -74,6 +76,8 @@ export interface PollPayload {
   durationMinutes?: number;
   timerMinutes?: number;
   expiresAt?: number;
+  startTime?: number;
+  scheduledStartTime?: number;
 }
 
 // ─── 4. Prediction ─────────────────────────────────────────────────────────
@@ -97,6 +101,8 @@ export interface PredictionPayload {
   durationMinutes?: number;
   timerMinutes?: number;
   expiresAt?: number;
+  startTime?: number;
+  scheduledStartTime?: number;
 }
 
 // ─── Universal Engagement Entity ──────────────────────────────────────────
@@ -132,6 +138,8 @@ export interface EngagementItem {
   createdAt: number;
   updatedAt: number;
   expiresAt?: number | null;
+  startTime?: number | null;
+  scheduledStartTime?: number | null;
 }
 
 // ─── User Vote / Answer Record ─────────────────────────────────────────────
