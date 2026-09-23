@@ -31,6 +31,7 @@ export default function EngagementsManagementPage() {
   const [status, setStatus] = useState<"active" | "inactive">("active");
 
   // Fan Battle state
+  const [battleStartTime, setBattleStartTime] = useState<string>("");
   const [fbLeftCode, setFbLeftCode] = useState("IN");
   const [fbLeftName, setFbLeftName] = useState("Virat Kohli");
   const [fbLeftStat, setFbLeftStat] = useState("Avg 58.6 in Tests");
@@ -56,6 +57,9 @@ export default function EngagementsManagementPage() {
   ]);
 
   // Poll state
+  const [pollStartTime, setPollStartTime] = useState<string>("");
+  const [pollTimerMinutes, setPollTimerMinutes] = useState<number>(10);
+  const [pollAnswer, setPollAnswer] = useState<string>("");
   const [pollQuestion, setPollQuestion] = useState("Who takes more wickets in Galle?");
   const [pollOptions, setPollOptions] = useState<string[]>([
     "Jasprit Bumrah 🏏",
@@ -64,6 +68,9 @@ export default function EngagementsManagementPage() {
   ]);
 
   // Prediction state
+  const [predStartTime, setPredStartTime] = useState<string>("");
+  const [predTimerMinutes, setPredTimerMinutes] = useState<number>(30);
+  const [predAnswer, setPredAnswer] = useState<string>("");
   const [predQuestion, setPredQuestion] = useState("India win the 1st Galle Test?");
   const [predLeftText, setPredLeftText] = useState("Yes, India win");
   const [predLeftCode, setPredLeftCode] = useState("IN");
@@ -126,8 +133,16 @@ export default function EngagementsManagementPage() {
   function handleOpenCreate(type: EngagementType) {
     setEditingItem(null);
     setActiveTab(type);
-    if (type === "fan_battle") setTitle("Fan Battle · Who wins your vote?");
-    else if (type === "quiz") {
+    if (type === "fan_battle") {
+      setTitle("Fan Battle · Who wins your vote?");
+      setBattleStartTime("");
+      setFbLeftCode("IN");
+      setFbLeftName("Virat Kohli");
+      setFbLeftStat("Avg 58.6 in Tests");
+      setFbRightCode("PK");
+      setFbRightName("Babar Azam");
+      setFbRightStat("Avg 44.8 in Tests");
+    } else if (type === "quiz") {
       setTitle("Quick Live Cricket Quiz");
       setQuizStartTime("");
       setQuizFrequencyMinutes(10);
@@ -144,8 +159,29 @@ export default function EngagementsManagementPage() {
           explanation: "Virat Kohli scored his 29th Test hundred against West Indies.",
         },
       ]);
-    } else if (type === "poll") setTitle("Who takes more wickets in Galle?");
-    else if (type === "prediction") setTitle("Predict the outcome!");
+    } else if (type === "poll") {
+      setTitle("Who takes more wickets in Galle?");
+      setPollStartTime("");
+      setPollTimerMinutes(10);
+      setPollAnswer("");
+      setPollQuestion("Who takes more wickets in Galle?");
+      setPollOptions([
+        "Jasprit Bumrah 🏏",
+        "Maheesh Theekshana 🌀",
+        "Ravindra Jadeja 🍌",
+      ]);
+    } else if (type === "prediction") {
+      setTitle("Predict the outcome!");
+      setPredStartTime("");
+      setPredTimerMinutes(30);
+      setPredAnswer("");
+      setPredQuestion("India win the 1st Galle Test?");
+      setPredLeftText("Yes, India win");
+      setPredLeftCode("IN");
+      setPredRightText("SL hold / win");
+      setPredRightCode("LK");
+      setPredCoinStake(25);
+    }
   }
 
   function handleEdit(item: EngagementItem) {
@@ -163,6 +199,17 @@ export default function EngagementsManagementPage() {
       setFbRightCode(item.fanBattleData.rightCompetitor.code);
       setFbRightName(item.fanBattleData.rightCompetitor.name);
       setFbRightStat(item.fanBattleData.rightCompetitor.stat);
+      if (item.fanBattleData.startTime || item.fanBattleData.scheduledStartTime) {
+        try {
+          const d = new Date(Number(item.fanBattleData.startTime || item.fanBattleData.scheduledStartTime));
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setBattleStartTime(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+        } catch {
+          setBattleStartTime("");
+        }
+      } else {
+        setBattleStartTime("");
+      }
     } else if (item.type === "quiz" && item.quizData) {
       // Start Time
       if (item.quizData.startTime || item.quizData.scheduledStartTime) {
@@ -211,15 +258,41 @@ export default function EngagementsManagementPage() {
         ]);
       }
     } else if (item.type === "poll" && item.pollData) {
-      setPollQuestion(item.pollData.question);
-      setPollOptions(item.pollData.options.map(o => o.text));
+      setPollQuestion(item.pollData.question || item.title || "");
+      setPollOptions(item.pollData.options?.length ? item.pollData.options.map(o => o.text) : ["", ""]);
+      setPollAnswer(item.pollData.correctAnswer || item.pollData.answer || "");
+      setPollTimerMinutes(item.pollData.durationMinutes || item.pollData.timerMinutes || 10);
+      if (item.pollData.startTime || item.pollData.scheduledStartTime) {
+        try {
+          const d = new Date(Number(item.pollData.startTime || item.pollData.scheduledStartTime));
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setPollStartTime(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+        } catch {
+          setPollStartTime("");
+        }
+      } else {
+        setPollStartTime("");
+      }
     } else if (item.type === "prediction" && item.predictionData) {
-      setPredQuestion(item.predictionData.question);
-      setPredLeftText(item.predictionData.leftChoice.text);
-      setPredLeftCode(item.predictionData.leftChoice.code || "");
-      setPredRightText(item.predictionData.rightChoice.text);
-      setPredRightCode(item.predictionData.rightChoice.code || "");
+      setPredQuestion(item.predictionData.question || item.title || "");
+      setPredLeftText(item.predictionData.leftChoice?.text || "");
+      setPredLeftCode(item.predictionData.leftChoice?.code || "");
+      setPredRightText(item.predictionData.rightChoice?.text || "");
+      setPredRightCode(item.predictionData.rightChoice?.code || "");
       setPredCoinStake(item.predictionData.coinStake || 25);
+      setPredAnswer(item.predictionData.correctAnswer || item.predictionData.answer || item.predictionData.winningChoiceId || "");
+      setPredTimerMinutes(item.predictionData.durationMinutes || item.predictionData.timerMinutes || 30);
+      if (item.predictionData.startTime || item.predictionData.scheduledStartTime) {
+        try {
+          const d = new Date(Number(item.predictionData.startTime || item.predictionData.scheduledStartTime));
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setPredStartTime(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+        } catch {
+          setPredStartTime("");
+        }
+      } else {
+        setPredStartTime("");
+      }
     }
   }
 
@@ -271,11 +344,14 @@ export default function EngagementsManagementPage() {
       };
 
       if (activeTab === "fan_battle") {
+        const startMs = battleStartTime ? new Date(battleStartTime).getTime() : Date.now();
         payload.tags = ["⚔️ FAN BATTLE", "🔥 TRENDING"];
         payload.fanBattleData = {
-          leftCompetitor: { code: fbLeftCode, name: fbLeftName, stat: fbLeftStat, votes: 0 },
-          rightCompetitor: { code: fbRightCode, name: fbRightName, stat: fbRightStat, votes: 0 },
-          totalVotes: 0,
+          leftCompetitor: { code: fbLeftCode, name: fbLeftName, stat: fbLeftStat, votes: editingItem?.fanBattleData?.leftCompetitor?.votes || 0 },
+          rightCompetitor: { code: fbRightCode, name: fbRightName, stat: fbRightStat, votes: editingItem?.fanBattleData?.rightCompetitor?.votes || 0 },
+          totalVotes: editingItem?.fanBattleData?.totalVotes || 0,
+          startTime: startMs,
+          scheduledStartTime: startMs,
         };
       } else if (activeTab === "quiz") {
         const startMs = quizStartTime ? new Date(quizStartTime).getTime() : Date.now();
@@ -312,37 +388,76 @@ export default function EngagementsManagementPage() {
           explanation: formattedQuestions[0]?.explanation || "",
         };
       } else if (activeTab === "poll") {
-        payload.tags = editingItem?.tags || ["📊 POLL"];
+        const now = Date.now();
+        const startMs = pollStartTime ? new Date(pollStartTime).getTime() : now;
+        const durationMins = Number(pollTimerMinutes) || 10;
+        const expiresAt = (startMs || now) + durationMins * 60 * 1000;
+        payload.tags = [
+          "📊 POLL",
+          `⏱️ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
+        ];
+        payload.expiresAt = expiresAt;
         payload.pollData = {
           ...(editingItem?.pollData || {}),
-          question: pollQuestion,
+          question: pollQuestion.trim(),
           options: pollOptions.filter(o => o.trim()).map((optText, idx) => ({
             id: String(idx + 1),
-            text: optText,
+            text: optText.trim(),
             votes: editingItem?.pollData?.options?.[idx]?.votes || 0,
           })),
           totalVotes: editingItem?.pollData?.totalVotes || 0,
+          answer: pollAnswer.trim(),
+          correctAnswer: pollAnswer.trim(),
+          durationMinutes: durationMins,
+          timerMinutes: durationMins,
+          startTime: startMs,
+          scheduledStartTime: startMs,
+          expiresAt,
         };
       } else if (activeTab === "prediction") {
-        payload.tags = editingItem?.tags || ["🎯 PREDICTION", "💎 POINTS"];
+        const now = Date.now();
+        const startMs = predStartTime ? new Date(predStartTime).getTime() : now;
+        const durationMins = Number(predTimerMinutes) || 30;
+        const expiresAt = (startMs || now) + durationMins * 60 * 1000;
+        payload.tags = [
+          "🎯 PREDICTION",
+          "💎 POINTS",
+          `⏱️ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
+        ];
+        payload.expiresAt = expiresAt;
+        const choiceId =
+          predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "left"
+            ? "left"
+            : predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "right"
+            ? "right"
+            : predAnswer.trim() || null;
+
         payload.predictionData = {
           ...(editingItem?.predictionData || {}),
-          question: predQuestion,
+          question: predQuestion.trim(),
           leftChoice: {
             id: "left",
-            text: predLeftText,
-            code: predLeftCode,
+            text: predLeftText.trim(),
+            code: predLeftCode.trim() || "IN",
             votes: editingItem?.predictionData?.leftChoice?.votes || 0,
           },
           rightChoice: {
             id: "right",
-            text: predRightText,
-            code: predRightCode,
+            text: predRightText.trim(),
+            code: predRightCode.trim() || "PK",
             votes: editingItem?.predictionData?.rightChoice?.votes || 0,
           },
-          coinStake: Number(predCoinStake),
+          coinStake: Number(predCoinStake) || 25,
           totalVotes: editingItem?.predictionData?.totalVotes || 0,
           status: editingItem?.predictionData?.status || "open",
+          answer: predAnswer.trim(),
+          correctAnswer: predAnswer.trim(),
+          winningChoiceId: choiceId,
+          durationMinutes: durationMins,
+          timerMinutes: durationMins,
+          startTime: startMs,
+          scheduledStartTime: startMs,
+          expiresAt,
         };
       }
 
@@ -612,7 +727,14 @@ export default function EngagementsManagementPage() {
 
                       <td style={{ padding: "10px 14px", color: "#8b949e", fontSize: 11 }}>
                         {item.type === "fan_battle" && (
-                          <span>{item.fanBattleData?.leftCompetitor?.name || "Competitor 1"} vs {item.fanBattleData?.rightCompetitor?.name || "Competitor 2"}</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span>{item.fanBattleData?.leftCompetitor?.name || "Competitor 1"} vs {item.fanBattleData?.rightCompetitor?.name || "Competitor 2"}</span>
+                            {item.fanBattleData?.startTime && (
+                              <span style={{ color: "#8b949e", fontSize: 10 }}>
+                                📅 Starts: {new Date(item.fanBattleData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
                         )}
                         {item.type === "quiz" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -627,10 +749,34 @@ export default function EngagementsManagementPage() {
                           </div>
                         )}
                         {item.type === "poll" && (
-                          <span>{item.pollData?.options?.length || 0} options</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span>{item.pollData?.options?.length || 0} options · ⏱️ {item.pollData?.durationMinutes || item.pollData?.timerMinutes || 10}m timer</span>
+                            {item.pollData?.correctAnswer && (
+                              <span style={{ color: "#3fb950", fontSize: 10, fontWeight: 600 }}>
+                                🏆 Answer: {item.pollData.correctAnswer}
+                              </span>
+                            )}
+                            {item.pollData?.startTime && (
+                              <span style={{ color: "#8b949e", fontSize: 10 }}>
+                                📅 Starts: {new Date(item.pollData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
                         )}
                         {item.type === "prediction" && (
-                          <span>Stake: {item.predictionData?.coinStake} Coins</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span>Stake: {item.predictionData?.coinStake || 25} Coins · ⏱️ {item.predictionData?.durationMinutes || item.predictionData?.timerMinutes || 30}m timer</span>
+                            {item.predictionData?.correctAnswer && (
+                              <span style={{ color: "#e3b341", fontSize: 10, fontWeight: 600 }}>
+                                🏆 Answer: {item.predictionData.correctAnswer}
+                              </span>
+                            )}
+                            {item.predictionData?.startTime && (
+                              <span style={{ color: "#8b949e", fontSize: 10 }}>
+                                📅 Starts: {new Date(item.predictionData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
 
@@ -939,6 +1085,37 @@ export default function EngagementsManagementPage() {
             {/* ── FAN BATTLE FIELDS ──────────────────────────────────────────────── */}
             {activeTab === "fan_battle" && (
               <div style={{ borderTop: "1px solid #30363d", paddingTop: 14, marginTop: 14 }}>
+                <div
+                  style={{
+                    background: "rgba(56, 139, 253, 0.08)",
+                    border: "1px solid rgba(56, 139, 253, 0.25)",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                    📅 Schedule Start Time (Optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={battleStartTime}
+                    onChange={e => setBattleStartTime(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "7px 10px",
+                      background: "#0d1117",
+                      border: "1px solid #30363d",
+                      borderRadius: 6,
+                      color: "#fff",
+                      fontSize: 12,
+                    }}
+                  />
+                  <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                    When this fan battle goes live (leave empty for immediate start)
+                  </span>
+                </div>
+
                 <h3 style={{ fontSize: 13, fontWeight: 600, color: "#58a6ff", marginBottom: 10 }}>Left Competitor (e.g. IN / Virat Kohli)</h3>
                 <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr", gap: 10, marginBottom: 14 }}>
                   <input placeholder="Code" value={fbLeftCode} onChange={e => setFbLeftCode(e.target.value)} style={{ padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
@@ -1230,30 +1407,162 @@ export default function EngagementsManagementPage() {
                 <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Poll Question</label>
                 <input value={pollQuestion} onChange={e => setPollQuestion(e.target.value)} required style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13, marginBottom: 12 }} />
 
-                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Poll Options</label>
-                {pollOptions.map((opt, i) => (
-                  <div key={i} style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                {/* Timing & Outcome Setup */}
+                <div
+                  style={{
+                    background: "rgba(56, 139, 253, 0.08)",
+                    border: "1px solid rgba(56, 139, 253, 0.25)",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <h3 style={{ fontSize: 12, fontWeight: 700, color: "#58a6ff", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                    ⏱️ Poll Timing, Schedule & Winning Outcome (+10 PTS)
+                  </h3>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        📅 Schedule Start Time (Optional)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={pollStartTime}
+                        onChange={e => setPollStartTime(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      />
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        When this poll unlocks (leave empty for immediate start)
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        ⏳ Timer / Duration (+10 PTS on Expiry)
+                      </label>
+                      <select
+                        value={pollTimerMinutes}
+                        onChange={e => setPollTimerMinutes(Number(e.target.value))}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      >
+                        <option value={5}>⚡ 5 mins</option>
+                        <option value={10}>⏱️ 10 mins</option>
+                        <option value={15}>⏱️ 15 mins</option>
+                        <option value={30}>⏳ 30 mins</option>
+                        <option value={45}>⏳ 45 mins</option>
+                        <option value={60}>🕒 1 hr</option>
+                        <option value={90}>⌛ 1 hr 30 mins</option>
+                        <option value={120}>⏰ 2 hr</option>
+                        <option value={180}>⏰ 3 hr</option>
+                        <option value={240}>⏰ 4 hr</option>
+                        <option value={360}>⏰ 6 hr</option>
+                        <option value={480}>⏰ 8 hr</option>
+                        <option value={720}>⏰ 12 hr</option>
+                        <option value={1080}>⏰ 18 hr</option>
+                        <option value={1440}>🌙 24 hr (Full Day)</option>
+                      </select>
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        Users who voted for the winning outcome receive +10 PTS after this timer expires
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                      🏆 Correct Answer / Winning Outcome (Optional)
+                    </label>
                     <input
-                      value={opt}
-                      onChange={e => {
-                        const copy = [...pollOptions];
-                        copy[i] = e.target.value;
-                        setPollOptions(copy);
+                      value={pollAnswer}
+                      onChange={e => setPollAnswer(e.target.value)}
+                      placeholder="Click 'Mark Winner' on an option below or type expected answer"
+                      style={{
+                        width: "100%",
+                        padding: "7px 10px",
+                        background: "#0d1117",
+                        border: "1px solid #30363d",
+                        borderRadius: 6,
+                        color: "#fff",
+                        fontSize: 12,
                       }}
-                      placeholder={`Option ${i + 1}`}
-                      style={{ flex: 1, padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }}
                     />
-                    {pollOptions.length > 2 && (
+                  </div>
+                </div>
+
+                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Poll Options</label>
+                {pollOptions.map((opt, i) => {
+                  const isSelectedAnswer = pollAnswer && opt && pollAnswer.trim().toLowerCase() === opt.trim().toLowerCase();
+                  return (
+                    <div key={i} style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 11, color: "#8b949e", width: 20 }}>{i + 1}.</span>
+                      <input
+                        value={opt}
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (isSelectedAnswer) setPollAnswer(val);
+                          const copy = [...pollOptions];
+                          copy[i] = val;
+                          setPollOptions(copy);
+                        }}
+                        placeholder={`Option ${i + 1}`}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          background: "#0d1117",
+                          border: `1px solid ${isSelectedAnswer ? "#2ea043" : "#30363d"}`,
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      />
                       <button
                         type="button"
-                        onClick={() => setPollOptions(pollOptions.filter((_, idx) => idx !== i))}
-                        style={{ background: "transparent", border: "1px solid #da3633", color: "#f85149", borderRadius: 6, padding: "0 10px", cursor: "pointer" }}
+                        onClick={() => setPollAnswer(opt)}
+                        style={{
+                          background: isSelectedAnswer ? "rgba(46, 160, 67, 0.2)" : "#21262d",
+                          border: `1px solid ${isSelectedAnswer ? "#2ea043" : "#30363d"}`,
+                          color: isSelectedAnswer ? "#3fb950" : "#8b949e",
+                          borderRadius: 6,
+                          padding: "5px 10px",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
                       >
-                        ✕
+                        {isSelectedAnswer ? "✓ Winner" : "Mark"}
                       </button>
-                    )}
-                  </div>
-                ))}
+                      {pollOptions.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isSelectedAnswer) setPollAnswer("");
+                            setPollOptions(pollOptions.filter((_, idx) => idx !== i));
+                          }}
+                          style={{ background: "transparent", border: "1px solid #da3633", color: "#f85149", borderRadius: 6, padding: "5px 10px", cursor: "pointer" }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
                 {pollOptions.length < 6 && (
                   <button
                     type="button"
@@ -1272,16 +1581,195 @@ export default function EngagementsManagementPage() {
                 <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Prediction Question</label>
                 <input value={predQuestion} onChange={e => setPredQuestion(e.target.value)} required style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13, marginBottom: 12 }} />
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                  <div>
-                    <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Option 1</label>
-                    <input placeholder="Text (e.g. Yes, India win)" value={predLeftText} onChange={e => setPredLeftText(e.target.value)} required style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }} />
-                    <input placeholder="Code (e.g. IN)" value={predLeftCode} onChange={e => setPredLeftCode(e.target.value)} style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
+                {/* Timing & Outcome Setup */}
+                <div
+                  style={{
+                    background: "rgba(210, 153, 34, 0.08)",
+                    border: "1px solid rgba(210, 153, 34, 0.25)",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <h3 style={{ fontSize: 12, fontWeight: 700, color: "#e3b341", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                    ⏱️ Prediction Timing, Schedule & Winning Outcome (+10 PTS)
+                  </h3>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        📅 Schedule Start Time (Optional)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={predStartTime}
+                        onChange={e => setPredStartTime(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      />
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        When this prediction unlocks (leave empty for immediate start)
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        ⏳ Timer / Duration (+10 PTS on Expiry)
+                      </label>
+                      <select
+                        value={predTimerMinutes}
+                        onChange={e => setPredTimerMinutes(Number(e.target.value))}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      >
+                        <option value={5}>⚡ 5 mins</option>
+                        <option value={10}>⏱️ 10 mins</option>
+                        <option value={15}>⏱️ 15 mins</option>
+                        <option value={30}>⏳ 30 mins</option>
+                        <option value={45}>⏳ 45 mins</option>
+                        <option value={60}>🕒 1 hr</option>
+                        <option value={90}>⌛ 1 hr 30 mins</option>
+                        <option value={120}>⏰ 2 hr</option>
+                        <option value={180}>⏰ 3 hr</option>
+                        <option value={240}>⏰ 4 hr</option>
+                        <option value={360}>⏰ 6 hr</option>
+                        <option value={480}>⏰ 8 hr</option>
+                        <option value={720}>⏰ 12 hr</option>
+                        <option value={1080}>⏰ 18 hr</option>
+                        <option value={1440}>🌙 24 hr (Full Day)</option>
+                      </select>
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        Users who predicted correctly receive +10 PTS after this timer expires
+                      </span>
+                    </div>
                   </div>
+
                   <div>
-                    <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Option 2</label>
-                    <input placeholder="Text (e.g. SL hold / win)" value={predRightText} onChange={e => setPredRightText(e.target.value)} required style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
-                    <input placeholder="Code (e.g. LK)" value={predRightCode} onChange={e => setPredRightCode(e.target.value)} style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
+                    <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                      🏆 Correct / Winning Outcome (Optional)
+                    </label>
+                    <input
+                      value={predAnswer}
+                      onChange={e => setPredAnswer(e.target.value)}
+                      placeholder="Click 'Mark Winner' on Option 1 or 2 below or type expected answer"
+                      style={{
+                        width: "100%",
+                        padding: "7px 10px",
+                        background: "#0d1117",
+                        border: "1px solid #30363d",
+                        borderRadius: 6,
+                        color: "#fff",
+                        fontSize: 12,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                  <div
+                    style={{
+                      background: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "rgba(46, 160, 67, 0.08)" : "#0d1117",
+                      border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#2ea043" : "#30363d"}`,
+                      borderRadius: 8,
+                      padding: "10px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <label style={{ fontSize: 11, color: "#8b949e", fontWeight: 600 }}>Option 1 (Left Choice)</label>
+                      <button
+                        type="button"
+                        onClick={() => setPredAnswer(predLeftText || "Option 1")}
+                        style={{
+                          background: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "rgba(46, 160, 67, 0.2)" : "#21262d",
+                          border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#2ea043" : "#30363d"}`,
+                          color: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#3fb950" : "#8b949e",
+                          borderRadius: 4,
+                          padding: "2px 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "✓ Winner" : "Mark"}
+                      </button>
+                    </div>
+                    <input
+                      placeholder="Text (e.g. Yes, India win)"
+                      value={predLeftText}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (predAnswer === predLeftText) setPredAnswer(val);
+                        setPredLeftText(val);
+                      }}
+                      required
+                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }}
+                    />
+                    <input
+                      placeholder="Code (e.g. IN)"
+                      value={predLeftCode}
+                      onChange={e => setPredLeftCode(e.target.value.toUpperCase())}
+                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }}
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      background: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "rgba(46, 160, 67, 0.08)" : "#0d1117",
+                      border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#2ea043" : "#30363d"}`,
+                      borderRadius: 8,
+                      padding: "10px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <label style={{ fontSize: 11, color: "#8b949e", fontWeight: 600 }}>Option 2 (Right Choice)</label>
+                      <button
+                        type="button"
+                        onClick={() => setPredAnswer(predRightText || "Option 2")}
+                        style={{
+                          background: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "rgba(46, 160, 67, 0.2)" : "#21262d",
+                          border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#2ea043" : "#30363d"}`,
+                          color: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#3fb950" : "#8b949e",
+                          borderRadius: 4,
+                          padding: "2px 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "✓ Winner" : "Mark"}
+                      </button>
+                    </div>
+                    <input
+                      placeholder="Text (e.g. SL hold / win)"
+                      value={predRightText}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (predAnswer === predRightText) setPredAnswer(val);
+                        setPredRightText(val);
+                      }}
+                      required
+                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }}
+                    />
+                    <input
+                      placeholder="Code (e.g. LK)"
+                      value={predRightCode}
+                      onChange={e => setPredRightCode(e.target.value.toUpperCase())}
+                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }}
+                    />
                   </div>
                 </div>
 
@@ -1441,21 +1929,46 @@ export default function EngagementsManagementPage() {
               {/* Poll Preview */}
               {activeTab === "poll" && (
                 <div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      background: "rgba(56, 139, 253, 0.1)",
+                      border: "1px solid rgba(56, 139, 253, 0.25)",
+                      borderRadius: 8,
+                      padding: "6px 10px",
+                      marginBottom: 10,
+                      fontSize: 11,
+                    }}
+                  >
+                    <span style={{ color: "#58a6ff", fontWeight: 700 }}>
+                      ⏱️ Duration: {pollTimerMinutes < 60 ? `${pollTimerMinutes} mins` : (pollTimerMinutes % 60 === 0 ? `${pollTimerMinutes / 60} hrs` : `${(pollTimerMinutes / 60).toFixed(1)} hrs`)}
+                    </span>
+                    {pollAnswer && (
+                      <span style={{ color: "#3fb950", fontWeight: 700 }}>
+                        🏆 Winner: {pollAnswer}
+                      </span>
+                    )}
+                  </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {pollOptions.map((opt, i) => {
                       const optVotes = editingItem?.pollData?.options?.[i]?.votes || 0;
                       const totalPollVotes = editingItem?.pollData?.totalVotes || 0;
                       const pct = totalPollVotes > 0 ? Math.round((optVotes / totalPollVotes) * 100) : 0;
+                      const isWinner = pollAnswer && opt && pollAnswer.trim().toLowerCase() === opt.trim().toLowerCase();
                       return (
                         <div
                           key={i}
                           style={{
-                            background: "#0d1117", border: "1px solid #30363d", borderRadius: 6,
+                            background: isWinner ? "rgba(46, 160, 67, 0.08)" : "#0d1117",
+                            border: `1px solid ${isWinner ? "#2ea043" : "#30363d"}`,
+                            borderRadius: 6,
                             padding: "10px 14px", fontSize: 13, fontWeight: 600, display: "flex", justifyContent: "space-between",
                           }}
                         >
-                          <span>{opt || `Option ${i + 1}`}</span>
-                          <span style={{ color: "#3fb950" }}>{pct}%</span>
+                          <span>{opt || `Option ${i + 1}`} {isWinner ? "✓" : ""}</span>
+                          <span style={{ color: isWinner ? "#3fb950" : "#c9d1d9" }}>{pct}%</span>
                         </div>
                       );
                     })}
@@ -1475,6 +1988,28 @@ export default function EngagementsManagementPage() {
                 const rightPct = totalPred > 0 ? 100 - leftPct : 50;
                 return (
                   <div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        background: "rgba(210, 153, 34, 0.1)",
+                        border: "1px solid rgba(210, 153, 34, 0.25)",
+                        borderRadius: 8,
+                        padding: "6px 10px",
+                        marginBottom: 10,
+                        fontSize: 11,
+                      }}
+                    >
+                      <span style={{ color: "#e3b341", fontWeight: 700 }}>
+                        ⏱️ Duration: {predTimerMinutes < 60 ? `${predTimerMinutes} mins` : (predTimerMinutes % 60 === 0 ? `${predTimerMinutes / 60} hrs` : `${(predTimerMinutes / 60).toFixed(1)} hrs`)}
+                      </span>
+                      {predAnswer && (
+                        <span style={{ color: "#3fb950", fontWeight: 700 }}>
+                          🏆 Winner: {predAnswer}
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 13, color: "#c9d1d9", marginBottom: 10 }}>{predQuestion}</div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                       <div style={{ border: "2px solid #238636", background: "rgba(35,134,54,0.1)", borderRadius: 8, padding: 12, textAlign: "center" }}>
