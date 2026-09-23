@@ -4,15 +4,17 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
-import { ScanCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem, EngagementType } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
+import { awardEngagementPoints } from "@/lib/engagementPoints";
 
 export const dynamic = "force-dynamic";
 
 // ─── GET /api/engagements — Fetch list with filtering ────────────────────────
 export async function GET(req: NextRequest) {
   try {
+    const authUser = await getUser(req);
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type") as EngagementType | null; // fan_battle | quiz | poll | prediction
     const status = searchParams.get("status"); // active | inactive | all
@@ -26,9 +28,10 @@ export async function GET(req: NextRequest) {
       const scanRes = await docClient.send(
         new ScanCommand({
           TableName: TABLES.SocialAndContent,
-          FilterExpression: "begins_with(contentId, :prefix)",
+          FilterExpression: "begins_with(contentId, :prefix) AND (sk = :metaSk OR attribute_not_exists(sk))",
           ExpressionAttributeValues: {
             ":prefix": "ENGAGEMENT#",
+            ":metaSk": "ENGAGEMENT#META",
           },
           Limit: 100,
         })
@@ -36,12 +39,16 @@ export async function GET(req: NextRequest) {
 
       if (scanRes.Items) {
         for (const it of scanRes.Items) {
+          // Ignore vote, like, or share records that share the same contentId prefix
+          if (it.sk && it.sk !== "ENGAGEMENT#META") continue;
+          if (!it.title || !it.type) continue;
+
           const id = it.id || String(it.contentId || "").replace(/^ENGAGEMENT#/, "");
           itemsMap.set(id, {
             id,
             type: it.type,
             title: it.title,
-            subtitle: it.subtitle,
+            subtitle: it.subtitle || "",
             tags: it.tags || [],
             sport: (it.sport || "cricket").toLowerCase(),
             status: it.status || "active",
@@ -55,6 +62,9 @@ export async function GET(req: NextRequest) {
             createdAt: it.createdAt || Date.now(),
             updatedAt: it.updatedAt || Date.now(),
             expiresAt: it.expiresAt || null,
+            creatorId: it.creatorId || undefined,
+            creatorEmail: it.creatorEmail || undefined,
+            creatorName: it.creatorName || undefined,
           });
         }
       }
@@ -69,6 +79,8 @@ export async function GET(req: NextRequest) {
         for (const doc of snap.docs) {
           const it = doc.data();
           const id = doc.id;
+          if (!it.type || !it.title) continue;
+
           if (!itemsMap.has(id)) {
             itemsMap.set(id, {
               id,
@@ -88,6 +100,9 @@ export async function GET(req: NextRequest) {
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
               expiresAt: it.expiresAt || null,
+              creatorId: it.creatorId || undefined,
+              creatorEmail: it.creatorEmail || undefined,
+              creatorName: it.creatorName || undefined,
             });
           }
         }
@@ -113,36 +128,59 @@ export async function GET(req: NextRequest) {
       items = items.slice(0, limit);
     }
 
-    // 3. Hydrate user interactions (userLiked, userVoted, userVote) matching api/roar pattern
-    const authUser = await getUser(req);
-    const resolvedUserId = authUser?.userId || authUser?.email || searchParams.get("userId");
+    // 3. Hydrate user interactions (userLiked, userVoted, userVote) matching candidate IDs
+    const candidateIds = Array.from(
+      new Set([authUser?.userId, authUser?.email, searchParams.get("userId")].filter(Boolean))
+    ) as string[];
 
-    if (resolvedUserId && items.length > 0) {
+    if (candidateIds.length > 0 && items.length > 0) {
       try {
         const [likeResults, voteResults] = await Promise.all([
           Promise.all(
-            items.map(it =>
-              docClient
-                .send(
-                  new GetCommand({
-                    TableName: TABLES.SocialAndContent,
-                    Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `LIKE#${resolvedUserId}` },
-                  })
-                )
-                .catch(() => ({ Item: null }))
-            )
+            items.map(async (it) => {
+              for (const uid of candidateIds) {
+                try {
+                  const res = await docClient.send(
+                    new GetCommand({
+                      TableName: TABLES.SocialAndContent,
+                      Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `LIKE#${uid}` },
+                    })
+                  );
+                  if (res.Item) return { Item: res.Item };
+                } catch {}
+              }
+              return { Item: null };
+            })
           ),
           Promise.all(
-            items.map(it =>
-              docClient
-                .send(
-                  new GetCommand({
-                    TableName: TABLES.SocialAndContent,
-                    Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `VOTE#${resolvedUserId}` },
-                  })
-                )
-                .catch(() => ({ Item: null }))
-            )
+            items.map(async (it) => {
+              for (const uid of candidateIds) {
+                try {
+                  const qRes = await docClient.send(
+                    new QueryCommand({
+                      TableName: TABLES.SocialAndContent,
+                      KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+                      ExpressionAttributeValues: {
+                        ":cid": `ENGAGEMENT#${it.id}`,
+                        ":skpfx": `VOTE#${uid}`,
+                      },
+                      Limit: 1,
+                    })
+                  );
+                  if (qRes.Items && qRes.Items.length > 0) {
+                    return { Item: qRes.Items[0] };
+                  }
+                  const gRes = await docClient.send(
+                    new GetCommand({
+                      TableName: TABLES.SocialAndContent,
+                      Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `VOTE#${uid}` },
+                    })
+                  );
+                  if (gRes.Item) return { Item: gRes.Item };
+                } catch {}
+              }
+              return { Item: null };
+            })
           ),
         ]);
 
@@ -197,6 +235,26 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
     const id = `eng_${now}_${Math.random().toString(36).slice(2, 8)}`;
 
+    // Resolve creator identity
+    const authUser = await getUser(req);
+    const creatorId =
+      authUser?.userId ||
+      body.userId ||
+      body.creatorId ||
+      authUser?.email ||
+      body.userEmail ||
+      body.creatorEmail ||
+      req.headers.get("x-user-id") ||
+      "";
+    const creatorEmail = (
+      authUser?.email ||
+      body.userEmail ||
+      body.creatorEmail ||
+      req.headers.get("x-user-email") ||
+      ""
+    ).trim().toLowerCase();
+    const creatorName = authUser?.name || body.userName || body.creatorName || "";
+
     // Set default tags based on type if omitted
     let computedTags = tags;
     if (!computedTags || computedTags.length === 0) {
@@ -206,6 +264,46 @@ export async function POST(req: NextRequest) {
       else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 POINTS"];
     }
 
+    // Resolve expiry for polls and predictions
+    const pollDurationMins = Number(pollData?.durationMinutes || pollData?.timerMinutes || 10);
+    const predDurationMins = Number(predictionData?.durationMinutes || predictionData?.timerMinutes || 30);
+    const computedExpiresAt =
+      expiresAt ||
+      (type === "poll"
+        ? pollData?.expiresAt || now + pollDurationMins * 60 * 1000
+        : type === "prediction"
+        ? predictionData?.expiresAt || now + predDurationMins * 60 * 1000
+        : null);
+
+    const formattedPollData =
+      type === "poll" && pollData
+        ? {
+            ...pollData,
+            durationMinutes: pollDurationMins,
+            timerMinutes: pollDurationMins,
+            expiresAt: computedExpiresAt,
+            correctAnswer: pollData.correctAnswer || pollData.answer || "",
+            answer: pollData.correctAnswer || pollData.answer || "",
+          }
+        : undefined;
+
+    const formattedPredData =
+      type === "prediction" && predictionData
+        ? {
+            ...predictionData,
+            durationMinutes: predDurationMins,
+            timerMinutes: predDurationMins,
+            expiresAt: computedExpiresAt,
+            correctAnswer: predictionData.correctAnswer || predictionData.answer || "",
+            answer: predictionData.correctAnswer || predictionData.answer || "",
+            winningChoiceId:
+              predictionData.winningChoiceId ||
+              predictionData.correctAnswer ||
+              predictionData.answer ||
+              null,
+          }
+        : undefined;
+
     const newEngagement: EngagementItem = {
       id,
       type,
@@ -214,16 +312,19 @@ export async function POST(req: NextRequest) {
       tags: computedTags,
       sport: (sport || "cricket").toLowerCase(),
       status: status || "active",
+      creatorId: creatorId || undefined,
+      creatorEmail: creatorEmail || undefined,
+      creatorName: creatorName || undefined,
       fanBattleData: type === "fan_battle" ? fanBattleData : undefined,
       quizData: type === "quiz" ? quizData : undefined,
-      pollData: type === "poll" ? pollData : undefined,
-      predictionData: type === "prediction" ? predictionData : undefined,
+      pollData: formattedPollData,
+      predictionData: formattedPredData,
       likes: Number(likes) || 0,
       shares: Number(shares) || 0,
       totalEngaged: Number(totalEngaged) || 0,
       createdAt: now,
       updatedAt: now,
-      expiresAt: expiresAt || null,
+      expiresAt: computedExpiresAt,
     };
 
     // DynamoDB Item for SocialAndContent table
@@ -237,10 +338,32 @@ export async function POST(req: NextRequest) {
     // Dual Write to DynamoDB + Firestore
     await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
 
+    // Award +2 points to creator for creating an engagement (quiz, poll, prediction, fan battle)
+    let pointsAwarded = 0;
+    if (creatorId || creatorEmail) {
+      try {
+        const ptsResult = await awardEngagementPoints({
+          userId: creatorId || creatorEmail,
+          userEmail: creatorEmail,
+          userName: creatorName,
+          action: "create",
+          engagementId: id,
+          engagementType: type,
+          engagementTitle: title,
+        });
+        if (ptsResult.success) {
+          pointsAwarded = ptsResult.pointsAwarded;
+        }
+      } catch (awardErr) {
+        console.warn("[POST /api/engagements] Creator points award notice:", awardErr);
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      message: "Engagement created successfully",
+      message: pointsAwarded > 0 ? `Engagement created successfully! +${pointsAwarded} points awarded.` : "Engagement created successfully",
       engagement: newEngagement,
+      pointsAwarded,
     });
   } catch (error: unknown) {
     console.error("POST /api/engagements error:", error);
