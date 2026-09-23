@@ -2,17 +2,6 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Manrope, Oswald } from "next/font/google";
-
-const titleFont = Oswald({
-    subsets: ["latin"],
-    weight: ["500", "600"],
-});
-
-const bodyFont = Manrope({
-    subsets: ["latin"],
-    weight: ["400", "500", "700"],
-});
 
 type CreatePasswordProps = {
     phone?: string;
@@ -54,7 +43,7 @@ export default function CreatePassword({ phone = "9876543", onPasswordCreate, on
     const isPasswordValid = password.length >= 6 && password === confirmPassword;
 
     return (
-        <main className={`${bodyFont.className} relative min-h-screen overflow-hidden bg-black px-6 py-12 text-white`}>
+        <main className="font-manrope relative min-h-screen overflow-hidden bg-black px-6 py-12 text-white">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_32%,rgba(255,48,111,0.25),transparent_38%)]" />
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_80%,rgba(255,140,65,0.12),transparent_42%)]" />
 
@@ -73,7 +62,7 @@ export default function CreatePassword({ phone = "9876543", onPasswordCreate, on
                         </svg>
 
                         <div className="text-center">
-                            <h1 className={`${titleFont.className} text-3xl font-bold uppercase leading-tight tracking-wide`}>
+                            <h1 className="font-oswald text-3xl font-bold uppercase leading-tight tracking-wide">
                                 Set Temporary Password
                             </h1>
 

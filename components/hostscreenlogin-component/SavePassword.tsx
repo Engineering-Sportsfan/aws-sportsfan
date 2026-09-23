@@ -1,17 +1,6 @@
 'use client';
 
 import Link from "next/link";
-import { Manrope, Oswald } from "next/font/google";
-
-const titleFont = Oswald({
-    subsets: ["latin"],
-    weight: ["500", "600"],
-});
-
-const bodyFont = Manrope({
-    subsets: ["latin"],
-    weight: ["400", "500", "700"],
-});
 
 type SavePasswordPromptProps = {
     phone?: string;
@@ -23,7 +12,7 @@ type SavePasswordPromptProps = {
 
 export default function SavePasswordPrompt({ phone = "09876543", onYes, onNo, onBack, loading = false }: SavePasswordPromptProps) {
     return (
-        <main className={`${bodyFont.className} relative min-h-screen overflow-hidden bg-black px-6 py-12 text-white`}>
+        <main className="font-manrope relative min-h-screen overflow-hidden bg-black px-6 py-12 text-white">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_32%,rgba(255,48,111,0.28),transparent_38%)]" />
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_80%,rgba(255,140,65,0.14),transparent_42%)]" />
 
@@ -41,7 +30,7 @@ export default function SavePasswordPrompt({ phone = "09876543", onYes, onNo, on
                     </svg>
                 </div>
 
-                <h1 className={`${titleFont.className} text-center text-[2.1rem] uppercase leading-none tracking-tight`}>
+                <h1 className="font-oswald text-center text-[2.1rem] uppercase leading-none tracking-tight">
                     Account Created!
                 </h1>
 
