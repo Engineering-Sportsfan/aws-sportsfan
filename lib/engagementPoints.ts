@@ -1,0 +1,260 @@
+// lib/engagementPoints.ts — Points handler for Fan Battles, Quizzes, Polls, and Predictions
+import { awardUserPoints, getUserInfo } from "@/lib/userPoints";
+import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
+import { db } from "@/lib/firebaseAdmin";
+import { UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { FieldValue } from "firebase-admin/firestore";
+
+export const ENGAGEMENT_CREATION_POINTS = 2;
+export const ENGAGEMENT_PARTICIPATION_POINTS = 2;
+
+export interface AwardEngagementPointsParams {
+  userId: string;
+  userEmail?: string;
+  userName?: string;
+  action: "create" | "participate";
+  engagementId: string;
+  engagementType: string; // "quiz" | "poll" | "prediction" | "fan_battle"
+  engagementTitle?: string;
+  questionId?: string;
+  quizPointsBonus?: number; // Additional points if quiz answer was correct
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Awards points to a user for either creating an Arena Engagement or participating in one.
+ * Base reward: +2 points for creating any engagement, +2 points for participating in any engagement.
+ * Quiz participation can include additional reward points if the answer was correct.
+ */
+export async function awardEngagementPoints({
+  userId,
+  userEmail,
+  userName,
+  action,
+  engagementId,
+  engagementType,
+  engagementTitle,
+  questionId,
+  quizPointsBonus = 0,
+  metadata = {},
+}: AwardEngagementPointsParams): Promise<{ success: boolean; pointsAwarded: number }> {
+  if (!userId) {
+    return { success: false, pointsAwarded: 0 };
+  }
+
+  const basePoints = action === "create" ? ENGAGEMENT_CREATION_POINTS : ENGAGEMENT_PARTICIPATION_POINTS;
+  const totalPointsToAward = basePoints + (quizPointsBonus > 0 ? quizPointsBonus : 0);
+  const now = Date.now();
+
+  const cleanType = String(engagementType || "engagement").toLowerCase();
+  const formattedType = cleanType.replace(/_/g, " ");
+
+  const reason =
+    action === "create"
+      ? `ENGAGEMENT_CREATE_${cleanType.toUpperCase()}`
+      : `ENGAGEMENT_PARTICIPATE_${cleanType.toUpperCase()}`;
+
+  const cleanUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const transactionId =
+    action === "create"
+      ? `eng_create_${engagementId}_${cleanUserId}`
+      : `eng_vote_${engagementId}_${cleanUserId}${questionId ? `_${questionId}` : ""}`;
+
+  const statement =
+    action === "create"
+      ? `Created ${formattedType}: "${engagementTitle || 'Arena Event'}" (+${basePoints} pts)`
+      : quizPointsBonus > 0
+      ? `Answered ${formattedType} correctly: "${engagementTitle || 'Arena Event'}" (+${totalPointsToAward} pts)`
+      : `Participated in ${formattedType}: "${engagementTitle || 'Arena Event'}" (+${basePoints} pts)`;
+
+  try {
+    // 1. Resolve full user profile details
+    const userProfile = await getUserInfo(userId, userName, userEmail);
+    const resolvedUserId = userProfile.actualUserId || userId;
+    const resolvedEmail = (userProfile.userEmail || userEmail || "").trim().toLowerCase();
+    const resolvedName = userProfile.userName || userName || "Sports Fan";
+
+    // 2. Award via central gamification engine
+    let awarded = false;
+    try {
+      awarded = await awardUserPoints({
+        actualUserId: resolvedUserId,
+        authUserId: userProfile.authUserId || resolvedUserId,
+        userName: resolvedName,
+        userEmail: resolvedEmail,
+        userExists: userProfile.exists,
+        points: totalPointsToAward,
+        reason,
+        transactionId,
+        metadata: {
+          engagementId,
+          engagementType: cleanType,
+          engagementTitle: engagementTitle || "",
+          questionId: questionId || null,
+          action,
+          statement,
+          ...metadata,
+        },
+      });
+    } catch (engineErr) {
+      console.warn("[awardEngagementPoints] userPoints engine notice:", engineErr);
+    }
+
+    // 3. Direct Dual-Write Atomic Guarantee
+    // Ensures user's totalPoints & totalXP reflect the +2 points across DynamoDB & Firestore
+    const ddbPromises: Promise<any>[] = [];
+    const safeEmail = resolvedEmail || `${resolvedUserId}@sportsfan360.com`;
+    const safeName = resolvedName || "Sports Fan";
+
+    // A. DynamoDB: Update IdentityAndAccess table for email key if available
+    if (resolvedEmail) {
+      ddbPromises.push(
+        docClient.send(
+          new UpdateCommand({
+            TableName: TABLES.IdentityAndAccess,
+            Key: { entityId: `USER#${resolvedEmail}`, sk: "USER#META" },
+            UpdateExpression:
+              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "totalXP = if_not_exists(totalXP, :zero) + :pts, " +
+              "userName = if_not_exists(userName, :uname), " +
+              "email = if_not_exists(email, :uemail), " +
+              "name = if_not_exists(name, :uname), " +
+              "lastActiveTimestamp = :now, updatedAt = :now",
+            ExpressionAttributeValues: {
+              ":zero": 0,
+              ":pts": totalPointsToAward,
+              ":now": now,
+              ":uname": safeName,
+              ":uemail": safeEmail,
+            },
+          })
+        ).catch((err) => console.warn("[awardEngagementPoints] DDB Identity email notice:", err))
+      );
+    }
+
+    // B. DynamoDB: Update IdentityAndAccess table for userId key if different from email
+    if (resolvedUserId && resolvedUserId !== resolvedEmail) {
+      ddbPromises.push(
+        docClient.send(
+          new UpdateCommand({
+            TableName: TABLES.IdentityAndAccess,
+            Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
+            UpdateExpression:
+              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "totalXP = if_not_exists(totalXP, :zero) + :pts, " +
+              "userName = if_not_exists(userName, :uname), " +
+              "email = if_not_exists(email, :uemail), " +
+              "name = if_not_exists(name, :uname), " +
+              "lastActiveTimestamp = :now, updatedAt = :now",
+            ExpressionAttributeValues: {
+              ":zero": 0,
+              ":pts": totalPointsToAward,
+              ":now": now,
+              ":uname": safeName,
+              ":uemail": safeEmail,
+            },
+          })
+        ).catch((err) => console.warn("[awardEngagementPoints] DDB Identity userId notice:", err))
+      );
+    }
+
+    // C. DynamoDB: Global Leaderboard entry in GamificationAndWallet
+    ddbPromises.push(
+      docClient.send(
+        new UpdateCommand({
+          TableName: TABLES.GamificationAndWallet,
+          Key: { userId: `USER#${resolvedUserId}`, sk: "LEADERBOARD#GLOBAL" },
+          UpdateExpression:
+            "SET points = if_not_exists(points, :zero) + :pts, " +
+            "totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+            "userName = :uname, userEmail = :uemail, lastUpdated = :now, leaderboardType = :ltype",
+          ExpressionAttributeValues: {
+            ":zero": 0,
+            ":pts": totalPointsToAward,
+            ":uname": safeName,
+            ":uemail": safeEmail,
+            ":now": now,
+            ":ltype": "GLOBAL",
+          },
+        })
+      ).catch((err) => console.warn("[awardEngagementPoints] DDB Global Leaderboard notice:", err))
+    );
+
+    // D. Firestore: Update master user document and globalLeaderboard
+    if (db) {
+      try {
+        const fsUserUpdate: any = {
+          totalPoints: FieldValue.increment(totalPointsToAward),
+          totalXP: FieldValue.increment(totalPointsToAward),
+          reputationScore: FieldValue.increment(totalPointsToAward),
+          lastActiveTimestamp: now,
+          updatedAt: now,
+        };
+
+        const fsPromises: Promise<any>[] = [
+          db.collection("users").doc(resolvedUserId).set(fsUserUpdate, { merge: true }),
+          db.collection("globalLeaderboard").doc(resolvedUserId).set({
+            userId: resolvedUserId,
+            userName: resolvedName,
+            userEmail: resolvedEmail,
+            totalPoints: FieldValue.increment(totalPointsToAward),
+            lastUpdated: now,
+          }, { merge: true }),
+        ];
+
+        if (resolvedEmail && resolvedEmail !== resolvedUserId) {
+          fsPromises.push(
+            db.collection("users").doc(resolvedEmail).set(fsUserUpdate, { merge: true })
+          );
+        }
+
+        // Also update quiz_leaderboard in Firestore
+        fsPromises.push(
+          db.collection("quiz_leaderboard").doc(resolvedUserId).set({
+            userId: resolvedUserId,
+            userName: resolvedName,
+            userEmail: safeEmail,
+            totalPoints: FieldValue.increment(totalPointsToAward),
+            lastAnsweredAt: now,
+            updatedAt: now,
+          }, { merge: true })
+        );
+
+        await Promise.all(fsPromises);
+      } catch (fsErr) {
+        console.warn("[awardEngagementPoints] Firestore sync notice:", fsErr);
+      }
+    }
+
+    // E. DynamoDB: Update QUIZ_LEADERBOARD#GLOBAL in SocialAndContent table
+    ddbPromises.push(
+      docClient.send(
+        new UpdateCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${resolvedUserId}` },
+          UpdateExpression:
+            "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+            "userName = :uname, userEmail = :uemail, " +
+            "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
+          ExpressionAttributeValues: {
+            ":zero": 0,
+            ":pts": totalPointsToAward,
+            ":uname": safeName,
+            ":uemail": safeEmail,
+            ":now": now,
+            ":entity": "QUIZ_LEADERBOARD",
+            ":uid": resolvedUserId,
+          },
+        })
+      ).catch((err) => console.warn("[awardEngagementPoints] DDB QUIZ_LEADERBOARD#GLOBAL notice:", err))
+    );
+
+    await Promise.all(ddbPromises);
+
+    return { success: true, pointsAwarded: totalPointsToAward };
+  } catch (error) {
+    console.error("[awardEngagementPoints] Unexpected error:", error);
+    return { success: false, pointsAwarded: 0 };
+  }
+}
