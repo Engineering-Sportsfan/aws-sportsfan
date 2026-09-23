@@ -38,6 +38,7 @@ export const TABLES = {
   StoreAndCommerce: `StoreAndCommerce${suffix}`,
   userwaitinglist: `userwaitinglist${suffix}`,
   records: `records${suffix}`,
+  homeDatabase: `homeDatabase`,
 } as const;
 
 export type TableKey = keyof typeof TABLES;

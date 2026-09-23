@@ -69,6 +69,11 @@ export interface PollPayload {
   question: string;
   options: PollChoice[];
   totalVotes: number;
+  answer?: string;
+  correctAnswer?: string;
+  durationMinutes?: number;
+  timerMinutes?: number;
+  expiresAt?: number;
 }
 
 // ─── 4. Prediction ─────────────────────────────────────────────────────────
@@ -87,6 +92,11 @@ export interface PredictionPayload {
   totalVotes: number;
   status?: "open" | "locked" | "settled";
   winningChoiceId?: string | null; // "left" | "right" once settled
+  answer?: string;
+  correctAnswer?: string;
+  durationMinutes?: number;
+  timerMinutes?: number;
+  expiresAt?: number;
 }
 
 // ─── Universal Engagement Entity ──────────────────────────────────────────
@@ -98,6 +108,9 @@ export interface EngagementItem {
   tags?: string[]; // e.g. ["FAN BATTLE", "TRENDING"] or ["QUIZ", "50 PTS"]
   sport?: string; // "cricket" | "football" | "athletics" | "general"
   status: EngagementStatus;
+  creatorId?: string;
+  creatorEmail?: string;
+  creatorName?: string;
 
   // Specific data payloads
   fanBattleData?: FanBattlePayload;

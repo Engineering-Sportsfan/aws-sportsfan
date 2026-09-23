@@ -86,7 +86,10 @@ export default function EngagementsManagementPage() {
     try {
       const res = await fetch(`/api/engagements?type=${typeFilter}`);
       const data = await res.json();
-      setEngagements(data.engagements || []);
+      const list: EngagementItem[] = Array.isArray(data.engagements)
+        ? data.engagements.filter((it: any) => Boolean(it && (it.title || it.type)))
+        : [];
+      setEngagements(list);
     } catch {
       setEngagements([]);
     } finally {
@@ -309,25 +312,37 @@ export default function EngagementsManagementPage() {
           explanation: formattedQuestions[0]?.explanation || "",
         };
       } else if (activeTab === "poll") {
-        payload.tags = ["📊 POLL"];
+        payload.tags = editingItem?.tags || ["📊 POLL"];
         payload.pollData = {
+          ...(editingItem?.pollData || {}),
           question: pollQuestion,
           options: pollOptions.filter(o => o.trim()).map((optText, idx) => ({
             id: String(idx + 1),
             text: optText,
-            votes: 0,
+            votes: editingItem?.pollData?.options?.[idx]?.votes || 0,
           })),
-          totalVotes: 0,
+          totalVotes: editingItem?.pollData?.totalVotes || 0,
         };
       } else if (activeTab === "prediction") {
-        payload.tags = ["🎯 PREDICTION", "💎 POINTS"];
+        payload.tags = editingItem?.tags || ["🎯 PREDICTION", "💎 POINTS"];
         payload.predictionData = {
+          ...(editingItem?.predictionData || {}),
           question: predQuestion,
-          leftChoice: { id: "left", text: predLeftText, code: predLeftCode, votes: 0 },
-          rightChoice: { id: "right", text: predRightText, code: predRightCode, votes: 0 },
+          leftChoice: {
+            id: "left",
+            text: predLeftText,
+            code: predLeftCode,
+            votes: editingItem?.predictionData?.leftChoice?.votes || 0,
+          },
+          rightChoice: {
+            id: "right",
+            text: predRightText,
+            code: predRightCode,
+            votes: editingItem?.predictionData?.rightChoice?.votes || 0,
+          },
           coinStake: Number(predCoinStake),
-          totalVotes: 0,
-          status: "open",
+          totalVotes: editingItem?.predictionData?.totalVotes || 0,
+          status: editingItem?.predictionData?.status || "open",
         };
       }
 
@@ -380,18 +395,18 @@ export default function EngagementsManagementPage() {
 
   const filtered = engagements.filter(
     i =>
-      i.title.toLowerCase().includes(search.toLowerCase()) ||
-      (i.subtitle || "").toLowerCase().includes(search.toLowerCase()) ||
-      i.type.toLowerCase().includes(search.toLowerCase())
+      (i?.title || "").toLowerCase().includes(search.toLowerCase()) ||
+      (i?.subtitle || "").toLowerCase().includes(search.toLowerCase()) ||
+      (i?.type || "").toLowerCase().includes(search.toLowerCase())
   );
 
-  const quizEngagements = engagements.filter(i => i.type === "quiz");
+  const quizEngagements = engagements.filter(i => i?.type === "quiz");
 
   const filteredLeaderboard = leaderboardData.filter(
     entry =>
-      entry.userName.toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
-      (entry.userEmail || "").toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
-      entry.userId.toLowerCase().includes(leaderboardSearch.toLowerCase())
+      (entry?.userName || "").toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
+      (entry?.userEmail || "").toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
+      (entry?.userId || "").toLowerCase().includes(leaderboardSearch.toLowerCase())
   );
 
   // Leaderboard Statistics
@@ -580,12 +595,12 @@ export default function EngagementsManagementPage() {
                           padding: "3px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700,
                           background: typeBadgeBg, color: typeBadgeColor, textTransform: "uppercase",
                         }}>
-                          {item.type.replace("_", " ")}
+                          {item?.type ? item.type.replace("_", " ") : "UNKNOWN"}
                         </span>
                       </td>
 
                       <td style={{ padding: "10px 14px", fontWeight: 600, color: "#f0f6fc" }}>
-                        {item.title}
+                        {item.title || "Untitled Engagement"}
                         {item.quizData && (
                           <div style={{ fontSize: 11, color: "#8b949e" }}>
                             {totalQuestions} Question{totalQuestions !== 1 ? "s" : ""} · {item.quizData.question || item.quizData.questions?.[0]?.question}
@@ -597,7 +612,7 @@ export default function EngagementsManagementPage() {
 
                       <td style={{ padding: "10px 14px", color: "#8b949e", fontSize: 11 }}>
                         {item.type === "fan_battle" && (
-                          <span>{item.fanBattleData?.leftCompetitor.name} vs {item.fanBattleData?.rightCompetitor.name}</span>
+                          <span>{item.fanBattleData?.leftCompetitor?.name || "Competitor 1"} vs {item.fanBattleData?.rightCompetitor?.name || "Competitor 2"}</span>
                         )}
                         {item.type === "quiz" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -612,7 +627,7 @@ export default function EngagementsManagementPage() {
                           </div>
                         )}
                         {item.type === "poll" && (
-                          <span>{item.pollData?.options.length} options</span>
+                          <span>{item.pollData?.options?.length || 0} options</span>
                         )}
                         {item.type === "prediction" && (
                           <span>Stake: {item.predictionData?.coinStake} Coins</span>
@@ -620,7 +635,7 @@ export default function EngagementsManagementPage() {
                       </td>
 
                       <td style={{ padding: "10px 14px", fontFamily: "monospace", color: "#8b949e" }}>
-                        🔥 {item.totalEngaged} · ❤️ {item.likes}
+                        🔥 {item.totalEngaged || 0} · ❤️ {item.likes || 0}
                       </td>
 
                       <td style={{ padding: "10px 14px" }}>

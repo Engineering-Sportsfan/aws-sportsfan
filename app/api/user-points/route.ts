@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
     try {
       const queryRes = await docClient.send(
         new QueryCommand({
-          TableName: "GamificationAndWallet",
+          TableName: TABLES.GamificationAndWallet,
           IndexName: "leaderboardType-points-index",
           KeyConditionExpression: "leaderboardType = :g",
           ExpressionAttributeValues: { ":g": "GLOBAL" },

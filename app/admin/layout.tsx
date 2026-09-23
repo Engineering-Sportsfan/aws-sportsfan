@@ -741,6 +741,16 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Home Cards & Agenda", icon: "◉",
+        children: [
+          { href: "/admin/homecardmanagement", label: "Overview Dashboard" },
+          { href: "/admin/homecardmanagement/MorningBrief/list", label: "Morning Brief List" },
+          { href: "/admin/homecardmanagement/MorningBrief/add", label: "Add Morning Story" },
+          { href: "/admin/homecardmanagement/TodaysAgenda/list", label: "Today's Agenda List" },
+          { href: "/admin/homecardmanagement/TodaysAgenda/add", label: "Add Agenda Event" },
+        ],
+      },
+      {
         label: "Host Login Screen", icon: "◉",
         children: [
           { href: "/admin/hostloginscreen-management/add-hostroomlogin", label: "Add Host Login Form" },
