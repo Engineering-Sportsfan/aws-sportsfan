@@ -86,36 +86,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-          const id = it.id || String(it.contentId || "").replace(/^ENGAGEMENT#/, "");
-          itemsMap.set(id, {
-            id,
-            type: it.type,
-            title: it.title,
-            subtitle: it.subtitle || "",
-            tags: it.tags || [],
-            sport: (it.sport || "cricket").toLowerCase(),
-            status: it.status || "active",
-            fanBattleData: it.fanBattleData,
-            quizData: it.quizData,
-            pollData: it.pollData,
-            predictionData: it.predictionData,
-            memeData: it.memeData,
-            likes: Number(it.likes) || 0,
-            shares: Number(it.shares) || 0,
-            totalEngaged: Number(it.totalEngaged) || 0,
-            createdAt: it.createdAt || Date.now(),
-            updatedAt: it.updatedAt || Date.now(),
-            expiresAt: it.expiresAt || null,
-            creatorId: it.creatorId || undefined,
-            creatorEmail: it.creatorEmail || undefined,
-            creatorName: it.creatorName || undefined,
-          });
-        }
-      }
-    } catch (dynErr: any) {
-      console.warn("DynamoDB engagements scan notice:", dynErr?.message || dynErr);
-    }
-
     // 2. Fetch from Firestore 'engagements' collection and merge
     if (db) {
       try {
@@ -431,19 +401,22 @@ export async function POST(req: NextRequest) {
         }
         : undefined;
 
-    const formattedMemeData =
-      type === "meme" && memeData
+    const formattedMemeData: MemePayload | undefined =
+      type === "meme"
         ? {
-            imageUrl: memeData.imageUrl || "",
-            authorName: memeData.authorName || creatorName || "SportsFan",
-            authorHandle: memeData.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@sportsfan"),
-            authorAvatar: memeData.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-            heatPercentage: memeData.heatPercentage !== undefined ? Number(memeData.heatPercentage) : 0,
-            totalVotes: Number(memeData.totalVotes) || 0,
-            reactions: memeData.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
-            commentsCount: Number(memeData.commentsCount) || 0,
-            sharesCount: Number(memeData.sharesCount) || 0,
-          caption: memeData.caption || subtitle || "",
+            imageUrl: memeData?.imageUrl || resolvedImageUrl || "",
+            mediaUrl: memeData?.mediaUrl || resolvedImageUrl || "",
+            authorName: memeData?.authorName || creatorName || "SportsFan",
+            authorHandle: memeData?.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@sportsfan"),
+            authorAvatar: memeData?.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
+            heatPercentage: memeData?.heatPercentage !== undefined ? Number(memeData.heatPercentage) : (memeData?.heatIndex !== undefined ? Number(memeData.heatIndex) : 0),
+            totalVotes: Number(memeData?.totalVotes) || 0,
+            reactions: memeData?.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+            commentsCount: Number(memeData?.commentsCount) || 0,
+            sharesCount: Number(memeData?.sharesCount) || 0,
+            title: memeData?.title || title || "",
+            caption: memeData?.caption || subtitle || description || "",
+            description: memeData?.description || subtitle || description || "",
             createdAt: now,
           }
         : undefined;

@@ -325,7 +325,7 @@ export async function POST(req: NextRequest) {
       quizId,
       questionId,
       isCorrect,
-      pointsEarned = 50,
+      pointsEarned = 10,
     } = body;
 
     const userId =
