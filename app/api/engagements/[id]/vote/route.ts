@@ -382,6 +382,16 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     for (const uid of candidateIds) {
       if (existingVote) break;
+       if (questionId) {
+        try {
+          const r = await docClient.send(new GetCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${uid}#${questionId}` },
+          }));
+          if (r.Item) { existingVote = r.Item; break; }
+        } catch { }
+        continue; // skip the begins_with check below
+      }
       // 1. Check standardized DynamoDB key shape with begins_with VOTE#
       try {
         const queryVote = await docClient.send(
@@ -842,6 +852,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         engagementTitle: item.title,
         questionId: questionId || undefined,
         quizPointsBonus: quizBonus,
+        syncQuizLeaderboard: false, 
       });
       if (awardRes.success) {
         responseData.pointsAwarded = awardRes.pointsAwarded;
@@ -905,7 +916,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // ─── Step 6: Update FlipARENA Leaderboard (Quizzes, Polls, Predictions, Battles) ─
     const isQuiz = item.type === "quiz";
     const isCorrect = isQuiz ? Boolean(responseData?.isCorrect) : false;
-    const earnedPts = Number(responseData?.pointsAwarded ?? (isQuiz && isCorrect ? 52 : 2));
+    const earnedPts = Number(responseData?.pointsAwarded ?? (isQuiz && isCorrect ? 12 : 2));
     const displayName = userName || authUser?.name || "Fan Quizzer";
     const avatar =
       userAvatar ||

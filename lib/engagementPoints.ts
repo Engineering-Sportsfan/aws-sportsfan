@@ -21,6 +21,7 @@ export interface AwardEngagementPointsParams {
   quizPointsBonus?: number; // Additional points if quiz answer was correct
   pointsBonus?: number; // Additional points for accuracy bonus (+10 points)
   metadata?: Record<string, any>;
+    syncQuizLeaderboard?: boolean;
 }
 
 /**
@@ -40,6 +41,7 @@ export async function awardEngagementPoints({
   questionId,
   quizPointsBonus = 0,
   pointsBonus = 0,
+  syncQuizLeaderboard = true,
   metadata = {},
 }: AwardEngagementPointsParams): Promise<{ success: boolean; pointsAwarded: number }> {
   if (!userId) {
@@ -220,18 +222,30 @@ export async function awardEngagementPoints({
         }
 
         // Also update quiz_leaderboard in Firestore
-        fsPromises.push(
-          db.collection("quiz_leaderboard").doc(resolvedUserId).set({
-            userId: resolvedUserId,
-            userName: resolvedName,
-            userEmail: safeEmail,
-            totalPoints: FieldValue.increment(totalPointsToAward),
-            correctCount: FieldValue.increment(isAccuracyBonus ? 1 : 0),
-            lastAnsweredAt: now,
-            updatedAt: now,
-          }, { merge: true })
-        );
-
+        // fsPromises.push(
+        //   db.collection("quiz_leaderboard").doc(resolvedUserId).set({
+        //     userId: resolvedUserId,
+        //     userName: resolvedName,
+        //     userEmail: safeEmail,
+        //     totalPoints: FieldValue.increment(totalPointsToAward),
+        //     correctCount: FieldValue.increment(isAccuracyBonus ? 1 : 0),
+        //     lastAnsweredAt: now,
+        //     updatedAt: now,
+        //   }, { merge: true })
+        // );
+if (syncQuizLeaderboard) {
+          fsPromises.push(
+            db.collection("quiz_leaderboard").doc(resolvedUserId).set({
+              userId: resolvedUserId,
+              userName: resolvedName,
+              userEmail: safeEmail,
+              totalPoints: FieldValue.increment(totalPointsToAward),
+              correctCount: FieldValue.increment(isAccuracyBonus ? 1 : 0),
+              lastAnsweredAt: now,
+              updatedAt: now,
+            }, { merge: true })
+          );
+        }
         await Promise.all(fsPromises);
       } catch (fsErr) {
         console.warn("[awardEngagementPoints] Firestore sync notice:", fsErr);
@@ -239,6 +253,7 @@ export async function awardEngagementPoints({
     }
 
     // E. DynamoDB: Update QUIZ_LEADERBOARD#GLOBAL in SocialAndContent table
+     if (syncQuizLeaderboard) {
     ddbPromises.push(
       docClient.send(
         new UpdateCommand({
@@ -262,7 +277,7 @@ export async function awardEngagementPoints({
         })
       ).catch((err) => console.warn("[awardEngagementPoints] DDB QUIZ_LEADERBOARD#GLOBAL notice:", err))
     );
-
+  }
     await Promise.all(ddbPromises);
 
     return { success: true, pointsAwarded: totalPointsToAward };
