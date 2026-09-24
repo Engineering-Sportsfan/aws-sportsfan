@@ -52,6 +52,7 @@ export default function EngagementsManagementPage() {
   // Multi-Question Quiz State with Starting Time & Frequency
   const [quizStartTime, setQuizStartTime] = useState<string>("");
   const [quizFrequencyMinutes, setQuizFrequencyMinutes] = useState<number>(10);
+  const [quizTimerMinutes, setQuizTimerMinutes] = useState<number>(600);
   const [quizQuestions, setQuizQuestions] = useState<AdminQuizQuestion[]>([
     {
       id: "q_1",
@@ -156,6 +157,7 @@ export default function EngagementsManagementPage() {
       setTitle("Quick Live Cricket Quiz");
       setQuizStartTime("");
       setQuizFrequencyMinutes(10);
+      setQuizTimerMinutes(600);
       setQuizQuestions([
         {
           id: "q_1",
@@ -247,6 +249,15 @@ export default function EngagementsManagementPage() {
 
       // Frequency
       setQuizFrequencyMinutes(item.quizData.frequencyMinutes || 10);
+
+      // Timer / Duration
+      const durMins =
+        item.quizData.durationMinutes ||
+        item.quizData.timerMinutes ||
+        (item.expiresAt && (item.quizData.startTime || item.quizData.scheduledStartTime)
+          ? Math.round((Number(item.expiresAt) - Number(item.quizData.startTime || item.quizData.scheduledStartTime)) / 60000)
+          : 600);
+      setQuizTimerMinutes(durMins || 600);
 
       // Questions array
       if (item.quizData.questions && item.quizData.questions.length > 0) {
@@ -375,7 +386,10 @@ export default function EngagementsManagementPage() {
           scheduledStartTime: startMs,
         };
       } else if (activeTab === "quiz") {
-        const startMs = quizStartTime ? new Date(quizStartTime).getTime() : Date.now();
+        const now = Date.now();
+        const startMs = quizStartTime ? new Date(quizStartTime).getTime() : now;
+        const durationMins = Number(quizTimerMinutes) || 600;
+        const expiresAt = (startMs || now) + durationMins * 60 * 1000;
         const formattedQuestions = quizQuestions.map((q, idx) => ({
           id: q.id || `q_${idx + 1}`,
           question: q.question,
@@ -393,13 +407,19 @@ export default function EngagementsManagementPage() {
         payload.tags = [
           "🧠 QUIZ",
           `⭐ ${formattedQuestions[0]?.pointsReward || 50} PTS/Q`,
-          `⏱️ ${quizFrequencyMinutes}m`,
+          `⏱️ ${quizFrequencyMinutes}m freq`,
+          `⏳ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
         ];
+
+        payload.expiresAt = expiresAt;
 
         payload.quizData = {
           startTime: startMs,
           scheduledStartTime: startMs,
           frequencyMinutes: Number(quizFrequencyMinutes) || 10,
+          durationMinutes: durationMins,
+          timerMinutes: durationMins,
+          expiresAt,
           questions: formattedQuestions,
           // Backwards compatibility for single-question readers
           question: formattedQuestions[0]?.question || title,
@@ -852,6 +872,14 @@ export default function EngagementsManagementPage() {
                             <span style={{ color: "#d2a8ff" }}>
                               🧠 {totalQuestions} Qs · ⏱️ Every {item.quizData?.frequencyMinutes || 10} mins
                             </span>
+                            {(item.quizData?.durationMinutes || item.quizData?.timerMinutes) && (
+                              <span style={{ color: "#388bfd", fontSize: 10, fontWeight: 600 }}>
+                                ⏳ Duration: {(item.quizData.durationMinutes || item.quizData.timerMinutes || 0) < 60
+                                  ? `${item.quizData.durationMinutes || item.quizData.timerMinutes}m`
+                                  : `${((item.quizData.durationMinutes || item.quizData.timerMinutes || 0) / 60).toFixed(0)}h`}
+                                {item.expiresAt && Date.now() >= Number(item.expiresAt) ? " (Closed)" : ""}
+                              </span>
+                            )}
                             {item.quizData?.startTime && (
                               <span style={{ color: "#8b949e", fontSize: 10 }}>
                                 📅 Starts: {new Date(item.quizData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -1461,9 +1489,9 @@ export default function EngagementsManagementPage() {
                   }}
                 >
                   <h3 style={{ fontSize: 12, fontWeight: 700, color: "#d2a8ff", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: 6 }}>
-                    ⏱️ Quiz Timing & Question Interval Setup
+                    ⏱️ Quiz Timing, Schedule & Timer Setup
                   </h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                     <div>
                       <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
                         📅 Starting Time
@@ -1509,7 +1537,47 @@ export default function EngagementsManagementPage() {
                         }}
                       />
                       <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
-                        How much time before the next quiz question shows (e.g. 10 mins)
+                        Time before next question shows (e.g. 10 mins)
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        ⏰ Quiz Timer / Duration (Closes After)
+                      </label>
+                      <select
+                        value={quizTimerMinutes}
+                        onChange={e => setQuizTimerMinutes(Number(e.target.value))}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      >
+                        <option value={5}>⚡ 5 mins</option>
+                        <option value={10}>⏱️ 10 mins</option>
+                        <option value={15}>⏱️ 15 mins</option>
+                        <option value={30}>⏳ 30 mins</option>
+                        <option value={45}>⏳ 45 mins</option>
+                        <option value={60}>🕒 1 hr</option>
+                        <option value={90}>⌛ 1 hr 30 mins</option>
+                        <option value={120}>⏰ 2 hr</option>
+                        <option value={180}>⏰ 3 hr</option>
+                        <option value={240}>⏰ 4 hr</option>
+                        <option value={360}>⏰ 6 hr</option>
+                        <option value={480}>⏰ 8 hr</option>
+                        <option value={600}>⏰ 10 hr (Standard)</option>
+                        <option value={720}>⏰ 12 hr</option>
+                        <option value={1080}>⏰ 18 hr</option>
+                        <option value={1440}>🌙 24 hr (Full Day)</option>
+                        <option value={2880}>📅 48 hr (2 Days)</option>
+                      </select>
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        Quiz automatically closes after this timer expires (e.g. 10 hrs)
                       </span>
                     </div>
                   </div>
@@ -2234,10 +2302,10 @@ export default function EngagementsManagementPage() {
                       }}
                     >
                       <span style={{ color: "#a5d6ff", fontWeight: 700 }}>
-                        Question 1 of {quizQuestions.length}
+                        Question 1 of {quizQuestions.length} · ⏱️ {quizFrequencyMinutes}m
                       </span>
-                      <span style={{ color: "#3fb950", fontWeight: 700 }}>
-                        ⏱️ Unlocks every {quizFrequencyMinutes}m
+                      <span style={{ color: "#388bfd", fontWeight: 700 }}>
+                        ⏳ Closes in: {quizTimerMinutes < 60 ? `${quizTimerMinutes}m` : (quizTimerMinutes % 60 === 0 ? `${quizTimerMinutes / 60} hrs` : `${(quizTimerMinutes / 60).toFixed(1)} hrs`)}
                       </span>
                     </div>
 
