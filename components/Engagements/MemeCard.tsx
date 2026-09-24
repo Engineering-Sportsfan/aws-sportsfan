@@ -78,7 +78,7 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
   const [pointsToast, setPointsToast] = useState(false);
 
   // Ratings map with default zero-values
-  const [ratings, setRatings] = useState({
+  const [ratings, setRatings] = useState<Record<string, number>>({
     mid: Number(meme?.ratings?.mid) || 0,
     funny: Number(meme?.ratings?.funny) || 0,
     hot: Number(meme?.ratings?.hot) || 0,
