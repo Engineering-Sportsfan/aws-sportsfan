@@ -6,6 +6,7 @@ import FanBattleCard from "./FanBattleCard";
 import QuizCard from "./QuizCard";
 import PollCard from "./PollCard";
 import PredictionCard from "./PredictionCard";
+import MemeCard from "./MemeCard";
 
 interface Props {
   item: EngagementItem;
@@ -24,6 +25,9 @@ export default function EngagementCard({ item, onInteraction }: Props) {
   }
   if (item.type === "prediction") {
     return <PredictionCard item={item} onPredictionSuccess={onInteraction} />;
+  }
+  if (item.type === "meme") {
+    return <MemeCard item={item} onVoteSuccess={onInteraction} />;
   }
   return null;
 }

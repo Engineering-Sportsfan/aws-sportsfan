@@ -44,6 +44,9 @@ export interface QuizPayload {
   scheduledStartTime?: number;
   frequencyMinutes?: number; // e.g. 10 (unlocks a new question every 10 mins)
   questions?: QuizQuestion[];
+  timerMinutes?: number;
+  durationMinutes?: number;
+  expiresAt?: number;
 }
 
 export interface QuizLeaderboardEntry {
@@ -107,6 +110,16 @@ export interface PredictionPayload {
 
 // ─── 5. Meme Arena ─────────────────────────────────────────────────────────
 export type MemeReactionType = "mild" | "funny" | "hot" | "fire" | "nuclear";
+export type MemeRatingId = "mid" | "funny" | "hot" | "fire" | "nuclear";
+
+export interface MemeRatingChoice {
+  id: MemeRatingId;
+  label: string;
+  emoji: string;
+  color: string;
+  votes: number;
+  percentage?: number;
+}
 
 export interface MemeReactions {
   mild: number;
@@ -122,13 +135,29 @@ export interface MemePayload {
   authorHandle?: string;
   authorAvatar?: string;
   heatPercentage?: number;
+  heatIndex?: number;
   totalVotes?: number;
   reactions?: MemeReactions;
+  ratings?: {
+    mid: number;
+    funny: number;
+    hot: number;
+    fire: number;
+    nuclear: number;
+  };
+  options?: any[];
   commentsCount?: number;
   sharesCount?: number;
   userReaction?: MemeReactionType | null;
   caption?: string;
+  title?: string;
+  description?: string;
+  mediaUrl?: string;
+  mediaType?: "image" | "video";
   createdAt?: number;
+  startTime?: number;
+  scheduledStartTime?: number;
+  expiresAt?: number;
 }
 
 // ─── Universal Engagement Entity ──────────────────────────────────────────
