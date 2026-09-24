@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { dualWrite } from "@/lib/dualWrite";
+import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
 import { ScanCommand, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem, EngagementType, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
@@ -24,25 +24,67 @@ export async function GET(req: NextRequest) {
 
     const itemsMap = new Map<string, EngagementItem>();
 
-    // 1. Fetch from DynamoDB SocialAndContent table
-    try {
-      const scanRes = await docClient.send(
-        new ScanCommand({
-          TableName: TABLES.SocialAndContent,
-          FilterExpression: "begins_with(contentId, :prefix) AND (sk = :metaSk OR attribute_not_exists(sk))",
-          ExpressionAttributeValues: {
-            ":prefix": "ENGAGEMENT#",
-            ":metaSk": "ENGAGEMENT#META",
-          },
-          Limit: 100,
-        })
-      );
+    // 1. Fetch from DynamoDB SocialAndContent table (with candidate table fallback)
+    const candidateTables = getCandidateTableNames(TABLES.SocialAndContent);
+    for (const table of candidateTables) {
+      try {
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: table,
+            FilterExpression: "begins_with(contentId, :prefix) AND (sk = :metaSk OR attribute_not_exists(sk))",
+            ExpressionAttributeValues: {
+              ":prefix": "ENGAGEMENT#",
+              ":metaSk": "ENGAGEMENT#META",
+            },
+            Limit: 100,
+          })
+        );
 
-      if (scanRes.Items) {
-        for (const it of scanRes.Items) {
-          // Ignore vote, like, or share records that share the same contentId prefix
-          if (it.sk && it.sk !== "ENGAGEMENT#META") continue;
-          if (!it.title || !it.type) continue;
+        if (scanRes.Items && scanRes.Items.length > 0) {
+          for (const it of scanRes.Items) {
+            // Ignore vote, like, or share records that share the same contentId prefix
+            if (it.sk && it.sk !== "ENGAGEMENT#META") continue;
+            if (!it.title || !it.type) continue;
+
+            const id = it.id || String(it.contentId || "").replace(/^ENGAGEMENT#/, "");
+            if (!itemsMap.has(id)) {
+              itemsMap.set(id, {
+                id,
+                type: it.type,
+                title: it.title,
+                subtitle: it.subtitle || "",
+                tags: it.tags || [],
+                sport: (it.sport || "cricket").toLowerCase(),
+                status: it.status || "active",
+                fanBattleData: it.fanBattleData,
+                quizData: it.quizData,
+                pollData: it.pollData,
+                predictionData: it.predictionData,
+                memeData: it.memeData,
+                likes: Number(it.likes) || 0,
+                shares: Number(it.shares) || 0,
+                totalEngaged: Number(it.totalEngaged) || 0,
+                createdAt: it.createdAt || Date.now(),
+                updatedAt: it.updatedAt || Date.now(),
+                expiresAt: it.expiresAt || null,
+                creatorId: it.creatorId || undefined,
+                creatorEmail: it.creatorEmail || undefined,
+                creatorName: it.creatorName || undefined,
+              });
+            }
+          }
+          break; // Successfully loaded from this DynamoDB table
+        }
+      } catch (dynErr: any) {
+        const isTableMissing =
+          dynErr?.name === "ResourceNotFoundException" ||
+          dynErr?.message?.includes("Cannot do operations on a non-existent table") ||
+          dynErr?.message?.includes("ResourceNotFoundException");
+        if (isTableMissing) continue;
+        console.warn(`DynamoDB engagements scan notice on table "${table}":`, dynErr?.message || dynErr);
+        break;
+      }
+    }
 
           const id = it.id || String(it.contentId || "").replace(/^ENGAGEMENT#/, "");
           itemsMap.set(id, {
@@ -221,14 +263,18 @@ export async function POST(req: NextRequest) {
       const formData = await req.formData();
       const file = formData.get("file") as File | null;
       if (file && typeof file === "object" && "arrayBuffer" in file && file.size > 0) {
-        const bytes = await file.arrayBuffer();
-        const buffer = Buffer.from(bytes);
-        const base64 = `data:${file.type || "image/jpeg"};base64,${buffer.toString("base64")}`;
-        const uploadRes = await cloudinary.uploader.upload(base64, {
-          folder: "engagements/memes",
-          resource_type: "auto",
-        });
-        uploadedMediaUrl = uploadRes.secure_url;
+        try {
+          const bytes = await file.arrayBuffer();
+          const buffer = Buffer.from(bytes);
+          const base64 = `data:${file.type || "image/jpeg"};base64,${buffer.toString("base64")}`;
+          const uploadRes = await cloudinary.uploader.upload(base64, {
+            folder: "engagements/memes",
+            resource_type: "auto",
+          });
+          uploadedMediaUrl = uploadRes.secure_url;
+        } catch (cErr: any) {
+          console.warn("[POST /api/engagements] Cloudinary file upload notice:", cErr?.message || cErr);
+        }
       }
 
       for (const [key, value] of formData.entries()) {
