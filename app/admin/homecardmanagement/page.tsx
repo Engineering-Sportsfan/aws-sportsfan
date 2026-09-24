@@ -19,6 +19,14 @@ import {
   Loader2
 } from "lucide-react";
 
+// Format date into standard agenda label format: e.g. "Tuesday · 23 September"
+function formatAgendaDate(date: Date): string {
+  const dayName = date.toLocaleDateString("en-US", { weekday: "long" });
+  const dayNum = date.getDate();
+  const monthName = date.toLocaleDateString("en-US", { month: "long" });
+  return `${dayName} · ${dayNum} ${monthName}`;
+}
+
 export default function HomeCardManagementDashboard() {
   const [data, setData] = useState<{
     morningBrief: any[];
@@ -359,17 +367,97 @@ export default function HomeCardManagementDashboard() {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-300 mb-1">
-                  Today&apos;s Agenda Date Label
-                </label>
-                <input
-                  type="text"
-                  value={agendaDateTitle}
-                  onChange={(e) => setAgendaDateTitle(e.target.value)}
-                  placeholder="e.g. Tuesday · 23 September"
-                  className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors"
-                />
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-gray-300">
+                    Today&apos;s Agenda Date Label
+                  </label>
+                  <span className="text-[10px] text-purple-400 font-semibold flex items-center gap-1">
+                    <Calendar size={11} /> 1-Click Select
+                  </span>
+                </div>
+
+                {/* Single-Click Date Quick Select Presets */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const today = new Date();
+                      setAgendaDateTitle(formatAgendaDate(today));
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 text-[10px] font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer"
+                  >
+                    <span>⚡ Set Today</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const tmrw = new Date();
+                      tmrw.setDate(tmrw.getDate() + 1);
+                      setAgendaDateTitle(formatAgendaDate(tmrw));
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 text-[10px] font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer"
+                  >
+                    <span>⏭️ Tomorrow</span>
+                  </button>
+
+                  {/* Native Date Picker trigger */}
+                  <div className="relative inline-flex items-center">
+                    <input
+                      type="date"
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          const [y, m, d] = e.target.value.split("-").map(Number);
+                          const chosen = new Date(y, m - 1, d);
+                          setAgendaDateTitle(formatAgendaDate(chosen));
+                        }
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                      title="Choose custom date"
+                    />
+                    <button
+                      type="button"
+                      className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 text-[10px] font-bold transition-all flex items-center gap-1 pointer-events-none"
+                    >
+                      <Calendar size={11} className="text-purple-400" />
+                      <span>Pick Date 📅</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Editable input with calendar trigger on the right */}
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    value={agendaDateTitle}
+                    onChange={(e) => setAgendaDateTitle(e.target.value)}
+                    placeholder="e.g. Tuesday · 23 September"
+                    className="w-full bg-[#090C15] border border-white/10 rounded-xl pl-3 pr-10 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors font-medium"
+                  />
+                  <div className="absolute right-2 flex items-center">
+                    <div className="relative">
+                      <input
+                        type="date"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const [y, m, d] = e.target.value.split("-").map(Number);
+                            const chosen = new Date(y, m - 1, d);
+                            setAgendaDateTitle(formatAgendaDate(chosen));
+                          }
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-7 h-7 z-10"
+                        title="Click to pick a date from calendar"
+                      />
+                      <button
+                        type="button"
+                        className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-purple-400 hover:text-purple-300 transition-colors pointer-events-none"
+                      >
+                        <Calendar size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div>
