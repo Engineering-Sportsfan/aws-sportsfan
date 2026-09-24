@@ -89,6 +89,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const channel = searchParams.get("channel");
+    const scheduledOnly = searchParams.get("scheduledOnly") === "true";
 
     const res = await docClient.send(
       new QueryCommand({
@@ -107,11 +108,100 @@ export async function GET(req: NextRequest) {
       author: (c.author || "").replace(/\s*\(SF360\)/gi, "").trim(),
     }));
 
+    const now = Date.now();
+    if (scheduledOnly) {
+      cards = cards.filter((c: any) => {
+        const schedTs = Number(c.scheduledAt) || Number(c.scheduledTimeMs);
+        const isSched = c.isScheduled === true || String(c.isScheduled) === "true" || (schedTs && schedTs > now);
+        return isSched && schedTs && schedTs > now;
+      });
+    } else {
+      cards = cards.filter((c: any) => {
+        const schedTs = Number(c.scheduledAt) || Number(c.scheduledTimeMs);
+        const isSched = c.isScheduled === true || String(c.isScheduled) === "true";
+        if (isSched && schedTs && schedTs > now) {
+          return false;
+        }
+        return true;
+      });
+    }
+
     if (channel && channel !== "all") {
-      cards = cards.filter(
-        (c: any) =>
-          (c.channel || c.sport || "").toLowerCase() === channel.toLowerCase()
-      );
+      const chTarget = channel.toLowerCase();
+      cards = cards.filter((c: any) => {
+        const cSport = (c.channel || c.sport || "").toLowerCase();
+        const chs = Array.isArray(c.channels)
+          ? c.channels.map((x: any) => String(x).toLowerCase())
+          : [];
+        return cSport === chTarget || chs.includes(chTarget);
+      });
+    }
+
+    // Deduplication for "All" category view (and clean up legacy duplicate items created per channel)
+    if (!channel || channel === "all") {
+      const seen = new Set<string>();
+      const deduplicated: any[] = [];
+
+      for (const card of cards) {
+        // 1. Group ID check
+        if (card.groupId || card.broadcastId) {
+          const gid = card.groupId || card.broadcastId;
+          const groupKey = `group_${gid}`;
+          if (seen.has(groupKey)) {
+            const existing = deduplicated.find((d) => (d.groupId || d.broadcastId) === gid);
+            if (existing) {
+              const currentChannels = Array.isArray(existing.channels)
+                ? [...existing.channels]
+                : [existing.channel || existing.sport].filter(Boolean);
+              const cardChs = Array.isArray(card.channels) && card.channels.length > 0
+                ? card.channels
+                : [card.channel || card.sport].filter(Boolean);
+              for (const ch of cardChs) {
+                if (ch && !currentChannels.includes(ch)) currentChannels.push(ch);
+              }
+              existing.channels = currentChannels;
+              existing.allChannels = currentChannels;
+            }
+            continue;
+          }
+          seen.add(groupKey);
+        }
+
+        // 2. Legacy check: identical author, content, media, posted within 15-second window
+        const authorKey = (card.author || "").toLowerCase().trim();
+        const contentKey = (card.content || "").trim().toLowerCase().slice(0, 100);
+        const mediaKey = card.videoUrl || card.image || card.imageUrl || "";
+        const timeBucket = Math.floor(Number(card.timeMs || card.scheduledAt || card.id || 0) / 15000);
+        const legacyKey = `legacy_${authorKey}_${contentKey}_${mediaKey}_${timeBucket}`;
+
+        if (seen.has(legacyKey)) {
+          const existing = deduplicated.find((d) => {
+            const dAuthor = (d.author || "").toLowerCase().trim();
+            const dContent = (d.content || "").trim().toLowerCase().slice(0, 100);
+            const dMedia = d.videoUrl || d.image || d.imageUrl || "";
+            const dBucket = Math.floor(Number(d.timeMs || d.scheduledAt || d.id || 0) / 15000);
+            return dAuthor === authorKey && dContent === contentKey && dMedia === mediaKey && dBucket === timeBucket;
+          });
+          if (existing) {
+            const currentChannels = Array.isArray(existing.channels)
+              ? [...existing.channels]
+              : [existing.channel || existing.sport].filter(Boolean);
+            const cardChs = Array.isArray(card.channels) && card.channels.length > 0
+              ? card.channels
+              : [card.channel || card.sport].filter(Boolean);
+            for (const ch of cardChs) {
+              if (ch && !currentChannels.includes(ch)) currentChannels.push(ch);
+            }
+            existing.channels = currentChannels;
+            existing.allChannels = currentChannels;
+          }
+          continue;
+        }
+
+        seen.add(legacyKey);
+        deduplicated.push(card);
+      }
+      cards = deduplicated;
     }
 
     return NextResponse.json({ success: true, posts: cards, total: cards.length });
@@ -140,6 +230,12 @@ export async function POST(req: NextRequest) {
     let directImageUrl = "";
     let directVideoUrl = "";
     let uploadedFiles: File[] = [];
+    let isScheduled = false;
+    let scheduledAt: number | undefined;
+    let day: string | undefined;
+    let time: string | undefined;
+    let timeMs: number | undefined;
+    let poll: any = undefined;
 
     if (contentType.includes("application/json")) {
       const body = await req.json();
@@ -171,6 +267,12 @@ export async function POST(req: NextRequest) {
       customScore = body.score || "";
       directImageUrl = body.image || "";
       directVideoUrl = body.videoUrl || "";
+      isScheduled = body.isScheduled === true || body.isScheduled === "true";
+      scheduledAt = Number(body.scheduledAt || body.scheduledTimeMs) || undefined;
+      day = body.day;
+      time = body.time;
+      timeMs = body.timeMs ? Number(body.timeMs) : undefined;
+      poll = body.poll;
     } else {
       const formData = await req.formData();
       content = ((formData.get("content") as string) || "").trim();
@@ -208,6 +310,20 @@ export async function POST(req: NextRequest) {
       directImageUrl = (formData.get("imageUrl") as string) || "";
       directVideoUrl = (formData.get("videoUrl") as string) || "";
       uploadedFiles = formData.getAll("media") as File[];
+
+      isScheduled = formData.get("isScheduled") === "true";
+      const schedAtStr = (formData.get("scheduledAt") as string | null) || (formData.get("scheduledTimeMs") as string | null);
+      scheduledAt = schedAtStr ? Number(schedAtStr) : undefined;
+      day = (formData.get("day") as string) || undefined;
+      time = (formData.get("time") as string) || undefined;
+      const tMsStr = formData.get("timeMs") as string | null;
+      timeMs = tMsStr ? Number(tMsStr) : undefined;
+      const pollRaw = formData.get("poll") as string | null;
+      if (pollRaw) {
+        try {
+          poll = JSON.parse(pollRaw);
+        } catch { }
+      }
     }
 
     // Default to general if empty
@@ -221,7 +337,7 @@ export async function POST(req: NextRequest) {
     // Find bot profile
     const bot = DEFAULT_FLIPLINE_BOTS.find((b) => b.id === botId || b.userId === botId) || DEFAULT_FLIPLINE_BOTS[0];
 
-    // Handle media uploads if any (upload once and share across all channel posts)
+    // Handle media uploads if any
     let imageUrl = directImageUrl;
     let videoUrl = directVideoUrl;
 
@@ -242,84 +358,90 @@ export async function POST(req: NextRequest) {
     const baseTimeMs = Date.now();
     const timeStr = formatCurrentTime();
     const tags = content ? content.match(/#[a-zA-Z0-9_]+/g) || [] : [];
-    const createdPosts = [];
 
-    // Publish to each selected channel
-    for (let i = 0; i < channels.length; i++) {
-      const channel = channels[i];
-      const timeMs = baseTimeMs + i;
-      const id = Date.now() + Math.floor(Math.random() * 10000) + i;
-      const meta = SPORT_META[channel] || { emoji: "💬", label: "General" };
+    const primaryChannel = channels[0] || "general";
+    const primaryMeta = SPORT_META[primaryChannel] || { emoji: "💬", label: "General" };
+    const isSF360 = bot.name === "SportsFan360" || bot.id === "bot_sportsfan360";
 
-      const isSF360 = bot.name === "SportsFan360" || bot.id === "bot_sportsfan360";
+    const broadcastId = `broadcast_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const id = Date.now() + Math.floor(Math.random() * 10000);
+    const postTimeMs = (isScheduled && scheduledAt) ? scheduledAt : (timeMs || baseTimeMs);
+    const postTimeStr = time || timeStr;
+    const postDayStr = day && day.toLowerCase() !== "just now" ? day : formatCurrentDate();
+    const channelLabels = channels.map((c) => SPORT_META[c]?.label || c).join(", ");
 
-      const newPost = {
-        roomId: "FLIPLINE#ALL",
-        sk: `CARD#${timeMs}#${id}`,
-        id,
-        type: isSF360 ? "" : type,
-        sport: channel,
-        channel,
-        sportEmoji: meta.emoji,
-        sportLabel: meta.label,
-        day: formatCurrentDate(),
-        time: timeStr,
-        timeMs,
+    // Single post created with multi-channel tagging (prevents duplicate items under FLIPLINE#ALL)
+    const newPost: any = {
+      roomId: "FLIPLINE#ALL",
+      sk: `CARD#${postTimeMs}#${id}`,
+      id,
+      groupId: broadcastId,
+      broadcastId,
+      type: isSF360 ? "" : type,
+      sport: primaryChannel,
+      channel: primaryChannel,
+      channels: channels,
+      allChannels: channels,
+      sportEmoji: primaryMeta.emoji,
+      sportLabel: channelLabels,
+      day: postDayStr,
+      time: postTimeStr,
+      timeMs: postTimeMs,
+      isScheduled: !!isScheduled,
+      ...(scheduledAt ? { scheduledAt, scheduledTimeMs: scheduledAt } : {}),
+      ...(poll ? { poll } : {}),
 
-        // Bot author details with Verified status (no (SF360) suffix)
-        author: isSF360 ? "SportsFan360" : (bot.name || "").replace(/\s*\(SF360\)/gi, "").trim(),
-        handle: bot.handle,
-        adminPhoto: bot.photoUrl,
-        authorPhoto: bot.photoUrl,
-        isVerified: true,
-        verifiedFlipLineAdmin: true,
-        badge: isSF360 ? "" : (bot.badge || ""),
-        title: isSF360 ? "" : (bot.title || ""),
-        isBot: true,
-        botId: bot.id,
-        userId: bot.userId,
-        isUserPost: true,
+      // Bot author details with Verified status (no (SF360) suffix)
+      author: isSF360 ? "SportsFan360" : (bot.name || "").replace(/\s*\(SF360\)/gi, "").trim(),
+      handle: bot.handle,
+      adminPhoto: bot.photoUrl,
+      authorPhoto: bot.photoUrl,
+      isVerified: true,
+      verifiedFlipLineAdmin: true,
+      badge: isSF360 ? "" : (bot.badge || ""),
+      title: isSF360 ? "" : (bot.title || ""),
+      isBot: true,
+      botId: bot.id,
+      userId: bot.userId,
+      isUserPost: true,
 
-        source,
-        content,
-        emoji: emoji || (channel === "cricket" ? "🏏" : channel === "football" ? "⚽" : channel === "athletics" ? "🏃" : channel === "experts" ? "🌟" : "💬"),
-        likes: 0,
-        likedBy: [],
-        comments: [],
-        isKey,
-        tags,
+      source,
+      content,
+      emoji: emoji || (primaryChannel === "cricket" ? "🏏" : primaryChannel === "football" ? "⚽" : primaryChannel === "athletics" ? "🏃" : primaryChannel === "experts" ? "🌟" : "💬"),
+      likes: 0,
+      likedBy: [],
+      comments: [],
+      isKey,
+      tags,
 
-        scoreChip: customScore
-          ? { score: customScore, status: "Live", statusType: "live" }
-          : undefined,
+      scoreChip: customScore
+        ? { score: customScore, status: "Live", statusType: "live" }
+        : undefined,
 
-        fomoMsg: fomoMsg || `${bot.name}'s update is getting live reactions in FlipLine`,
-        fomoCount: fomoCount || Math.floor(Math.random() * 200) + 50,
-        ctaType: "watchalong",
-        flipResponse: flipResponse || undefined,
+      fomoMsg: fomoMsg || `${bot.name}'s update is getting live reactions in FlipLine`,
+      fomoCount: fomoCount || Math.floor(Math.random() * 200) + 50,
+      ctaType: "watchalong",
+      flipResponse: flipResponse || undefined,
 
-        hasAttachedImage: !!imageUrl,
-        hasAttachedVideo: !!videoUrl,
-        image: imageUrl || undefined,
-        videoUrl: videoUrl || undefined,
-        mediaType: videoUrl ? "video" : imageUrl ? "image" : undefined,
-      };
+      hasAttachedImage: !!imageUrl,
+      hasAttachedVideo: !!videoUrl,
+      image: imageUrl || undefined,
+      videoUrl: videoUrl || undefined,
+      mediaType: videoUrl ? "video" : imageUrl ? "image" : undefined,
+    };
 
-      await docClient.send(
-        new PutCommand({
-          TableName: TABLES.RealTimeChat,
-          Item: newPost,
-        })
-      );
-
-      createdPosts.push(newPost);
-    }
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLES.RealTimeChat,
+        Item: newPost,
+      })
+    );
 
     return NextResponse.json({
       success: true,
       message: `Post successfully published to ${channels.length} channel${channels.length > 1 ? "s" : ""} on behalf of ${bot.name}`,
-      post: createdPosts[0],
-      posts: createdPosts,
+      post: newPost,
+      posts: [newPost],
       channels,
     });
   } catch (error: unknown) {
@@ -341,6 +463,7 @@ export async function PUT(req: NextRequest) {
     let sk = "";
     let content: string | undefined;
     let channel: string | undefined;
+    let channelsToUpdate: string[] | undefined;
     let fomoMsg: string | undefined;
     let fomoCount: number | undefined;
     let customScore: string | undefined;
@@ -354,6 +477,9 @@ export async function PUT(req: NextRequest) {
       sk = body.sk || "";
       content = body.content !== undefined ? (body.content || "").trim() : undefined;
       channel = body.channel || body.sport;
+      if (Array.isArray(body.channels)) {
+        channelsToUpdate = body.channels.map((c: any) => String(c).toLowerCase().trim()).filter(Boolean);
+      }
       fomoMsg = body.fomoMsg;
       fomoCount = body.fomoCount !== undefined ? Number(body.fomoCount) : undefined;
       customScore = body.score;
@@ -368,6 +494,14 @@ export async function PUT(req: NextRequest) {
       }
       if (formData.has("channel")) {
         channel = (formData.get("channel") as string).toLowerCase();
+      }
+      if (formData.has("channels")) {
+        try {
+          const parsed = JSON.parse(formData.get("channels") as string);
+          if (Array.isArray(parsed)) {
+            channelsToUpdate = parsed.map((c: any) => String(c).toLowerCase().trim()).filter(Boolean);
+          }
+        } catch { }
       }
       if (formData.has("fomoMsg")) {
         fomoMsg = (formData.get("fomoMsg") as string) || "";
@@ -433,6 +567,13 @@ export async function PUT(req: NextRequest) {
     const meta = SPORT_META[finalChannel] || { emoji: "🏆", label: "General" };
     const finalTags = finalContent ? finalContent.match(/#[a-zA-Z0-9_]+/g) || [] : [];
 
+    let finalChannels = existing.channels || (existing.channel ? [existing.channel] : [finalChannel]);
+    if (channelsToUpdate && channelsToUpdate.length > 0) {
+      finalChannels = channelsToUpdate;
+    } else if (channel !== undefined && !finalChannels.includes(channel.toLowerCase())) {
+      finalChannels = [channel.toLowerCase()];
+    }
+
     let finalImageUrl = existing.image;
     let finalVideoUrl = existing.videoUrl;
     let finalMediaType = existing.mediaType;
@@ -459,6 +600,10 @@ export async function PUT(req: NextRequest) {
       content: finalContent,
       channel: finalChannel,
       sport: finalChannel,
+      channels: finalChannels,
+      allChannels: finalChannels,
+      groupId: existing.groupId,
+      broadcastId: existing.broadcastId,
       sportEmoji: meta.emoji,
       sportLabel: meta.label,
       tags: finalTags,
@@ -508,6 +653,18 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Missing required query parameter: 'sk'" }, { status: 400 });
     }
 
+    // Attempt to fetch post to check for groupId/broadcastId
+    let groupId: string | undefined;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: TABLES.RealTimeChat,
+          Key: { roomId: "FLIPLINE#ALL", sk },
+        })
+      );
+      groupId = getRes.Item?.groupId || getRes.Item?.broadcastId;
+    } catch { }
+
     await docClient.send(
       new DeleteCommand({
         TableName: TABLES.RealTimeChat,
@@ -517,6 +674,36 @@ export async function DELETE(req: NextRequest) {
         },
       })
     );
+
+    // If there were legacy sister copies with the same groupId, delete them too
+    if (groupId) {
+      try {
+        const queryRes = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.RealTimeChat,
+            KeyConditionExpression: "roomId = :roomId AND begins_with(sk, :skPrefix)",
+            FilterExpression: "groupId = :gid OR broadcastId = :gid",
+            ExpressionAttributeValues: {
+              ":roomId": "FLIPLINE#ALL",
+              ":skPrefix": "CARD#",
+              ":gid": groupId,
+            },
+          })
+        );
+        for (const item of queryRes.Items || []) {
+          if (item.sk !== sk) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: TABLES.RealTimeChat,
+                Key: { roomId: "FLIPLINE#ALL", sk: item.sk },
+              })
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Error cleaning up sister broadcast records:", err);
+      }
+    }
 
     return NextResponse.json({ success: true, message: "Post deleted successfully" });
   } catch (error: unknown) {

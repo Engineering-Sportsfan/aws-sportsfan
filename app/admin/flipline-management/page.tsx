@@ -22,6 +22,11 @@ import {
   Layers,
   Pencil,
   X,
+  Clock,
+  Calendar,
+  AlertCircle,
+  Plus,
+  BarChart2,
 } from "lucide-react";
 
 interface BotProfile {
@@ -48,6 +53,10 @@ interface FlipLinePost {
   isVerified?: boolean;
   sport: string;
   channel?: string;
+  channels?: string[];
+  allChannels?: string[];
+  groupId?: string;
+  broadcastId?: string;
   content: string;
   time?: string;
   timeMs?: number;
@@ -59,6 +68,10 @@ interface FlipLinePost {
   scoreChip?: { score: string; status: string };
   fomoMsg?: string;
   fomoCount?: number;
+  isScheduled?: boolean;
+  scheduledAt?: number;
+  scheduledTimeMs?: number;
+  poll?: any;
 }
 
 const CHANNELS = [
@@ -76,6 +89,28 @@ const SUGGESTED_HASHTAGS: Record<string, string[]> = {
   general: ["#General", "#SportsFan", "#Community", "#WeekendBanter", "#HotTakes"],
   experts: ["#ExpertsCorner", "#ProAnalysis", "#TacticalBreakdown", "#InsiderTake", "#MatchStrategy"],
 };
+
+function formatCountdown(targetMs: number): string {
+  const diffMs = targetMs - Date.now();
+  if (diffMs <= 0) return "Publishing now";
+
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffDays > 0) {
+    const remHours = diffHours % 24;
+    return `in ${diffDays}d ${remHours > 0 ? `${remHours}h` : ""}`;
+  }
+  if (diffHours > 0) {
+    const remMins = diffMins % 60;
+    return `in ${diffHours}h ${remMins > 0 ? `${remMins}m` : ""}`;
+  }
+  if (diffMins > 0) {
+    return `in ${diffMins} min${diffMins > 1 ? "s" : ""}`;
+  }
+  return "in < 1 min";
+}
 
 export default function FlipLineManagementPage() {
   const [bots, setBots] = useState<BotProfile[]>([]);
@@ -108,6 +143,19 @@ export default function FlipLineManagementPage() {
   const [mediaPreview, setMediaPreview] = useState<string>("");
   const [fomoCount, setFomoCount] = useState<number>(312);
 
+  // Scheduling & Poll state
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduledDate, setScheduledDate] = useState<string>("");
+  const [scheduledTime, setScheduledTime] = useState<string>("");
+  const [showPoll, setShowPoll] = useState(false);
+  const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
+
+  // Feed Tabs & Scheduled Queue state
+  const [activeTab, setActiveTab] = useState<"published" | "scheduled">("published");
+  const [scheduledPosts, setScheduledPosts] = useState<FlipLinePost[]>([]);
+  const [loadingScheduled, setLoadingScheduled] = useState(false);
+  const [deletingSk, setDeletingSk] = useState<string | null>(null);
+
   // Status & loading
   const [loadingBots, setLoadingBots] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -131,9 +179,62 @@ export default function FlipLineManagementPage() {
   const [editExistingMediaUrl, setEditExistingMediaUrl] = useState<string>("");
   const [editExistingMediaType, setEditExistingMediaType] = useState<"image" | "video" | undefined>(undefined);
   const [editRemoveMedia, setEditRemoveMedia] = useState<boolean>(false);
+  const [editShowSchedule, setEditShowSchedule] = useState<boolean>(false);
+  const [editScheduledDate, setEditScheduledDate] = useState<string>("");
+  const [editScheduledTime, setEditScheduledTime] = useState<string>("");
   const [isSubmittingEdit, setIsSubmittingEdit] = useState<boolean>(false);
   const [editStatusMsg, setEditStatusMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
+
+  const getTodayDateString = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const getDefaultTimeString = (offsetMinutes = 30) => {
+    const d = new Date(Date.now() + offsetMinutes * 60 * 1000);
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    return `${hours}:${minutes}`;
+  };
+
+  const applySchedulePreset = (minutesFromNow: number) => {
+    const target = new Date(Date.now() + minutesFromNow * 60 * 1000);
+    const y = target.getFullYear();
+    const m = String(target.getMonth() + 1).padStart(2, "0");
+    const d = String(target.getDate()).padStart(2, "0");
+    setScheduledDate(`${y}-${m}-${d}`);
+    const hh = String(target.getHours()).padStart(2, "0");
+    const mm = String(target.getMinutes()).padStart(2, "0");
+    setScheduledTime(`${hh}:${mm}`);
+  };
+
+  const applyTomorrowPreset = (hour: number, minute: number) => {
+    const target = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    target.setHours(hour, minute, 0, 0);
+    const y = target.getFullYear();
+    const m = String(target.getMonth() + 1).padStart(2, "0");
+    const d = String(target.getDate()).padStart(2, "0");
+    setScheduledDate(`${y}-${m}-${d}`);
+    const hh = String(hour).padStart(2, "0");
+    const mm = String(minute).padStart(2, "0");
+    setScheduledTime(`${hh}:${mm}`);
+  };
+
+  const getScheduledTs = (): number | null => {
+    if (!scheduledDate || !scheduledTime) return null;
+    const [year, month, day] = scheduledDate.split("-").map(Number);
+    const [hours, minutes] = scheduledTime.split(":").map(Number);
+    if (isNaN(year) || isNaN(month) || isNaN(day) || isNaN(hours) || isNaN(minutes)) return null;
+    const d = new Date(year, month - 1, day, hours, minutes, 0, 0);
+    return d.getTime();
+  };
+
+  const scheduledTs = showSchedule ? getScheduledTs() : null;
+  const isPastTime = scheduledTs !== null && scheduledTs <= Date.now();
 
   // 1. Fetch bots
   useEffect(() => {
@@ -177,8 +278,29 @@ export default function FlipLineManagementPage() {
     }
   };
 
+  // 3. Fetch scheduled posts queue
+  const fetchScheduledPosts = async () => {
+    try {
+      setLoadingScheduled(true);
+      const url =
+        feedFilterChannel === "all"
+          ? "/api/admin/flipline-posts?scheduledOnly=true"
+          : `/api/admin/flipline-posts?scheduledOnly=true&channel=${feedFilterChannel}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.posts)) {
+        setScheduledPosts(data.posts);
+      }
+    } catch (err) {
+      console.error("Failed to fetch scheduled posts:", err);
+    } finally {
+      setLoadingScheduled(false);
+    }
+  };
+
   useEffect(() => {
     fetchPosts();
+    fetchScheduledPosts();
   }, [feedFilterChannel]);
 
   const activeBot = bots.find((b) => b.id === selectedBotId) || bots[0];
@@ -210,7 +332,7 @@ export default function FlipLineManagementPage() {
     e.preventDefault();
     if (!activeBot) return;
 
-    if (mediaMode === "text" && !content.trim()) {
+    if (mediaMode === "text" && !content.trim() && !showPoll) {
       setStatusMsg({ type: "error", text: "Please enter text content for the post." });
       return;
     }
@@ -222,6 +344,10 @@ export default function FlipLineManagementPage() {
     }
     if (mediaMode === "video" && !mediaFile && !mediaPreview) {
       setStatusMsg({ type: "error", text: "Please upload a video." });
+      return;
+    }
+    if (showSchedule && (isPastTime || !scheduledTs)) {
+      setStatusMsg({ type: "error", text: "Please choose a valid future date and time for the scheduled post." });
       return;
     }
 
@@ -237,6 +363,45 @@ export default function FlipLineManagementPage() {
       formData.append("content", content.trim());
       formData.append("fomoCount", String(fomoCount));
 
+      if (showSchedule && scheduledTs && scheduledTs > Date.now()) {
+        const schedTimeStr = new Date(scheduledTs).toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+        const schedDateStr = new Date(scheduledTs).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+
+        formData.append("isScheduled", "true");
+        formData.append("scheduledAt", String(scheduledTs));
+        formData.append("scheduledTimeMs", String(scheduledTs));
+        formData.append("day", schedDateStr);
+        formData.append("time", schedTimeStr);
+        formData.append("timeMs", String(scheduledTs));
+      } else {
+        formData.append("isScheduled", "false");
+      }
+
+      if (showPoll) {
+        const validOptions = pollOptions.filter((opt) => opt.trim() !== "");
+        if (validOptions.length >= 2) {
+          const pollData = {
+            options: validOptions.map((text, i) => ({
+              id: `opt_${i + 1}`,
+              text: text.trim(),
+              votes: 0,
+            })),
+            totalVotes: 0,
+            endsAt: Date.now() + 24 * 60 * 60 * 1000,
+            createdAt: Date.now(),
+          };
+          formData.append("poll", JSON.stringify(pollData));
+        }
+      }
+
       if (mediaFile) {
         formData.append("media", mediaFile);
       }
@@ -251,13 +416,28 @@ export default function FlipLineManagementPage() {
         const channelLabels = selectedChannels
           .map((ch) => CHANNELS.find((c) => c.id === ch)?.label || ch)
           .join(", ");
-        setStatusMsg({
-          type: "success",
-          text: `🎉 Successfully published verified post to ${selectedChannels.length} channel(s) (${channelLabels}) as ${activeBot.name}!`,
-        });
+
+        if (showSchedule && scheduledTs) {
+          setStatusMsg({
+            type: "success",
+            text: `⏰ Successfully scheduled post for ${new Date(scheduledTs).toLocaleString()} in ${selectedChannels.length} channel(s) (${channelLabels}) as ${activeBot.name}!`,
+          });
+        } else {
+          setStatusMsg({
+            type: "success",
+            text: `🎉 Successfully published verified post to ${selectedChannels.length} channel(s) (${channelLabels}) as ${activeBot.name}!`,
+          });
+        }
+
         setContent("");
         clearMedia();
+        setShowSchedule(false);
+        setScheduledDate("");
+        setScheduledTime("");
+        setShowPoll(false);
+        setPollOptions(["", ""]);
         fetchPosts();
+        fetchScheduledPosts();
       } else {
         setStatusMsg({ type: "error", text: data.error || "Failed to publish post" });
       }
@@ -287,6 +467,26 @@ export default function FlipLineManagementPage() {
     }
   };
 
+  const handleDeleteScheduledPost = async (sk: string) => {
+    if (!confirm("Are you sure you want to cancel and delete this scheduled post?")) return;
+    try {
+      setDeletingSk(sk);
+      const res = await fetch(`/api/admin/flipline-posts?sk=${encodeURIComponent(sk)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (data.success) {
+        setScheduledPosts((prev) => prev.filter((p) => p.sk !== sk));
+      } else {
+        alert(data.error || "Failed to delete scheduled post");
+      }
+    } catch {
+      alert("Error deleting scheduled post");
+    } finally {
+      setDeletingSk(null);
+    }
+  };
+
   // ── Edit Post Handlers ───────────────────────────────────────────────────────
   const handleOpenEditModal = (post: FlipLinePost) => {
     setEditingPost(post);
@@ -298,6 +498,23 @@ export default function FlipLineManagementPage() {
     setEditMediaPreview("");
     setEditRemoveMedia(false);
     setEditStatusMsg(null);
+
+    const schedTs = Number(post.scheduledAt) || Number(post.scheduledTimeMs);
+    if (schedTs && schedTs > Date.now()) {
+      setEditShowSchedule(true);
+      const d = new Date(schedTs);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const dayStr = String(d.getDate()).padStart(2, "0");
+      setEditScheduledDate(`${y}-${m}-${dayStr}`);
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      setEditScheduledTime(`${hh}:${mm}`);
+    } else {
+      setEditShowSchedule(false);
+      setEditScheduledDate("");
+      setEditScheduledTime("");
+    }
 
     if (post.videoUrl) {
       setEditExistingMediaUrl(post.videoUrl);
@@ -316,6 +533,9 @@ export default function FlipLineManagementPage() {
     setEditMediaFile(null);
     setEditMediaPreview("");
     setEditStatusMsg(null);
+    setEditShowSchedule(false);
+    setEditScheduledDate("");
+    setEditScheduledTime("");
   };
 
   const handleEditFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -377,6 +597,33 @@ export default function FlipLineManagementPage() {
         formData.append("media", editMediaFile);
       }
 
+      if (editShowSchedule && editScheduledDate && editScheduledTime) {
+        const [y, m, d] = editScheduledDate.split("-").map(Number);
+        const [hh, mm] = editScheduledTime.split(":").map(Number);
+        const schedD = new Date(y, m - 1, d, hh, mm, 0, 0);
+        const schedTs = schedD.getTime();
+        const schedTimeStr = schedD.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+        const schedDateStr = schedD.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+
+        formData.append("isScheduled", "true");
+        formData.append("scheduledAt", String(schedTs));
+        formData.append("scheduledTimeMs", String(schedTs));
+        formData.append("day", schedDateStr);
+        formData.append("time", schedTimeStr);
+        formData.append("timeMs", String(schedTs));
+      } else if (editingPost.isScheduled && !editShowSchedule) {
+        formData.append("isScheduled", "false");
+        formData.append("timeMs", String(Date.now()));
+      }
+
       const res = await fetch("/api/admin/flipline-posts", {
         method: "PUT",
         body: formData,
@@ -393,6 +640,8 @@ export default function FlipLineManagementPage() {
         setRecentPosts((prev) =>
           prev.map((p) => (p.sk === editingPost.sk ? { ...p, ...data.post } : p))
         );
+        fetchPosts();
+        fetchScheduledPosts();
 
         setTimeout(() => {
           handleCloseEditModal();
@@ -463,8 +712,8 @@ export default function FlipLineManagementPage() {
                       type="button"
                       onClick={() => setSelectedBotId(bot.id)}
                       className={`relative flex flex-col items-center p-3.5 rounded-xl border text-center transition-all ${isSelected
-                          ? "bg-indigo-950/40 border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg shadow-indigo-500/10"
-                          : "bg-[#0d1117] border-[#30363d] hover:border-[#8b949e]/50 hover:bg-[#1f242c]"
+                        ? "bg-indigo-950/40 border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg shadow-indigo-500/10"
+                        : "bg-[#0d1117] border-[#30363d] hover:border-[#8b949e]/50 hover:bg-[#1f242c]"
                         }`}
                     >
                       <div className="relative mb-2">
@@ -530,16 +779,16 @@ export default function FlipLineManagementPage() {
                     type="button"
                     onClick={() => toggleChannel(ch.id)}
                     className={`p-3 rounded-xl border flex flex-col text-left transition-all relative cursor-pointer ${isSelected
-                        ? "bg-blue-950/40 border-blue-500 ring-2 ring-blue-500/30 text-white shadow-md shadow-blue-500/10"
-                        : "bg-[#0d1117] border-[#30363d] hover:border-[#8b949e]/50 text-[#8b949e] hover:text-white"
+                      ? "bg-blue-950/40 border-blue-500 ring-2 ring-blue-500/30 text-white shadow-md shadow-blue-500/10"
+                      : "bg-[#0d1117] border-[#30363d] hover:border-[#8b949e]/50 text-[#8b949e] hover:text-white"
                       }`}
                   >
                     <div className="flex items-center justify-between w-full mb-1">
                       <span className="text-xl">{ch.emoji}</span>
                       <span
                         className={`w-5 h-5 rounded-md flex items-center justify-center text-xs font-bold border transition-colors ${isSelected
-                            ? "bg-blue-500 border-blue-400 text-white shadow"
-                            : "border-[#30363d] bg-[#21262d] text-transparent"
+                          ? "bg-blue-500 border-blue-400 text-white shadow"
+                          : "border-[#30363d] bg-[#21262d] text-transparent"
                           }`}
                       >
                         ✓
@@ -564,8 +813,8 @@ export default function FlipLineManagementPage() {
                   type="button"
                   onClick={() => setMediaMode("text")}
                   className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${mediaMode === "text"
-                      ? "bg-indigo-600 text-white shadow-md"
-                      : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
+                    ? "bg-indigo-600 text-white shadow-md"
+                    : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
                     }`}
                 >
                   <FileText className="w-3.5 h-3.5" />
@@ -575,8 +824,8 @@ export default function FlipLineManagementPage() {
                   type="button"
                   onClick={() => setMediaMode("text_image")}
                   className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${mediaMode === "text_image"
-                      ? "bg-indigo-600 text-white shadow-md"
-                      : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
+                    ? "bg-indigo-600 text-white shadow-md"
+                    : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
                     }`}
                 >
                   <ImageIcon className="w-3.5 h-3.5" />
@@ -586,8 +835,8 @@ export default function FlipLineManagementPage() {
                   type="button"
                   onClick={() => setMediaMode("image_only")}
                   className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${mediaMode === "image_only"
-                      ? "bg-indigo-600 text-white shadow-md"
-                      : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
+                    ? "bg-indigo-600 text-white shadow-md"
+                    : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
                     }`}
                 >
                   <ImageIcon className="w-3.5 h-3.5" />
@@ -597,8 +846,8 @@ export default function FlipLineManagementPage() {
                   type="button"
                   onClick={() => setMediaMode("video")}
                   className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${mediaMode === "video"
-                      ? "bg-indigo-600 text-white shadow-md"
-                      : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
+                    ? "bg-indigo-600 text-white shadow-md"
+                    : "text-[#8b949e] hover:text-white hover:bg-[#21262d]"
                     }`}
                 >
                   <Video className="w-3.5 h-3.5" />
@@ -700,12 +949,184 @@ export default function FlipLineManagementPage() {
               </div>
             )}
 
+            {/* Poll & Schedule Toolbar */}
+            <div className="flex items-center gap-2 pt-2 border-t border-[#30363d]">
+              <button
+                type="button"
+                onClick={() => setShowPoll((prev) => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${showPoll
+                  ? "bg-pink-500/20 border-pink-500/40 text-pink-300"
+                  : "bg-[#0d1117] hover:bg-[#161c26] text-[#8b949e] hover:text-white border-[#30363d]"
+                  }`}
+              >
+                <BarChart2 className="w-3.5 h-3.5 text-pink-400" />
+                <span>{showPoll ? "Remove Poll" : "+ Add Poll"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!showSchedule) {
+                    if (!scheduledDate) setScheduledDate(getTodayDateString());
+                    if (!scheduledTime) setScheduledTime(getDefaultTimeString(30));
+                  }
+                  setShowSchedule((prev) => !prev);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${showSchedule
+                  ? "bg-amber-500/20 border-amber-500/40 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.15)]"
+                  : "bg-[#0d1117] hover:bg-[#161c26] text-[#8b949e] hover:text-white border-[#30363d]"
+                  }`}
+              >
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                <span>{showSchedule ? "Scheduled (Auto-publish)" : "Schedule Post"}</span>
+              </button>
+            </div>
+
+            {/* Poll Builder Section */}
+            {showPoll && (
+              <div className="flex flex-col gap-2.5 bg-[#0d1117] border border-pink-500/30 rounded-xl p-3.5">
+                <div className="flex items-center justify-between text-xs font-bold text-pink-400 uppercase tracking-wider">
+                  <span>Poll Options (24 Hours)</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowPoll(false)}
+                    className="text-gray-400 hover:text-rose-400 text-xs cursor-pointer"
+                  >
+                    Remove Poll
+                  </button>
+                </div>
+                {pollOptions.map((opt, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={opt}
+                      onChange={(e) => {
+                        const updated = [...pollOptions];
+                        updated[idx] = e.target.value;
+                        setPollOptions(updated);
+                      }}
+                      placeholder={`Option ${idx + 1}`}
+                      className="flex-1 bg-[#161b22] border border-[#30363d] focus:border-pink-500 rounded-lg px-3 py-2 text-xs text-white outline-none placeholder:text-[#8b949e]/50"
+                      maxLength={50}
+                    />
+                    {pollOptions.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setPollOptions((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-[#8b949e] hover:text-rose-400 p-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {pollOptions.length < 4 && (
+                  <button
+                    type="button"
+                    onClick={() => setPollOptions((prev) => [...prev, ""])}
+                    className="flex items-center gap-1.5 text-xs text-pink-400 hover:text-pink-300 font-bold py-1 mt-1 cursor-pointer w-fit"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Option</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Schedule Post Section */}
+            {showSchedule && (
+              <div className="flex flex-col gap-3 bg-[#0d1117] border border-amber-500/30 rounded-xl p-3.5 shadow-lg shadow-amber-500/5">
+                <div className="flex items-center justify-between text-xs font-bold text-amber-400 uppercase tracking-wider">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Schedule Post (Auto-publish)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSchedule(false)}
+                    className="text-gray-400 hover:text-rose-400 text-xs font-medium cursor-pointer"
+                  >
+                    Cancel Schedule
+                  </button>
+                </div>
+
+                {/* Date & Time Input Row */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10.5px] font-semibold text-[#8b949e]">Publish Date</label>
+                    <input
+                      type="date"
+                      min={getTodayDateString()}
+                      value={scheduledDate}
+                      onChange={(e) => setScheduledDate(e.target.value)}
+                      className="w-full bg-[#161b22] border border-[#30363d] focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white outline-none [color-scheme:dark]"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10.5px] font-semibold text-[#8b949e]">Publish Time</label>
+                    <input
+                      type="time"
+                      value={scheduledTime}
+                      onChange={(e) => setScheduledTime(e.target.value)}
+                      className="w-full bg-[#161b22] border border-[#30363d] focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white outline-none [color-scheme:dark]"
+                    />
+                  </div>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <span className="text-[10px] text-[#8b949e] font-medium mr-0.5">Presets:</span>
+                  {[
+                    { label: "+15m", action: () => applySchedulePreset(15) },
+                    { label: "+1h", action: () => applySchedulePreset(60) },
+                    { label: "+3h", action: () => applySchedulePreset(180) },
+                    { label: "Tomorrow 9 AM", action: () => applyTomorrowPreset(9, 0) },
+                    { label: "Tomorrow 6 PM", action: () => applyTomorrowPreset(18, 0) },
+                  ].map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={preset.action}
+                      className="px-2 py-1 rounded-md bg-white/5 hover:bg-amber-500/20 text-[#c9d1d9] hover:text-amber-300 border border-[#30363d] hover:border-amber-500/30 text-[10.5px] font-semibold transition-all cursor-pointer"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Live Preview Info Banner */}
+                {scheduledTs && (
+                  <div
+                    className={`p-2.5 rounded-lg text-xs font-medium flex items-center gap-2 border ${isPastTime
+                      ? "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                      : "bg-amber-500/10 border-amber-500/25 text-amber-300"
+                      }`}
+                  >
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      {isPastTime
+                        ? "⚠️ Selected time is in the past. Please choose a future time."
+                        : `Will go live on ${new Date(scheduledTs).toLocaleString("en-US", {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                          hour12: true,
+                        })}`}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Submit Notification Status */}
             {statusMsg && (
               <div
                 className={`p-3.5 rounded-xl border text-xs font-medium ${statusMsg.type === "success"
-                    ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
-                    : "bg-rose-950/40 border-rose-500/50 text-rose-300"
+                  ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
+                  : "bg-rose-950/40 border-rose-500/50 text-rose-300"
                   }`}
               >
                 {statusMsg.text}
@@ -715,13 +1136,26 @@ export default function FlipLineManagementPage() {
             {/* Publish Action Button */}
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3.5 px-5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-semibold rounded-xl text-sm shadow-lg shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
+              disabled={
+                isSubmitting ||
+                (showSchedule && (isPastTime || !scheduledTs))
+              }
+              className={`w-full py-3.5 px-5 text-white font-semibold rounded-xl text-sm shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer ${showSchedule
+                ? "bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-500/20"
+                : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-indigo-600/20"
+                }`}
             >
               {isSubmitting ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  Publishing to {selectedChannels.length} channel{selectedChannels.length > 1 ? "s" : ""} as {activeBot?.name || "Bot"}...
+                  {showSchedule
+                    ? `Scheduling for ${selectedChannels.length} channel${selectedChannels.length > 1 ? "s" : ""} as ${activeBot?.name || "Bot"}...`
+                    : `Publishing to ${selectedChannels.length} channel${selectedChannels.length > 1 ? "s" : ""} as ${activeBot?.name || "Bot"}...`}
+                </>
+              ) : showSchedule ? (
+                <>
+                  <Clock className="w-4 h-4" />
+                  Schedule Post for {selectedChannels.length} Channel{selectedChannels.length > 1 ? "s" : ""} as {activeBot?.name || "Bot"}
                 </>
               ) : (
                 <>
@@ -830,37 +1264,172 @@ export default function FlipLineManagementPage() {
         </div>
       </div>
 
-      {/* Published FlipLine Posts Feed Manager */}
+      {/* Published FlipLine Posts & Scheduled Queue Feed Manager */}
       <div className="max-w-7xl mx-auto mt-12 bg-[#161b22] border border-[#30363d] rounded-2xl p-6 shadow-xl">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-          <div>
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Layers className="w-5 h-5 text-indigo-400" />
-              Published FlipLine Posts Feed
-            </h2>
-            <p className="text-xs text-[#8b949e]">
-              Manage live published posts in the FlipLine stream.
-            </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab("published")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${activeTab === "published"
+                ? "bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/20"
+                : "bg-[#0d1117] text-[#8b949e] hover:text-white border-[#30363d]"
+                }`}
+            >
+              <Layers className="w-4 h-4" />
+              <span>Published Posts ({recentPosts.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("scheduled");
+                fetchScheduledPosts();
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${activeTab === "scheduled"
+                ? "bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-md shadow-amber-500/10"
+                : "bg-[#0d1117] text-[#8b949e] hover:text-white border-[#30363d]"
+                }`}
+            >
+              <Clock className={`w-4 h-4 ${scheduledPosts.length > 0 ? "text-amber-400 animate-pulse" : ""}`} />
+              <span>Scheduled Queue</span>
+              {scheduledPosts.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-amber-500 text-black">
+                  {scheduledPosts.length}
+                </span>
+              )}
+            </button>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-[#8b949e]">Filter by Channel:</span>
-            <select
-              value={feedFilterChannel}
-              onChange={(e) => setFeedFilterChannel(e.target.value)}
-              className="bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (activeTab === "published") fetchPosts();
+                else fetchScheduledPosts();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0d1117] hover:bg-[#21262d] text-xs text-[#8b949e] hover:text-white border border-[#30363d] transition-colors cursor-pointer"
+              title="Refresh feed"
             >
-              <option value="all">All Channels</option>
-              {CHANNELS.map((ch) => (
-                <option key={ch.id} value={ch.id}>
-                  {ch.emoji} {ch.label}
-                </option>
-              ))}
-            </select>
+              <RefreshCw className={`w-3.5 h-3.5 ${(loadingPosts || loadingScheduled) ? "animate-spin" : ""}`} />
+              <span>Refresh</span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[#8b949e]">Channel:</span>
+              <select
+                value={feedFilterChannel}
+                onChange={(e) => setFeedFilterChannel(e.target.value)}
+                className="bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+              >
+                <option value="all">All Channels</option>
+                {CHANNELS.map((ch) => (
+                  <option key={ch.id} value={ch.id}>
+                    {ch.emoji} {ch.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
-        {loadingPosts ? (
+        {activeTab === "scheduled" ? (
+          loadingScheduled ? (
+            <div className="py-12 text-center text-sm text-[#8b949e] flex items-center justify-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
+              <span>Loading scheduled queue...</span>
+            </div>
+          ) : scheduledPosts.length === 0 ? (
+            <div className="py-12 px-4 text-center rounded-xl border border-dashed border-[#30363d] bg-[#0d1117]/50 flex flex-col items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-2">
+                <Clock className="w-5 h-5" />
+              </div>
+              <h4 className="text-sm font-bold text-white mb-1">No Scheduled Posts Pending</h4>
+              <p className="text-xs text-[#8b949e] max-w-sm">
+                When you schedule posts for a future date & time, they appear in this queue. When their live time arrives, they automatically move to the published feed.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[#30363d]">
+              {scheduledPosts.map((post) => {
+                const targetTs = Number(post.scheduledAt) || Number(post.scheduledTimeMs) || post.timeMs || 0;
+                const countdown = formatCountdown(targetTs);
+                const isDeleting = deletingSk === post.sk;
+
+                return (
+                  <div key={post.sk} className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <img
+                        src={post.adminPhoto || post.authorPhoto || "https://res.cloudinary.com/dflnsufit/image/upload/v1788332913/Kabir_Sharma_kwc0vp.png"}
+                        alt={post.author}
+                        className="w-10 h-10 rounded-full object-cover border border-[#30363d]"
+                      />
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-xs text-white">{post.author}</span>
+                          {post.isVerified && (
+                            <CheckCircle2 className="w-3.5 h-3.5 fill-blue-500 text-white" />
+                          )}
+                          {post.channels && post.channels.length > 1 ? (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {post.channels.map((ch) => (
+                                <span key={ch} className="text-[10px] bg-[#21262d] text-[#8b949e] px-1.5 py-0.5 rounded capitalize">
+                                  {ch}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] bg-[#21262d] text-[#8b949e] px-1.5 py-0.5 rounded capitalize">
+                              {post.channel || post.sport || "general"}
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/15 border border-amber-500/30 text-amber-300 flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-amber-400" />
+                            <span>{countdown}</span>
+                          </span>
+                          <span className="text-[11px] text-[#8b949e]">
+                            Target: {targetTs ? new Date(targetTs).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : post.time}
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#c9d1d9] mt-1 line-clamp-2 max-w-2xl">{post.content}</p>
+                        {post.image && (
+                          <div className="mt-1.5 text-[11px] text-indigo-400 flex items-center gap-1">
+                            <ImageIcon className="w-3 h-3" /> Image attached
+                          </div>
+                        )}
+                        {post.videoUrl && (
+                          <div className="mt-1.5 text-[11px] text-purple-400 flex items-center gap-1">
+                            <Video className="w-3 h-3" /> Video attached
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleOpenEditModal(post)}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#0d1117] hover:bg-amber-500/20 text-xs font-semibold text-[#c9d1d9] hover:text-amber-300 border border-[#30363d] hover:border-amber-500/30 transition-all cursor-pointer"
+                        title="Edit Schedule"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        disabled={isDeleting}
+                        onClick={() => handleDeleteScheduledPost(post.sk)}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-xs font-semibold text-rose-400 border border-rose-500/25 transition-all disabled:opacity-50 cursor-pointer"
+                        title="Cancel & Delete Post"
+                      >
+                        {isDeleting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                        <span>Cancel</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : loadingPosts ? (
           <div className="py-12 text-center text-sm text-[#8b949e]">Loading feed posts...</div>
         ) : recentPosts.length === 0 ? (
           <div className="py-12 text-center text-sm text-[#8b949e] border border-dashed border-[#30363d] rounded-xl">
@@ -882,9 +1451,19 @@ export default function FlipLineManagementPage() {
                       {post.isVerified && (
                         <CheckCircle2 className="w-3.5 h-3.5 fill-blue-500 text-white" />
                       )}
-                      <span className="text-[10px] bg-[#21262d] text-[#8b949e] px-1.5 py-0.5 rounded capitalize">
-                        {post.channel || post.sport || "general"}
-                      </span>
+                      {post.channels && post.channels.length > 1 ? (
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {post.channels.map((ch) => (
+                            <span key={ch} className="text-[10px] bg-[#21262d] text-[#8b949e] px-1.5 py-0.5 rounded capitalize">
+                              {ch}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[10px] bg-[#21262d] text-[#8b949e] px-1.5 py-0.5 rounded capitalize">
+                          {post.channel || post.sport || "general"}
+                        </span>
+                      )}
                       <span className="text-[11px] text-[#8b949e]">{post.time || (post.timeMs ? new Date(post.timeMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : "")}</span>
                     </div>
                     <p className="text-xs text-[#c9d1d9] mt-1 line-clamp-2 max-w-2xl">{post.content}</p>
@@ -971,8 +1550,8 @@ export default function FlipLineManagementPage() {
                         key={ch.id}
                         onClick={() => setEditChannel(ch.id)}
                         className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${isSelected
-                            ? "bg-indigo-950/40 border-indigo-500 text-white shadow-lg shadow-indigo-500/10"
-                            : "bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#8b949e]"
+                          ? "bg-indigo-950/40 border-indigo-500 text-white shadow-lg shadow-indigo-500/10"
+                          : "bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#8b949e]"
                           }`}
                       >
                         <div className="flex items-center gap-1.5 font-bold text-xs">
@@ -1115,12 +1694,67 @@ export default function FlipLineManagementPage() {
                 />
               </div>
 
+              {/* Edit Schedule Section */}
+              <div className="pt-2 border-t border-[#30363d]">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-[#8b949e] flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Schedule Settings</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!editShowSchedule) {
+                        if (!editScheduledDate) setEditScheduledDate(getTodayDateString());
+                        if (!editScheduledTime) setEditScheduledTime(getDefaultTimeString(30));
+                      }
+                      setEditShowSchedule((prev) => !prev);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                      editShowSchedule
+                        ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                        : "bg-[#0d1117] hover:bg-[#21262d] text-[#8b949e] hover:text-white border-[#30363d]"
+                    }`}
+                  >
+                    {editShowSchedule ? "Cancel Schedule (Publish Now)" : "+ Schedule Post"}
+                  </button>
+                </div>
+
+                {editShowSchedule && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-[#0d1117] border border-amber-500/30">
+                    <div>
+                      <label className="block text-[10.5px] font-semibold text-[#8b949e] mb-1">
+                        Publish Date
+                      </label>
+                      <input
+                        type="date"
+                        min={getTodayDateString()}
+                        value={editScheduledDate}
+                        onChange={(e) => setEditScheduledDate(e.target.value)}
+                        className="w-full bg-[#161b22] border border-[#30363d] focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white outline-none [color-scheme:dark]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10.5px] font-semibold text-[#8b949e] mb-1">
+                        Publish Time
+                      </label>
+                      <input
+                        type="time"
+                        value={editScheduledTime}
+                        onChange={(e) => setEditScheduledTime(e.target.value)}
+                        className="w-full bg-[#161b22] border border-[#30363d] focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white outline-none [color-scheme:dark]"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Status Message */}
               {editStatusMsg && (
                 <div
                   className={`p-3 rounded-xl border text-xs font-medium ${editStatusMsg.type === "success"
-                      ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
-                      : "bg-rose-950/40 border-rose-500/50 text-rose-300"
+                    ? "bg-emerald-950/40 border-emerald-500/50 text-emerald-300"
+                    : "bg-rose-950/40 border-rose-500/50 text-rose-300"
                     }`}
                 >
                   {editStatusMsg.text}
