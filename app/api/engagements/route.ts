@@ -401,19 +401,22 @@ export async function POST(req: NextRequest) {
         }
         : undefined;
 
-    const formattedMemeData =
-      type === "meme" && memeData
+    const formattedMemeData: MemePayload | undefined =
+      type === "meme"
         ? {
-            imageUrl: memeData.imageUrl || "",
-            authorName: memeData.authorName || creatorName || "SportsFan",
-            authorHandle: memeData.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@sportsfan"),
-            authorAvatar: memeData.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-            heatPercentage: memeData.heatPercentage !== undefined ? Number(memeData.heatPercentage) : 0,
-            totalVotes: Number(memeData.totalVotes) || 0,
-            reactions: memeData.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
-            commentsCount: Number(memeData.commentsCount) || 0,
-            sharesCount: Number(memeData.sharesCount) || 0,
-          caption: memeData.caption || subtitle || "",
+            imageUrl: memeData?.imageUrl || resolvedImageUrl || "",
+            mediaUrl: memeData?.mediaUrl || resolvedImageUrl || "",
+            authorName: memeData?.authorName || creatorName || "SportsFan",
+            authorHandle: memeData?.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@sportsfan"),
+            authorAvatar: memeData?.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
+            heatPercentage: memeData?.heatPercentage !== undefined ? Number(memeData.heatPercentage) : (memeData?.heatIndex !== undefined ? Number(memeData.heatIndex) : 0),
+            totalVotes: Number(memeData?.totalVotes) || 0,
+            reactions: memeData?.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+            commentsCount: Number(memeData?.commentsCount) || 0,
+            sharesCount: Number(memeData?.sharesCount) || 0,
+            title: memeData?.title || title || "",
+            caption: memeData?.caption || subtitle || description || "",
+            description: memeData?.description || subtitle || description || "",
             createdAt: now,
           }
         : undefined;

@@ -62,7 +62,7 @@ export default function EngagementsManagementPage() {
       optionC: "30",
       optionD: "32",
       correctOptionId: "B",
-      pointsReward: 50,
+      pointsReward: 10,
       explanation: "Virat Kohli scored his 29th Test hundred against West Indies.",
     },
   ]);
@@ -167,7 +167,7 @@ export default function EngagementsManagementPage() {
           optionC: "30",
           optionD: "32",
           correctOptionId: "B",
-          pointsReward: 50,
+          pointsReward: 10,
           explanation: "Virat Kohli scored his 29th Test hundred against West Indies.",
         },
       ]);
@@ -340,7 +340,7 @@ export default function EngagementsManagementPage() {
         optionC: "",
         optionD: "",
         correctOptionId: "A",
-        pointsReward: 50,
+        pointsReward: 10,
         explanation: "",
       },
     ]);
@@ -400,13 +400,13 @@ export default function EngagementsManagementPage() {
             { id: "D", text: q.optionD },
           ],
           correctOptionId: q.correctOptionId,
-          pointsReward: Number(q.pointsReward) || 50,
+          pointsReward: Number(q.pointsReward) || 10,
           explanation: q.explanation,
         }));
 
         payload.tags = [
           "🧠 QUIZ",
-          `⭐ ${formattedQuestions[0]?.pointsReward || 50} PTS/Q`,
+          `⭐ ${formattedQuestions[0]?.pointsReward || 10} PTS/Q`,
           `⏱️ ${quizFrequencyMinutes}m freq`,
           `⏳ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
         ];
@@ -425,7 +425,7 @@ export default function EngagementsManagementPage() {
           question: formattedQuestions[0]?.question || title,
           options: formattedQuestions[0]?.options || [],
           correctOptionId: formattedQuestions[0]?.correctOptionId || "B",
-          pointsReward: Number(formattedQuestions[0]?.pointsReward) || 50,
+          pointsReward: Number(formattedQuestions[0]?.pointsReward) || 10,
           explanation: formattedQuestions[0]?.explanation || "",
         };
       } else if (activeTab === "poll") {
@@ -529,11 +529,14 @@ export default function EngagementsManagementPage() {
         payload.memeData = {
           title: memeTitle.trim(),
           description: memeDescription.trim(),
+          caption: memeDescription.trim(),
           imageUrl: resolvedUrl,
           mediaUrl: resolvedUrl,
           mediaType: "image",
           totalVotes: editingItem?.memeData?.totalVotes || 0,
-          heatIndex: editingItem?.memeData?.heatIndex || 78,
+          heatPercentage: editingItem?.memeData?.heatPercentage || editingItem?.memeData?.heatIndex || 78,
+          heatIndex: editingItem?.memeData?.heatIndex || editingItem?.memeData?.heatPercentage || 78,
+          reactions: editingItem?.memeData?.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
           ratings: editingItem?.memeData?.ratings || { mid: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
         };
       }
