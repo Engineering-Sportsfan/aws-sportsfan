@@ -691,7 +691,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         item.quizData;
 
       const correctOptId = targetQ.correctOptionId || "B";
-      const ptsReward = Number(targetQ.pointsReward || item.quizData.pointsReward || 50);
+      // Enforce +10 PTS bonus for correct quiz answer (+2 participation points = 12 total)
+      const ptsReward = 10;
       const isCorrect = String(selectedOptionId).trim().toUpperCase() === String(correctOptId).trim().toUpperCase();
       const pointsAwarded = isCorrect ? ptsReward : 0;
       item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
