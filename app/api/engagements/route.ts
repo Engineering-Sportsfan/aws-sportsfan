@@ -86,36 +86,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-          const id = it.id || String(it.contentId || "").replace(/^ENGAGEMENT#/, "");
-          itemsMap.set(id, {
-            id,
-            type: it.type,
-            title: it.title,
-            subtitle: it.subtitle || "",
-            tags: it.tags || [],
-            sport: (it.sport || "cricket").toLowerCase(),
-            status: it.status || "active",
-            fanBattleData: it.fanBattleData,
-            quizData: it.quizData,
-            pollData: it.pollData,
-            predictionData: it.predictionData,
-            memeData: it.memeData,
-            likes: Number(it.likes) || 0,
-            shares: Number(it.shares) || 0,
-            totalEngaged: Number(it.totalEngaged) || 0,
-            createdAt: it.createdAt || Date.now(),
-            updatedAt: it.updatedAt || Date.now(),
-            expiresAt: it.expiresAt || null,
-            creatorId: it.creatorId || undefined,
-            creatorEmail: it.creatorEmail || undefined,
-            creatorName: it.creatorName || undefined,
-          });
-        }
-      }
-    } catch (dynErr: any) {
-      console.warn("DynamoDB engagements scan notice:", dynErr?.message || dynErr);
-    }
-
     // 2. Fetch from Firestore 'engagements' collection and merge
     if (db) {
       try {
