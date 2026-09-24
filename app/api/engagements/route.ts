@@ -269,12 +269,12 @@ export async function POST(req: NextRequest) {
       pollData,
       predictionData,
       memeData,
-      imageUrl,
-      mediaUrl,
       likes,
       shares,
       totalEngaged,
       expiresAt,
+      imageUrl,
+      mediaUrl,
     } = body;
 
     const isMeme = type === "meme";
@@ -329,19 +329,32 @@ export async function POST(req: NextRequest) {
       else if (type === "quiz") computedTags = ["🧠 QUIZ", `⭐ ${quizData?.pointsReward || 50} PTS`];
       else if (type === "poll") computedTags = ["📊 POLL"];
       else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 POINTS"];
-      else if (type === "meme") computedTags = ["🔥 MEME ARENA", "🌶️ HOT TAKES"];
+      else if (type === "meme") computedTags = ["🔥 MEME ARENA", "😂 VIRAL"];
     }
 
-    // Resolve expiry for polls and predictions
+    // Resolve expiry for polls, predictions, and quizzes
     const pollDurationMins = Number(pollData?.durationMinutes || pollData?.timerMinutes || 10);
     const predDurationMins = Number(predictionData?.durationMinutes || predictionData?.timerMinutes || 30);
+    const quizDurationMins = Number(quizData?.durationMinutes || quizData?.timerMinutes || 600);
     const computedExpiresAt =
       expiresAt ||
       (type === "poll"
         ? pollData?.expiresAt || now + pollDurationMins * 60 * 1000
         : type === "prediction"
           ? predictionData?.expiresAt || now + predDurationMins * 60 * 1000
-          : null);
+          : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
+            ? quizData?.expiresAt || now + quizDurationMins * 60 * 1000
+            : null);
+
+    const formattedQuizData =
+      type === "quiz" && quizData
+        ? {
+            ...quizData,
+            durationMinutes: quizDurationMins,
+            timerMinutes: quizDurationMins,
+            expiresAt: computedExpiresAt,
+          }
+        : undefined;
 
     const formattedPollData =
       type === "poll" && pollData
@@ -372,100 +385,34 @@ export async function POST(req: NextRequest) {
         }
         : undefined;
 
-    // Format Meme Data if type === "meme"
-    let formattedMemeData: MemePayload | undefined = undefined;
-    if (isMeme) {
-      const memeRatings = {
-        mid: Number(memeData?.ratings?.mid) || 0,
-        funny: Number(memeData?.ratings?.funny) || 0,
-        hot: Number(memeData?.ratings?.hot) || 0,
-        fire: Number(memeData?.ratings?.fire) || 0,
-        nuclear: Number(memeData?.ratings?.nuclear) || 0,
-      };
-      const totalMemeVotes =
-        memeRatings.mid + memeRatings.funny + memeRatings.hot + memeRatings.fire + memeRatings.nuclear;
-      const computedHeatIndex =
-        totalMemeVotes > 0
-          ? Math.round(
-            (memeRatings.mid * 15 +
-              memeRatings.funny * 35 +
-              memeRatings.hot * 65 +
-              memeRatings.fire * 85 +
-              memeRatings.nuclear * 100) /
-            totalMemeVotes
-          )
-          : 78;
+    const formattedMemeData =
+      type === "meme" && memeData
+        ? {
+            imageUrl: memeData.imageUrl || resolvedImageUrl || "",
+            authorName: memeData.authorName || creatorName || "AmitFan",
+            authorHandle: memeData.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@AmitFan"),
+            authorAvatar: memeData.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
+            heatPercentage: memeData.heatPercentage || memeData.heatIndex || 78,
+            heatIndex: memeData.heatIndex || memeData.heatPercentage || 78,
+            totalVotes: Number(memeData.totalVotes) || 1240,
+            reactions: memeData.reactions || { mild: 25, funny: 310, hot: 480, fire: 320, nuclear: 105 },
+            ratings: memeData.ratings || { mid: 25, funny: 310, hot: 480, fire: 320, nuclear: 105 },
+            commentsCount: Number(memeData.commentsCount) || 43,
+            sharesCount: Number(memeData.sharesCount) || 12,
+            title: memeData.title || title || "",
+            caption: memeData.caption || subtitle || description || "",
+            description: memeData.description || subtitle || description || "",
+            createdAt: now,
+          }
+        : undefined;
 
-      const memeOptions: MemeRatingChoice[] = [
-        {
-          id: "mid",
-          label: "Mild",
-          emoji: "🔥",
-          color: "#6e7681",
-          votes: memeRatings.mid,
-          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.mid / totalMemeVotes) * 100) : 0,
-        },
-        {
-          id: "funny",
-          label: "Funny",
-          emoji: "🔥",
-          color: "#ec4899",
-          votes: memeRatings.funny,
-          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.funny / totalMemeVotes) * 100) : 0,
-        },
-        {
-          id: "hot",
-          label: "Hot",
-          emoji: "🔥",
-          color: "#f97316",
-          votes: memeRatings.hot,
-          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.hot / totalMemeVotes) * 100) : 0,
-        },
-        {
-          id: "fire",
-          label: "Fire",
-          emoji: "🔥",
-          color: "#ef4444",
-          votes: memeRatings.fire,
-          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.fire / totalMemeVotes) * 100) : 0,
-        },
-        {
-          id: "nuclear",
-          label: "Nuclear",
-          emoji: "🔥",
-          color: "#d946ef",
-          votes: memeRatings.nuclear,
-          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.nuclear / totalMemeVotes) * 100) : 0,
-        },
-      ];
-
-      formattedMemeData = {
-        title: title || memeData?.title || "",
-        description: description || memeData?.description || "",
-        imageUrl: resolvedImageUrl,
-        mediaUrl: resolvedImageUrl,
-        mediaType: "image",
-        authorHandle:
-          body.authorHandle ||
-          memeData?.authorHandle ||
-          (creatorName ? `@${creatorName.replace(/\s+/g, "")}` : "@SportsFan"),
-        authorName: creatorName || body.authorName || memeData?.authorName || "SportsFan",
-        authorAvatar: body.authorAvatar || memeData?.authorAvatar || undefined,
-        totalVotes: totalMemeVotes,
-        heatIndex: computedHeatIndex,
-        ratings: memeRatings,
-        options: memeOptions,
-        startTime: now,
-      };
-    }
-
-    const finalTitle = title || (isMeme ? formattedMemeData?.title || "Meme Arena" : "");
+    const finalTitle = title || (isMeme ? formattedMemeData?.title || formattedMemeData?.caption || "Meme Arena" : "");
 
     const newEngagement: EngagementItem = {
       id,
       type,
       title: finalTitle,
-      subtitle: subtitle || (isMeme ? formattedMemeData?.description || "" : ""),
+      subtitle: subtitle || (isMeme ? formattedMemeData?.caption || formattedMemeData?.description || "" : ""),
       tags: computedTags,
       sport: (sport || "cricket").toLowerCase(),
       status: status || "active",
@@ -473,10 +420,10 @@ export async function POST(req: NextRequest) {
       creatorEmail: creatorEmail || undefined,
       creatorName: creatorName || undefined,
       fanBattleData: type === "fan_battle" ? fanBattleData : undefined,
-      quizData: type === "quiz" ? quizData : undefined,
+      quizData: formattedQuizData,
       pollData: formattedPollData,
       predictionData: formattedPredData,
-      memeData: isMeme ? formattedMemeData : undefined,
+      memeData: formattedMemeData,
       likes: Number(likes) || 0,
       shares: Number(shares) || 0,
       totalEngaged: Number(totalEngaged) || 0,

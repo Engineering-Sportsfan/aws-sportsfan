@@ -772,108 +772,47 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
-    // 3.5 Meme Rating Vote Handling (5 ratings: mid, funny, hot, fire, nuclear)
-    else if (item.type === "meme") {
-      let ratingKey = String(selectedOptionId).trim().toLowerCase();
-      if (ratingKey === "mild") ratingKey = "mid";
-
-      const validKeys = ["mid", "funny", "hot", "fire", "nuclear"];
-      if (!validKeys.includes(ratingKey)) {
-        ratingKey = "hot"; // fallback if unknown
-      }
-
-      if (!item.memeData) {
-        item.memeData = {
-          imageUrl: "",
-          totalVotes: 0,
-          heatIndex: 75,
-          ratings: { mid: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
-        };
-      }
-
-      const ratings = {
-        mid: Number(item.memeData.ratings?.mid) || 0,
-        funny: Number(item.memeData.ratings?.funny) || 0,
-        hot: Number(item.memeData.ratings?.hot) || 0,
-        fire: Number(item.memeData.ratings?.fire) || 0,
-        nuclear: Number(item.memeData.ratings?.nuclear) || 0,
+    // 3.5 Meme Arena Reaction Vote Handling
+    else if (item.type === "meme" && item.memeData) {
+      const reactions = {
+        mild: Number(item.memeData.reactions?.mild || 0),
+        funny: Number(item.memeData.reactions?.funny || 0),
+        hot: Number(item.memeData.reactions?.hot || 0),
+        fire: Number(item.memeData.reactions?.fire || 0),
+        nuclear: Number(item.memeData.reactions?.nuclear || 0),
       };
 
-      // Increment selected rating
-      ratings[ratingKey as keyof typeof ratings] += 1;
+      const reactionType = (selectedOptionId || "hot").toLowerCase() as keyof typeof reactions;
+      if (reactions[reactionType] !== undefined) {
+        reactions[reactionType] = (reactions[reactionType] || 0) + 1;
+      }
 
       const totalVotes =
-        ratings.mid + ratings.funny + ratings.hot + ratings.fire + ratings.nuclear;
+        (Number(item.memeData.totalVotes) ||
+          reactions.mild + reactions.funny + reactions.hot + reactions.fire + reactions.nuclear) + 1;
 
-      const computedHeatIndex =
-        totalVotes > 0
-          ? Math.round(
-              (ratings.mid * 15 +
-                ratings.funny * 35 +
-                ratings.hot * 65 +
-                ratings.fire * 85 +
-                ratings.nuclear * 100) /
-                totalVotes
-            )
-          : 75;
+      // Calculate weighted heat percentage: mild (20%), funny (40%), hot (60%), fire (80%), nuclear (100%)
+      const weightedScore =
+        reactions.mild * 20 +
+        reactions.funny * 40 +
+        reactions.hot * 60 +
+        reactions.fire * 80 +
+        reactions.nuclear * 100;
+      const heatPercentage =
+        totalVotes > 0 ? Math.min(100, Math.max(10, Math.round(weightedScore / totalVotes))) : 78;
 
-      const optionsWithPercentages = [
-        {
-          id: "mid",
-          label: "Mild",
-          emoji: "🔥",
-          color: "#6e7681",
-          votes: ratings.mid,
-          percentage: totalVotes > 0 ? Math.round((ratings.mid / totalVotes) * 100) : 0,
-        },
-        {
-          id: "funny",
-          label: "Funny",
-          emoji: "🔥",
-          color: "#ec4899",
-          votes: ratings.funny,
-          percentage: totalVotes > 0 ? Math.round((ratings.funny / totalVotes) * 100) : 0,
-        },
-        {
-          id: "hot",
-          label: "Hot",
-          emoji: "🔥",
-          color: "#f97316",
-          votes: ratings.hot,
-          percentage: totalVotes > 0 ? Math.round((ratings.hot / totalVotes) * 100) : 0,
-        },
-        {
-          id: "fire",
-          label: "Fire",
-          emoji: "🔥",
-          color: "#ef4444",
-          votes: ratings.fire,
-          percentage: totalVotes > 0 ? Math.round((ratings.fire / totalVotes) * 100) : 0,
-        },
-        {
-          id: "nuclear",
-          label: "Nuclear",
-          emoji: "🔥",
-          color: "#d946ef",
-          votes: ratings.nuclear,
-          percentage: totalVotes > 0 ? Math.round((ratings.nuclear / totalVotes) * 100) : 0,
-        },
-      ];
-
-      item.memeData.ratings = ratings;
+      item.memeData.reactions = reactions;
       item.memeData.totalVotes = totalVotes;
-      item.memeData.heatIndex = computedHeatIndex;
-      item.memeData.options = optionsWithPercentages;
+      item.memeData.heatPercentage = heatPercentage;
       item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
 
       responseData = {
         success: true,
         type: "meme",
-        selectedOptionId: ratingKey,
-        ratings,
-        options: optionsWithPercentages,
+        selectedOptionId: reactionType,
+        heatPercentage,
         totalVotes,
-        heatIndex: computedHeatIndex,
+        reactions,
         participationPointsAwarded: 2,
         pointsAwarded: 2,
       };
