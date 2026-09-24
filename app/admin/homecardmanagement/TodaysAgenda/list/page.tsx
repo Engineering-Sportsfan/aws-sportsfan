@@ -28,10 +28,10 @@ interface AgendaEventItem {
   sport: string;
   subEvent: string;
   detail: string;
-  statusType: "live" | "up_next" | "afternoon" | "evening";
+  statusType: "completed" | "live" | "up_next" | "scheduled" | string;
   statusLabel: string;
   icon: string;
-  nodeColor: "emerald" | "amber" | "blue";
+  nodeColor: "gray" | "emerald" | "amber" | "blue" | string;
   venue?: string;
   active: boolean;
   createdAt: number;
@@ -117,11 +117,16 @@ export default function TodaysAgendaListPage() {
       event.venue?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       event.time?.toLowerCase().includes(searchQuery.toLowerCase());
 
+    const rawStatus = (event.statusType || "").toLowerCase();
+    const normalizedStatus =
+      rawStatus === "afternoon" || rawStatus === "evening" ? "scheduled" : rawStatus || "live";
+
     const matchesStatus =
       statusFilter === "all" ||
-      (statusFilter === "live" && event.statusType === "live") ||
-      (statusFilter === "up_next" && event.statusType === "up_next") ||
-      (statusFilter === "afternoon" && event.statusType === "afternoon");
+      (statusFilter === "completed" && normalizedStatus === "completed") ||
+      (statusFilter === "live" && normalizedStatus === "live") ||
+      (statusFilter === "up_next" && normalizedStatus === "up_next") ||
+      (statusFilter === "scheduled" && normalizedStatus === "scheduled");
 
     return matchesQuery && matchesStatus;
   });
@@ -189,7 +194,7 @@ export default function TodaysAgendaListPage() {
           </div>
 
           <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-            {["all", "live", "up_next", "afternoon"].map((st) => (
+            {["all", "completed", "live", "up_next", "scheduled"].map((st) => (
               <button
                 key={st}
                 type="button"
@@ -213,6 +218,10 @@ export default function TodaysAgendaListPage() {
           <span>•</span>
           <span className="text-emerald-400 font-semibold">
             Live: <strong>{events.filter((e) => e.statusType === "live").length}</strong>
+          </span>
+          <span>•</span>
+          <span className="text-gray-400 font-semibold">
+            Completed: <strong>{events.filter((e) => e.statusType === "completed").length}</strong>
           </span>
         </div>
       </div>
@@ -249,7 +258,9 @@ export default function TodaysAgendaListPage() {
               <tbody className="divide-y divide-white/5">
                 {filteredEvents.map((evt, idx) => {
                   let badgeClass = "bg-[#0b1c33] text-[#60A5FA] border border-[#1E40AF]/60";
-                  if (evt.statusType === "live") {
+                  if (evt.statusType === "completed") {
+                    badgeClass = "bg-[#1e293b] text-[#94a3b8] border border-[#475569]/50";
+                  } else if (evt.statusType === "live") {
                     badgeClass = "bg-[#04281E] text-[#10B981] border border-[#10B981]/50";
                   } else if (evt.statusType === "up_next") {
                     badgeClass = "bg-[#2E1F06] text-[#FBBF24] border border-[#D97706]/60";
@@ -304,7 +315,14 @@ export default function TodaysAgendaListPage() {
                           {evt.statusType === "live" && (
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                           )}
-                          {evt.statusLabel || (evt.statusType === "live" ? "LIVE" : evt.statusType === "up_next" ? "UP NEXT" : "AFTERNOON")}
+                          {evt.statusLabel ||
+                            (evt.statusType === "completed"
+                              ? "COMPLETED"
+                              : evt.statusType === "live"
+                              ? "LIVE"
+                              : evt.statusType === "up_next"
+                              ? "UP NEXT"
+                              : "SCHEDULED")}
                         </span>
                       </td>
 

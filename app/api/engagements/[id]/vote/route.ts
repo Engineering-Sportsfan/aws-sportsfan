@@ -789,8 +789,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
 
       const totalVotes =
-        (Number(item.memeData.totalVotes) ||
-          reactions.mild + reactions.funny + reactions.hot + reactions.fire + reactions.nuclear) + 1;
+        reactions.mild + reactions.funny + reactions.hot + reactions.fire + reactions.nuclear;
 
       // Calculate weighted heat percentage: mild (20%), funny (40%), hot (60%), fire (80%), nuclear (100%)
       const weightedScore =
