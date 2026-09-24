@@ -63,7 +63,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     if (resolvedUserId) {
       try {
-        const [likeRes, voteRes] = await Promise.all([
+        const [likeRes, voteRes, userMarkerRes] = await Promise.all([
           docClient
             .send(
               new GetCommand({
@@ -80,13 +80,21 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
               })
             )
             .catch(() => ({ Item: null })),
+          docClient
+            .send(
+              new GetCommand({
+                TableName: TABLES.SocialAndContent,
+                Key: { contentId: `ENGAGEMENT#${id}`, sk: `USER#${resolvedUserId}` },
+              })
+            )
+            .catch(() => ({ Item: null })),
         ]);
 
         item = {
           ...item,
           userLiked: !!likeRes?.Item,
-          userVoted: !!voteRes?.Item,
-          userVote: voteRes?.Item?.selectedOptionId ?? null,
+          userVoted: !!voteRes?.Item || !!userMarkerRes?.Item,
+          userVote: voteRes?.Item?.selectedOptionId ?? userMarkerRes?.Item?.selectedOptionId ?? null,
         };
       } catch (hydrationErr) {
         console.warn("Single engagement user hydration notice:", hydrationErr);
