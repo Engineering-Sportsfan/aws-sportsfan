@@ -276,7 +276,7 @@ export default function HomeCardManagementDashboard() {
                 </h3>
               </div>
               <p className="text-xs text-gray-300 max-w-md leading-relaxed">
-                Manage the schedule timeline events (Badminton, Cricket, Shooting, Swimming, etc.) with LIVE, UP NEXT, and AFTERNOON badges.
+                Manage the schedule timeline events (Badminton, Cricket, Shooting, Swimming, etc.) with COMPLETED, LIVE, UP NEXT, and SCHEDULED badges.
               </p>
             </div>
             <div className="flex items-center gap-2.5 shrink-0">

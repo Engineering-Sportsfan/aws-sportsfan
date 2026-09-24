@@ -312,14 +312,14 @@ export async function POST(req: NextRequest) {
       type === "meme" && memeData
         ? {
             imageUrl: memeData.imageUrl || "",
-            authorName: memeData.authorName || creatorName || "AmitFan",
-            authorHandle: memeData.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@AmitFan"),
+            authorName: memeData.authorName || creatorName || "SportsFan",
+            authorHandle: memeData.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@sportsfan"),
             authorAvatar: memeData.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-            heatPercentage: memeData.heatPercentage || 78,
-            totalVotes: Number(memeData.totalVotes) || 1240,
-            reactions: memeData.reactions || { mild: 25, funny: 310, hot: 480, fire: 320, nuclear: 105 },
-            commentsCount: Number(memeData.commentsCount) || 43,
-            sharesCount: Number(memeData.sharesCount) || 12,
+            heatPercentage: memeData.heatPercentage !== undefined ? Number(memeData.heatPercentage) : 0,
+            totalVotes: Number(memeData.totalVotes) || 0,
+            reactions: memeData.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+            commentsCount: Number(memeData.commentsCount) || 0,
+            sharesCount: Number(memeData.sharesCount) || 0,
             caption: memeData.caption || subtitle || "",
             createdAt: now,
           }
