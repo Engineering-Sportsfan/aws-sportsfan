@@ -1,13 +1,14 @@
-// app/api/engagements/route.ts — Main CRUD API for Fan Battles, Quizzes, Polls & Predictions
+// app/api/engagements/route.ts — Main CRUD API for Fan Battles, Quizzes, Polls, Predictions & Meme Voting
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { ScanCommand, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { EngagementItem, EngagementType } from "@/types/engagements";
+import { EngagementItem, EngagementType, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
+import cloudinary from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest) {
             quizData: it.quizData,
             pollData: it.pollData,
             predictionData: it.predictionData,
+            memeData: it.memeData,
             likes: Number(it.likes) || 0,
             shares: Number(it.shares) || 0,
             totalEngaged: Number(it.totalEngaged) || 0,
@@ -94,6 +96,7 @@ export async function GET(req: NextRequest) {
               quizData: it.quizData,
               pollData: it.pollData,
               predictionData: it.predictionData,
+              memeData: it.memeData,
               likes: Number(it.likes) || 0,
               shares: Number(it.shares) || 0,
               totalEngaged: Number(it.totalEngaged) || 0,
@@ -147,7 +150,7 @@ export async function GET(req: NextRequest) {
                     })
                   );
                   if (res.Item) return { Item: res.Item };
-                } catch {}
+                } catch { }
               }
               return { Item: null };
             })
@@ -177,7 +180,7 @@ export async function GET(req: NextRequest) {
                     })
                   );
                   if (gRes.Item) return { Item: gRes.Item };
-                } catch {}
+                } catch { }
               }
               return { Item: null };
             })
@@ -207,14 +210,57 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ─── POST /api/engagements — Create new Fan Battle, Quiz, Poll, or Prediction ─
+// ─── POST /api/engagements — Create new Fan Battle, Quiz, Poll, Prediction, or Meme ─
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    let body: any = {};
+    let uploadedMediaUrl = "";
+
+    const contentType = req.headers.get("content-type") || "";
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await req.formData();
+      const file = formData.get("file") as File | null;
+      if (file && typeof file === "object" && "arrayBuffer" in file && file.size > 0) {
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        const base64 = `data:${file.type || "image/jpeg"};base64,${buffer.toString("base64")}`;
+        const uploadRes = await cloudinary.uploader.upload(base64, {
+          folder: "engagements/memes",
+          resource_type: "auto",
+        });
+        uploadedMediaUrl = uploadRes.secure_url;
+      }
+
+      for (const [key, value] of formData.entries()) {
+        if (key === "file") continue;
+        try {
+          body[key] = JSON.parse(value as string);
+        } catch {
+          body[key] = value;
+        }
+      }
+    } else {
+      body = await req.json();
+    }
+
+    // Support base64 upload in JSON body if provided
+    if (!uploadedMediaUrl && body.file && typeof body.file === "string" && body.file.startsWith("data:")) {
+      try {
+        const uploadRes = await cloudinary.uploader.upload(body.file, {
+          folder: "engagements/memes",
+          resource_type: "auto",
+        });
+        uploadedMediaUrl = uploadRes.secure_url;
+      } catch (err) {
+        console.error("Cloudinary base64 upload error in POST /api/engagements:", err);
+      }
+    }
+
     const {
       type,
       title,
       subtitle,
+      description,
       tags,
       sport,
       status,
@@ -222,14 +268,35 @@ export async function POST(req: NextRequest) {
       quizData,
       pollData,
       predictionData,
+      memeData,
+      imageUrl,
+      mediaUrl,
       likes,
       shares,
       totalEngaged,
       expiresAt,
     } = body;
 
-    if (!type || !title) {
+    const isMeme = type === "meme";
+
+    if (!type) {
+      return NextResponse.json({ error: "Type is required" }, { status: 400 });
+    }
+
+    if (!isMeme && !title) {
       return NextResponse.json({ error: "Type and Title are required" }, { status: 400 });
+    }
+
+    const resolvedImageUrl =
+      uploadedMediaUrl ||
+      imageUrl ||
+      mediaUrl ||
+      memeData?.imageUrl ||
+      memeData?.mediaUrl ||
+      "";
+
+    if (isMeme && !resolvedImageUrl) {
+      return NextResponse.json({ error: "Media upload is required for meme voting" }, { status: 400 });
     }
 
     const now = Date.now();
@@ -262,6 +329,7 @@ export async function POST(req: NextRequest) {
       else if (type === "quiz") computedTags = ["🧠 QUIZ", `⭐ ${quizData?.pointsReward || 50} PTS`];
       else if (type === "poll") computedTags = ["📊 POLL"];
       else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 POINTS"];
+      else if (type === "meme") computedTags = ["🔥 MEME ARENA", "🌶️ HOT TAKES"];
     }
 
     // Resolve expiry for polls and predictions
@@ -272,43 +340,132 @@ export async function POST(req: NextRequest) {
       (type === "poll"
         ? pollData?.expiresAt || now + pollDurationMins * 60 * 1000
         : type === "prediction"
-        ? predictionData?.expiresAt || now + predDurationMins * 60 * 1000
-        : null);
+          ? predictionData?.expiresAt || now + predDurationMins * 60 * 1000
+          : null);
 
     const formattedPollData =
       type === "poll" && pollData
         ? {
-            ...pollData,
-            durationMinutes: pollDurationMins,
-            timerMinutes: pollDurationMins,
-            expiresAt: computedExpiresAt,
-            correctAnswer: pollData.correctAnswer || pollData.answer || "",
-            answer: pollData.correctAnswer || pollData.answer || "",
-          }
+          ...pollData,
+          durationMinutes: pollDurationMins,
+          timerMinutes: pollDurationMins,
+          expiresAt: computedExpiresAt,
+          correctAnswer: pollData.correctAnswer || pollData.answer || "",
+          answer: pollData.correctAnswer || pollData.answer || "",
+        }
         : undefined;
 
     const formattedPredData =
       type === "prediction" && predictionData
         ? {
-            ...predictionData,
-            durationMinutes: predDurationMins,
-            timerMinutes: predDurationMins,
-            expiresAt: computedExpiresAt,
-            correctAnswer: predictionData.correctAnswer || predictionData.answer || "",
-            answer: predictionData.correctAnswer || predictionData.answer || "",
-            winningChoiceId:
-              predictionData.winningChoiceId ||
-              predictionData.correctAnswer ||
-              predictionData.answer ||
-              null,
-          }
+          ...predictionData,
+          durationMinutes: predDurationMins,
+          timerMinutes: predDurationMins,
+          expiresAt: computedExpiresAt,
+          correctAnswer: predictionData.correctAnswer || predictionData.answer || "",
+          answer: predictionData.correctAnswer || predictionData.answer || "",
+          winningChoiceId:
+            predictionData.winningChoiceId ||
+            predictionData.correctAnswer ||
+            predictionData.answer ||
+            null,
+        }
         : undefined;
+
+    // Format Meme Data if type === "meme"
+    let formattedMemeData: MemePayload | undefined = undefined;
+    if (isMeme) {
+      const memeRatings = {
+        mid: Number(memeData?.ratings?.mid) || 0,
+        funny: Number(memeData?.ratings?.funny) || 0,
+        hot: Number(memeData?.ratings?.hot) || 0,
+        fire: Number(memeData?.ratings?.fire) || 0,
+        nuclear: Number(memeData?.ratings?.nuclear) || 0,
+      };
+      const totalMemeVotes =
+        memeRatings.mid + memeRatings.funny + memeRatings.hot + memeRatings.fire + memeRatings.nuclear;
+      const computedHeatIndex =
+        totalMemeVotes > 0
+          ? Math.round(
+            (memeRatings.mid * 15 +
+              memeRatings.funny * 35 +
+              memeRatings.hot * 65 +
+              memeRatings.fire * 85 +
+              memeRatings.nuclear * 100) /
+            totalMemeVotes
+          )
+          : 78;
+
+      const memeOptions: MemeRatingChoice[] = [
+        {
+          id: "mid",
+          label: "Mild",
+          emoji: "🔥",
+          color: "#6e7681",
+          votes: memeRatings.mid,
+          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.mid / totalMemeVotes) * 100) : 0,
+        },
+        {
+          id: "funny",
+          label: "Funny",
+          emoji: "🔥",
+          color: "#ec4899",
+          votes: memeRatings.funny,
+          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.funny / totalMemeVotes) * 100) : 0,
+        },
+        {
+          id: "hot",
+          label: "Hot",
+          emoji: "🔥",
+          color: "#f97316",
+          votes: memeRatings.hot,
+          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.hot / totalMemeVotes) * 100) : 0,
+        },
+        {
+          id: "fire",
+          label: "Fire",
+          emoji: "🔥",
+          color: "#ef4444",
+          votes: memeRatings.fire,
+          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.fire / totalMemeVotes) * 100) : 0,
+        },
+        {
+          id: "nuclear",
+          label: "Nuclear",
+          emoji: "🔥",
+          color: "#d946ef",
+          votes: memeRatings.nuclear,
+          percentage: totalMemeVotes > 0 ? Math.round((memeRatings.nuclear / totalMemeVotes) * 100) : 0,
+        },
+      ];
+
+      formattedMemeData = {
+        title: title || memeData?.title || "",
+        description: description || memeData?.description || "",
+        imageUrl: resolvedImageUrl,
+        mediaUrl: resolvedImageUrl,
+        mediaType: "image",
+        authorHandle:
+          body.authorHandle ||
+          memeData?.authorHandle ||
+          (creatorName ? `@${creatorName.replace(/\s+/g, "")}` : "@SportsFan"),
+        authorName: creatorName || body.authorName || memeData?.authorName || "SportsFan",
+        authorAvatar: body.authorAvatar || memeData?.authorAvatar || undefined,
+        totalVotes: totalMemeVotes,
+        heatIndex: computedHeatIndex,
+        ratings: memeRatings,
+        options: memeOptions,
+        startTime: now,
+      };
+    }
+
+    const finalTitle = title || (isMeme ? formattedMemeData?.title || "Meme Arena" : "");
 
     const newEngagement: EngagementItem = {
       id,
       type,
-      title,
-      subtitle: subtitle || "",
+      title: finalTitle,
+      subtitle: subtitle || (isMeme ? formattedMemeData?.description || "" : ""),
       tags: computedTags,
       sport: (sport || "cricket").toLowerCase(),
       status: status || "active",
@@ -319,6 +476,7 @@ export async function POST(req: NextRequest) {
       quizData: type === "quiz" ? quizData : undefined,
       pollData: formattedPollData,
       predictionData: formattedPredData,
+      memeData: isMeme ? formattedMemeData : undefined,
       likes: Number(likes) || 0,
       shares: Number(shares) || 0,
       totalEngaged: Number(totalEngaged) || 0,

@@ -1,5 +1,5 @@
 // types/engagements.ts — Type definitions for Fan Battles, Quizzes, Polls, and Predictions
-export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction";
+export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme";
 export type EngagementStatus = "active" | "inactive" | "expired" | "settled";
 
 // ─── 1. Fan Battle ─────────────────────────────────────────────────────────
@@ -105,6 +105,42 @@ export interface PredictionPayload {
   scheduledStartTime?: number;
 }
 
+// ─── 5. Meme Voting ────────────────────────────────────────────────────────
+export type MemeRatingId = "mid" | "funny" | "hot" | "fire" | "nuclear";
+
+export interface MemeRatingChoice {
+  id: MemeRatingId;
+  label: string; // "Mild", "Funny", "Hot", "Fire", "Nuclear"
+  emoji: string;
+  color: string;
+  votes: number;
+  percentage?: number;
+}
+
+export interface MemePayload {
+  title?: string; // Optional headline
+  description?: string; // Optional context (max 200 chars)
+  imageUrl: string; // Required meme image URL (from Cloudinary)
+  mediaUrl?: string;
+  mediaType?: "image" | "video";
+  authorHandle?: string; // e.g. "@AmitFan"
+  authorName?: string;
+  authorAvatar?: string;
+  totalVotes: number;
+  heatIndex?: number; // e.g. 78 (percentage heat)
+  ratings: {
+    mid: number;
+    funny: number;
+    hot: number;
+    fire: number;
+    nuclear: number;
+  };
+  options?: MemeRatingChoice[];
+  startTime?: number;
+  scheduledStartTime?: number;
+  expiresAt?: number;
+}
+
 // ─── Universal Engagement Entity ──────────────────────────────────────────
 export interface EngagementItem {
   id: string;
@@ -123,6 +159,7 @@ export interface EngagementItem {
   quizData?: QuizPayload;
   pollData?: PollPayload;
   predictionData?: PredictionPayload;
+  memeData?: MemePayload;
 
   // Social / Engagement counters
   likes: number;
