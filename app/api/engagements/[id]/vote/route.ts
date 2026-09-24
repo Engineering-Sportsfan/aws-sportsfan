@@ -772,6 +772,52 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
+    // 3.5 Meme Arena Reaction Vote Handling
+    else if (item.type === "meme" && item.memeData) {
+      const reactions = {
+        mild: Number(item.memeData.reactions?.mild || 0),
+        funny: Number(item.memeData.reactions?.funny || 0),
+        hot: Number(item.memeData.reactions?.hot || 0),
+        fire: Number(item.memeData.reactions?.fire || 0),
+        nuclear: Number(item.memeData.reactions?.nuclear || 0),
+      };
+
+      const reactionType = (selectedOptionId || "hot").toLowerCase() as keyof typeof reactions;
+      if (reactions[reactionType] !== undefined) {
+        reactions[reactionType] = (reactions[reactionType] || 0) + 1;
+      }
+
+      const totalVotes =
+        (Number(item.memeData.totalVotes) ||
+          reactions.mild + reactions.funny + reactions.hot + reactions.fire + reactions.nuclear) + 1;
+
+      // Calculate weighted heat percentage: mild (20%), funny (40%), hot (60%), fire (80%), nuclear (100%)
+      const weightedScore =
+        reactions.mild * 20 +
+        reactions.funny * 40 +
+        reactions.hot * 60 +
+        reactions.fire * 80 +
+        reactions.nuclear * 100;
+      const heatPercentage =
+        totalVotes > 0 ? Math.min(100, Math.max(10, Math.round(weightedScore / totalVotes))) : 78;
+
+      item.memeData.reactions = reactions;
+      item.memeData.totalVotes = totalVotes;
+      item.memeData.heatPercentage = heatPercentage;
+      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+
+      responseData = {
+        success: true,
+        type: "meme",
+        selectedOptionId: reactionType,
+        heatPercentage,
+        totalVotes,
+        reactions,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
+      };
+    }
+
     // ─── Step 4: Update Parent Engagement Item ────────────────────────────────
     const dynamoItem = {
       contentId: `ENGAGEMENT#${id}`,

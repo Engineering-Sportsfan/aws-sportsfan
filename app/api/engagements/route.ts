@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
             quizData: it.quizData,
             pollData: it.pollData,
             predictionData: it.predictionData,
+            memeData: it.memeData,
             likes: Number(it.likes) || 0,
             shares: Number(it.shares) || 0,
             totalEngaged: Number(it.totalEngaged) || 0,
@@ -94,6 +95,7 @@ export async function GET(req: NextRequest) {
               quizData: it.quizData,
               pollData: it.pollData,
               predictionData: it.predictionData,
+              memeData: it.memeData,
               likes: Number(it.likes) || 0,
               shares: Number(it.shares) || 0,
               totalEngaged: Number(it.totalEngaged) || 0,
@@ -222,6 +224,7 @@ export async function POST(req: NextRequest) {
       quizData,
       pollData,
       predictionData,
+      memeData,
       likes,
       shares,
       totalEngaged,
@@ -262,6 +265,7 @@ export async function POST(req: NextRequest) {
       else if (type === "quiz") computedTags = ["🧠 QUIZ", `⭐ ${quizData?.pointsReward || 50} PTS`];
       else if (type === "poll") computedTags = ["📊 POLL"];
       else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 POINTS"];
+      else if (type === "meme") computedTags = ["🔥 MEME ARENA", "😂 VIRAL"];
     }
 
     // Resolve expiry for polls and predictions
@@ -304,6 +308,23 @@ export async function POST(req: NextRequest) {
           }
         : undefined;
 
+    const formattedMemeData =
+      type === "meme" && memeData
+        ? {
+            imageUrl: memeData.imageUrl || "",
+            authorName: memeData.authorName || creatorName || "AmitFan",
+            authorHandle: memeData.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@AmitFan"),
+            authorAvatar: memeData.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
+            heatPercentage: memeData.heatPercentage || 78,
+            totalVotes: Number(memeData.totalVotes) || 1240,
+            reactions: memeData.reactions || { mild: 25, funny: 310, hot: 480, fire: 320, nuclear: 105 },
+            commentsCount: Number(memeData.commentsCount) || 43,
+            sharesCount: Number(memeData.sharesCount) || 12,
+            caption: memeData.caption || subtitle || "",
+            createdAt: now,
+          }
+        : undefined;
+
     const newEngagement: EngagementItem = {
       id,
       type,
@@ -319,6 +340,7 @@ export async function POST(req: NextRequest) {
       quizData: type === "quiz" ? quizData : undefined,
       pollData: formattedPollData,
       predictionData: formattedPredData,
+      memeData: formattedMemeData,
       likes: Number(likes) || 0,
       shares: Number(shares) || 0,
       totalEngaged: Number(totalEngaged) || 0,
