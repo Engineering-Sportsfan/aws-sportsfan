@@ -622,6 +622,100 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // ─── Step 1.5: Determine Unique User Engagement (Prevent duplicate totalEngaged increment) ───
+    let isNewUserEngagement = true;
+
+    // Check frontend payload hint (Option B)
+    if (typeof body.isFirstQuizEngagement === "boolean") {
+      isNewUserEngagement = body.isFirstQuizEngagement;
+    } else if (typeof body.questionIndex === "number" && body.questionIndex > 0) {
+      isNewUserEngagement = false;
+    }
+
+    // Check existing engagement records in DB if not already false (Option A: authoritative verification)
+    if (isNewUserEngagement && questionId) {
+      for (const uid of candidateIds) {
+        if (!isNewUserEngagement) break;
+
+        // 1. Direct O(1) check for user participant marker on this engagement
+        try {
+          const userMarker = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk: `USER#${uid}` },
+            })
+          );
+          if (userMarker.Item) {
+            isNewUserEngagement = false;
+            break;
+          }
+        } catch {}
+
+        // 2. Query any previous question votes for this user on this engagement (sk starts with VOTE#{uid}#)
+        try {
+          const priorVotes = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":cid": `ENGAGEMENT#${id}`,
+                ":skpfx": `VOTE#${uid}#`,
+              },
+              Limit: 1,
+            })
+          );
+          if (priorVotes.Items && priorVotes.Items.length > 0) {
+            isNewUserEngagement = false;
+            break;
+          }
+        } catch {}
+
+        // 3. Direct check for single vote VOTE#{uid}
+        try {
+          const singleVote = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${uid}` },
+            })
+          );
+          if (singleVote.Item) {
+            isNewUserEngagement = false;
+            break;
+          }
+        } catch {}
+
+        // 4. Query legacy DynamoDB shape USER_VOTE#{uid}
+        try {
+          const legacyPrior = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":cid": `USER_VOTE#${uid}`,
+                ":skpfx": `ENGAGEMENT#${id}`,
+              },
+              Limit: 1,
+            })
+          );
+          if (legacyPrior.Items && legacyPrior.Items.length > 0) {
+            isNewUserEngagement = false;
+            break;
+          }
+        } catch {}
+
+        // 5. Check Firestore user_engagements record
+        if (db) {
+          try {
+            const userEngSnap = await db.collection(getFirestoreCollection("user_engagements")).doc(`${uid}_${id}`).get();
+            if (userEngSnap.exists) {
+              isNewUserEngagement = false;
+              break;
+            }
+          } catch {}
+        }
+      }
+    }
+
     // ─── Step 2: Fetch Current Engagement Item ───────────────────────────────
     let item: any = null;
     try {
@@ -676,7 +770,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       item.fanBattleData.leftCompetitor = left;
       item.fanBattleData.rightCompetitor = right;
       item.fanBattleData.totalVotes = total;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
 
       responseData = {
         success: true,
@@ -687,6 +783,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         leftVotes: left.votes,
         rightVotes: right.votes,
         totalVotes: total,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
         participationPointsAwarded: 2,
         pointsAwarded: 2,
       };
@@ -705,7 +803,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       const ptsReward = 10;
       const isCorrect = String(selectedOptionId).trim().toUpperCase() === String(correctOptId).trim().toUpperCase();
       const pointsAwarded = isCorrect ? ptsReward : 0;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      
+      // ONLY increment totalEngaged if this is the user's first time interacting with this quiz
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
 
       responseData = {
         success: true,
@@ -717,6 +819,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         participationPointsAwarded: 2,
         pointsAwarded: pointsAwarded + 2,
         explanation: targetQ.explanation || item.quizData.explanation || `Correct: ${correctOptId}`,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstQuizEngagement: isNewUserEngagement,
+        isFirstEngagement: isNewUserEngagement,
       };
     }
 
@@ -737,7 +842,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
       item.pollData.options = options;
       item.pollData.totalVotes = totalVotes;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
 
       responseData = {
         success: true,
@@ -745,6 +852,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         selectedOptionId,
         options: optionsWithPercentages,
         totalVotes,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
         participationPointsAwarded: 2,
         pointsAwarded: 2,
       };
@@ -768,7 +877,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       item.predictionData.leftChoice = left;
       item.predictionData.rightChoice = right;
       item.predictionData.totalVotes = total;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
 
       responseData = {
         success: true,
@@ -778,6 +889,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         rightPercentage: rightPct,
         coinsLocked: item.predictionData.coinStake || 25,
         totalVotes: total,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
         participationPointsAwarded: 2,
         pointsAwarded: 2,
       };
@@ -814,7 +927,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       item.memeData.reactions = reactions;
       item.memeData.totalVotes = totalVotes;
       item.memeData.heatPercentage = heatPercentage;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
 
       responseData = {
         success: true,
@@ -822,6 +937,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         selectedOptionId: reactionType,
         heatPercentage,
         totalVotes,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
         reactions,
         participationPointsAwarded: 2,
         pointsAwarded: 2,
@@ -889,6 +1006,27 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       console.warn("DynamoDB standard vote record notice:", dynVoteErr);
     }
 
+    // A2. Standardized DynamoDB Participant Marker: contentId = ENGAGEMENT#{id}, sk = USER#{userId}
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.SocialAndContent,
+          Item: {
+            contentId: `ENGAGEMENT#${id}`,
+            sk: `USER#${userId}`,
+            entityId: `USER_ENGAGEMENT#${String(item.type).toUpperCase()}`,
+            userId,
+            engagementId: id,
+            type: item.type,
+            firstEngagedAt: now,
+            updatedAt: now,
+          },
+        })
+      );
+    } catch (dynUserEngErr) {
+      console.warn("DynamoDB user engagement marker notice:", dynUserEngErr);
+    }
+
     // B. Legacy DynamoDB Key: contentId = USER_VOTE#{userId}, sk = ENGAGEMENT#{id} (Backwards compatibility)
     try {
       await docClient.send(
@@ -908,6 +1046,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (db) {
       try {
         await db.collection("user_engagements").doc(firestoreVoteDocId).set(userRecord);
+        if (questionId) {
+          await db.collection(getFirestoreCollection("user_engagements")).doc(`${userId}_${id}`).set({
+            userId,
+            engagementId: id,
+            type: item.type,
+            firstEngagedAt: now,
+            updatedAt: now,
+          }, { merge: true });
+        }
       } catch (fbVoteErr) {
         console.warn("Firestore user vote record notice:", fbVoteErr);
       }
