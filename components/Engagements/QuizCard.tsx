@@ -243,7 +243,10 @@ export default function QuizCard({
     } else {
       setIncorrectCount(prev => prev + 1);
     }
-    setTotalEngaged(prev => prev + 1);
+    const isFirstQuizEngagement = Object.keys(answers).length === 0;
+    if (isFirstQuizEngagement) {
+      setTotalEngaged(prev => prev + 1);
+    }
 
     // Save to localStorage so this question is never re-asked
     try {
@@ -262,6 +265,9 @@ export default function QuizCard({
             userId: propUserId,
             userName: propUserName,
             userAvatar: propUserAvatar,
+            isFirstQuizEngagement,
+            questionIndex: currentSlotIndex,
+            totalQuestions: questions.length,
           }),
         }),
         fetch(`/api/engagements/quiz/leaderboard`, {
@@ -281,6 +287,9 @@ export default function QuizCard({
       ]);
 
       const data = await voteRes.json();
+      if (typeof data.totalEngaged === "number") {
+        setTotalEngaged(data.totalEngaged);
+      }
       if (data.success && onAnswerSuccess) {
         onAnswerSuccess(data);
       }
