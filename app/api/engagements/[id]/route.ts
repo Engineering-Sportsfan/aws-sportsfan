@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { dualWrite } from "@/lib/dualWrite";
+import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
 import { GetCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem } from "@/types/engagements";
 
@@ -21,19 +21,28 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     let item: any = null;
 
-    // Try DynamoDB first
-    try {
-      const getRes = await docClient.send(
-        new GetCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
-        })
-      );
-      if (getRes.Item) {
-        item = getRes.Item;
+    // Try DynamoDB first with candidate table fallback
+    const candidateTables = getCandidateTableNames(TABLES.SocialAndContent);
+    for (const table of candidateTables) {
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: table,
+            Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
+          })
+        );
+        if (getRes.Item) {
+          item = getRes.Item;
+          break;
+        }
+      } catch (dynErr: any) {
+        const isTableMissing =
+          dynErr?.name === "ResourceNotFoundException" ||
+          dynErr?.message?.includes("Cannot do operations on a non-existent table") ||
+          dynErr?.message?.includes("ResourceNotFoundException");
+        if (isTableMissing) continue;
+        console.warn(`DynamoDB get engagement notice on "${table}":`, dynErr?.message || dynErr);
       }
-    } catch (dynErr: any) {
-      console.warn("DynamoDB get engagement notice:", dynErr?.message || dynErr);
     }
 
     // Fallback to Firestore
@@ -54,7 +63,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     if (resolvedUserId) {
       try {
-        const [likeRes, voteRes] = await Promise.all([
+        const [likeRes, voteRes, userMarkerRes] = await Promise.all([
           docClient
             .send(
               new GetCommand({
@@ -71,13 +80,21 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
               })
             )
             .catch(() => ({ Item: null })),
+          docClient
+            .send(
+              new GetCommand({
+                TableName: TABLES.SocialAndContent,
+                Key: { contentId: `ENGAGEMENT#${id}`, sk: `USER#${resolvedUserId}` },
+              })
+            )
+            .catch(() => ({ Item: null })),
         ]);
 
         item = {
           ...item,
           userLiked: !!likeRes?.Item,
-          userVoted: !!voteRes?.Item,
-          userVote: voteRes?.Item?.selectedOptionId ?? null,
+          userVoted: !!voteRes?.Item || !!userMarkerRes?.Item,
+          userVote: voteRes?.Item?.selectedOptionId ?? userMarkerRes?.Item?.selectedOptionId ?? null,
         };
       } catch (hydrationErr) {
         console.warn("Single engagement user hydration notice:", hydrationErr);
@@ -152,24 +169,12 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
 
-    // Delete from DynamoDB
-    try {
-      await docClient.send(
-        new DeleteCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
-        })
-      );
-    } catch (dynErr: any) {
-      console.warn("DynamoDB delete engagement notice:", dynErr?.message || dynErr);
-    }
-
-    // Delete from Firestore
-    try {
-      await db.collection(getFirestoreCollection("engagements")).doc(id).delete();
-    } catch (fbErr: any) {
-      console.warn("Firestore delete engagement notice:", fbErr?.message || fbErr);
-    }
+    await dualDelete(
+      "engagements",
+      id,
+      TABLES.SocialAndContent,
+      { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" }
+    );
 
     return NextResponse.json({ success: true, message: "Engagement deleted successfully" });
   } catch (error: unknown) {

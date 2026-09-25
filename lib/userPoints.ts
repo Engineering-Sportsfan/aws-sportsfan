@@ -138,6 +138,22 @@ export async function getUserInfo(
 
 // ─── SPEC HARCODED FALLBACK VALUES ──────────────────────────────────────────
 const DEFAULT_RULES_FALLBACKS: Record<string, { points: number; dailyLimit: number }> = {
+  ENGAGEMENT_CREATE: { points: 2, dailyLimit: 100 },
+  ENGAGEMENT_PARTICIPATE: { points: 2, dailyLimit: 200 },
+  ENGAGEMENT_CREATE_FAN_BATTLE: { points: 2, dailyLimit: 50 },
+  ENGAGEMENT_CREATE_QUIZ: { points: 2, dailyLimit: 50 },
+  ENGAGEMENT_CREATE_POLL: { points: 2, dailyLimit: 50 },
+  ENGAGEMENT_CREATE_PREDICTION: { points: 2, dailyLimit: 50 },
+  ENGAGEMENT_CREATE_MEME: { points: 2, dailyLimit: 50 },
+  ENGAGEMENT_PARTICIPATE_FAN_BATTLE: { points: 2, dailyLimit: 100 },
+  ENGAGEMENT_PARTICIPATE_QUIZ: { points: 2, dailyLimit: 100 },
+  ENGAGEMENT_PARTICIPATE_POLL: { points: 2, dailyLimit: 100 },
+  ENGAGEMENT_PARTICIPATE_PREDICTION: { points: 2, dailyLimit: 100 },
+  ENGAGEMENT_PARTICIPATE_MEME: { points: 2, dailyLimit: 100 },
+  ENGAGEMENT_ACCURACY_BONUS: { points: 10, dailyLimit: 100 },
+  ENGAGEMENT_ACCURACY_BONUS_POLL: { points: 10, dailyLimit: 100 },
+  ENGAGEMENT_ACCURACY_BONUS_PREDICTION: { points: 10, dailyLimit: 100 },
+  ENGAGEMENT_ACCURACY_BONUS_QUIZ: { points: 10, dailyLimit: 100 },
   CREATE_POST: { points: 65, dailyLimit: 5 },
   CREATE_DEBATE: { points: 80, dailyLimit: 3 },
   CREATE_PREDICTION: { points: 55, dailyLimit: 5 },
@@ -466,6 +482,16 @@ function getFeatureCategory(reason: string): string {
     ROAR_PREDICTION: "predictions",
     ROAR_RAW_REACTIONS: "post",
     ROAR_QUIZ: "trivia",
+    ENGAGEMENT_CREATE: "post",
+    ENGAGEMENT_PARTICIPATE: "community",
+    ENGAGEMENT_CREATE_FAN_BATTLE: "battles",
+    ENGAGEMENT_CREATE_QUIZ: "trivia",
+    ENGAGEMENT_CREATE_POLL: "post",
+    ENGAGEMENT_CREATE_PREDICTION: "predictions",
+    ENGAGEMENT_PARTICIPATE_FAN_BATTLE: "battles",
+    ENGAGEMENT_PARTICIPATE_QUIZ: "trivia",
+    ENGAGEMENT_PARTICIPATE_POLL: "community",
+    ENGAGEMENT_PARTICIPATE_PREDICTION: "predictions",
   };
   return map[reason] || "";
 }
@@ -693,7 +719,11 @@ export async function awardUserPoints({
       }
 
       // Enforce 300 XP Daily Limit on participation categories
-      const isCreatorPoint = reason.startsWith("CREATE_") || reason === "CREATOR_STREAK_BONUS" || reason === "WIN_FEATURED_POST";
+      const isCreatorPoint =
+        reason.startsWith("CREATE_") ||
+        reason.startsWith("ENGAGEMENT_CREATE") ||
+        reason === "CREATOR_STREAK_BONUS" ||
+        reason === "WIN_FEATURED_POST";
       if (!isCreatorPoint) {
         if (dailyPointsEarned >= 300) {
           console.log(`[PointsEngine] Daily engagement XP cap (300) reached. Action skipped.`);
@@ -842,7 +872,7 @@ export async function awardUserPoints({
         }).catch(err => console.error("[PointsEngine] Referral Chant payout failed:", err));
       }
 
-      transaction.update(userRef, updatePayload);
+      transaction.set(userRef, updatePayload, { merge: true });
 
       // 15. Update single consolidated globalLeaderboard document
       transaction.set(globalRef, {

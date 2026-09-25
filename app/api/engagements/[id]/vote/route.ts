@@ -4,9 +4,10 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
-import { GetCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, UpdateCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
+import { awardEngagementPoints } from "@/lib/engagementPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -18,52 +19,331 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const { searchParams } = new URL(req.url);
     const authUser = await getUser(req);
-    const userId = authUser?.userId || authUser?.email || searchParams.get("userId");
+    const userId = authUser?.userId || searchParams.get("userId") || authUser?.email;
+    const userEmail = authUser?.email || searchParams.get("userEmail");
 
-    if (!userId) {
+    if (!userId && !userEmail) {
       return NextResponse.json({ hasVoted: false });
     }
 
     let voteItem: any = null;
+    const candidateIds = Array.from(new Set([userId, userEmail, searchParams.get("userId")].filter(Boolean))) as string[];
 
-    // 1. Check standardized DynamoDB key shape: contentId = ENGAGEMENT#{id}, sk = VOTE#{userId}
-    try {
-      const getVote = await docClient.send(
-        new GetCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${userId}` },
-        })
-      );
-      if (getVote.Item) voteItem = getVote.Item;
-    } catch (dynErr) {
-      console.warn("DynamoDB vote status check notice:", dynErr);
-    }
-
-    // 2. Fallback: Check legacy DynamoDB key shape: contentId = USER_VOTE#{userId}, sk = ENGAGEMENT#{id}
-    if (!voteItem) {
+    // 1. Check standardized DynamoDB key shape for each candidate ID
+    for (const uid of candidateIds) {
+      if (voteItem) break;
       try {
-        const legacyVote = await docClient.send(
-          new GetCommand({
+        // Query any vote starting with VOTE#{uid}
+        const queryVote = await docClient.send(
+          new QueryCommand({
             TableName: TABLES.SocialAndContent,
-            Key: { contentId: `USER_VOTE#${userId}`, sk: `ENGAGEMENT#${id}` },
+            KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+            ExpressionAttributeValues: {
+              ":cid": `ENGAGEMENT#${id}`,
+              ":skpfx": `VOTE#${uid}`,
+            },
+            Limit: 1,
           })
         );
-        if (legacyVote.Item) voteItem = legacyVote.Item;
-      } catch { }
+        if (queryVote.Items && queryVote.Items.length > 0) {
+          voteItem = queryVote.Items[0];
+          break;
+        }
+
+        // Also direct GetCommand for exact match
+        const getVote = await docClient.send(
+          new GetCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${uid}` },
+          })
+        );
+        if (getVote.Item) {
+          voteItem = getVote.Item;
+          break;
+        }
+      } catch (dynErr) {
+        console.warn("DynamoDB vote status check notice:", dynErr);
+      }
+    }
+
+    // 2. Fallback: Check legacy DynamoDB key shape: contentId = USER_VOTE#{userId}, sk begins_with ENGAGEMENT#{id}
+    if (!voteItem) {
+      for (const uid of candidateIds) {
+        if (voteItem) break;
+        try {
+          const legacyQuery = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":cid": `USER_VOTE#${uid}`,
+                ":skpfx": `ENGAGEMENT#${id}`,
+              },
+              Limit: 1,
+            })
+          );
+          if (legacyQuery.Items && legacyQuery.Items.length > 0) {
+            voteItem = legacyQuery.Items[0];
+            break;
+          }
+        } catch { }
+      }
     }
 
     // 3. Fallback: Check Firestore user_engagements collection
     if (!voteItem && db) {
+      for (const uid of candidateIds) {
+        if (voteItem) break;
+        try {
+          const snap = await db.collection(getFirestoreCollection("user_engagements")).doc(`${uid}_${id}`).get();
+          if (snap.exists) {
+            voteItem = snap.data();
+            break;
+          }
+          // Also check doc ID query
+          const qSnap = await db
+            .collection(getFirestoreCollection("user_engagements"))
+            .where("userId", "==", uid)
+            .where("engagementId", "==", id)
+            .limit(1)
+            .get();
+          if (!qSnap.empty) {
+            voteItem = qSnap.docs[0].data();
+            break;
+          }
+        } catch { }
+      }
+    }
+
+    // 4. Fetch Engagement Metadata for Timer Expiry & Correct Answer Check
+    let engagementItem: any = null;
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
+        })
+      );
+      if (getRes.Item) engagementItem = getRes.Item;
+    } catch { }
+
+    if (!engagementItem && db) {
       try {
-        const snap = await db.collection(getFirestoreCollection("user_engagements")).doc(`${userId}_${id}`).get();
-        if (snap.exists) voteItem = snap.data();
+        const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
+        if (snap.exists) engagementItem = { id: snap.id, ...snap.data() };
       } catch { }
+    }
+
+    const now = Date.now();
+    const startTime = Number(
+      engagementItem?.pollData?.startTime ||
+      engagementItem?.predictionData?.startTime ||
+      engagementItem?.startTime ||
+      engagementItem?.createdAt ||
+      0
+    );
+    const durationMins = Number(
+      engagementItem?.pollData?.durationMinutes ||
+      engagementItem?.pollData?.timerMinutes ||
+      engagementItem?.predictionData?.durationMinutes ||
+      engagementItem?.predictionData?.timerMinutes ||
+      (engagementItem?.type === "poll" ? 10 : engagementItem?.type === "prediction" ? 30 : 0)
+    );
+    const computedExpiresAt =
+      engagementItem?.expiresAt ||
+      engagementItem?.pollData?.expiresAt ||
+      engagementItem?.predictionData?.expiresAt ||
+      (startTime > 0 && durationMins > 0 ? startTime + durationMins * 60 * 1000 : null);
+    const isExpired = Boolean(computedExpiresAt && now >= Number(computedExpiresAt));
+
+    let correctAnswer = "";
+    let winningChoiceId = "";
+    if (engagementItem?.type === "poll") {
+      correctAnswer =
+        engagementItem.pollData?.correctAnswer ||
+        engagementItem.pollData?.answer ||
+        engagementItem.correctAnswer ||
+        "";
+    } else if (engagementItem?.type === "prediction") {
+      correctAnswer =
+        engagementItem.predictionData?.correctAnswer ||
+        engagementItem.predictionData?.answer ||
+        engagementItem.correctAnswer ||
+        "";
+      winningChoiceId =
+        engagementItem.predictionData?.winningChoiceId ||
+        engagementItem.winningChoiceId ||
+        correctAnswer ||
+        "";
+    }
+
+    if (!voteItem && (searchParams.get("selectedOptionId") || searchParams.get("choice"))) {
+      const clientOpt = searchParams.get("selectedOptionId") || searchParams.get("choice");
+      voteItem = {
+        userId,
+        selectedOptionId: clientOpt,
+        votedAt: now,
+      };
+    }
+
+    let isCorrect: boolean | null = null;
+    let wonBonusPoints = 0;
+    let newlyAwarded = false;
+
+    if (voteItem && (engagementItem?.type === "poll" || engagementItem?.type === "prediction")) {
+      const userChoice = String(voteItem.selectedOptionId || "").trim().toLowerCase();
+      const leftText = String(engagementItem.predictionData?.leftChoice?.text || "").trim().toLowerCase();
+      const leftCode = String(engagementItem.predictionData?.leftChoice?.code || "").trim().toLowerCase();
+      const rightText = String(engagementItem.predictionData?.rightChoice?.text || "").trim().toLowerCase();
+      const rightCode = String(engagementItem.predictionData?.rightChoice?.code || "").trim().toLowerCase();
+      const winTarget = String(winningChoiceId || correctAnswer).trim().toLowerCase();
+
+      if (engagementItem.type === "prediction") {
+        const isLeftWinning =
+          winTarget === "left" ||
+          (!!leftText && winTarget === leftText) ||
+          (!!leftCode && winTarget === leftCode) ||
+          (!!leftText && leftText.includes(winTarget) && winTarget.length > 2);
+
+        const isRightWinning =
+          winTarget === "right" ||
+          (!!rightText && winTarget === rightText) ||
+          (!!rightCode && winTarget === rightCode) ||
+          (!!rightText && rightText.includes(winTarget) && winTarget.length > 2);
+
+        const isUserLeft =
+          userChoice === "left" ||
+          (!!leftText && userChoice === leftText) ||
+          (!!leftCode && userChoice === leftCode);
+
+        const isUserRight =
+          userChoice === "right" ||
+          (!!rightText && userChoice === rightText) ||
+          (!!rightCode && userChoice === rightCode);
+
+        if (isLeftWinning && isUserLeft) {
+          isCorrect = true;
+        } else if (isRightWinning && isUserRight) {
+          isCorrect = true;
+        } else if (winTarget && userChoice === winTarget) {
+          isCorrect = true;
+        } else if (winTarget) {
+          isCorrect = false;
+        }
+      } else if (engagementItem.type === "poll") {
+        if (correctAnswer) {
+          const correctLower = String(correctAnswer).trim().toLowerCase();
+          if (userChoice === correctLower) {
+            isCorrect = true;
+          } else if (engagementItem.pollData?.options) {
+            const chosenOpt = engagementItem.pollData.options.find(
+              (o: any) =>
+                String(o.id).trim().toLowerCase() === userChoice ||
+                String(o.text || o.label || "").trim().toLowerCase() === userChoice
+            );
+            const targetOpt = engagementItem.pollData.options.find(
+              (o: any) =>
+                String(o.id).trim().toLowerCase() === correctLower ||
+                String(o.text || o.label || "").trim().toLowerCase() === correctLower ||
+                (o.text && correctLower && (
+                  String(o.text).toLowerCase().includes(correctLower) ||
+                  correctLower.includes(String(o.text).toLowerCase())
+                ))
+            );
+
+            if (chosenOpt && targetOpt && chosenOpt.id === targetOpt.id) {
+              isCorrect = true;
+            } else if (chosenOpt && (
+              String(chosenOpt.id).toLowerCase() === correctLower ||
+              String(chosenOpt.text || chosenOpt.label || "").trim().toLowerCase() === correctLower
+            )) {
+              isCorrect = true;
+            } else if (chosenOpt?.isCorrect === true) {
+              isCorrect = true;
+            } else {
+              isCorrect = false;
+            }
+          } else {
+            isCorrect = false;
+          }
+        }
+      }
+
+      // If timer is expired and outcome was correct, award +10 points if not already awarded
+      if (isExpired && isCorrect && !voteItem.accuracyBonusAwarded) {
+        try {
+          const awardUid = voteItem.userId || userId;
+          const awardEmail = authUser?.email || (awardUid && awardUid.includes("@") ? awardUid : "");
+          const awardName = authUser?.name || "";
+
+          const ptsRes = await awardEngagementPoints({
+            userId: awardUid,
+            userEmail: awardEmail,
+            userName: awardName,
+            action: "accuracy_bonus",
+            engagementId: id,
+            engagementType: engagementItem.type,
+            engagementTitle: engagementItem.title,
+            pointsBonus: 10,
+            metadata: {
+              reason: "CORRECT_PREDICTION_BONUS",
+              bonusPoints: 10,
+              type: engagementItem.type,
+            },
+          });
+
+          if (ptsRes.success) {
+            newlyAwarded = true;
+          }
+
+          // Mark accuracyBonusAwarded = true in DynamoDB
+          await docClient.send(
+            new UpdateCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk: voteItem.sk || `VOTE#${awardUid}` },
+              UpdateExpression: "SET accuracyBonusAwarded = :t, isCorrect = :t, wonBonusPoints = :pts, resolvedAt = :now",
+              ExpressionAttributeValues: {
+                ":t": true,
+                ":pts": 10,
+                ":now": now,
+              },
+            })
+          ).catch((e) => console.warn("DDB accuracy bonus flag update notice:", e));
+
+          // Mark in Firestore
+          if (db) {
+            await db.collection(getFirestoreCollection("user_engagements")).doc(`${awardUid}_${id}`).set({
+              accuracyBonusAwarded: true,
+              isCorrect: true,
+              wonBonusPoints: 10,
+              resolvedAt: now,
+            }, { merge: true }).catch((e) => console.warn("Firestore accuracy bonus flag notice:", e));
+          }
+
+          voteItem.accuracyBonusAwarded = true;
+          voteItem.isCorrect = true;
+          voteItem.wonBonusPoints = 10;
+          wonBonusPoints = 10;
+        } catch (awardErr) {
+          console.warn("Failed to award accuracy bonus points:", awardErr);
+        }
+      } else if (voteItem.accuracyBonusAwarded) {
+        wonBonusPoints = voteItem.wonBonusPoints || 10;
+      }
     }
 
     return NextResponse.json({
       hasVoted: !!voteItem,
       selectedOptionId: voteItem?.selectedOptionId || null,
       vote: voteItem,
+      isExpired,
+      expiresAt: computedExpiresAt || null,
+      isCorrect,
+      accuracyBonusAwarded: Boolean(voteItem?.accuracyBonusAwarded),
+      wonBonusPoints,
+      newlyAwarded,
+      correctAnswer: correctAnswer || winningChoiceId || null,
+      winningChoiceId: winningChoiceId || null,
     });
   } catch (error: unknown) {
     console.error("GET /api/engagements/[id]/vote error:", error);
@@ -96,50 +376,240 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     // ─── Step 1: Enforce Single-Vote Pre-check ────────────────────────────────
     let existingVote: any = null;
+    const candidateIds = Array.from(
+      new Set([userId, inputUserId, authUser?.userId, authUser?.email].filter(Boolean))
+    ) as string[];
 
-    if (userId) {
-      // Check standardized DynamoDB key
+    for (const uid of candidateIds) {
+      if (existingVote) break;
+       if (questionId) {
+        try {
+          const r = await docClient.send(new GetCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${uid}#${questionId}` },
+          }));
+          if (r.Item) { existingVote = r.Item; break; }
+        } catch { }
+        continue; // skip the begins_with check below
+      }
+      // 1. Check standardized DynamoDB key shape with begins_with VOTE#
       try {
+        const queryVote = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.SocialAndContent,
+            KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+            ExpressionAttributeValues: {
+              ":cid": `ENGAGEMENT#${id}`,
+              ":skpfx": `VOTE#${uid}`,
+            },
+            Limit: 1,
+          })
+        );
+        if (queryVote.Items && queryVote.Items.length > 0) {
+          existingVote = queryVote.Items[0];
+          break;
+        }
+
+        // Direct key check
         const voteRes = await docClient.send(
           new GetCommand({
             TableName: TABLES.SocialAndContent,
-            Key: { contentId: `ENGAGEMENT#${id}`, sk: voteSk },
+            Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${uid}` },
           })
         );
         if (voteRes.Item) {
           existingVote = voteRes.Item;
+          break;
         }
       } catch (dynCheckErr) {
         console.warn("DynamoDB existing vote check notice:", dynCheckErr);
       }
 
-      // Check legacy DynamoDB key format: contentId = USER_VOTE#{userId}, sk = ENGAGEMENT#{id}
+      // 2. Check legacy DynamoDB key format: contentId = USER_VOTE#{uid}, sk begins_with ENGAGEMENT#{id}
       if (!existingVote) {
         try {
           const legacyVoteRes = await docClient.send(
-            new GetCommand({
+            new QueryCommand({
               TableName: TABLES.SocialAndContent,
-              Key: { contentId: `USER_VOTE#${userId}`, sk: questionId ? `ENGAGEMENT#${id}#${questionId}` : `ENGAGEMENT#${id}` },
+              KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":cid": `USER_VOTE#${uid}`,
+                ":skpfx": `ENGAGEMENT#${id}`,
+              },
+              Limit: 1,
             })
           );
-          if (legacyVoteRes.Item) {
-            existingVote = legacyVoteRes.Item;
+          if (legacyVoteRes.Items && legacyVoteRes.Items.length > 0) {
+            existingVote = legacyVoteRes.Items[0];
+            break;
           }
         } catch { }
       }
 
-      // Firestore fallback check
+      // 3. Firestore fallback check
       if (!existingVote && db) {
         try {
-          const snap = await db.collection("user_engagements").doc(firestoreVoteDocId).get();
+          const snap = await db.collection(getFirestoreCollection("user_engagements")).doc(`${uid}_${id}`).get();
           if (snap.exists) {
             existingVote = snap.data();
+            break;
+          }
+          if (questionId) {
+            const qSnap = await db.collection(getFirestoreCollection("user_engagements")).doc(`${uid}_${id}_${questionId}`).get();
+            if (qSnap.exists) {
+              existingVote = qSnap.data();
+              break;
+            }
           }
         } catch { }
       }
     }
 
     if (existingVote) {
+      // If client is claiming accuracy bonus on an expired event
+      if (body.action === "claim_bonus" || body.claimBonus === true) {
+        let engagementItem: any = null;
+        try {
+          const getRes = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
+            })
+          );
+          if (getRes.Item) engagementItem = getRes.Item;
+        } catch { }
+        if (!engagementItem && db) {
+          const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
+          if (snap.exists) engagementItem = { id: snap.id, ...snap.data() };
+        }
+
+        const now = Date.now();
+        const startTime = Number(
+          engagementItem?.pollData?.startTime ||
+          engagementItem?.predictionData?.startTime ||
+          engagementItem?.startTime ||
+          engagementItem?.createdAt ||
+          0
+        );
+        const durationMins = Number(
+          engagementItem?.pollData?.durationMinutes ||
+          engagementItem?.pollData?.timerMinutes ||
+          engagementItem?.predictionData?.durationMinutes ||
+          engagementItem?.predictionData?.timerMinutes ||
+          (engagementItem?.type === "poll" ? 10 : engagementItem?.type === "prediction" ? 30 : 0)
+        );
+        const computedExpiresAt =
+          engagementItem?.expiresAt ||
+          engagementItem?.pollData?.expiresAt ||
+          engagementItem?.predictionData?.expiresAt ||
+          (startTime > 0 && durationMins > 0 ? startTime + durationMins * 60 * 1000 : null);
+        const isExpired = Boolean(computedExpiresAt && now >= Number(computedExpiresAt));
+
+        let isCorrect = false;
+        const correctAnswer =
+          engagementItem?.pollData?.correctAnswer ||
+          engagementItem?.pollData?.answer ||
+          engagementItem?.correctAnswer ||
+          "";
+        const winningChoiceId =
+          engagementItem?.predictionData?.winningChoiceId ||
+          engagementItem?.winningChoiceId ||
+          correctAnswer ||
+          "";
+
+        const userChoice = String(existingVote.selectedOptionId || selectedOptionId || "").trim().toLowerCase();
+
+        if (engagementItem?.type === "prediction") {
+          const winTarget = String(winningChoiceId || correctAnswer).trim().toLowerCase();
+          const leftText = String(engagementItem.predictionData?.leftChoice?.text || "").trim().toLowerCase();
+          const leftCode = String(engagementItem.predictionData?.leftChoice?.code || "").trim().toLowerCase();
+          const rightText = String(engagementItem.predictionData?.rightChoice?.text || "").trim().toLowerCase();
+          const rightCode = String(engagementItem.predictionData?.rightChoice?.code || "").trim().toLowerCase();
+
+          const isLeftWinning = winTarget === "left" || (!!leftText && winTarget === leftText) || (!!leftCode && winTarget === leftCode) || (!!leftText && leftText.includes(winTarget) && winTarget.length > 2);
+          const isRightWinning = winTarget === "right" || (!!rightText && winTarget === rightText) || (!!rightCode && winTarget === rightCode) || (!!rightText && rightText.includes(winTarget) && winTarget.length > 2);
+          const isUserLeft = userChoice === "left" || (!!leftText && userChoice === leftText) || (!!leftCode && userChoice === leftCode);
+          const isUserRight = userChoice === "right" || (!!rightText && userChoice === rightText) || (!!rightCode && userChoice === rightCode);
+
+          if (isLeftWinning && isUserLeft) isCorrect = true;
+          else if (isRightWinning && isUserRight) isCorrect = true;
+          else if (winTarget && userChoice === winTarget) isCorrect = true;
+        } else if (engagementItem?.type === "poll") {
+          const correctLower = String(correctAnswer).trim().toLowerCase();
+          if (userChoice === correctLower) {
+            isCorrect = true;
+          } else if (engagementItem.pollData?.options) {
+            const chosenOpt = engagementItem.pollData.options.find(
+              (o: any) => String(o.id).trim().toLowerCase() === userChoice || String(o.text || o.label || "").trim().toLowerCase() === userChoice
+            );
+            const targetOpt = engagementItem.pollData.options.find(
+              (o: any) => String(o.id).trim().toLowerCase() === correctLower || String(o.text || o.label || "").trim().toLowerCase() === correctLower || (o.text && correctLower && (String(o.text).toLowerCase().includes(correctLower) || correctLower.includes(String(o.text).toLowerCase())))
+            );
+            if (chosenOpt && targetOpt && chosenOpt.id === targetOpt.id) isCorrect = true;
+            else if (chosenOpt && (String(chosenOpt.id).toLowerCase() === correctLower || String(chosenOpt.text || chosenOpt.label || "").trim().toLowerCase() === correctLower)) isCorrect = true;
+            else if (chosenOpt?.isCorrect === true) isCorrect = true;
+          }
+        }
+
+        let newlyAwarded = false;
+        if (isExpired && isCorrect && !existingVote.accuracyBonusAwarded) {
+          try {
+            const awardUid = existingVote.userId || userId;
+            const awardEmail = authUser?.email || (awardUid && awardUid.includes("@") ? awardUid : "");
+            const ptsRes = await awardEngagementPoints({
+              userId: awardUid,
+              userEmail: awardEmail,
+              userName: authUser?.name || userName || "",
+              action: "accuracy_bonus",
+              engagementId: id,
+              engagementType: engagementItem.type,
+              engagementTitle: engagementItem.title,
+              pointsBonus: 10,
+              metadata: {
+                reason: "CORRECT_PREDICTION_BONUS",
+                bonusPoints: 10,
+                type: engagementItem.type,
+              },
+            });
+            if (ptsRes.success) newlyAwarded = true;
+
+            await docClient.send(
+              new UpdateCommand({
+                TableName: TABLES.SocialAndContent,
+                Key: { contentId: `ENGAGEMENT#${id}`, sk: existingVote.sk || `VOTE#${awardUid}` },
+                UpdateExpression: "SET accuracyBonusAwarded = :t, isCorrect = :t, wonBonusPoints = :pts, resolvedAt = :now",
+                ExpressionAttributeValues: { ":t": true, ":pts": 10, ":now": now },
+              })
+            ).catch(() => {});
+
+            if (db) {
+              await db.collection(getFirestoreCollection("user_engagements")).doc(`${awardUid}_${id}`).set({
+                accuracyBonusAwarded: true,
+                isCorrect: true,
+                wonBonusPoints: 10,
+                resolvedAt: now,
+              }, { merge: true }).catch(() => {});
+            }
+
+            existingVote.accuracyBonusAwarded = true;
+            existingVote.wonBonusPoints = 10;
+          } catch (e) {
+            console.warn("POST claim bonus error:", e);
+          }
+        }
+
+        return NextResponse.json({
+          success: true,
+          alreadyVoted: true,
+          isExpired,
+          isCorrect,
+          accuracyBonusAwarded: Boolean(existingVote.accuracyBonusAwarded),
+          wonBonusPoints: existingVote.wonBonusPoints || (isCorrect ? 10 : 0),
+          newlyAwarded,
+          selectedOptionId: existingVote.selectedOptionId,
+        });
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -150,6 +620,100 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         },
         { status: 400 }
       );
+    }
+
+    // ─── Step 1.5: Determine Unique User Engagement (Prevent duplicate totalEngaged increment) ───
+    let isNewUserEngagement = true;
+
+    // Check frontend payload hint (Option B)
+    if (typeof body.isFirstQuizEngagement === "boolean") {
+      isNewUserEngagement = body.isFirstQuizEngagement;
+    } else if (typeof body.questionIndex === "number" && body.questionIndex > 0) {
+      isNewUserEngagement = false;
+    }
+
+    // Check existing engagement records in DB if not already false (Option A: authoritative verification)
+    if (isNewUserEngagement && questionId) {
+      for (const uid of candidateIds) {
+        if (!isNewUserEngagement) break;
+
+        // 1. Direct O(1) check for user participant marker on this engagement
+        try {
+          const userMarker = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk: `USER#${uid}` },
+            })
+          );
+          if (userMarker.Item) {
+            isNewUserEngagement = false;
+            break;
+          }
+        } catch {}
+
+        // 2. Query any previous question votes for this user on this engagement (sk starts with VOTE#{uid}#)
+        try {
+          const priorVotes = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":cid": `ENGAGEMENT#${id}`,
+                ":skpfx": `VOTE#${uid}#`,
+              },
+              Limit: 1,
+            })
+          );
+          if (priorVotes.Items && priorVotes.Items.length > 0) {
+            isNewUserEngagement = false;
+            break;
+          }
+        } catch {}
+
+        // 3. Direct check for single vote VOTE#{uid}
+        try {
+          const singleVote = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${uid}` },
+            })
+          );
+          if (singleVote.Item) {
+            isNewUserEngagement = false;
+            break;
+          }
+        } catch {}
+
+        // 4. Query legacy DynamoDB shape USER_VOTE#{uid}
+        try {
+          const legacyPrior = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.SocialAndContent,
+              KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":cid": `USER_VOTE#${uid}`,
+                ":skpfx": `ENGAGEMENT#${id}`,
+              },
+              Limit: 1,
+            })
+          );
+          if (legacyPrior.Items && legacyPrior.Items.length > 0) {
+            isNewUserEngagement = false;
+            break;
+          }
+        } catch {}
+
+        // 5. Check Firestore user_engagements record
+        if (db) {
+          try {
+            const userEngSnap = await db.collection(getFirestoreCollection("user_engagements")).doc(`${uid}_${id}`).get();
+            if (userEngSnap.exists) {
+              isNewUserEngagement = false;
+              break;
+            }
+          } catch {}
+        }
+      }
     }
 
     // ─── Step 2: Fetch Current Engagement Item ───────────────────────────────
@@ -171,6 +735,17 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     if (!item) {
       return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
+    }
+
+    if (item.expiresAt && Date.now() >= Number(item.expiresAt)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Voting is closed. This event's timer has expired.",
+          isExpired: true,
+        },
+        { status: 400 }
+      );
     }
 
     let responseData: Record<string, any> = { success: true };
@@ -195,7 +770,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       item.fanBattleData.leftCompetitor = left;
       item.fanBattleData.rightCompetitor = right;
       item.fanBattleData.totalVotes = total;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
 
       responseData = {
         success: true,
@@ -206,6 +783,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         leftVotes: left.votes,
         rightVotes: right.votes,
         totalVotes: total,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
       };
     }
 
@@ -218,29 +799,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         item.quizData;
 
       const correctOptId = targetQ.correctOptionId || "B";
-      const ptsReward = Number(targetQ.pointsReward || item.quizData.pointsReward || 50);
+      // Enforce +10 PTS bonus for correct quiz answer (+2 participation points = 12 total)
+      const ptsReward = 10;
       const isCorrect = String(selectedOptionId).trim().toUpperCase() === String(correctOptId).trim().toUpperCase();
       const pointsAwarded = isCorrect ? ptsReward : 0;
-
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
-
-      // Award points if user is authenticated and answer is correct
-      if (isCorrect && authUser?.email) {
-        try {
-          await docClient.send(
-            new UpdateCommand({
-              TableName: TABLES.IdentityAndAccess,
-              Key: { entityId: `USER#${authUser.email}`, sk: "USER#META" },
-              UpdateExpression: "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, totalXP = if_not_exists(totalXP, :zero) + :pts",
-              ExpressionAttributeValues: {
-                ":zero": 0,
-                ":pts": pointsAwarded,
-              },
-            })
-          );
-        } catch (pointErr) {
-          console.warn("Could not award quiz points:", pointErr);
-        }
+      
+      // ONLY increment totalEngaged if this is the user's first time interacting with this quiz
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
       }
 
       responseData = {
@@ -249,8 +815,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         questionId: targetQ.id || questionId,
         isCorrect,
         correctOptionId: correctOptId,
-        pointsAwarded,
+        quizPointsAwarded: pointsAwarded,
+        participationPointsAwarded: 2,
+        pointsAwarded: pointsAwarded + 2,
         explanation: targetQ.explanation || item.quizData.explanation || `Correct: ${correctOptId}`,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstQuizEngagement: isNewUserEngagement,
+        isFirstEngagement: isNewUserEngagement,
       };
     }
 
@@ -271,7 +842,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
       item.pollData.options = options;
       item.pollData.totalVotes = totalVotes;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
 
       responseData = {
         success: true,
@@ -279,6 +852,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         selectedOptionId,
         options: optionsWithPercentages,
         totalVotes,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
       };
     }
 
@@ -300,7 +877,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       item.predictionData.leftChoice = left;
       item.predictionData.rightChoice = right;
       item.predictionData.totalVotes = total;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
 
       responseData = {
         success: true,
@@ -310,6 +889,59 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         rightPercentage: rightPct,
         coinsLocked: item.predictionData.coinStake || 25,
         totalVotes: total,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
+      };
+    }
+
+    // 3.5 Meme Arena Reaction Vote Handling
+    else if (item.type === "meme" && item.memeData) {
+      const reactions = {
+        mild: Number(item.memeData.reactions?.mild || 0),
+        funny: Number(item.memeData.reactions?.funny || 0),
+        hot: Number(item.memeData.reactions?.hot || 0),
+        fire: Number(item.memeData.reactions?.fire || 0),
+        nuclear: Number(item.memeData.reactions?.nuclear || 0),
+      };
+
+      const reactionType = (selectedOptionId || "hot").toLowerCase() as keyof typeof reactions;
+      if (reactions[reactionType] !== undefined) {
+        reactions[reactionType] = (reactions[reactionType] || 0) + 1;
+      }
+
+      const totalVotes =
+        reactions.mild + reactions.funny + reactions.hot + reactions.fire + reactions.nuclear;
+
+      // Calculate weighted heat percentage: mild (20%), funny (40%), hot (60%), fire (80%), nuclear (100%)
+      const weightedScore =
+        reactions.mild * 20 +
+        reactions.funny * 40 +
+        reactions.hot * 60 +
+        reactions.fire * 80 +
+        reactions.nuclear * 100;
+      const heatPercentage =
+        totalVotes > 0 ? Math.min(100, Math.max(10, Math.round(weightedScore / totalVotes))) : 78;
+
+      item.memeData.reactions = reactions;
+      item.memeData.totalVotes = totalVotes;
+      item.memeData.heatPercentage = heatPercentage;
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
+
+      responseData = {
+        success: true,
+        type: "meme",
+        selectedOptionId: reactionType,
+        heatPercentage,
+        totalVotes,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
+        reactions,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
       };
     }
 
@@ -323,6 +955,28 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     };
 
     await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
+
+    // ─── Step 4.5: Award Participation Points (+2 points for quiz, polls, predictions, battles) ─
+    const quizBonus = item.type === "quiz" && responseData?.isCorrect ? Number(responseData.quizPointsAwarded || 0) : 0;
+    try {
+      const awardRes = await awardEngagementPoints({
+        userId,
+        userEmail: authUser?.email || body.userEmail || (userId.includes("@") ? userId : ""),
+        userName: userName || authUser?.name || body.userName || "",
+        action: "participate",
+        engagementId: id,
+        engagementType: item.type,
+        engagementTitle: item.title,
+        questionId: questionId || undefined,
+        quizPointsBonus: quizBonus,
+        syncQuizLeaderboard: false, 
+      });
+      if (awardRes.success) {
+        responseData.pointsAwarded = awardRes.pointsAwarded;
+      }
+    } catch (ptsErr) {
+      console.warn("[POST /api/engagements/[id]/vote] Failed to award participation points:", ptsErr);
+    }
 
     // ─── Step 5: Save User Vote Record ────────────────────────────────────────
     const userRecord = {
@@ -352,6 +1006,27 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       console.warn("DynamoDB standard vote record notice:", dynVoteErr);
     }
 
+    // A2. Standardized DynamoDB Participant Marker: contentId = ENGAGEMENT#{id}, sk = USER#{userId}
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.SocialAndContent,
+          Item: {
+            contentId: `ENGAGEMENT#${id}`,
+            sk: `USER#${userId}`,
+            entityId: `USER_ENGAGEMENT#${String(item.type).toUpperCase()}`,
+            userId,
+            engagementId: id,
+            type: item.type,
+            firstEngagedAt: now,
+            updatedAt: now,
+          },
+        })
+      );
+    } catch (dynUserEngErr) {
+      console.warn("DynamoDB user engagement marker notice:", dynUserEngErr);
+    }
+
     // B. Legacy DynamoDB Key: contentId = USER_VOTE#{userId}, sk = ENGAGEMENT#{id} (Backwards compatibility)
     try {
       await docClient.send(
@@ -371,110 +1046,120 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     if (db) {
       try {
         await db.collection("user_engagements").doc(firestoreVoteDocId).set(userRecord);
+        if (questionId) {
+          await db.collection(getFirestoreCollection("user_engagements")).doc(`${userId}_${id}`).set({
+            userId,
+            engagementId: id,
+            type: item.type,
+            firstEngagedAt: now,
+            updatedAt: now,
+          }, { merge: true });
+        }
       } catch (fbVoteErr) {
         console.warn("Firestore user vote record notice:", fbVoteErr);
       }
     }
 
-    // ─── Step 6: Update Quiz Leaderboard in DynamoDB and Firestore ────────────
-    if (item.type === "quiz" && responseData?.type === "quiz") {
-      const isCorrect = Boolean(responseData.isCorrect);
-      const pts = Number(responseData.pointsAwarded || 0);
-      const displayName = userName || authUser?.name || "Fan Quizzer";
-      const avatar =
-        userAvatar ||
-        (authUser as any)?.picture ||
-        (authUser as any)?.photoURL ||
-        `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`;
+    // ─── Step 6: Update FlipARENA Leaderboard (Quizzes, Polls, Predictions, Battles) ─
+    const isQuiz = item.type === "quiz";
+    const isCorrect = isQuiz ? Boolean(responseData?.isCorrect) : false;
+    const earnedPts = Number(responseData?.pointsAwarded ?? (isQuiz && isCorrect ? 12 : 2));
+    const displayName = userName || authUser?.name || "Fan Quizzer";
+    const avatar =
+      userAvatar ||
+      (authUser as any)?.picture ||
+      (authUser as any)?.photoURL ||
+      `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`;
 
-      // 1. DynamoDB: Update QUIZ_LEADERBOARD#GLOBAL and QUIZ_LEADERBOARD#{id}
+    const userEmailVal = (authUser?.email || body.userEmail || "").trim() || `${userId}@sportsfan360.com`;
+
+    // 1. DynamoDB: Update QUIZ_LEADERBOARD#GLOBAL and QUIZ_LEADERBOARD#{id}
+    try {
+      const updateGlobal = docClient.send(
+        new UpdateCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${userId}` },
+          UpdateExpression:
+            "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+            "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+            "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+            "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+            "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+            "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
+          ExpressionAttributeValues: {
+            ":zero": 0,
+            ":pts": earnedPts,
+            ":corr": isCorrect ? 1 : 0,
+            ":incorr": isQuiz && !isCorrect ? 1 : 0,
+            ":one": 1,
+            ":uname": displayName,
+            ":uavatar": avatar,
+            ":uemail": userEmailVal,
+            ":now": now,
+            ":entity": "QUIZ_LEADERBOARD",
+            ":uid": userId,
+          },
+        })
+      );
+
+      const updateQuiz = docClient.send(
+        new UpdateCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: `QUIZ_LEADERBOARD#${id}`, sk: `USER#${userId}` },
+          UpdateExpression:
+            "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+            "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+            "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+            "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+            "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+            "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid, quizId = :qid",
+          ExpressionAttributeValues: {
+            ":zero": 0,
+            ":pts": earnedPts,
+            ":corr": isCorrect ? 1 : 0,
+            ":incorr": isQuiz && !isCorrect ? 1 : 0,
+            ":one": 1,
+            ":uname": displayName,
+            ":uavatar": avatar,
+            ":uemail": userEmailVal,
+            ":now": now,
+            ":entity": "QUIZ_LEADERBOARD",
+            ":uid": userId,
+            ":qid": id,
+          },
+        })
+      );
+
+      await Promise.all([updateGlobal, updateQuiz]);
+    } catch (lbDynErr) {
+      console.warn("DynamoDB quiz leaderboard update notice:", lbDynErr);
+    }
+
+    // 2. Firestore: Update quiz_leaderboard collection
+    if (db) {
       try {
-        const updateGlobal = docClient.send(
-          new UpdateCommand({
-            TableName: TABLES.SocialAndContent,
-            Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${userId}` },
-            UpdateExpression:
-              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
-              "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
-              "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
-              "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
-              "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
-              "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
-            ExpressionAttributeValues: {
-              ":zero": 0,
-              ":pts": pts,
-              ":corr": isCorrect ? 1 : 0,
-              ":incorr": isCorrect ? 0 : 1,
-              ":one": 1,
-              ":uname": displayName,
-              ":uavatar": avatar,
-              ":uemail": authUser?.email || "",
-              ":now": now,
-              ":entity": "QUIZ_LEADERBOARD",
-              ":uid": userId,
-            },
-          })
-        );
-
-        const updateQuiz = docClient.send(
-          new UpdateCommand({
-            TableName: TABLES.SocialAndContent,
-            Key: { contentId: `QUIZ_LEADERBOARD#${id}`, sk: `USER#${userId}` },
-            UpdateExpression:
-              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
-              "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
-              "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
-              "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
-              "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
-              "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid, quizId = :qid",
-            ExpressionAttributeValues: {
-              ":zero": 0,
-              ":pts": pts,
-              ":corr": isCorrect ? 1 : 0,
-              ":incorr": isCorrect ? 0 : 1,
-              ":one": 1,
-              ":uname": displayName,
-              ":uavatar": avatar,
-              ":uemail": authUser?.email || "",
-              ":now": now,
-              ":entity": "QUIZ_LEADERBOARD",
-              ":uid": userId,
-              ":qid": id,
-            },
-          })
-        );
-
-        await Promise.all([updateGlobal, updateQuiz]);
-      } catch (lbDynErr) {
-        console.warn("DynamoDB quiz leaderboard update notice:", lbDynErr);
-      }
-
-      // 2. Firestore: Update quiz_leaderboard collection
-      if (db) {
-        try {
-          const colName = getFirestoreCollection("quiz_leaderboard");
-          const incData = {
-            userId,
-            userName: displayName,
-            userAvatar: avatar,
-            userEmail: authUser?.email || "",
-            totalPoints: FieldValue.increment(pts),
-            correctCount: FieldValue.increment(isCorrect ? 1 : 0),
-            incorrectCount: FieldValue.increment(isCorrect ? 0 : 1),
-            totalAnswered: FieldValue.increment(1),
-            lastAnsweredAt: now,
-            updatedAt: now,
-          };
-          await Promise.all([
-            db.collection(colName).doc(userId).set(incData, { merge: true }),
-            db.collection(colName).doc(`${userId}_${id}`).set({ ...incData, quizId: id }, { merge: true }),
-            colName !== "quiz_leaderboard"
-              ? db.collection("quiz_leaderboard").doc(userId).set(incData, { merge: true })
-              : Promise.resolve(),
-          ]);
-        } catch (lbFbErr) {
-          console.warn("Firestore quiz leaderboard update notice:", lbFbErr);
-        }
+        const colName = getFirestoreCollection("quiz_leaderboard");
+        const incData = {
+          userId,
+          userName: displayName,
+          userAvatar: avatar,
+          userEmail: authUser?.email || "",
+          totalPoints: FieldValue.increment(earnedPts),
+          correctCount: FieldValue.increment(isCorrect ? 1 : 0),
+          incorrectCount: FieldValue.increment(isQuiz && !isCorrect ? 1 : 0),
+          totalAnswered: FieldValue.increment(1),
+          lastAnsweredAt: now,
+          updatedAt: now,
+        };
+        await Promise.all([
+          db.collection(colName).doc(userId).set(incData, { merge: true }),
+          db.collection(colName).doc(`${userId}_${id}`).set({ ...incData, quizId: id }, { merge: true }),
+          colName !== "quiz_leaderboard"
+            ? db.collection("quiz_leaderboard").doc(userId).set(incData, { merge: true })
+            : Promise.resolve(),
+        ]);
+      } catch (lbFbErr) {
+        console.warn("Firestore quiz leaderboard update notice:", lbFbErr);
       }
     }
 

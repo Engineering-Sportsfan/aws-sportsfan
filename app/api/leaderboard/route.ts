@@ -4,6 +4,8 @@ import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+
 export const dynamic = "force-dynamic";
 
 function getErrorMessage(err: unknown): string {
@@ -18,15 +20,15 @@ export async function GET(req: NextRequest) {
 
     let entries: any[] = [];
 
-    // 1. Try DynamoDB UserData or SportsData
+    // 1. Try DynamoDB IdentityAndAccess table
     try {
       const scanRes = await docClient.send(
         new ScanCommand({
-          TableName: "UserData",
-          FilterExpression: "begins_with(userId, :uPrefix) AND sk = :profileSk",
+          TableName: TABLES.IdentityAndAccess,
+          FilterExpression: "begins_with(entityId, :uPrefix) AND sk = :metaSk",
           ExpressionAttributeValues: {
             ":uPrefix": "USER#",
-            ":profileSk": "PROFILE",
+            ":metaSk": "USER#META",
           },
           Limit: 300,
         })
@@ -35,12 +37,13 @@ export async function GET(req: NextRequest) {
       if (scanRes.Items && scanRes.Items.length > 0) {
         entries = scanRes.Items
           .map((item) => ({
-            userId: (item.userId as string).replace(/^USER#/, "") || item.id,
-            username: item.name || item.username || item.userName || "User",
-            totalPoints: Number(item.totalPoints || item.points || 0),
+            userId: (item.entityId as string).replace(/^USER#/, "") || item.userId || item.id,
+            username: item.userName || item.name || item.username || (item.email ? item.email.split("@")[0] : "User"),
+            totalPoints: Number(item.totalPoints || item.points || item.totalXP || 0),
             correctPredictions: item.correctPredictions || 0,
             totalPredictions: item.totalPredictions || 0,
           }))
+          .filter((u) => u.totalPoints > 0)
           .sort((a, b) => b.totalPoints - a.totalPoints)
           .map((e, index) => ({
             rank: index + 1,
@@ -54,7 +57,7 @@ export async function GET(req: NextRequest) {
     // 2. Fallback to Firestore globalLeaderboard
     if (entries.length === 0 && db) {
       const snapshot = await db
-        .collection("globalLeaderboard")
+        .collection(getFirestoreCollection("globalLeaderboard"))
         .orderBy("totalPoints", "desc")
         .select("userId", "userName", "userEmail", "totalPoints", "lastUpdated")
         .get();

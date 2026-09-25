@@ -2,17 +2,6 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Manrope, Oswald } from "next/font/google";
-
-const titleFont = Oswald({
-    subsets: ["latin"],
-    weight: ["500", "600"],
-});
-
-const bodyFont = Manrope({
-    subsets: ["latin"],
-    weight: ["400", "500", "700"],
-});
 
 interface UsernameEntryProps {
     onUsernameSubmit?: (username: string) => void;
@@ -40,7 +29,7 @@ export default function UsernameEntry({ onUsernameSubmit, loading = false }: Use
     };
 
     return (
-        <main className={`${bodyFont.className} relative min-h-screen overflow-hidden bg-black px-4 text-white sm:px-6`}>
+        <main className="font-manrope relative min-h-screen overflow-hidden bg-black px-4 text-white sm:px-6">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_32%,rgba(255,48,111,0.25),transparent_38%)]" />
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_80%,rgba(255,140,65,0.12),transparent_42%)]" />
 
@@ -58,7 +47,7 @@ export default function UsernameEntry({ onUsernameSubmit, loading = false }: Use
                 </div>
 
                 <div className="mt-5 text-center sm:mt-7 lg:mt-8">
-                    <h1 className={`${titleFont.className} bg-gradient-to-b from-white to-[#b6b6b6] bg-clip-text text-[34px] font-semibold uppercase leading-none tracking-[0.03em] text-transparent sm:text-[44px] lg:text-[48px] xl:text-[54px]`}>
+                    <h1 className="font-oswald bg-gradient-to-b from-white to-[#b6b6b6] bg-clip-text text-[34px] font-semibold uppercase leading-none tracking-[0.03em] text-transparent sm:text-[44px] lg:text-[48px] xl:text-[54px]">
                         Create Host Account
                     </h1>
                     <p className="mt-2 text-[14px] text-[#ececec] sm:mt-3 sm:text-[16px] lg:text-[17px]">Enter email for new host account</p>

@@ -193,6 +193,22 @@ export default function QuizCard({
     };
   }, [now, startTime, frequencyMs, questions.length]);
 
+  // Check if entire quiz is closed based on timer (expiresAt)
+  const quizExpiresAt = item.expiresAt || item.quizData?.expiresAt;
+  const isQuizExpired = Boolean(quizExpiresAt && now >= Number(quizExpiresAt));
+  const quizDurationMinutes = Number(item.quizData?.durationMinutes || item.quizData?.timerMinutes || 600);
+
+  const quizTimeRemainingMs = quizExpiresAt ? Math.max(0, Number(quizExpiresAt) - now) : null;
+  const formattedQuizRemaining = useMemo(() => {
+    if (quizTimeRemainingMs === null) return null;
+    const totalSecs = Math.floor(quizTimeRemainingMs / 1000);
+    const hours = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    const secs = totalSecs % 60;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }, [quizTimeRemainingMs]);
+
   // Formatted countdown timer MM:SS
   const formattedCountdown = useMemo(() => {
     const totalSecs = Math.floor(timeRemainingInSlotMs / 1000);
@@ -207,7 +223,7 @@ export default function QuizCard({
 
   // ─── Handle Option Selection ───────────────────────────────────────────────
   async function handleOptionSelect(q: QuizQuestion, optId: string) {
-    if (answers[q.id] || submittingQId === q.id) return;
+    if (isQuizExpired || answers[q.id] || submittingQId === q.id) return;
 
     setSubmittingQId(q.id);
     const localIsCorrect = optId.toUpperCase() === q.correctOptionId.toUpperCase();
@@ -227,7 +243,10 @@ export default function QuizCard({
     } else {
       setIncorrectCount(prev => prev + 1);
     }
-    setTotalEngaged(prev => prev + 1);
+    const isFirstQuizEngagement = Object.keys(answers).length === 0;
+    if (isFirstQuizEngagement) {
+      setTotalEngaged(prev => prev + 1);
+    }
 
     // Save to localStorage so this question is never re-asked
     try {
@@ -246,6 +265,9 @@ export default function QuizCard({
             userId: propUserId,
             userName: propUserName,
             userAvatar: propUserAvatar,
+            isFirstQuizEngagement,
+            questionIndex: currentSlotIndex,
+            totalQuestions: questions.length,
           }),
         }),
         fetch(`/api/engagements/quiz/leaderboard`, {
@@ -265,6 +287,9 @@ export default function QuizCard({
       ]);
 
       const data = await voteRes.json();
+      if (typeof data.totalEngaged === "number") {
+        setTotalEngaged(data.totalEngaged);
+      }
       if (data.success && onAnswerSuccess) {
         onAnswerSuccess(data);
       }
@@ -337,24 +362,63 @@ export default function QuizCard({
         }}
       >
         {/* Left Badges */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span
-            style={{
-              background: "rgba(163, 113, 247, 0.15)",
-              color: "#d2a8ff",
-              border: "1px solid rgba(163, 113, 247, 0.3)",
-              padding: "4px 10px",
-              borderRadius: 20,
-              fontSize: 11,
-              fontWeight: 800,
-              letterSpacing: ".04em",
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-            }}
-          >
-            🧠 LIVE QUIZ
-          </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {isQuizExpired ? (
+            <span
+              style={{
+                background: "rgba(239, 68, 68, 0.15)",
+                color: "#f87171",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                padding: "4px 10px",
+                borderRadius: 20,
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: ".04em",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+              }}
+            >
+              🔒 QUIZ CLOSED
+            </span>
+          ) : (
+            <span
+              style={{
+                background: "rgba(163, 113, 247, 0.15)",
+                color: "#d2a8ff",
+                border: "1px solid rgba(163, 113, 247, 0.3)",
+                padding: "4px 10px",
+                borderRadius: 20,
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: ".04em",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+              }}
+            >
+              🧠 LIVE QUIZ
+            </span>
+          )}
+
+          {formattedQuizRemaining && !isQuizExpired && (
+            <span
+              style={{
+                background: "rgba(56, 139, 253, 0.12)",
+                color: "#58a6ff",
+                border: "1px solid rgba(56, 139, 253, 0.25)",
+                padding: "4px 10px",
+                borderRadius: 20,
+                fontSize: 11,
+                fontWeight: 800,
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              ⏳ Closes in: {formattedQuizRemaining}
+            </span>
+          )}
 
           <span
             style={{
@@ -440,11 +504,33 @@ export default function QuizCard({
               Question {currentSlotIndex + 1} of {questions.length}
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#3fb950", fontWeight: 700, fontSize: 12 }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#3fb950", display: "inline-block" }} />
-              <span>Next in: {formattedCountdown} (every {frequencyMinutes}m)</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, color: isQuizExpired ? "#f87171" : "#3fb950", fontWeight: 700, fontSize: 12 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: isQuizExpired ? "#f87171" : "#3fb950", display: "inline-block" }} />
+              <span>{isQuizExpired ? "Quiz Expired & Closed" : `Next in: ${formattedCountdown} (every ${frequencyMinutes}m)`}</span>
             </div>
           </div>
+
+          {/* Quiz Closed Notice Banner */}
+          {isQuizExpired && (
+            <div
+              style={{
+                background: "rgba(218, 54, 51, 0.12)",
+                border: "1.5px solid rgba(218, 54, 51, 0.4)",
+                borderRadius: 12,
+                padding: "16px 20px",
+                textAlign: "center",
+                marginBottom: 16,
+              }}
+            >
+              <div style={{ fontSize: 26, marginBottom: 4 }}>🔒</div>
+              <h3 style={{ margin: "0 0 4px 0", fontSize: 16, fontWeight: 800, color: "#ff7b72" }}>
+                Quiz Closed
+              </h3>
+              <p style={{ margin: 0, fontSize: 13, color: "#c9d1d9" }}>
+                This quiz has concluded after its {quizDurationMinutes < 60 ? `${quizDurationMinutes}m` : `${Math.round(quizDurationMinutes / 60)}h`} timer expired. Answers are now closed!
+              </p>
+            </div>
+          )}
 
           {/* Check if current single question was already answered */}
           {isCurrentQuestionAnswered ? (
@@ -514,6 +600,7 @@ export default function QuizCard({
               answer={answers[currentQuestion?.id]}
               onSelect={optId => handleOptionSelect(currentQuestion, optId)}
               isSubmitting={submittingQId === currentQuestion?.id}
+              disabled={isQuizExpired}
             />
           )}
         </div>
@@ -727,6 +814,7 @@ interface QuestionRendererProps {
   answer?: { selectedId: string; isCorrect: boolean; pointsAwarded: number };
   onSelect: (optionId: string) => void;
   isSubmitting?: boolean;
+  disabled?: boolean;
 }
 
 function SingleQuestionRenderer({
@@ -735,6 +823,7 @@ function SingleQuestionRenderer({
   answer,
   onSelect,
   isSubmitting,
+  disabled,
 }: QuestionRendererProps) {
   const answered = !!answer;
   const isCorrect = answer?.isCorrect;
@@ -795,7 +884,7 @@ function SingleQuestionRenderer({
             <button
               key={opt.id}
               onClick={() => onSelect(opt.id)}
-              disabled={answered || isSubmitting}
+              disabled={answered || isSubmitting || disabled}
               style={{
                 background: bg,
                 border: border,
@@ -806,7 +895,8 @@ function SingleQuestionRenderer({
                 fontWeight: 700,
                 display: "flex",
                 alignItems: "center",
-                cursor: answered ? "default" : "pointer",
+                cursor: answered || disabled ? "default" : "pointer",
+                opacity: disabled && !answered ? 0.6 : 1,
                 transition: "all .15s ease",
                 textAlign: "left",
               }}

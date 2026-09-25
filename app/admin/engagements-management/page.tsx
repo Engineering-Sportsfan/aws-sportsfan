@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { EngagementItem, EngagementType, QuizOption, QuizLeaderboardEntry } from "@/types/engagements";
+import MemeCard from "@/components/Engagements/MemeCard";
+import { Upload, Image as ImageIcon, Flame, Sparkles, X, Check, HelpCircle, Swords, BarChart2, Brain, Target, MessageSquare, Radio } from "lucide-react";
 
 interface AdminQuizQuestion {
   id: string;
@@ -16,7 +18,7 @@ interface AdminQuizQuestion {
 }
 
 export default function EngagementsManagementPage() {
-  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "fan_battle" | "quiz" | "poll" | "prediction">("list");
+  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "meme_arena">("list");
   const [engagements, setEngagements] = useState<EngagementItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -30,7 +32,16 @@ export default function EngagementsManagementPage() {
   const [sport, setSport] = useState("cricket");
   const [status, setStatus] = useState<"active" | "inactive">("active");
 
+  // ── Meme Arena State ─────────────────────────────────────────────────────────
+  const [memeTitle, setMemeTitle] = useState("");
+  const [memeDescription, setMemeDescription] = useState("");
+  const [memeFile, setMemeFile] = useState<File | null>(null);
+  const [memePreviewUrl, setMemePreviewUrl] = useState<string | null>(null);
+  const [memeFeedFilter, setMemeFeedFilter] = useState<"top" | "trending" | "my_votes">("top");
+  const memeFileInputRef = useRef<HTMLInputElement>(null);
+
   // Fan Battle state
+  const [battleStartTime, setBattleStartTime] = useState<string>("");
   const [fbLeftCode, setFbLeftCode] = useState("IN");
   const [fbLeftName, setFbLeftName] = useState("Virat Kohli");
   const [fbLeftStat, setFbLeftStat] = useState("Avg 58.6 in Tests");
@@ -40,7 +51,8 @@ export default function EngagementsManagementPage() {
 
   // Multi-Question Quiz State with Starting Time & Frequency
   const [quizStartTime, setQuizStartTime] = useState<string>("");
-  const [quizFrequencyMinutes, setQuizFrequencyMinutes] = useState<number>(10);
+  const [quizFrequencyMinutes, setQuizFrequencyMinutes] = useState<number>(0);
+  const [quizTimerMinutes, setQuizTimerMinutes] = useState<number>(600);
   const [quizQuestions, setQuizQuestions] = useState<AdminQuizQuestion[]>([
     {
       id: "q_1",
@@ -50,12 +62,15 @@ export default function EngagementsManagementPage() {
       optionC: "30",
       optionD: "32",
       correctOptionId: "B",
-      pointsReward: 50,
+      pointsReward: 10,
       explanation: "Virat Kohli scored his 29th Test hundred against West Indies.",
     },
   ]);
 
   // Poll state
+  const [pollStartTime, setPollStartTime] = useState<string>("");
+  const [pollTimerMinutes, setPollTimerMinutes] = useState<number>(10);
+  const [pollAnswer, setPollAnswer] = useState<string>("");
   const [pollQuestion, setPollQuestion] = useState("Who takes more wickets in Galle?");
   const [pollOptions, setPollOptions] = useState<string[]>([
     "Jasprit Bumrah 🏏",
@@ -64,6 +79,9 @@ export default function EngagementsManagementPage() {
   ]);
 
   // Prediction state
+  const [predStartTime, setPredStartTime] = useState<string>("");
+  const [predTimerMinutes, setPredTimerMinutes] = useState<number>(30);
+  const [predAnswer, setPredAnswer] = useState<string>("");
   const [predQuestion, setPredQuestion] = useState("India win the 1st Galle Test?");
   const [predLeftText, setPredLeftText] = useState("Yes, India win");
   const [predLeftCode, setPredLeftCode] = useState("IN");
@@ -86,7 +104,10 @@ export default function EngagementsManagementPage() {
     try {
       const res = await fetch(`/api/engagements?type=${typeFilter}`);
       const data = await res.json();
-      setEngagements(data.engagements || []);
+      const list: EngagementItem[] = Array.isArray(data.engagements)
+        ? data.engagements.filter((it: any) => Boolean(it && (it.title || it.type)))
+        : [];
+      setEngagements(list);
     } catch {
       setEngagements([]);
     } finally {
@@ -123,11 +144,20 @@ export default function EngagementsManagementPage() {
   function handleOpenCreate(type: EngagementType) {
     setEditingItem(null);
     setActiveTab(type);
-    if (type === "fan_battle") setTitle("Fan Battle · Who wins your vote?");
-    else if (type === "quiz") {
+    if (type === "fan_battle") {
+      setTitle("Fan Battle · Who wins your vote?");
+      setBattleStartTime("");
+      setFbLeftCode("IN");
+      setFbLeftName("Virat Kohli");
+      setFbLeftStat("Avg 58.6 in Tests");
+      setFbRightCode("PK");
+      setFbRightName("Babar Azam");
+      setFbRightStat("Avg 44.8 in Tests");
+    } else if (type === "quiz") {
       setTitle("Quick Live Cricket Quiz");
       setQuizStartTime("");
-      setQuizFrequencyMinutes(10);
+      setQuizFrequencyMinutes(0);
+      setQuizTimerMinutes(600);
       setQuizQuestions([
         {
           id: "q_1",
@@ -137,12 +167,39 @@ export default function EngagementsManagementPage() {
           optionC: "30",
           optionD: "32",
           correctOptionId: "B",
-          pointsReward: 50,
+          pointsReward: 10,
           explanation: "Virat Kohli scored his 29th Test hundred against West Indies.",
         },
       ]);
-    } else if (type === "poll") setTitle("Who takes more wickets in Galle?");
-    else if (type === "prediction") setTitle("Predict the outcome!");
+    } else if (type === "poll") {
+      setTitle("Who takes more wickets in Galle?");
+      setPollStartTime("");
+      setPollTimerMinutes(10);
+      setPollAnswer("");
+      setPollQuestion("Who takes more wickets in Galle?");
+      setPollOptions([
+        "Jasprit Bumrah 🏏",
+        "Maheesh Theekshana 🌀",
+        "Ravindra Jadeja 🍌",
+      ]);
+    } else if (type === "prediction") {
+      setTitle("Predict the outcome!");
+      setPredStartTime("");
+      setPredTimerMinutes(30);
+      setPredAnswer("");
+      setPredQuestion("India win the 1st Galle Test?");
+      setPredLeftText("Yes, India win");
+      setPredLeftCode("IN");
+      setPredRightText("SL hold / win");
+      setPredRightCode("LK");
+      setPredCoinStake(25);
+    } else if (type === "meme") {
+      setTitle("Meme Arena");
+      setMemeTitle("");
+      setMemeDescription("");
+      setMemeFile(null);
+      setMemePreviewUrl(null);
+    }
   }
 
   function handleEdit(item: EngagementItem) {
@@ -153,13 +210,29 @@ export default function EngagementsManagementPage() {
     setSport(item.sport || "cricket");
     setStatus(item.status === "active" ? "active" : "inactive");
 
-    if (item.type === "fan_battle" && item.fanBattleData) {
+    if (item.type === "meme") {
+      setMemeTitle(item.memeData?.title || item.title || "");
+      setMemeDescription(item.memeData?.description || item.subtitle || "");
+      setMemePreviewUrl(item.memeData?.imageUrl || (item as any).imageUrl || "");
+      setMemeFile(null);
+    } else if (item.type === "fan_battle" && item.fanBattleData) {
       setFbLeftCode(item.fanBattleData.leftCompetitor.code);
       setFbLeftName(item.fanBattleData.leftCompetitor.name);
       setFbLeftStat(item.fanBattleData.leftCompetitor.stat);
       setFbRightCode(item.fanBattleData.rightCompetitor.code);
       setFbRightName(item.fanBattleData.rightCompetitor.name);
       setFbRightStat(item.fanBattleData.rightCompetitor.stat);
+      if (item.fanBattleData.startTime || item.fanBattleData.scheduledStartTime) {
+        try {
+          const d = new Date(Number(item.fanBattleData.startTime || item.fanBattleData.scheduledStartTime));
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setBattleStartTime(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+        } catch {
+          setBattleStartTime("");
+        }
+      } else {
+        setBattleStartTime("");
+      }
     } else if (item.type === "quiz" && item.quizData) {
       // Start Time
       if (item.quizData.startTime || item.quizData.scheduledStartTime) {
@@ -175,7 +248,16 @@ export default function EngagementsManagementPage() {
       }
 
       // Frequency
-      setQuizFrequencyMinutes(item.quizData.frequencyMinutes || 10);
+      setQuizFrequencyMinutes(item.quizData.frequencyMinutes ?? 0);
+
+      // Timer / Duration
+      const durMins =
+        item.quizData.durationMinutes ||
+        item.quizData.timerMinutes ||
+        (item.expiresAt && (item.quizData.startTime || item.quizData.scheduledStartTime)
+          ? Math.round((Number(item.expiresAt) - Number(item.quizData.startTime || item.quizData.scheduledStartTime)) / 60000)
+          : 600);
+      setQuizTimerMinutes(durMins || 600);
 
       // Questions array
       if (item.quizData.questions && item.quizData.questions.length > 0) {
@@ -208,15 +290,41 @@ export default function EngagementsManagementPage() {
         ]);
       }
     } else if (item.type === "poll" && item.pollData) {
-      setPollQuestion(item.pollData.question);
-      setPollOptions(item.pollData.options.map(o => o.text));
+      setPollQuestion(item.pollData.question || item.title || "");
+      setPollOptions(item.pollData.options?.length ? item.pollData.options.map(o => o.text) : ["", ""]);
+      setPollAnswer(item.pollData.correctAnswer || item.pollData.answer || "");
+      setPollTimerMinutes(item.pollData.durationMinutes || item.pollData.timerMinutes || 10);
+      if (item.pollData.startTime || item.pollData.scheduledStartTime) {
+        try {
+          const d = new Date(Number(item.pollData.startTime || item.pollData.scheduledStartTime));
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setPollStartTime(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+        } catch {
+          setPollStartTime("");
+        }
+      } else {
+        setPollStartTime("");
+      }
     } else if (item.type === "prediction" && item.predictionData) {
-      setPredQuestion(item.predictionData.question);
-      setPredLeftText(item.predictionData.leftChoice.text);
-      setPredLeftCode(item.predictionData.leftChoice.code || "");
-      setPredRightText(item.predictionData.rightChoice.text);
-      setPredRightCode(item.predictionData.rightChoice.code || "");
+      setPredQuestion(item.predictionData.question || item.title || "");
+      setPredLeftText(item.predictionData.leftChoice?.text || "");
+      setPredLeftCode(item.predictionData.leftChoice?.code || "");
+      setPredRightText(item.predictionData.rightChoice?.text || "");
+      setPredRightCode(item.predictionData.rightChoice?.code || "");
       setPredCoinStake(item.predictionData.coinStake || 25);
+      setPredAnswer(item.predictionData.correctAnswer || item.predictionData.answer || item.predictionData.winningChoiceId || "");
+      setPredTimerMinutes(item.predictionData.durationMinutes || item.predictionData.timerMinutes || 30);
+      if (item.predictionData.startTime || item.predictionData.scheduledStartTime) {
+        try {
+          const d = new Date(Number(item.predictionData.startTime || item.predictionData.scheduledStartTime));
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setPredStartTime(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+        } catch {
+          setPredStartTime("");
+        }
+      } else {
+        setPredStartTime("");
+      }
     }
   }
 
@@ -232,7 +340,7 @@ export default function EngagementsManagementPage() {
         optionC: "",
         optionD: "",
         correctOptionId: "A",
-        pointsReward: 50,
+        pointsReward: 10,
         explanation: "",
       },
     ]);
@@ -268,14 +376,20 @@ export default function EngagementsManagementPage() {
       };
 
       if (activeTab === "fan_battle") {
+        const startMs = battleStartTime ? new Date(battleStartTime).getTime() : Date.now();
         payload.tags = ["⚔️ FAN BATTLE", "🔥 TRENDING"];
         payload.fanBattleData = {
-          leftCompetitor: { code: fbLeftCode, name: fbLeftName, stat: fbLeftStat, votes: 0 },
-          rightCompetitor: { code: fbRightCode, name: fbRightName, stat: fbRightStat, votes: 0 },
-          totalVotes: 0,
+          leftCompetitor: { code: fbLeftCode, name: fbLeftName, stat: fbLeftStat, votes: editingItem?.fanBattleData?.leftCompetitor?.votes || 0 },
+          rightCompetitor: { code: fbRightCode, name: fbRightName, stat: fbRightStat, votes: editingItem?.fanBattleData?.rightCompetitor?.votes || 0 },
+          totalVotes: editingItem?.fanBattleData?.totalVotes || 0,
+          startTime: startMs,
+          scheduledStartTime: startMs,
         };
       } else if (activeTab === "quiz") {
-        const startMs = quizStartTime ? new Date(quizStartTime).getTime() : Date.now();
+        const now = Date.now();
+        const startMs = quizStartTime ? new Date(quizStartTime).getTime() : now;
+        const durationMins = Number(quizTimerMinutes) || 600;
+        const expiresAt = (startMs || now) + durationMins * 60 * 1000;
         const formattedQuestions = quizQuestions.map((q, idx) => ({
           id: q.id || `q_${idx + 1}`,
           question: q.question,
@@ -286,48 +400,144 @@ export default function EngagementsManagementPage() {
             { id: "D", text: q.optionD },
           ],
           correctOptionId: q.correctOptionId,
-          pointsReward: Number(q.pointsReward) || 50,
+          pointsReward: Number(q.pointsReward) || 10,
           explanation: q.explanation,
         }));
 
         payload.tags = [
           "🧠 QUIZ",
-          `⭐ ${formattedQuestions[0]?.pointsReward || 50} PTS/Q`,
-          `⏱️ ${quizFrequencyMinutes}m`,
+          `⭐ ${formattedQuestions[0]?.pointsReward || 10} PTS/Q`,
+          `⏱️ ${quizFrequencyMinutes}m freq`,
+          `⏳ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
         ];
+
+        payload.expiresAt = expiresAt;
 
         payload.quizData = {
           startTime: startMs,
           scheduledStartTime: startMs,
-          frequencyMinutes: Number(quizFrequencyMinutes) || 10,
+          frequencyMinutes: Number(quizFrequencyMinutes) >= 0 ? Number(quizFrequencyMinutes) : 0,
+          durationMinutes: durationMins,
+          timerMinutes: durationMins,
+          expiresAt,
           questions: formattedQuestions,
           // Backwards compatibility for single-question readers
           question: formattedQuestions[0]?.question || title,
           options: formattedQuestions[0]?.options || [],
           correctOptionId: formattedQuestions[0]?.correctOptionId || "B",
-          pointsReward: Number(formattedQuestions[0]?.pointsReward) || 50,
+          pointsReward: Number(formattedQuestions[0]?.pointsReward) || 10,
           explanation: formattedQuestions[0]?.explanation || "",
         };
       } else if (activeTab === "poll") {
-        payload.tags = ["📊 POLL"];
+        const now = Date.now();
+        const startMs = pollStartTime ? new Date(pollStartTime).getTime() : now;
+        const durationMins = Number(pollTimerMinutes) || 10;
+        const expiresAt = (startMs || now) + durationMins * 60 * 1000;
+        payload.tags = [
+          "📊 POLL",
+          `⏱️ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
+        ];
+        payload.expiresAt = expiresAt;
         payload.pollData = {
-          question: pollQuestion,
+          ...(editingItem?.pollData || {}),
+          question: pollQuestion.trim(),
           options: pollOptions.filter(o => o.trim()).map((optText, idx) => ({
             id: String(idx + 1),
-            text: optText,
-            votes: 0,
+            text: optText.trim(),
+            votes: editingItem?.pollData?.options?.[idx]?.votes || 0,
           })),
-          totalVotes: 0,
+          totalVotes: editingItem?.pollData?.totalVotes || 0,
+          answer: pollAnswer.trim(),
+          correctAnswer: pollAnswer.trim(),
+          durationMinutes: durationMins,
+          timerMinutes: durationMins,
+          startTime: startMs,
+          scheduledStartTime: startMs,
+          expiresAt,
         };
       } else if (activeTab === "prediction") {
-        payload.tags = ["🎯 PREDICTION", "💎 POINTS"];
+        const now = Date.now();
+        const startMs = predStartTime ? new Date(predStartTime).getTime() : now;
+        const durationMins = Number(predTimerMinutes) || 30;
+        const expiresAt = (startMs || now) + durationMins * 60 * 1000;
+        payload.tags = [
+          "🎯 PREDICTION",
+          "💎 POINTS",
+          `⏱️ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
+        ];
+        payload.expiresAt = expiresAt;
+        const choiceId =
+          predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "left"
+            ? "left"
+            : predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "right"
+            ? "right"
+            : predAnswer.trim() || null;
+
         payload.predictionData = {
-          question: predQuestion,
-          leftChoice: { id: "left", text: predLeftText, code: predLeftCode, votes: 0 },
-          rightChoice: { id: "right", text: predRightText, code: predRightCode, votes: 0 },
-          coinStake: Number(predCoinStake),
-          totalVotes: 0,
-          status: "open",
+          ...(editingItem?.predictionData || {}),
+          question: predQuestion.trim(),
+          leftChoice: {
+            id: "left",
+            text: predLeftText.trim(),
+            code: predLeftCode.trim() || "IN",
+            votes: editingItem?.predictionData?.leftChoice?.votes || 0,
+          },
+          rightChoice: {
+            id: "right",
+            text: predRightText.trim(),
+            code: predRightCode.trim() || "PK",
+            votes: editingItem?.predictionData?.rightChoice?.votes || 0,
+          },
+          coinStake: Number(predCoinStake) || 25,
+          totalVotes: editingItem?.predictionData?.totalVotes || 0,
+          status: editingItem?.predictionData?.status || "open",
+          answer: predAnswer.trim(),
+          correctAnswer: predAnswer.trim(),
+          winningChoiceId: choiceId,
+          durationMinutes: durationMins,
+          timerMinutes: durationMins,
+          startTime: startMs,
+          scheduledStartTime: startMs,
+          expiresAt,
+        };
+      } else if (activeTab === "meme") {
+        if (!memeFile && !memePreviewUrl) {
+          alert("Media upload is required for Meme Voting (file upload)");
+          setSubmitting(false);
+          return;
+        }
+
+        let resolvedUrl = memePreviewUrl || "";
+        if (memeFile) {
+          const formData = new FormData();
+          formData.append("file", memeFile);
+          const upRes = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+          });
+          const upData = await upRes.json();
+          if (!upData.success || !upData.url) {
+            throw new Error(upData.message || "Failed to upload meme image to Cloudinary");
+          }
+          resolvedUrl = upData.url;
+        }
+
+        payload.type = "meme";
+        payload.title = memeTitle.trim() || "Meme Arena";
+        payload.subtitle = memeDescription.trim();
+        payload.tags = ["🔥 MEME ARENA", "🌶️ HOT TAKES"];
+        payload.memeData = {
+          title: memeTitle.trim(),
+          description: memeDescription.trim(),
+          caption: memeDescription.trim(),
+          imageUrl: resolvedUrl,
+          mediaUrl: resolvedUrl,
+          mediaType: "image",
+          totalVotes: editingItem?.memeData?.totalVotes || 0,
+          heatPercentage: editingItem?.memeData?.heatPercentage || editingItem?.memeData?.heatIndex || 78,
+          heatIndex: editingItem?.memeData?.heatIndex || editingItem?.memeData?.heatPercentage || 78,
+          reactions: editingItem?.memeData?.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+          ratings: editingItem?.memeData?.ratings || { mid: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
         };
       }
 
@@ -380,18 +590,18 @@ export default function EngagementsManagementPage() {
 
   const filtered = engagements.filter(
     i =>
-      i.title.toLowerCase().includes(search.toLowerCase()) ||
-      (i.subtitle || "").toLowerCase().includes(search.toLowerCase()) ||
-      i.type.toLowerCase().includes(search.toLowerCase())
+      (i?.title || "").toLowerCase().includes(search.toLowerCase()) ||
+      (i?.subtitle || "").toLowerCase().includes(search.toLowerCase()) ||
+      (i?.type || "").toLowerCase().includes(search.toLowerCase())
   );
 
-  const quizEngagements = engagements.filter(i => i.type === "quiz");
+  const quizEngagements = engagements.filter(i => i?.type === "quiz");
 
   const filteredLeaderboard = leaderboardData.filter(
     entry =>
-      entry.userName.toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
-      (entry.userEmail || "").toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
-      entry.userId.toLowerCase().includes(leaderboardSearch.toLowerCase())
+      (entry?.userName || "").toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
+      (entry?.userEmail || "").toLowerCase().includes(leaderboardSearch.toLowerCase()) ||
+      (entry?.userId || "").toLowerCase().includes(leaderboardSearch.toLowerCase())
   );
 
   // Leaderboard Statistics
@@ -433,6 +643,22 @@ export default function EngagementsManagementPage() {
             🏆 Live Leaderboard
           </button>
           <button
+            onClick={() => handleOpenCreate("meme")}
+            style={{
+              background: "linear-gradient(135deg, #ff5e00 0%, #ff2a6d 100%)",
+              color: "#fff",
+              padding: "8px 14px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 700,
+              border: "none",
+              cursor: "pointer",
+              boxShadow: "0 4px 12px rgba(255, 94, 0, 0.35)",
+            }}
+          >
+            + 🔥 Meme Arena
+          </button>
+          <button
             onClick={() => handleOpenCreate("fan_battle")}
             style={{
               background: "#238636", color: "#fff", padding: "8px 14px", borderRadius: 6,
@@ -472,10 +698,12 @@ export default function EngagementsManagementPage() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #30363d", paddingBottom: 10, marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #30363d", paddingBottom: 10, marginBottom: 20, overflowX: "auto" }}>
         {[
           { id: "list", label: "📋 All Engagements" },
+          { id: "meme_arena", label: "🔥 Meme Arena Feed" },
           { id: "leaderboard", label: "🏆 Quiz Leaderboard" },
+          { id: "meme", label: "🔥 Meme Arena Creator" },
           { id: "fan_battle", label: "⚔️ Fan Battle Creator" },
           { id: "quiz", label: "🧠 Multi-Question Quiz Creator" },
           { id: "poll", label: "📊 Poll Creator" },
@@ -485,15 +713,16 @@ export default function EngagementsManagementPage() {
             key={tab.id}
             onClick={() => {
               setActiveTab(tab.id as any);
-              if (tab.id !== "list" && tab.id !== "leaderboard") setEditingItem(null);
+              if (tab.id !== "list" && tab.id !== "leaderboard" && tab.id !== "meme_arena") setEditingItem(null);
             }}
             style={{
               padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600,
-              background: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : "#388bfd") : "transparent",
+              background: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : tab.id === "meme" || tab.id === "meme_arena" ? "#ff5e00" : "#388bfd") : "transparent",
               color: activeTab === tab.id ? (tab.id === "leaderboard" ? "#000" : "#fff") : "#8b949e",
               border: "1px solid",
-              borderColor: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : "#388bfd") : "transparent",
+              borderColor: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : tab.id === "meme" || tab.id === "meme_arena" ? "#ff5e00" : "#388bfd") : "transparent",
               cursor: "pointer",
+              whiteSpace: "nowrap",
             }}
           >
             {tab.label}
@@ -515,8 +744,8 @@ export default function EngagementsManagementPage() {
                 color: "#e6edf3", padding: "6px 12px", fontSize: 12, width: 250, outline: "none",
               }}
             />
-            <div style={{ display: "flex", gap: 6 }}>
-              {["all", "fan_battle", "quiz", "poll", "prediction"].map(t => (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {["all", "meme", "fan_battle", "quiz", "poll", "prediction"].map(t => (
                 <button
                   key={t}
                   onClick={() => setTypeFilter(t)}
@@ -529,7 +758,7 @@ export default function EngagementsManagementPage() {
                     textTransform: "capitalize",
                   }}
                 >
-                  {t.replace("_", " ")}
+                  {t === "meme" ? "🔥 Meme Arena" : t.replace("_", " ")}
                 </button>
               ))}
             </div>
@@ -570,6 +799,7 @@ export default function EngagementsManagementPage() {
                   if (item.type === "fan_battle") { typeBadgeBg = "rgba(46, 160, 67, 0.15)"; typeBadgeColor = "#3fb950"; }
                   else if (item.type === "quiz") { typeBadgeBg = "rgba(163, 113, 247, 0.15)"; typeBadgeColor = "#d2a8ff"; }
                   else if (item.type === "prediction") { typeBadgeBg = "rgba(210, 153, 34, 0.15)"; typeBadgeColor = "#e3b341"; }
+                  else if (item.type === "meme") { typeBadgeBg = "rgba(255, 94, 0, 0.15)"; typeBadgeColor = "#ff7b00"; }
 
                   const totalQuestions = item.quizData?.questions?.length || (item.quizData?.question ? 1 : 0);
 
@@ -580,12 +810,26 @@ export default function EngagementsManagementPage() {
                           padding: "3px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700,
                           background: typeBadgeBg, color: typeBadgeColor, textTransform: "uppercase",
                         }}>
-                          {item.type.replace("_", " ")}
+                          {item?.type === "meme" ? "🔥 MEME" : item?.type ? item.type.replace("_", " ") : "UNKNOWN"}
                         </span>
                       </td>
 
                       <td style={{ padding: "10px 14px", fontWeight: 600, color: "#f0f6fc" }}>
-                        {item.title}
+                        {item.title || "Untitled Engagement"}
+                        {item.type === "meme" && item.memeData && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                            {item.memeData.imageUrl && (
+                              <img
+                                src={item.memeData.imageUrl}
+                                alt="meme thumbnail"
+                                style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }}
+                              />
+                            )}
+                            <div style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic" }}>
+                              {item.memeData.description ? item.memeData.description.slice(0, 50) + (item.memeData.description.length > 50 ? "…" : "") : "Meme image upload"}
+                            </div>
+                          </div>
+                        )}
                         {item.quizData && (
                           <div style={{ fontSize: 11, color: "#8b949e" }}>
                             {totalQuestions} Question{totalQuestions !== 1 ? "s" : ""} · {item.quizData.question || item.quizData.questions?.[0]?.question}
@@ -596,14 +840,49 @@ export default function EngagementsManagementPage() {
                       </td>
 
                       <td style={{ padding: "10px 14px", color: "#8b949e", fontSize: 11 }}>
+                        {item.type === "meme" && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", fontSize: 10 }}>
+                              {(["mid", "funny", "hot", "fire", "nuclear"] as const).map((k) => {
+                                const v = (item.memeData?.ratings as any)?.[k] || 0;
+                                const tot = item.memeData?.totalVotes || 0;
+                                const pct = tot > 0 ? Math.round((v / tot) * 100) : 0;
+                                const label = k === "mid" ? "Mild" : k.charAt(0).toUpperCase() + k.slice(1);
+                                return (
+                                  <span key={k} style={{ background: "rgba(255,255,255,0.06)", padding: "1px 6px", borderRadius: 4, color: "#c9d1d9" }}>
+                                    {label}: {v} ({pct}%)
+                                  </span>
+                                );
+                              })}
+                            </div>
+                            <span style={{ color: "#ff8b3d", fontSize: 10, fontWeight: 700 }}>
+                              📊 {item.memeData?.heatIndex || 78}% Heat • {item.memeData?.totalVotes || item.totalEngaged || 0} votes
+                            </span>
+                          </div>
+                        )}
                         {item.type === "fan_battle" && (
-                          <span>{item.fanBattleData?.leftCompetitor.name} vs {item.fanBattleData?.rightCompetitor.name}</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span>{item.fanBattleData?.leftCompetitor?.name || "Competitor 1"} vs {item.fanBattleData?.rightCompetitor?.name || "Competitor 2"}</span>
+                            {item.fanBattleData?.startTime && (
+                              <span style={{ color: "#8b949e", fontSize: 10 }}>
+                                📅 Starts: {new Date(item.fanBattleData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
                         )}
                         {item.type === "quiz" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                             <span style={{ color: "#d2a8ff" }}>
-                              🧠 {totalQuestions} Qs · ⏱️ Every {item.quizData?.frequencyMinutes || 10} mins
+                              🧠 {totalQuestions} Qs · ⏱️ Every {item.quizData?.frequencyMinutes ?? 0} mins
                             </span>
+                            {(item.quizData?.durationMinutes || item.quizData?.timerMinutes) && (
+                              <span style={{ color: "#388bfd", fontSize: 10, fontWeight: 600 }}>
+                                ⏳ Duration: {(item.quizData.durationMinutes || item.quizData.timerMinutes || 0) < 60
+                                  ? `${item.quizData.durationMinutes || item.quizData.timerMinutes}m`
+                                  : `${((item.quizData.durationMinutes || item.quizData.timerMinutes || 0) / 60).toFixed(0)}h`}
+                                {item.expiresAt && Date.now() >= Number(item.expiresAt) ? " (Closed)" : ""}
+                              </span>
+                            )}
                             {item.quizData?.startTime && (
                               <span style={{ color: "#8b949e", fontSize: 10 }}>
                                 📅 Starts: {new Date(item.quizData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -612,15 +891,39 @@ export default function EngagementsManagementPage() {
                           </div>
                         )}
                         {item.type === "poll" && (
-                          <span>{item.pollData?.options.length} options</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span>{item.pollData?.options?.length || 0} options · ⏱️ {item.pollData?.durationMinutes || item.pollData?.timerMinutes || 10}m timer</span>
+                            {item.pollData?.correctAnswer && (
+                              <span style={{ color: "#3fb950", fontSize: 10, fontWeight: 600 }}>
+                                🏆 Answer: {item.pollData.correctAnswer}
+                              </span>
+                            )}
+                            {item.pollData?.startTime && (
+                              <span style={{ color: "#8b949e", fontSize: 10 }}>
+                                📅 Starts: {new Date(item.pollData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
                         )}
                         {item.type === "prediction" && (
-                          <span>Stake: {item.predictionData?.coinStake} Coins</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span>Stake: {item.predictionData?.coinStake || 25} Coins · ⏱️ {item.predictionData?.durationMinutes || item.predictionData?.timerMinutes || 30}m timer</span>
+                            {item.predictionData?.correctAnswer && (
+                              <span style={{ color: "#e3b341", fontSize: 10, fontWeight: 600 }}>
+                                🏆 Answer: {item.predictionData.correctAnswer}
+                              </span>
+                            )}
+                            {item.predictionData?.startTime && (
+                              <span style={{ color: "#8b949e", fontSize: 10 }}>
+                                📅 Starts: {new Date(item.predictionData.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
 
                       <td style={{ padding: "10px 14px", fontFamily: "monospace", color: "#8b949e" }}>
-                        🔥 {item.totalEngaged} · ❤️ {item.likes}
+                        🔥 {item.totalEngaged || 0} · ❤️ {item.likes || 0}
                       </td>
 
                       <td style={{ padding: "10px 14px" }}>
@@ -882,48 +1185,283 @@ export default function EngagementsManagementPage() {
       )}
 
       {/* ── TAB 3-6: CREATOR FORM TABS ───────────────────────────────────────── */}
-      {activeTab !== "list" && activeTab !== "leaderboard" && (
+      {activeTab !== "list" && activeTab !== "leaderboard" && activeTab !== "meme_arena" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", gap: 24 }}>
           {/* Form Area */}
           <form onSubmit={handleSubmit} style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 20 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
-              {editingItem ? "✏️ Edit" : "+ Create New"}{" "}
-              {activeTab === "fan_battle" && "⚔️ Fan Battle"}
-              {activeTab === "quiz" && "🧠 Multi-Question Live Quiz"}
-              {activeTab === "poll" && "📊 Poll"}
-              {activeTab === "prediction" && "🎯 Match Prediction"}
-            </h2>
+            {activeTab !== "meme" && (
+              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                {editingItem ? "✏️ Edit" : "+ Create New"}{" "}
+                {activeTab === "fan_battle" && "⚔️ Fan Battle"}
+                {activeTab === "quiz" && "🧠 Multi-Question Live Quiz"}
+                {activeTab === "poll" && "📊 Poll"}
+                {activeTab === "prediction" && "🎯 Match Prediction"}
+              </h2>
+            )}
 
-            {/* General Fields */}
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 14 }}>
-              <div>
-                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Quiz / Engagement Title</label>
-                <input
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  placeholder="e.g. IND vs ENG Match Quiz"
-                  required
-                  style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13 }}
-                />
+            {/* ── MEME CREATOR FORM (Exact match to left screenshot mockup) ───────── */}
+            {activeTab === "meme" && (
+              <div style={{ marginBottom: 14 }}>
+                {/* Header */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ width: 38, height: 38, borderRadius: "50%", background: "linear-gradient(135deg, #a855f7 0%, #ec4899 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
+                      <HelpCircle size={20} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: "#ffffff" }}>Create Meme Arena</div>
+                      <div style={{ fontSize: 12, color: "#8b949e" }}>Let fans drop their funniest sports memes</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("list")}
+                    style={{ background: "rgba(255,255,255,0.06)", border: "none", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: "#8b949e", cursor: "pointer" }}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {/* Sub-mode Switcher */}
+                <div style={{ display: "flex", gap: 8, background: "#0d1117", padding: 6, borderRadius: 10, border: "1px solid #21262d", marginBottom: 20 }}>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreate("quiz")}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 8, background: "transparent", border: "none", color: "#8b949e", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  >
+                    <span>🧠 Quiz</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreate("fan_battle")}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 8, background: "transparent", border: "none", color: "#8b949e", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  >
+                    <span>⚔️ Battle</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreate("poll")}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 8, background: "transparent", border: "none", color: "#8b949e", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  >
+                    <span>📊 Poll</span>
+                  </button>
+                  <button
+                    type="button"
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 8, background: "linear-gradient(135deg, #ff5e00 0%, #ff2a6d 100%)", border: "none", color: "#ffffff", fontSize: 12, fontWeight: 800, cursor: "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, boxShadow: "0 2px 10px rgba(255,94,0,0.4)" }}
+                  >
+                    <span>🔥 Meme</span>
+                  </button>
+                </div>
+
+                {/* Event Title / Headline (Optional) */}
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#c9d1d9", display: "block", marginBottom: 6, textTransform: "uppercase" }}>
+                    EVENT TITLE / HEADLINE (OPTIONAL)
+                  </label>
+                  <input
+                    value={memeTitle}
+                    onChange={(e) => {
+                      setMemeTitle(e.target.value);
+                      setTitle(e.target.value);
+                    }}
+                    placeholder="e.g. When your team says trust the process"
+                    style={{
+                      width: "100%",
+                      padding: "11px 14px",
+                      background: "#0d1117",
+                      border: "1px solid #30363d",
+                      borderRadius: 8,
+                      color: "#fff",
+                      fontSize: 13,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+
+                {/* Description (Optional) */}
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#c9d1d9", display: "block", marginBottom: 6, textTransform: "uppercase" }}>
+                    DESCRIPTION (OPTIONAL)
+                  </label>
+                  <div style={{ position: "relative" }}>
+                    <textarea
+                      value={memeDescription}
+                      onChange={(e) => {
+                        if (e.target.value.length <= 200) {
+                          setMemeDescription(e.target.value);
+                          setSubtitle(e.target.value);
+                        }
+                      }}
+                      placeholder="Add a little context for the meme..."
+                      rows={3}
+                      maxLength={200}
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px 24px",
+                        background: "#0d1117",
+                        border: "1px solid #30363d",
+                        borderRadius: 8,
+                        color: "#fff",
+                        fontSize: 13,
+                        outline: "none",
+                        resize: "none",
+                        fontFamily: "inherit",
+                      }}
+                    />
+                    <div style={{ position: "absolute", bottom: 8, right: 10, fontSize: 11, color: "#6e7681", pointerEvents: "none" }}>
+                      {memeDescription.length}/200
+                    </div>
+                  </div>
+                </div>
+
+                {/* Upload Meme (Required File Upload, goes to Cloudinary) */}
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#c9d1d9", display: "block", marginBottom: 6, textTransform: "uppercase" }}>
+                    UPLOAD MEME <span style={{ color: "#ff7b72" }}>* (FILE UPLOAD REQUIRED)</span>
+                  </label>
+
+                  <input
+                    ref={memeFileInputRef}
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 10 * 1024 * 1024) {
+                        alert("File exceeds maximum size of 10 MB");
+                        return;
+                      }
+                      setMemeFile(file);
+                      setMemePreviewUrl(URL.createObjectURL(file));
+                    }}
+                    style={{ display: "none" }}
+                  />
+
+                  {!memePreviewUrl ? (
+                    <div
+                      onClick={() => memeFileInputRef.current?.click()}
+                      style={{
+                        border: "2px dashed #30363d",
+                        borderRadius: 12,
+                        padding: "36px 20px",
+                        textAlign: "center",
+                        background: "rgba(13, 17, 23, 0.7)",
+                        cursor: "pointer",
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      <div style={{ width: 44, height: 44, margin: "0 auto 10px", borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b949e" }}>
+                        <ImageIcon size={24} />
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f6fc" }}>Upload meme image</div>
+                      <div style={{ fontSize: 12, color: "#8b949e", marginTop: 4 }}>JPG, PNG • Max 10 MB</div>
+                    </div>
+                  ) : (
+                    <div style={{ position: "relative", border: "1px solid #30363d", borderRadius: 12, overflow: "hidden", background: "#0d1117" }}>
+                      <img
+                        src={memePreviewUrl}
+                        alt="Meme preview"
+                        style={{ width: "100%", maxHeight: 280, objectFit: "contain", display: "block", background: "#05070a" }}
+                      />
+                      <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(22, 27, 34, 0.9)" }}>
+                        <span style={{ fontSize: 12, color: "#8b949e" }}>
+                          {memeFile ? `${memeFile.name} (${(memeFile.size / 1024 / 1024).toFixed(2)} MB)` : "Selected Meme Media"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMemeFile(null);
+                            setMemePreviewUrl(null);
+                          }}
+                          style={{ background: "rgba(255, 123, 114, 0.15)", border: "1px solid #ff7b72", color: "#ff7b72", padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                        >
+                          ✕ Remove
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sport Category for Meme */}
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Sport / Arena Category</label>
+                  <select
+                    value={sport}
+                    onChange={e => setSport(e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13 }}
+                  >
+                    <option value="cricket">Cricket</option>
+                    <option value="football">Football</option>
+                    <option value="athletics">Athletics</option>
+                    <option value="general">General / Sports Banter</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Sport Category</label>
-                <select
-                  value={sport}
-                  onChange={e => setSport(e.target.value)}
-                  style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13 }}
-                >
-                  <option value="cricket">Cricket</option>
-                  <option value="football">Football</option>
-                  <option value="athletics">Athletics</option>
-                  <option value="general">General</option>
-                </select>
+            )}
+
+            {/* General Fields (For non-meme engagements) */}
+            {activeTab !== "meme" && (
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 14 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Quiz / Engagement Title</label>
+                  <input
+                    value={title}
+                    onChange={e => setTitle(e.target.value)}
+                    placeholder="e.g. IND vs ENG Match Quiz"
+                    required
+                    style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Sport Category</label>
+                  <select
+                    value={sport}
+                    onChange={e => setSport(e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13 }}
+                  >
+                    <option value="cricket">Cricket</option>
+                    <option value="football">Football</option>
+                    <option value="athletics">Athletics</option>
+                    <option value="general">General</option>
+                  </select>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* ── FAN BATTLE FIELDS ──────────────────────────────────────────────── */}
             {activeTab === "fan_battle" && (
               <div style={{ borderTop: "1px solid #30363d", paddingTop: 14, marginTop: 14 }}>
+                <div
+                  style={{
+                    background: "rgba(56, 139, 253, 0.08)",
+                    border: "1px solid rgba(56, 139, 253, 0.25)",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                    📅 Schedule Start Time (Optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={battleStartTime}
+                    onChange={e => setBattleStartTime(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "7px 10px",
+                      background: "#0d1117",
+                      border: "1px solid #30363d",
+                      borderRadius: 6,
+                      color: "#fff",
+                      fontSize: 12,
+                    }}
+                  />
+                  <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                    When this fan battle goes live (leave empty for immediate start)
+                  </span>
+                </div>
+
                 <h3 style={{ fontSize: 13, fontWeight: 600, color: "#58a6ff", marginBottom: 10 }}>Left Competitor (e.g. IN / Virat Kohli)</h3>
                 <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 1fr", gap: 10, marginBottom: 14 }}>
                   <input placeholder="Code" value={fbLeftCode} onChange={e => setFbLeftCode(e.target.value)} style={{ padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
@@ -954,9 +1492,9 @@ export default function EngagementsManagementPage() {
                   }}
                 >
                   <h3 style={{ fontSize: 12, fontWeight: 700, color: "#d2a8ff", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: 6 }}>
-                    ⏱️ Quiz Timing & Question Interval Setup
+                    ⏱️ Quiz Timing, Schedule & Timer Setup
                   </h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                     <div>
                       <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
                         📅 Starting Time
@@ -986,10 +1524,10 @@ export default function EngagementsManagementPage() {
                       </label>
                       <input
                         type="number"
-                        min={1}
+                        min={0}
                         value={quizFrequencyMinutes}
-                        onChange={e => setQuizFrequencyMinutes(Math.max(1, Number(e.target.value)))}
-                        placeholder="10"
+                        onChange={e => setQuizFrequencyMinutes(Math.max(0, Number(e.target.value)))}
+                        placeholder="0"
                         required
                         style={{
                           width: "100%",
@@ -1002,7 +1540,47 @@ export default function EngagementsManagementPage() {
                         }}
                       />
                       <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
-                        How much time before the next quiz question shows (e.g. 10 mins)
+                        Time before next question shows (default: 0 mins for all questions available immediately)
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        ⏰ Quiz Timer / Duration (Closes After)
+                      </label>
+                      <select
+                        value={quizTimerMinutes}
+                        onChange={e => setQuizTimerMinutes(Number(e.target.value))}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      >
+                        <option value={5}>⚡ 5 mins</option>
+                        <option value={10}>⏱️ 10 mins</option>
+                        <option value={15}>⏱️ 15 mins</option>
+                        <option value={30}>⏳ 30 mins</option>
+                        <option value={45}>⏳ 45 mins</option>
+                        <option value={60}>🕒 1 hr</option>
+                        <option value={90}>⌛ 1 hr 30 mins</option>
+                        <option value={120}>⏰ 2 hr</option>
+                        <option value={180}>⏰ 3 hr</option>
+                        <option value={240}>⏰ 4 hr</option>
+                        <option value={360}>⏰ 6 hr</option>
+                        <option value={480}>⏰ 8 hr</option>
+                        <option value={600}>⏰ 10 hr (Standard)</option>
+                        <option value={720}>⏰ 12 hr</option>
+                        <option value={1080}>⏰ 18 hr</option>
+                        <option value={1440}>🌙 24 hr (Full Day)</option>
+                        <option value={2880}>📅 48 hr (2 Days)</option>
+                      </select>
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        Quiz automatically closes after this timer expires (e.g. 10 hrs)
                       </span>
                     </div>
                   </div>
@@ -1215,30 +1793,162 @@ export default function EngagementsManagementPage() {
                 <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Poll Question</label>
                 <input value={pollQuestion} onChange={e => setPollQuestion(e.target.value)} required style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13, marginBottom: 12 }} />
 
-                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Poll Options</label>
-                {pollOptions.map((opt, i) => (
-                  <div key={i} style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                {/* Timing & Outcome Setup */}
+                <div
+                  style={{
+                    background: "rgba(56, 139, 253, 0.08)",
+                    border: "1px solid rgba(56, 139, 253, 0.25)",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <h3 style={{ fontSize: 12, fontWeight: 700, color: "#58a6ff", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                    ⏱️ Poll Timing, Schedule & Winning Outcome (+10 PTS)
+                  </h3>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        📅 Schedule Start Time (Optional)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={pollStartTime}
+                        onChange={e => setPollStartTime(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      />
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        When this poll unlocks (leave empty for immediate start)
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        ⏳ Timer / Duration (+10 PTS on Expiry)
+                      </label>
+                      <select
+                        value={pollTimerMinutes}
+                        onChange={e => setPollTimerMinutes(Number(e.target.value))}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      >
+                        <option value={5}>⚡ 5 mins</option>
+                        <option value={10}>⏱️ 10 mins</option>
+                        <option value={15}>⏱️ 15 mins</option>
+                        <option value={30}>⏳ 30 mins</option>
+                        <option value={45}>⏳ 45 mins</option>
+                        <option value={60}>🕒 1 hr</option>
+                        <option value={90}>⌛ 1 hr 30 mins</option>
+                        <option value={120}>⏰ 2 hr</option>
+                        <option value={180}>⏰ 3 hr</option>
+                        <option value={240}>⏰ 4 hr</option>
+                        <option value={360}>⏰ 6 hr</option>
+                        <option value={480}>⏰ 8 hr</option>
+                        <option value={720}>⏰ 12 hr</option>
+                        <option value={1080}>⏰ 18 hr</option>
+                        <option value={1440}>🌙 24 hr (Full Day)</option>
+                      </select>
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        Users who voted for the winning outcome receive +10 PTS after this timer expires
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                      🏆 Correct Answer / Winning Outcome (Optional)
+                    </label>
                     <input
-                      value={opt}
-                      onChange={e => {
-                        const copy = [...pollOptions];
-                        copy[i] = e.target.value;
-                        setPollOptions(copy);
+                      value={pollAnswer}
+                      onChange={e => setPollAnswer(e.target.value)}
+                      placeholder="Click 'Mark Winner' on an option below or type expected answer"
+                      style={{
+                        width: "100%",
+                        padding: "7px 10px",
+                        background: "#0d1117",
+                        border: "1px solid #30363d",
+                        borderRadius: 6,
+                        color: "#fff",
+                        fontSize: 12,
                       }}
-                      placeholder={`Option ${i + 1}`}
-                      style={{ flex: 1, padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }}
                     />
-                    {pollOptions.length > 2 && (
+                  </div>
+                </div>
+
+                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Poll Options</label>
+                {pollOptions.map((opt, i) => {
+                  const isSelectedAnswer = pollAnswer && opt && pollAnswer.trim().toLowerCase() === opt.trim().toLowerCase();
+                  return (
+                    <div key={i} style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 11, color: "#8b949e", width: 20 }}>{i + 1}.</span>
+                      <input
+                        value={opt}
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (isSelectedAnswer) setPollAnswer(val);
+                          const copy = [...pollOptions];
+                          copy[i] = val;
+                          setPollOptions(copy);
+                        }}
+                        placeholder={`Option ${i + 1}`}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          background: "#0d1117",
+                          border: `1px solid ${isSelectedAnswer ? "#2ea043" : "#30363d"}`,
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      />
                       <button
                         type="button"
-                        onClick={() => setPollOptions(pollOptions.filter((_, idx) => idx !== i))}
-                        style={{ background: "transparent", border: "1px solid #da3633", color: "#f85149", borderRadius: 6, padding: "0 10px", cursor: "pointer" }}
+                        onClick={() => setPollAnswer(opt)}
+                        style={{
+                          background: isSelectedAnswer ? "rgba(46, 160, 67, 0.2)" : "#21262d",
+                          border: `1px solid ${isSelectedAnswer ? "#2ea043" : "#30363d"}`,
+                          color: isSelectedAnswer ? "#3fb950" : "#8b949e",
+                          borderRadius: 6,
+                          padding: "5px 10px",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
                       >
-                        ✕
+                        {isSelectedAnswer ? "✓ Winner" : "Mark"}
                       </button>
-                    )}
-                  </div>
-                ))}
+                      {pollOptions.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isSelectedAnswer) setPollAnswer("");
+                            setPollOptions(pollOptions.filter((_, idx) => idx !== i));
+                          }}
+                          style={{ background: "transparent", border: "1px solid #da3633", color: "#f85149", borderRadius: 6, padding: "5px 10px", cursor: "pointer" }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
                 {pollOptions.length < 6 && (
                   <button
                     type="button"
@@ -1257,16 +1967,195 @@ export default function EngagementsManagementPage() {
                 <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Prediction Question</label>
                 <input value={predQuestion} onChange={e => setPredQuestion(e.target.value)} required style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13, marginBottom: 12 }} />
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                  <div>
-                    <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Option 1</label>
-                    <input placeholder="Text (e.g. Yes, India win)" value={predLeftText} onChange={e => setPredLeftText(e.target.value)} required style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }} />
-                    <input placeholder="Code (e.g. IN)" value={predLeftCode} onChange={e => setPredLeftCode(e.target.value)} style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
+                {/* Timing & Outcome Setup */}
+                <div
+                  style={{
+                    background: "rgba(210, 153, 34, 0.08)",
+                    border: "1px solid rgba(210, 153, 34, 0.25)",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <h3 style={{ fontSize: 12, fontWeight: 700, color: "#e3b341", margin: "0 0 10px 0", display: "flex", alignItems: "center", gap: 6 }}>
+                    ⏱️ Prediction Timing, Schedule & Winning Outcome (+10 PTS)
+                  </h3>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        📅 Schedule Start Time (Optional)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={predStartTime}
+                        onChange={e => setPredStartTime(e.target.value)}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      />
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        When this prediction unlocks (leave empty for immediate start)
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                        ⏳ Timer / Duration (+10 PTS on Expiry)
+                      </label>
+                      <select
+                        value={predTimerMinutes}
+                        onChange={e => setPredTimerMinutes(Number(e.target.value))}
+                        style={{
+                          width: "100%",
+                          padding: "7px 10px",
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      >
+                        <option value={5}>⚡ 5 mins</option>
+                        <option value={10}>⏱️ 10 mins</option>
+                        <option value={15}>⏱️ 15 mins</option>
+                        <option value={30}>⏳ 30 mins</option>
+                        <option value={45}>⏳ 45 mins</option>
+                        <option value={60}>🕒 1 hr</option>
+                        <option value={90}>⌛ 1 hr 30 mins</option>
+                        <option value={120}>⏰ 2 hr</option>
+                        <option value={180}>⏰ 3 hr</option>
+                        <option value={240}>⏰ 4 hr</option>
+                        <option value={360}>⏰ 6 hr</option>
+                        <option value={480}>⏰ 8 hr</option>
+                        <option value={720}>⏰ 12 hr</option>
+                        <option value={1080}>⏰ 18 hr</option>
+                        <option value={1440}>🌙 24 hr (Full Day)</option>
+                      </select>
+                      <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
+                        Users who predicted correctly receive +10 PTS after this timer expires
+                      </span>
+                    </div>
                   </div>
+
                   <div>
-                    <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Option 2</label>
-                    <input placeholder="Text (e.g. SL hold / win)" value={predRightText} onChange={e => setPredRightText(e.target.value)} required style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
-                    <input placeholder="Code (e.g. LK)" value={predRightCode} onChange={e => setPredRightCode(e.target.value)} style={{ width: "100%", padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
+                    <label style={{ fontSize: 11, color: "#c9d1d9", display: "block", marginBottom: 4, fontWeight: 600 }}>
+                      🏆 Correct / Winning Outcome (Optional)
+                    </label>
+                    <input
+                      value={predAnswer}
+                      onChange={e => setPredAnswer(e.target.value)}
+                      placeholder="Click 'Mark Winner' on Option 1 or 2 below or type expected answer"
+                      style={{
+                        width: "100%",
+                        padding: "7px 10px",
+                        background: "#0d1117",
+                        border: "1px solid #30363d",
+                        borderRadius: 6,
+                        color: "#fff",
+                        fontSize: 12,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                  <div
+                    style={{
+                      background: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "rgba(46, 160, 67, 0.08)" : "#0d1117",
+                      border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#2ea043" : "#30363d"}`,
+                      borderRadius: 8,
+                      padding: "10px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <label style={{ fontSize: 11, color: "#8b949e", fontWeight: 600 }}>Option 1 (Left Choice)</label>
+                      <button
+                        type="button"
+                        onClick={() => setPredAnswer(predLeftText || "Option 1")}
+                        style={{
+                          background: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "rgba(46, 160, 67, 0.2)" : "#21262d",
+                          border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#2ea043" : "#30363d"}`,
+                          color: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#3fb950" : "#8b949e",
+                          borderRadius: 4,
+                          padding: "2px 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "✓ Winner" : "Mark"}
+                      </button>
+                    </div>
+                    <input
+                      placeholder="Text (e.g. Yes, India win)"
+                      value={predLeftText}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (predAnswer === predLeftText) setPredAnswer(val);
+                        setPredLeftText(val);
+                      }}
+                      required
+                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }}
+                    />
+                    <input
+                      placeholder="Code (e.g. IN)"
+                      value={predLeftCode}
+                      onChange={e => setPredLeftCode(e.target.value.toUpperCase())}
+                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }}
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      background: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "rgba(46, 160, 67, 0.08)" : "#0d1117",
+                      border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#2ea043" : "#30363d"}`,
+                      borderRadius: 8,
+                      padding: "10px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <label style={{ fontSize: 11, color: "#8b949e", fontWeight: 600 }}>Option 2 (Right Choice)</label>
+                      <button
+                        type="button"
+                        onClick={() => setPredAnswer(predRightText || "Option 2")}
+                        style={{
+                          background: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "rgba(46, 160, 67, 0.2)" : "#21262d",
+                          border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#2ea043" : "#30363d"}`,
+                          color: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#3fb950" : "#8b949e",
+                          borderRadius: 4,
+                          padding: "2px 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "✓ Winner" : "Mark"}
+                      </button>
+                    </div>
+                    <input
+                      placeholder="Text (e.g. SL hold / win)"
+                      value={predRightText}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (predAnswer === predRightText) setPredAnswer(val);
+                        setPredRightText(val);
+                      }}
+                      required
+                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }}
+                    />
+                    <input
+                      placeholder="Code (e.g. LK)"
+                      value={predRightCode}
+                      onChange={e => setPredRightCode(e.target.value.toUpperCase())}
+                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }}
+                    />
                   </div>
                 </div>
 
@@ -1283,11 +2172,21 @@ export default function EngagementsManagementPage() {
                 type="submit"
                 disabled={submitting}
                 style={{
-                  background: "#238636", color: "#fff", padding: "8px 20px", borderRadius: 6,
-                  fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer",
+                  background: activeTab === "meme" ? "linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)" : "#238636",
+                  color: "#fff",
+                  padding: activeTab === "meme" ? "10px 24px" : "8px 20px",
+                  borderRadius: 6,
+                  fontSize: 13,
+                  fontWeight: 800,
+                  border: "none",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  boxShadow: activeTab === "meme" ? "0 4px 15px rgba(236, 72, 153, 0.4)" : "none",
                 }}
               >
-                {submitting ? "Saving…" : editingItem ? "Update Engagement" : "Publish to Live Feed"}
+                {submitting ? "Saving…" : activeTab === "meme" ? "✨ Publish to Arena" : editingItem ? "Update Engagement" : "Publish to Live Feed"}
               </button>
               <button
                 type="button"
@@ -1308,186 +2207,461 @@ export default function EngagementsManagementPage() {
               👁️ Live Frontend Preview
             </div>
 
-            {/* Preview Container matching the exact dark style */}
-            <div style={{ background: "#06090e", border: "1px solid #1f242c", borderRadius: 12, padding: 18, color: "#fff" }}>
-              {/* Card Header */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <div style={{ display: "flex", gap: 8, fontSize: 11, fontWeight: 800 }}>
-                  {activeTab === "fan_battle" && (
-                    <>
-                      <span style={{ color: "#ff7b72" }}>⚔️ FAN BATTLE</span>
-                      <span style={{ color: "#e3b341" }}>🔥 TRENDING</span>
-                    </>
-                  )}
-                  {activeTab === "quiz" && (
-                    <>
-                      <span style={{ color: "#d2a8ff" }}>🧠 LIVE QUIZ</span>
-                      <span style={{ color: "#e3b341" }}>⭐ {quizQuestions[0]?.pointsReward || 50} PTS/Q</span>
-                    </>
-                  )}
-                  {activeTab === "poll" && <span style={{ color: "#58a6ff" }}>📊 POLL</span>}
-                  {activeTab === "prediction" && (
-                    <>
-                      <span style={{ color: "#ff7b72" }}>🎯 PREDICTION</span>
-                      <span style={{ color: "#58a6ff" }}>💎 POINTS</span>
-                    </>
-                  )}
+            {activeTab === "meme" ? (
+              <MemeCard
+                item={{
+                  id: "preview_meme",
+                  type: "meme",
+                  title: memeTitle || "ME ON MONDAY | ME ON MATCH DAY",
+                  subtitle: memeDescription || "SAME ENERGY. DIFFERENT PRIORITIES.",
+                  status: "active",
+                  likes: 42,
+                  shares: 18,
+                  totalEngaged: 1200,
+                  createdAt: Date.now() - 2 * 60 * 60 * 1000,
+                  updatedAt: Date.now(),
+                  memeData: {
+                    title: memeTitle || "ME ON MONDAY | ME ON MATCH DAY",
+                    description: memeDescription || "SAME ENERGY. DIFFERENT PRIORITIES.",
+                    imageUrl:
+                      memePreviewUrl ||
+                      "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800&auto=format&fit=crop&q=80",
+                    authorName: "AmitFan",
+                    authorHandle: "@AmitFan",
+                    authorAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=AmitFan",
+                    totalVotes: 1200,
+                    heatIndex: 78,
+                    ratings: { mid: 80, funny: 310, hot: 550, fire: 210, nuclear: 50 },
+                  },
+                }}
+              />
+            ) : (
+              <div style={{ background: "#06090e", border: "1px solid #1f242c", borderRadius: 12, padding: 18, color: "#fff" }}>
+                {/* Card Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ display: "flex", gap: 8, fontSize: 11, fontWeight: 800 }}>
+                    {activeTab === "fan_battle" && (
+                      <>
+                        <span style={{ color: "#ff7b72" }}>⚔️ FAN BATTLE</span>
+                        <span style={{ color: "#e3b341" }}>🔥 TRENDING</span>
+                      </>
+                    )}
+                    {activeTab === "quiz" && (
+                      <>
+                        <span style={{ color: "#d2a8ff" }}>🧠 LIVE QUIZ</span>
+                        <span style={{ color: "#e3b341" }}>⭐ {quizQuestions[0]?.pointsReward || 50} PTS/Q</span>
+                      </>
+                    )}
+                    {activeTab === "poll" && <span style={{ color: "#58a6ff" }}>📊 POLL</span>}
+                    {activeTab === "prediction" && (
+                      <>
+                        <span style={{ color: "#ff7b72" }}>🎯 PREDICTION</span>
+                        <span style={{ color: "#58a6ff" }}>💎 POINTS</span>
+                      </>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 10, color: "#8b949e" }}>Live Feed</span>
                 </div>
-                <span style={{ fontSize: 10, color: "#8b949e" }}>Live Feed</span>
-              </div>
 
-              {/* Title */}
-              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>{title}</div>
+                {/* Title */}
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>{title}</div>
 
-              {/* Fan Battle Preview */}
-              {activeTab === "fan_battle" && (
-                <div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 12, alignItems: "center", background: "#0d1117", border: "1px solid #21262d", borderRadius: 8, padding: 16 }}>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 20, fontWeight: 800 }}>{fbLeftCode}</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{fbLeftName}</div>
-                      <div style={{ fontSize: 11, color: "#8b949e", marginTop: 2 }}>{fbLeftStat}</div>
-                    </div>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: "#8b949e" }}>VS</div>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 20, fontWeight: 800 }}>{fbRightCode}</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{fbRightName}</div>
-                      <div style={{ fontSize: 11, color: "#8b949e", marginTop: 2 }}>{fbRightStat}</div>
-                    </div>
-                  </div>
-                  <button style={{ width: "100%", background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#fff", padding: "10px", fontSize: 12, fontWeight: 600, marginTop: 10, cursor: "pointer" }}>
-                    📢 Challenge a Friend
-                  </button>
-                </div>
-              )}
-
-              {/* Quiz Preview */}
-              {activeTab === "quiz" && (
-                <div>
-                  {/* Progress & Frequency Bar Preview */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      background: "rgba(22, 30, 46, 0.6)",
-                      border: "1px solid #1f2a3e",
-                      borderRadius: 8,
-                      padding: "6px 10px",
-                      marginBottom: 10,
-                      fontSize: 11,
-                    }}
-                  >
-                    <span style={{ color: "#a5d6ff", fontWeight: 700 }}>
-                      Question 1 of {quizQuestions.length}
-                    </span>
-                    <span style={{ color: "#3fb950", fontWeight: 700 }}>
-                      ⏱️ Unlocks every {quizFrequencyMinutes}m
-                    </span>
-                  </div>
-
-                  <div style={{ fontSize: 13, color: "#c9d1d9", marginBottom: 10, fontWeight: 600 }}>
-                    {quizQuestions[0]?.question}
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    {[
-                      { id: "A", val: quizQuestions[0]?.optionA },
-                      { id: "B", val: quizQuestions[0]?.optionB },
-                      { id: "C", val: quizQuestions[0]?.optionC },
-                      { id: "D", val: quizQuestions[0]?.optionD },
-                    ].map(opt => (
-                      <div
-                        key={opt.id}
-                        style={{
-                          background: "#0d1117",
-                          border: `1px solid ${quizQuestions[0]?.correctOptionId === opt.id ? "#2ea043" : "#30363d"}`,
-                          borderRadius: 6,
-                          padding: "8px 10px",
-                          fontSize: 12,
-                          fontWeight: 700,
-                          display: "flex",
-                          gap: 6,
-                          color: quizQuestions[0]?.correctOptionId === opt.id ? "#3fb950" : "#e6edf3",
-                        }}
-                      >
-                        <span style={{ color: "#8b949e" }}>{opt.id}</span>
-                        <span>{opt.val}</span>
+                {/* Fan Battle Preview */}
+                {activeTab === "fan_battle" && (
+                  <div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 12, alignItems: "center", background: "#0d1117", border: "1px solid #21262d", borderRadius: 8, padding: 16 }}>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 20, fontWeight: 800 }}>{fbLeftCode}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{fbLeftName}</div>
+                        <div style={{ fontSize: 11, color: "#8b949e", marginTop: 2 }}>{fbLeftStat}</div>
                       </div>
-                    ))}
-                  </div>
-                  {quizQuestions[0]?.explanation && (
-                    <div style={{ background: "rgba(46,160,67,0.12)", border: "1px solid rgba(46,160,67,0.3)", borderRadius: 6, padding: "8px 12px", marginTop: 10, fontSize: 11, color: "#3fb950", fontWeight: 600 }}>
-                      💡 {quizQuestions[0]?.explanation}
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#8b949e" }}>VS</div>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 20, fontWeight: 800 }}>{fbRightCode}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{fbRightName}</div>
+                        <div style={{ fontSize: 11, color: "#8b949e", marginTop: 2 }}>{fbRightStat}</div>
+                      </div>
                     </div>
-                  )}
-                </div>
-              )}
+                    <button style={{ width: "100%", background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#fff", padding: "10px", fontSize: 12, fontWeight: 600, marginTop: 10, cursor: "pointer" }}>
+                      📢 Challenge a Friend
+                    </button>
+                  </div>
+                )}
 
-              {/* Poll Preview */}
-              {activeTab === "poll" && (
-                <div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {pollOptions.map((opt, i) => {
-                      const optVotes = editingItem?.pollData?.options?.[i]?.votes || 0;
-                      const totalPollVotes = editingItem?.pollData?.totalVotes || 0;
-                      const pct = totalPollVotes > 0 ? Math.round((optVotes / totalPollVotes) * 100) : 0;
-                      return (
+                {/* Quiz Preview */}
+                {activeTab === "quiz" && (
+                  <div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        background: "rgba(22, 30, 46, 0.6)",
+                        border: "1px solid #1f2a3e",
+                        borderRadius: 8,
+                        padding: "6px 10px",
+                        marginBottom: 10,
+                        fontSize: 11,
+                      }}
+                    >
+                      <span style={{ color: "#a5d6ff", fontWeight: 700 }}>
+                        Question 1 of {quizQuestions.length} · ⏱️ {quizFrequencyMinutes}m
+                      </span>
+                      <span style={{ color: "#388bfd", fontWeight: 700 }}>
+                        ⏳ Closes in: {quizTimerMinutes < 60 ? `${quizTimerMinutes}m` : (quizTimerMinutes % 60 === 0 ? `${quizTimerMinutes / 60} hrs` : `${(quizTimerMinutes / 60).toFixed(1)} hrs`)}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: 13, color: "#c9d1d9", marginBottom: 10, fontWeight: 600 }}>
+                      {quizQuestions[0]?.question}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      {[
+                        { id: "A", val: quizQuestions[0]?.optionA },
+                        { id: "B", val: quizQuestions[0]?.optionB },
+                        { id: "C", val: quizQuestions[0]?.optionC },
+                        { id: "D", val: quizQuestions[0]?.optionD },
+                      ].map(opt => (
                         <div
-                          key={i}
+                          key={opt.id}
                           style={{
-                            background: "#0d1117", border: "1px solid #30363d", borderRadius: 6,
-                            padding: "10px 14px", fontSize: 13, fontWeight: 600, display: "flex", justifyContent: "space-between",
+                            background: "#0d1117",
+                            border: `1px solid ${quizQuestions[0]?.correctOptionId === opt.id ? "#2ea043" : "#30363d"}`,
+                            borderRadius: 6,
+                            padding: "8px 10px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            display: "flex",
+                            gap: 6,
+                            color: quizQuestions[0]?.correctOptionId === opt.id ? "#3fb950" : "#e6edf3",
                           }}
                         >
-                          <span>{opt || `Option ${i + 1}`}</span>
-                          <span style={{ color: "#3fb950" }}>{pct}%</span>
+                          <span style={{ color: "#8b949e" }}>{opt.id}</span>
+                          <span>{opt.val}</span>
                         </div>
-                      );
-                    })}
+                      ))}
+                    </div>
+                    {quizQuestions[0]?.explanation && (
+                      <div style={{ background: "rgba(46,160,67,0.12)", border: "1px solid rgba(46,160,67,0.3)", borderRadius: 6, padding: "8px 12px", marginTop: 10, fontSize: 11, color: "#3fb950", fontWeight: 600 }}>
+                        💡 {quizQuestions[0]?.explanation}
+                      </div>
+                    )}
                   </div>
-                  <div style={{ fontSize: 11, color: "#8b949e", textAlign: "center", marginTop: 10 }}>
-                    Thanks for voting · Results based on all SF360 fans
-                  </div>
-                </div>
-              )}
+                )}
 
-              {/* Prediction Preview */}
-              {activeTab === "prediction" && (() => {
-                const leftVotes = editingItem?.predictionData?.leftChoice?.votes || 0;
-                const rightVotes = editingItem?.predictionData?.rightChoice?.votes || 0;
-                const totalPred = leftVotes + rightVotes;
-                const leftPct = totalPred > 0 ? Math.round((leftVotes / totalPred) * 100) : 50;
-                const rightPct = totalPred > 0 ? 100 - leftPct : 50;
-                return (
+                {/* Poll Preview */}
+                {activeTab === "poll" && (
                   <div>
-                    <div style={{ fontSize: 13, color: "#c9d1d9", marginBottom: 10 }}>{predQuestion}</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                      <div style={{ border: "2px solid #238636", background: "rgba(35,134,54,0.1)", borderRadius: 8, padding: 12, textAlign: "center" }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: "#3fb950" }}>{predLeftText} <span style={{ fontSize: 10 }}>{predLeftCode}</span></div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: "#3fb950", marginTop: 4 }}>{leftPct}%</div>
-                      </div>
-                      <div style={{ border: "1px solid #30363d", background: "#0d1117", borderRadius: 8, padding: 12, textAlign: "center" }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: "#c9d1d9" }}>{predRightText} <span style={{ fontSize: 10 }}>{predRightCode}</span></div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: "#ff7b72", marginTop: 4 }}>{rightPct}%</div>
-                      </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        background: "rgba(56, 139, 253, 0.1)",
+                        border: "1px solid rgba(56, 139, 253, 0.25)",
+                        borderRadius: 8,
+                        padding: "6px 10px",
+                        marginBottom: 10,
+                        fontSize: 11,
+                      }}
+                    >
+                      <span style={{ color: "#58a6ff", fontWeight: 700 }}>
+                        ⏱️ Duration: {pollTimerMinutes < 60 ? `${pollTimerMinutes} mins` : (pollTimerMinutes % 60 === 0 ? `${pollTimerMinutes / 60} hrs` : `${(pollTimerMinutes / 60).toFixed(1)} hrs`)}
+                      </span>
+                      {pollAnswer && (
+                        <span style={{ color: "#3fb950", fontWeight: 700 }}>
+                          🏆 Winner: {pollAnswer}
+                        </span>
+                      )}
                     </div>
-                    <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: "8px", marginTop: 10, textAlign: "center", fontSize: 11, color: "#e3b341", fontWeight: 600 }}>
-                      🔒 +{predCoinStake} FlipCoins locked in · Results after match
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {pollOptions.map((opt, i) => {
+                        const optVotes = editingItem?.pollData?.options?.[i]?.votes || 0;
+                        const totalPollVotes = editingItem?.pollData?.totalVotes || 0;
+                        const pct = totalPollVotes > 0 ? Math.round((optVotes / totalPollVotes) * 100) : 0;
+                        const isWinner = pollAnswer && opt && pollAnswer.trim().toLowerCase() === opt.trim().toLowerCase();
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              background: isWinner ? "rgba(46, 160, 67, 0.08)" : "#0d1117",
+                              border: `1px solid ${isWinner ? "#2ea043" : "#30363d"}`,
+                              borderRadius: 6,
+                              padding: "10px 14px", fontSize: 13, fontWeight: 600, display: "flex", justifyContent: "space-between",
+                            }}
+                          >
+                            <span>{opt || `Option ${i + 1}`} {isWinner ? "✓" : ""}</span>
+                            <span style={{ color: isWinner ? "#3fb950" : "#c9d1d9" }}>{pct}%</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#8b949e", textAlign: "center", marginTop: 10 }}>
+                      Thanks for voting · Results based on all SF360 fans
                     </div>
                   </div>
-                );
-              })()}
+                )}
 
-              {/* Card Footer with Dynamic Preview Numbers */}
-              <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #21262d", paddingTop: 12, marginTop: 14, fontSize: 12, color: "#8b949e" }}>
-                <div style={{ display: "flex", gap: 14 }}>
-                  <span>❤️ {editingItem ? editingItem.likes.toLocaleString() : "0"}</span>
-                  <span>🔗 Share {editingItem && editingItem.shares > 0 ? `(${editingItem.shares})` : "(0)"}</span>
+                {/* Prediction Preview */}
+                {activeTab === "prediction" && (() => {
+                  const leftVotes = editingItem?.predictionData?.leftChoice?.votes || 0;
+                  const rightVotes = editingItem?.predictionData?.rightChoice?.votes || 0;
+                  const totalPred = leftVotes + rightVotes;
+                  const leftPct = totalPred > 0 ? Math.round((leftVotes / totalPred) * 100) : 50;
+                  const rightPct = totalPred > 0 ? 100 - leftPct : 50;
+                  return (
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          background: "rgba(210, 153, 34, 0.1)",
+                          border: "1px solid rgba(210, 153, 34, 0.25)",
+                          borderRadius: 8,
+                          padding: "6px 10px",
+                          marginBottom: 10,
+                          fontSize: 11,
+                        }}
+                      >
+                        <span style={{ color: "#e3b341", fontWeight: 700 }}>
+                          ⏱️ Duration: {predTimerMinutes < 60 ? `${predTimerMinutes} mins` : (predTimerMinutes % 60 === 0 ? `${predTimerMinutes / 60} hrs` : `${(predTimerMinutes / 60).toFixed(1)} hrs`)}
+                        </span>
+                        {predAnswer && (
+                          <span style={{ color: "#3fb950", fontWeight: 700 }}>
+                            🏆 Winner: {predAnswer}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 13, color: "#c9d1d9", marginBottom: 10 }}>{predQuestion}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <div style={{ border: "2px solid #238636", background: "rgba(35,134,54,0.1)", borderRadius: 8, padding: 12, textAlign: "center" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#3fb950" }}>{predLeftText} <span style={{ fontSize: 10 }}>{predLeftCode}</span></div>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: "#3fb950", marginTop: 4 }}>{leftPct}%</div>
+                        </div>
+                        <div style={{ border: "1px solid #30363d", background: "#0d1117", borderRadius: 8, padding: 12, textAlign: "center" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#c9d1d9" }}>{predRightText} <span style={{ fontSize: 10 }}>{predRightCode}</span></div>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: "#ff7b72", marginTop: 4 }}>{rightPct}%</div>
+                        </div>
+                      </div>
+                      <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: "8px", marginTop: 10, textAlign: "center", fontSize: 11, color: "#e3b341", fontWeight: 600 }}>
+                        🔒 +{predCoinStake} FlipCoins locked in · Results after match
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Card Footer with Dynamic Preview Numbers */}
+                <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #21262d", paddingTop: 12, marginTop: 14, fontSize: 12, color: "#8b949e" }}>
+                  <div style={{ display: "flex", gap: 14 }}>
+                    <span>❤️ {editingItem ? editingItem.likes.toLocaleString() : "0"}</span>
+                    <span>🔗 Share {editingItem && editingItem.shares > 0 ? `(${editingItem.shares})` : "(0)"}</span>
+                  </div>
+                  <div>{editingItem ? editingItem.totalEngaged.toLocaleString() : "0"} engaged</div>
                 </div>
-                <div>{editingItem ? editingItem.totalEngaged.toLocaleString() : "0"} engaged</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB 7: DEDICATED MEME ARENA FEED SECTION ───────────────────────── */}
+      {activeTab === "meme_arena" && (
+        <div style={{ maxWidth: 640, margin: "0 auto" }}>
+          {/* Header Banner matching right screenshot */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 16,
+              background: "#161b22",
+              border: "1px solid #30363d",
+              borderRadius: 14,
+              padding: "16px 20px",
+            }}
+          >
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 22, fontWeight: 900, color: "#fff", display: "flex", alignItems: "center", gap: 6 }}>
+                  🔥 Meme Arena
+                </span>
+                <span
+                  style={{
+                    background: "rgba(46, 160, 67, 0.15)",
+                    border: "1px solid rgba(46, 160, 67, 0.4)",
+                    color: "#3fb950",
+                    padding: "2px 8px",
+                    borderRadius: 20,
+                    fontSize: 10,
+                    fontWeight: 800,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#3fb950", display: "inline-block" }} />
+                  Live Now
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: "#8b949e", marginTop: 4 }}>
+                Funniest memes. Hottest takes. Only on SportsFan360.
               </div>
             </div>
+
+            <button
+              onClick={() => handleOpenCreate("meme")}
+              style={{
+                background: "linear-gradient(135deg, #ff5e00 0%, #ff2a6d 100%)",
+                border: "none",
+                borderRadius: 10,
+                color: "#fff",
+                padding: "8px 16px",
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(255, 94, 0, 0.3)",
+              }}
+            >
+              + Drop a Meme
+            </button>
           </div>
+
+          {/* Sub Navigation Tabs: Top Memes | Trending | My Votes */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            <button
+              onClick={() => setMemeFeedFilter("top")}
+              style={{
+                flex: 1,
+                padding: "10px 14px",
+                borderRadius: 10,
+                background: memeFeedFilter === "top" ? "linear-gradient(135deg, #ff5e00 0%, #ff2a6d 100%)" : "#161b22",
+                color: memeFeedFilter === "top" ? "#fff" : "#8b949e",
+                border: memeFeedFilter === "top" ? "none" : "1px solid #30363d",
+                fontSize: 13,
+                fontWeight: 800,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                boxShadow: memeFeedFilter === "top" ? "0 4px 14px rgba(255, 94, 0, 0.35)" : "none",
+              }}
+            >
+              🔥 Top Memes
+            </button>
+            <button
+              onClick={() => setMemeFeedFilter("trending")}
+              style={{
+                flex: 1,
+                padding: "10px 14px",
+                borderRadius: 10,
+                background: memeFeedFilter === "trending" ? "#21262d" : "#161b22",
+                color: memeFeedFilter === "trending" ? "#58a6ff" : "#8b949e",
+                border: `1px solid ${memeFeedFilter === "trending" ? "#58a6ff" : "#30363d"}`,
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+              }}
+            >
+              📈 Trending
+            </button>
+            <button
+              onClick={() => setMemeFeedFilter("my_votes")}
+              style={{
+                flex: 1,
+                padding: "10px 14px",
+                borderRadius: 10,
+                background: memeFeedFilter === "my_votes" ? "#21262d" : "#161b22",
+                color: memeFeedFilter === "my_votes" ? "#e3b341" : "#8b949e",
+                border: `1px solid ${memeFeedFilter === "my_votes" ? "#e3b341" : "#30363d"}`,
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+              }}
+            >
+              👤 My Votes
+            </button>
+          </div>
+
+          {/* Memes List */}
+          {(() => {
+            let memeItems = engagements.filter((i) => i.type === "meme");
+            if (memeFeedFilter === "top") {
+              memeItems = [...memeItems].sort((a, b) => {
+                const aVotes = a.memeData?.totalVotes || a.totalEngaged || 0;
+                const bVotes = b.memeData?.totalVotes || b.totalEngaged || 0;
+                return bVotes - aVotes;
+              });
+            } else if (memeFeedFilter === "trending") {
+              memeItems = [...memeItems].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            } else if (memeFeedFilter === "my_votes") {
+              memeItems = memeItems.filter((i) => Boolean(i.userVoted));
+            }
+
+            if (memeItems.length === 0) {
+              return (
+                <div
+                  style={{
+                    background: "#161b22",
+                    border: "1px solid #30363d",
+                    borderRadius: 14,
+                    padding: "50px 20px",
+                    textAlign: "center",
+                    color: "#8b949e",
+                  }}
+                >
+                  <div style={{ fontSize: 36, marginBottom: 12 }}>🔥</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: "#f0f6fc", marginBottom: 6 }}>
+                    {memeFeedFilter === "my_votes" ? "No memes voted on yet!" : "No memes published to the Arena yet!"}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#8b949e", marginBottom: 20 }}>
+                    {memeFeedFilter === "my_votes"
+                      ? "Vote on memes in the Top Memes or Trending tab to earn +2 points each!"
+                      : "Be the first fan to publish a hilarious sports take and get voted on!"}
+                  </div>
+                  <button
+                    onClick={() => handleOpenCreate("meme")}
+                    style={{
+                      background: "linear-gradient(135deg, #ff5e00 0%, #ff2a6d 100%)",
+                      color: "#fff",
+                      border: "none",
+                      padding: "10px 22px",
+                      borderRadius: 10,
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      boxShadow: "0 4px 15px rgba(255, 94, 0, 0.4)",
+                    }}
+                  >
+                    + Create First Meme
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                {memeItems.map((m) => (
+                  <MemeCard
+                    key={m.id}
+                    item={m}
+                    onVoteSuccess={() => {
+                      fetchEngagements();
+                    }}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

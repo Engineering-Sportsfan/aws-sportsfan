@@ -48,9 +48,13 @@ export interface FlipLineCard {
   roomId: string;
   sk: string;
   id: number | string;
+  groupId?: string;
+  broadcastId?: string;
   type: string;
   sport: string;
   channel?: string;
+  channels?: string[];
+  allChannels?: string[];
   sportEmoji: string;
   sportLabel: string;
   day?: string;
@@ -524,8 +528,42 @@ export async function GET(req: NextRequest) {
       cards = cards.filter((card) => {
         const cardSport = (card.sport || "").toLowerCase();
         const cardChannel = (card.channel || "").toLowerCase();
-        return cardSport === channelParam || cardChannel === channelParam;
+        const cardChannels = Array.isArray(card.channels)
+          ? card.channels.map((c: any) => String(c).toLowerCase())
+          : [];
+        return (
+          cardSport === channelParam ||
+          cardChannel === channelParam ||
+          cardChannels.includes(channelParam)
+        );
       });
+    } else {
+      // In "all" view, deduplicate multiple records belonging to the same broadcast or legacy duplicate posts
+      const seen = new Set<string>();
+      const deduplicated: FlipLineCard[] = [];
+
+      for (const card of cards) {
+        if (card.groupId || card.broadcastId) {
+          const gid = card.groupId || card.broadcastId;
+          const groupKey = `group_${gid}`;
+          if (seen.has(groupKey)) continue;
+          seen.add(groupKey);
+        }
+
+        const authorKey = (card.author || "").toLowerCase().trim();
+        const contentKey = (card.content || "").trim().toLowerCase().slice(0, 100);
+        const mediaKey = card.videoUrl || (card as any).image || (card as any).imageUrl || "";
+        const timeBucket = Math.floor(Number(card.timeMs || card.scheduledAt || card.id || 0) / 15000);
+        const legacyKey = `legacy_${authorKey}_${contentKey}_${mediaKey}_${timeBucket}`;
+
+        if (seen.has(legacyKey)) {
+          continue;
+        }
+
+        seen.add(legacyKey);
+        deduplicated.push(card);
+      }
+      cards = deduplicated;
     }
 
     // Filter out posts scheduled for a future time (not yet arrived)
@@ -722,6 +760,17 @@ export async function POST(req: NextRequest) {
     const meta = SPORT_META[sport] || { emoji: "🏆", label: "General" };
     const tags = content ? content.match(/#[a-zA-Z0-9_]+/g) || [] : [];
 
+    const rawChannels = formData.get("channels") as string | null;
+    let postChannels: string[] = [sport];
+    if (rawChannels) {
+      try {
+        const parsed = JSON.parse(rawChannels);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          postChannels = parsed.map((c: any) => String(c).toLowerCase().trim());
+        }
+      } catch { }
+    }
+
     const newCard: FlipLineCard = {
       roomId: "FLIPLINE#ALL",
       sk: `CARD#${timeMs}#${id}`,
@@ -729,6 +778,8 @@ export async function POST(req: NextRequest) {
       type,
       sport,
       channel: sport,
+      channels: postChannels,
+      allChannels: postChannels,
       sportEmoji: meta.emoji,
       sportLabel: meta.label,
       day: day && day.toLowerCase() !== "just now" ? day : formatCurrentDate(),

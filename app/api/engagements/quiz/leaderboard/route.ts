@@ -325,7 +325,7 @@ export async function POST(req: NextRequest) {
       quizId,
       questionId,
       isCorrect,
-      pointsEarned = 50,
+      pointsEarned = 10,
     } = body;
 
     const userId =
@@ -373,32 +373,32 @@ export async function POST(req: NextRequest) {
 
       const updateQuizPromise = quizId
         ? docClient.send(
-            new UpdateCommand({
-              TableName: TABLES.SocialAndContent,
-              Key: { contentId: `QUIZ_LEADERBOARD#${quizId}`, sk: `USER#${userId}` },
-              UpdateExpression:
-                "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
-                "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
-                "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
-                "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
-                "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
-                "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid, quizId = :qid",
-              ExpressionAttributeValues: {
-                ":zero": 0,
-                ":pts": pts,
-                ":corr": isCorrect ? 1 : 0,
-                ":incorr": isCorrect ? 0 : 1,
-                ":one": 1,
-                ":uname": displayName,
-                ":uavatar": avatar,
-                ":uemail": authUser?.email || "",
-                ":now": now,
-                ":entity": "QUIZ_LEADERBOARD",
-                ":uid": userId,
-                ":qid": quizId,
-              },
-            })
-          )
+          new UpdateCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: `QUIZ_LEADERBOARD#${quizId}`, sk: `USER#${userId}` },
+            UpdateExpression:
+              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+              "incorrectCount = if_not_exists(incorrectCount, :zero) + :incorr, " +
+              "totalAnswered = if_not_exists(totalAnswered, :zero) + :one, " +
+              "userName = :uname, userAvatar = :uavatar, userEmail = :uemail, " +
+              "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid, quizId = :qid",
+            ExpressionAttributeValues: {
+              ":zero": 0,
+              ":pts": pts,
+              ":corr": isCorrect ? 1 : 0,
+              ":incorr": isCorrect ? 0 : 1,
+              ":one": 1,
+              ":uname": displayName,
+              ":uavatar": avatar,
+              ":uemail": authUser?.email || "",
+              ":now": now,
+              ":entity": "QUIZ_LEADERBOARD",
+              ":uid": userId,
+              ":qid": quizId,
+            },
+          })
+        )
         : Promise.resolve();
 
       const [resGlobal] = await Promise.all([updateGlobalPromise, updateQuizPromise]);
@@ -428,9 +428,9 @@ export async function POST(req: NextRequest) {
           db.collection(colName).doc(userId).set(incData, { merge: true }),
           quizId
             ? db
-                .collection(colName)
-                .doc(`${userId}_${quizId}`)
-                .set({ ...incData, quizId }, { merge: true })
+              .collection(colName)
+              .doc(`${userId}_${quizId}`)
+              .set({ ...incData, quizId }, { merge: true })
             : Promise.resolve(),
           colName !== "quiz_leaderboard"
             ? db.collection("quiz_leaderboard").doc(userId).set(incData, { merge: true })
