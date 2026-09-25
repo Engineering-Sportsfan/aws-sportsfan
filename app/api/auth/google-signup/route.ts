@@ -108,6 +108,33 @@ export async function POST(req: NextRequest) {
 
       await dualWrite("users", cleanEmail, TABLES.IdentityAndAccess, dynamoItem);
       console.log(`[DynamoDB Auth] ⚡ SUCCESS: Google signup created user in DynamoDB (${TABLES.IdentityAndAccess}) -> entityId: [USER#${cleanEmail}], sk: [USER#META]`);
+
+      // ── Bulletproof PostHog Analytics (Backend) ───────────────────────────
+      if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+        try {
+          await fetch('https://app.posthog.com/capture/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              api_key: process.env.NEXT_PUBLIC_POSTHOG_KEY,
+              event: 'signup_completed',
+              properties: {
+                distinct_id: consistentUserId,
+                email: cleanEmail,
+                signup_method: 'google',
+                timestamp: new Date().toISOString(),
+                $set: {
+                  email: cleanEmail,
+                  name: username,
+                }
+              }
+            })
+          });
+          console.log(`[PostHog Backend] ⚡ Successfully logged signup_completed for ${cleanEmail}`);
+        } catch (phErr) {
+          console.warn("[PostHog Backend] Failed to send signup_completed event:", phErr);
+        }
+      }
     } else {
       // ── Update Existing User ──────────────────────────────────────────────
       if (existingUser.status === "disabled") {
@@ -192,6 +219,7 @@ export async function POST(req: NextRequest) {
       lastName: lastName || (existingUser?.lastName as string) || "",
       role,
       status: "active",
+      isNewUser: !existingUser,
     });
 
     response.cookies.set("token", token, {
