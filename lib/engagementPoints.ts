@@ -89,6 +89,7 @@ export async function awardEngagementPoints({
 
     // 2. Award via central gamification engine
     let awarded = false;
+    let engineThrewError = false;
     try {
       awarded = await awardUserPoints({
         actualUserId: resolvedUserId,
@@ -110,174 +111,174 @@ export async function awardEngagementPoints({
         },
       });
     } catch (engineErr) {
+      engineThrewError = true;
       console.warn("[awardEngagementPoints] userPoints engine notice:", engineErr);
     }
 
-    // 3. Direct Dual-Write Atomic Guarantee
-    // Ensures user's totalPoints & totalXP reflect the +2 points across DynamoDB & Firestore
+    // If awardUserPoints returned false without throwing (e.g., transaction already exists / daily cap),
+    // do not award duplicate points.
+    if (!awarded && !engineThrewError) {
+      console.log(`[awardEngagementPoints] Transaction ${transactionId} already processed or capped. Skipping points award.`);
+      return { success: true, pointsAwarded: 0 };
+    }
+
     const ddbPromises: Promise<any>[] = [];
     const safeEmail = resolvedEmail || `${resolvedUserId}@sportsfan360.com`;
     const safeName = resolvedName || "Sports Fan";
 
-    // A. DynamoDB: Update IdentityAndAccess table for email key if available
-    if (resolvedEmail) {
+    // 3. Fallback direct dual-write ONLY if central points engine threw an unexpected error
+    if (!awarded && engineThrewError) {
+      // A. DynamoDB: Update IdentityAndAccess table for email key if available
+      if (resolvedEmail) {
+        ddbPromises.push(
+          docClient.send(
+            new UpdateCommand({
+              TableName: TABLES.IdentityAndAccess,
+              Key: { entityId: `USER#${resolvedEmail}`, sk: "USER#META" },
+              UpdateExpression:
+                "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+                "totalXP = if_not_exists(totalXP, :zero) + :pts, " +
+                "userName = if_not_exists(userName, :uname), " +
+                "email = if_not_exists(email, :uemail), " +
+                "name = if_not_exists(name, :uname), " +
+                "lastActiveTimestamp = :now, updatedAt = :now",
+              ExpressionAttributeValues: {
+                ":zero": 0,
+                ":pts": totalPointsToAward,
+                ":now": now,
+                ":uname": safeName,
+                ":uemail": safeEmail,
+              },
+            })
+          ).catch((err) => console.warn("[awardEngagementPoints] DDB Identity email notice:", err))
+        );
+      }
+
+      // B. DynamoDB: Update IdentityAndAccess table for userId key if different from email
+      if (resolvedUserId && resolvedUserId !== resolvedEmail) {
+        ddbPromises.push(
+          docClient.send(
+            new UpdateCommand({
+              TableName: TABLES.IdentityAndAccess,
+              Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
+              UpdateExpression:
+                "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+                "totalXP = if_not_exists(totalXP, :zero) + :pts, " +
+                "userName = if_not_exists(userName, :uname), " +
+                "email = if_not_exists(email, :uemail), " +
+                "name = if_not_exists(name, :uname), " +
+                "lastActiveTimestamp = :now, updatedAt = :now",
+              ExpressionAttributeValues: {
+                ":zero": 0,
+                ":pts": totalPointsToAward,
+                ":now": now,
+                ":uname": safeName,
+                ":uemail": safeEmail,
+              },
+            })
+          ).catch((err) => console.warn("[awardEngagementPoints] DDB Identity userId notice:", err))
+        );
+      }
+
+      // C. DynamoDB: Global Leaderboard entry in GamificationAndWallet
       ddbPromises.push(
         docClient.send(
           new UpdateCommand({
-            TableName: TABLES.IdentityAndAccess,
-            Key: { entityId: `USER#${resolvedEmail}`, sk: "USER#META" },
+            TableName: TABLES.GamificationAndWallet,
+            Key: { userId: `USER#${resolvedUserId}`, sk: "LEADERBOARD#GLOBAL" },
             UpdateExpression:
-              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
-              "totalXP = if_not_exists(totalXP, :zero) + :pts, " +
-              "userName = if_not_exists(userName, :uname), " +
-              "email = if_not_exists(email, :uemail), " +
-              "name = if_not_exists(name, :uname), " +
-              "lastActiveTimestamp = :now, updatedAt = :now",
+              "SET points = if_not_exists(points, :zero) + :pts, " +
+              "totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "userName = :uname, userEmail = :uemail, lastUpdated = :now, leaderboardType = :ltype",
             ExpressionAttributeValues: {
               ":zero": 0,
               ":pts": totalPointsToAward,
-              ":now": now,
               ":uname": safeName,
               ":uemail": safeEmail,
-            },
-          })
-        ).catch((err) => console.warn("[awardEngagementPoints] DDB Identity email notice:", err))
-      );
-    }
-
-    // B. DynamoDB: Update IdentityAndAccess table for userId key if different from email
-    if (resolvedUserId && resolvedUserId !== resolvedEmail) {
-      ddbPromises.push(
-        docClient.send(
-          new UpdateCommand({
-            TableName: TABLES.IdentityAndAccess,
-            Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
-            UpdateExpression:
-              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
-              "totalXP = if_not_exists(totalXP, :zero) + :pts, " +
-              "userName = if_not_exists(userName, :uname), " +
-              "email = if_not_exists(email, :uemail), " +
-              "name = if_not_exists(name, :uname), " +
-              "lastActiveTimestamp = :now, updatedAt = :now",
-            ExpressionAttributeValues: {
-              ":zero": 0,
-              ":pts": totalPointsToAward,
               ":now": now,
-              ":uname": safeName,
-              ":uemail": safeEmail,
+              ":ltype": "GLOBAL",
             },
           })
-        ).catch((err) => console.warn("[awardEngagementPoints] DDB Identity userId notice:", err))
+        ).catch((err) => console.warn("[awardEngagementPoints] DDB Global Leaderboard notice:", err))
       );
-    }
 
-    // C. DynamoDB: Global Leaderboard entry in GamificationAndWallet
-    ddbPromises.push(
-      docClient.send(
-        new UpdateCommand({
-          TableName: TABLES.GamificationAndWallet,
-          Key: { userId: `USER#${resolvedUserId}`, sk: "LEADERBOARD#GLOBAL" },
-          UpdateExpression:
-            "SET points = if_not_exists(points, :zero) + :pts, " +
-            "totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
-            "userName = :uname, userEmail = :uemail, lastUpdated = :now, leaderboardType = :ltype",
-          ExpressionAttributeValues: {
-            ":zero": 0,
-            ":pts": totalPointsToAward,
-            ":uname": safeName,
-            ":uemail": safeEmail,
-            ":now": now,
-            ":ltype": "GLOBAL",
-          },
-        })
-      ).catch((err) => console.warn("[awardEngagementPoints] DDB Global Leaderboard notice:", err))
-    );
-
-    // D. Firestore: Update master user document and globalLeaderboard
-    if (db) {
-      try {
-        const fsUserUpdate: any = {
-          totalPoints: FieldValue.increment(totalPointsToAward),
-          totalXP: FieldValue.increment(totalPointsToAward),
-          reputationScore: FieldValue.increment(totalPointsToAward),
-          lastActiveTimestamp: now,
-          updatedAt: now,
-        };
-
-        const fsPromises: Promise<any>[] = [
-          db.collection("users").doc(resolvedUserId).set(fsUserUpdate, { merge: true }),
-          db.collection("globalLeaderboard").doc(resolvedUserId).set({
-            userId: resolvedUserId,
-            userName: resolvedName,
-            userEmail: resolvedEmail,
+      // D. Firestore: Update master user document and globalLeaderboard
+      if (db) {
+        try {
+          const fsUserUpdate: any = {
             totalPoints: FieldValue.increment(totalPointsToAward),
-            lastUpdated: now,
-          }, { merge: true }),
-        ];
+            totalXP: FieldValue.increment(totalPointsToAward),
+            reputationScore: FieldValue.increment(totalPointsToAward),
+            lastActiveTimestamp: now,
+            updatedAt: now,
+          };
 
-        if (resolvedEmail && resolvedEmail !== resolvedUserId) {
-          fsPromises.push(
-            db.collection("users").doc(resolvedEmail).set(fsUserUpdate, { merge: true })
-          );
-        }
-
-        // Also update quiz_leaderboard in Firestore
-        // fsPromises.push(
-        //   db.collection("quiz_leaderboard").doc(resolvedUserId).set({
-        //     userId: resolvedUserId,
-        //     userName: resolvedName,
-        //     userEmail: safeEmail,
-        //     totalPoints: FieldValue.increment(totalPointsToAward),
-        //     correctCount: FieldValue.increment(isAccuracyBonus ? 1 : 0),
-        //     lastAnsweredAt: now,
-        //     updatedAt: now,
-        //   }, { merge: true })
-        // );
-if (syncQuizLeaderboard) {
-          fsPromises.push(
-            db.collection("quiz_leaderboard").doc(resolvedUserId).set({
+          const fsPromises: Promise<any>[] = [
+            db.collection("users").doc(resolvedUserId).set(fsUserUpdate, { merge: true }),
+            db.collection("globalLeaderboard").doc(resolvedUserId).set({
               userId: resolvedUserId,
               userName: resolvedName,
-              userEmail: safeEmail,
+              userEmail: resolvedEmail,
               totalPoints: FieldValue.increment(totalPointsToAward),
-              correctCount: FieldValue.increment(isAccuracyBonus ? 1 : 0),
-              lastAnsweredAt: now,
-              updatedAt: now,
-            }, { merge: true })
-          );
+              lastUpdated: now,
+            }, { merge: true }),
+          ];
+
+          if (resolvedEmail && resolvedEmail !== resolvedUserId) {
+            fsPromises.push(
+              db.collection("users").doc(resolvedEmail).set(fsUserUpdate, { merge: true })
+            );
+          }
+          await Promise.all(fsPromises);
+        } catch (fsErr) {
+          console.warn("[awardEngagementPoints] Firestore fallback sync notice:", fsErr);
         }
-        await Promise.all(fsPromises);
-      } catch (fsErr) {
-        console.warn("[awardEngagementPoints] Firestore sync notice:", fsErr);
       }
     }
 
-    // E. DynamoDB: Update QUIZ_LEADERBOARD#GLOBAL in SocialAndContent table
-     if (syncQuizLeaderboard) {
-    ddbPromises.push(
-      docClient.send(
-        new UpdateCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${resolvedUserId}` },
-          UpdateExpression:
-            "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
-            "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
-            "userName = :uname, userEmail = :uemail, " +
-            "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
-          ExpressionAttributeValues: {
-            ":zero": 0,
-            ":pts": totalPointsToAward,
-            ":corr": isAccuracyBonus ? 1 : 0,
-            ":uname": safeName,
-            ":uemail": safeEmail,
-            ":now": now,
-            ":entity": "QUIZ_LEADERBOARD",
-            ":uid": resolvedUserId,
-          },
-        })
-      ).catch((err) => console.warn("[awardEngagementPoints] DDB QUIZ_LEADERBOARD#GLOBAL notice:", err))
-    );
-  }
+    // 4. Update QUIZ_LEADERBOARD ONLY when explicitly requested for quiz engagements
+    if (syncQuizLeaderboard && (awarded || engineThrewError)) {
+      if (db) {
+        try {
+          await db.collection("quiz_leaderboard").doc(resolvedUserId).set({
+            userId: resolvedUserId,
+            userName: resolvedName,
+            userEmail: safeEmail,
+            totalPoints: FieldValue.increment(totalPointsToAward),
+            correctCount: FieldValue.increment(isAccuracyBonus ? 1 : 0),
+            lastAnsweredAt: now,
+            updatedAt: now,
+          }, { merge: true });
+        } catch (fsErr) {
+          console.warn("[awardEngagementPoints] Firestore quiz_leaderboard sync notice:", fsErr);
+        }
+      }
+
+      ddbPromises.push(
+        docClient.send(
+          new UpdateCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: "QUIZ_LEADERBOARD#GLOBAL", sk: `USER#${resolvedUserId}` },
+            UpdateExpression:
+              "SET totalPoints = if_not_exists(totalPoints, :zero) + :pts, " +
+              "correctCount = if_not_exists(correctCount, :zero) + :corr, " +
+              "userName = :uname, userEmail = :uemail, " +
+              "lastAnsweredAt = :now, updatedAt = :now, entityId = :entity, userId = :uid",
+            ExpressionAttributeValues: {
+              ":zero": 0,
+              ":pts": totalPointsToAward,
+              ":corr": isAccuracyBonus ? 1 : 0,
+              ":uname": safeName,
+              ":uemail": safeEmail,
+              ":now": now,
+              ":entity": "QUIZ_LEADERBOARD",
+              ":uid": resolvedUserId,
+            },
+          })
+        ).catch((err) => console.warn("[awardEngagementPoints] DDB QUIZ_LEADERBOARD#GLOBAL notice:", err))
+      );
+    }
+
     await Promise.all(ddbPromises);
 
     return { success: true, pointsAwarded: totalPointsToAward };
