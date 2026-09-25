@@ -26,7 +26,7 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
     question: "India win the 1st Galle Test?",
     leftChoice: { id: "left", text: "Yes, India win", code: "IN", votes: 71 },
     rightChoice: { id: "right", text: "SL hold / win", code: "LK", votes: 29 },
-    coinStake: 25,
+    coinStake: 10,
     totalVotes: 100,
     status: "open",
   };
@@ -64,7 +64,7 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
         setResultData({
           leftPercentage: data.leftPercentage,
           rightPercentage: data.rightPercentage,
-          coinsLocked: data.coinsLocked || pred.coinStake || 25,
+          coinsLocked: data.coinsLocked || pred.coinStake || 10,
         });
         if (onPredictionSuccess) onPredictionSuccess(data);
       }
@@ -72,7 +72,7 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
       setResultData({
         leftPercentage: choice === "left" ? 71 : 29,
         rightPercentage: choice === "right" ? 71 : 29,
-        coinsLocked: pred.coinStake || 25,
+        coinsLocked: pred.coinStake || 10,
       });
     } finally {
       setLoading(false);
@@ -245,7 +245,7 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
           gap: 6,
         }}
       >
-        <span>🔒</span> +{resultData?.coinsLocked || pred.coinStake || 25} FlipCoins locked in · Results after match
+        <span>🔒</span> +{resultData?.coinsLocked || pred.coinStake || 10} FlipCoins locked in · Results after match
       </div>
 
       {/* Footer / Counters with Dynamic Likes */}

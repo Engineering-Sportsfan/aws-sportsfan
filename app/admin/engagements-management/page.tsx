@@ -51,7 +51,7 @@ export default function EngagementsManagementPage() {
 
   // Multi-Question Quiz State with Starting Time & Frequency
   const [quizStartTime, setQuizStartTime] = useState<string>("");
-  const [quizFrequencyMinutes, setQuizFrequencyMinutes] = useState<number>(10);
+  const [quizFrequencyMinutes, setQuizFrequencyMinutes] = useState<number>(0);
   const [quizTimerMinutes, setQuizTimerMinutes] = useState<number>(600);
   const [quizQuestions, setQuizQuestions] = useState<AdminQuizQuestion[]>([
     {
@@ -156,7 +156,7 @@ export default function EngagementsManagementPage() {
     } else if (type === "quiz") {
       setTitle("Quick Live Cricket Quiz");
       setQuizStartTime("");
-      setQuizFrequencyMinutes(10);
+      setQuizFrequencyMinutes(0);
       setQuizTimerMinutes(600);
       setQuizQuestions([
         {
@@ -248,7 +248,7 @@ export default function EngagementsManagementPage() {
       }
 
       // Frequency
-      setQuizFrequencyMinutes(item.quizData.frequencyMinutes || 10);
+      setQuizFrequencyMinutes(item.quizData.frequencyMinutes ?? 0);
 
       // Timer / Duration
       const durMins =
@@ -416,7 +416,7 @@ export default function EngagementsManagementPage() {
         payload.quizData = {
           startTime: startMs,
           scheduledStartTime: startMs,
-          frequencyMinutes: Number(quizFrequencyMinutes) || 10,
+          frequencyMinutes: Number(quizFrequencyMinutes) >= 0 ? Number(quizFrequencyMinutes) : 0,
           durationMinutes: durationMins,
           timerMinutes: durationMins,
           expiresAt,
@@ -873,7 +873,7 @@ export default function EngagementsManagementPage() {
                         {item.type === "quiz" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                             <span style={{ color: "#d2a8ff" }}>
-                              🧠 {totalQuestions} Qs · ⏱️ Every {item.quizData?.frequencyMinutes || 10} mins
+                              🧠 {totalQuestions} Qs · ⏱️ Every {item.quizData?.frequencyMinutes ?? 0} mins
                             </span>
                             {(item.quizData?.durationMinutes || item.quizData?.timerMinutes) && (
                               <span style={{ color: "#388bfd", fontSize: 10, fontWeight: 600 }}>
@@ -1524,10 +1524,10 @@ export default function EngagementsManagementPage() {
                       </label>
                       <input
                         type="number"
-                        min={1}
+                        min={0}
                         value={quizFrequencyMinutes}
-                        onChange={e => setQuizFrequencyMinutes(Math.max(1, Number(e.target.value)))}
-                        placeholder="10"
+                        onChange={e => setQuizFrequencyMinutes(Math.max(0, Number(e.target.value)))}
+                        placeholder="0"
                         required
                         style={{
                           width: "100%",
@@ -1540,7 +1540,7 @@ export default function EngagementsManagementPage() {
                         }}
                       />
                       <span style={{ fontSize: 10, color: "#8b949e", display: "block", marginTop: 3 }}>
-                        Time before next question shows (e.g. 10 mins)
+                        Time before next question shows (default: 0 mins for all questions available immediately)
                       </span>
                     </div>
 
