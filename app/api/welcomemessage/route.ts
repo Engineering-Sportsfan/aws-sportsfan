@@ -51,6 +51,7 @@ export async function GET(req: NextRequest) {
         type: "welcome_config",
         actionSubtitle: "Top action today · Asian Games",
         agendaDateTitle: "Tuesday · 23 September",
+        briefTitle: "Daily Huddle",
         briefSubtitle: "Top 5 stories to know today",
       };
 

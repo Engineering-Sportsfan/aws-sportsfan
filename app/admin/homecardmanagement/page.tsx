@@ -47,6 +47,7 @@ export default function HomeCardManagementDashboard() {
   // Config editable state
   const [actionSubtitle, setActionSubtitle] = useState("Top action today · Asian Games");
   const [agendaDateTitle, setAgendaDateTitle] = useState("Tuesday · 23 September");
+  const [briefTitle, setBriefTitle] = useState("Daily Huddle");
   const [briefSubtitle, setBriefSubtitle] = useState("Top 5 stories to know today");
 
   const fetchData = async () => {
@@ -58,6 +59,7 @@ export default function HomeCardManagementDashboard() {
         if (res.data.data.config) {
           setActionSubtitle(res.data.data.config.actionSubtitle || "Top action today · Asian Games");
           setAgendaDateTitle(res.data.data.config.agendaDateTitle || "Tuesday · 23 September");
+          setBriefTitle(res.data.data.config.briefTitle || "Daily Huddle");
           setBriefSubtitle(res.data.data.config.briefSubtitle || "Top 5 stories to know today");
         }
       }
@@ -82,6 +84,7 @@ export default function HomeCardManagementDashboard() {
         type: "welcome_config",
         actionSubtitle,
         agendaDateTitle,
+        briefTitle,
         briefSubtitle,
       });
       setConfigSaved(true);
@@ -204,7 +207,7 @@ export default function HomeCardManagementDashboard() {
           </div>
           <div className="my-3">
             <span className="text-3xl font-black text-white">
-              {loading ? "..." : data.radarCards.length}
+              {loading ? "..." : (data.todaysAgenda.length || data.radarCards.length)}
             </span>
             <span className="text-xs text-gray-400 ml-2">Carousel Cards</span>
           </div>
@@ -462,7 +465,20 @@ export default function HomeCardManagementDashboard() {
 
               <div>
                 <label className="block text-xs font-bold text-gray-300 mb-1">
-                  Morning Brief Subtitle
+                  Daily Huddle / Brief Title
+                </label>
+                <input
+                  type="text"
+                  value={briefTitle}
+                  onChange={(e) => setBriefTitle(e.target.value)}
+                  placeholder="e.g. Daily Huddle"
+                  className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-300 mb-1">
+                  Daily Huddle Subtitle
                 </label>
                 <input
                   type="text"
