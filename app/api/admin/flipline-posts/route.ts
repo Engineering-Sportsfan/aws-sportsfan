@@ -387,9 +387,11 @@ export async function POST(req: NextRequest) {
       day: postDayStr,
       time: postTimeStr,
       timeMs: postTimeMs,
+      postingTime: postTimeMs,
       isScheduled: !!isScheduled,
       ...(scheduledAt ? { scheduledAt, scheduledTimeMs: scheduledAt } : {}),
       ...(poll ? { poll } : {}),
+      updatedAt: baseTimeMs,
 
       // Bot author details with Verified status (no (SF360) suffix)
       author: isSF360 ? "SportsFan360" : (bot.name || "").replace(/\s*\(SF360\)/gi, "").trim(),
@@ -470,6 +472,12 @@ export async function PUT(req: NextRequest) {
     let directImageUrl: string | undefined;
     let directVideoUrl: string | undefined;
     let removeMedia = false;
+    let isScheduled: boolean | undefined;
+    let scheduledAt: number | undefined;
+    let day: string | undefined;
+    let time: string | undefined;
+    let timeMs: number | undefined;
+    let poll: any;
     let uploadedFiles: File[] = [];
 
     if (contentType.includes("application/json")) {
@@ -486,6 +494,18 @@ export async function PUT(req: NextRequest) {
       directImageUrl = body.image;
       directVideoUrl = body.videoUrl;
       removeMedia = !!body.removeMedia;
+      if (body.isScheduled !== undefined) {
+        isScheduled = body.isScheduled === true || body.isScheduled === "true";
+      }
+      if (body.scheduledAt || body.scheduledTimeMs) {
+        scheduledAt = Number(body.scheduledAt || body.scheduledTimeMs);
+      }
+      day = body.day;
+      time = body.time;
+      if (body.timeMs) {
+        timeMs = Number(body.timeMs);
+      }
+      poll = body.poll;
     } else {
       const formData = await req.formData();
       sk = (formData.get("sk") as string) || "";
@@ -520,6 +540,29 @@ export async function PUT(req: NextRequest) {
       }
       if (formData.has("removeMedia")) {
         removeMedia = formData.get("removeMedia") === "true";
+      }
+      if (formData.has("isScheduled")) {
+        isScheduled = formData.get("isScheduled") === "true";
+      }
+      const schedAtStr = (formData.get("scheduledAt") as string | null) || (formData.get("scheduledTimeMs") as string | null);
+      if (schedAtStr) {
+        scheduledAt = Number(schedAtStr);
+      }
+      if (formData.has("day")) {
+        day = (formData.get("day") as string) || undefined;
+      }
+      if (formData.has("time")) {
+        time = (formData.get("time") as string) || undefined;
+      }
+      const tMsStr = formData.get("timeMs") as string | null;
+      if (tMsStr) {
+        timeMs = Number(tMsStr);
+      }
+      const pollRaw = formData.get("poll") as string | null;
+      if (pollRaw) {
+        try {
+          poll = JSON.parse(pollRaw);
+        } catch { }
       }
       uploadedFiles = formData.getAll("media") as File[];
     }
@@ -592,6 +635,49 @@ export async function PUT(req: NextRequest) {
 
     const isSF360 = (existing.author && existing.author.toLowerCase() === "sportsfan360") || existing.botId === "bot_sportsfan360";
 
+    const now = Date.now();
+    const currentTimeStr = formatCurrentTime();
+    const currentDateStr = formatCurrentDate();
+
+    let postIsScheduled = existing.isScheduled;
+    let postScheduledAt = existing.scheduledAt;
+    let postScheduledTimeMs = existing.scheduledTimeMs;
+    let postTimeMs = existing.timeMs;
+    let postPostingTime = existing.postingTime || existing.timeMs;
+    let postTime = existing.time;
+    let postDay = existing.day;
+
+    if (isScheduled !== undefined) {
+      postIsScheduled = isScheduled;
+      if (isScheduled && scheduledAt) {
+        postScheduledAt = scheduledAt;
+        postScheduledTimeMs = scheduledAt;
+        postTimeMs = scheduledAt;
+        postPostingTime = scheduledAt;
+        postTime = time || currentTimeStr;
+        postDay = day || currentDateStr;
+      } else if (!isScheduled) {
+        postScheduledAt = undefined;
+        postScheduledTimeMs = undefined;
+        postTimeMs = timeMs || now;
+        postPostingTime = timeMs || now;
+        postTime = time || currentTimeStr;
+        postDay = day || currentDateStr;
+      }
+    } else if (scheduledAt) {
+      postScheduledAt = scheduledAt;
+      postScheduledTimeMs = scheduledAt;
+      postTimeMs = scheduledAt;
+      postPostingTime = scheduledAt;
+      postTime = time || currentTimeStr;
+      postDay = day || currentDateStr;
+    } else {
+      postTime = time || currentTimeStr;
+      postTimeMs = timeMs || now;
+      postPostingTime = timeMs || now;
+      if (day) postDay = day;
+    }
+
     const updatedPost = {
       ...existing,
       type: isSF360 ? "" : existing.type,
@@ -607,6 +693,14 @@ export async function PUT(req: NextRequest) {
       sportEmoji: meta.emoji,
       sportLabel: meta.label,
       tags: finalTags,
+      time: postTime,
+      day: postDay,
+      timeMs: postTimeMs,
+      postingTime: postPostingTime,
+      isScheduled: !!postIsScheduled,
+      ...(postScheduledAt ? { scheduledAt: postScheduledAt, scheduledTimeMs: postScheduledTimeMs } : { scheduledAt: undefined, scheduledTimeMs: undefined }),
+      ...(poll !== undefined ? { poll } : existing.poll ? { poll: existing.poll } : {}),
+      updatedAt: now,
       fomoMsg: fomoMsg !== undefined ? fomoMsg : existing.fomoMsg,
       fomoCount: fomoCount !== undefined ? fomoCount : existing.fomoCount,
       scoreChip: customScore !== undefined

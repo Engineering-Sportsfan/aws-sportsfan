@@ -619,9 +619,26 @@ export default function FlipLineManagementPage() {
         formData.append("day", schedDateStr);
         formData.append("time", schedTimeStr);
         formData.append("timeMs", String(schedTs));
-      } else if (editingPost.isScheduled && !editShowSchedule) {
-        formData.append("isScheduled", "false");
-        formData.append("timeMs", String(Date.now()));
+      } else {
+        const now = new Date();
+        const nowTs = now.getTime();
+        const nowTimeStr = now.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+        const nowDateStr = now.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+
+        if (editingPost.isScheduled) {
+          formData.append("isScheduled", "false");
+        }
+        formData.append("time", nowTimeStr);
+        formData.append("day", nowDateStr);
+        formData.append("timeMs", String(nowTs));
       }
 
       const res = await fetch("/api/admin/flipline-posts", {
