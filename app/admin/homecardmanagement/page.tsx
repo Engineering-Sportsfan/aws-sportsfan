@@ -27,6 +27,149 @@ function formatAgendaDate(date: Date): string {
   return `${dayName} · ${dayNum} ${monthName}`;
 }
 
+function parseTimeToMinutes(timeStr?: string): number {
+  if (!timeStr) return -1;
+  const clean = timeStr.trim().toUpperCase();
+
+  const ampmMatch = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+  if (!ampmMatch) {
+    const looseMatch = clean.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/);
+    if (looseMatch) {
+      let hours = parseInt(looseMatch[1], 10);
+      const minutes = looseMatch[2] ? parseInt(looseMatch[2], 10) : 0;
+      const period = looseMatch[3];
+      if (period === "PM" && hours < 12) hours += 12;
+      if (period === "AM" && hours === 12) hours = 0;
+      return hours * 60 + minutes;
+    }
+    return -1;
+  }
+
+  let hours = parseInt(ampmMatch[1], 10);
+  const minutes = parseInt(ampmMatch[2], 10);
+  const period = ampmMatch[3];
+
+  if (period === "PM" && hours < 12) {
+    hours += 12;
+  } else if (period === "AM" && hours === 12) {
+    hours = 0;
+  }
+
+  return hours * 60 + minutes;
+}
+
+function resolveDynamicAgendaEvents(events: any[], now = new Date()): any[] {
+  if (!events || events.length === 0) return [];
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const parsedEvents = events.map((evt, idx) => {
+    const rawStatus = (evt.statusType || "").toLowerCase().trim();
+    const rawLabel = (evt.statusLabel || "").toUpperCase().trim();
+    const isAutoMode = rawStatus === "auto" || evt.statusMode === "auto" || rawLabel === "AUTO";
+    const isExplicitCompleted = rawStatus === "completed" || rawLabel === "COMPLETED";
+    const isExplicitLive = rawStatus === "live" || rawLabel === "LIVE";
+    const isExplicitUpNext = rawStatus === "up_next" || rawLabel === "UP NEXT";
+    const isExplicitScheduled = rawStatus === "scheduled" || rawLabel === "SCHEDULED";
+    const isManual = evt.isManual === true || evt.statusMode === "manual" || (!isAutoMode && (isExplicitCompleted || isExplicitLive || isExplicitUpNext));
+
+    return {
+      evt,
+      idx,
+      minutes: parseTimeToMinutes(evt.time),
+      order: evt.order ?? idx,
+      isAutoMode,
+      isExplicitCompleted,
+      isExplicitLive,
+      isExplicitUpNext,
+      isExplicitScheduled,
+      isManual,
+    };
+  });
+
+  parsedEvents.sort((a, b) => {
+    if (a.order !== undefined && b.order !== undefined && a.order !== b.order) {
+      return a.order - b.order;
+    }
+    if (a.minutes >= 0 && b.minutes >= 0 && a.minutes !== b.minutes) {
+      return a.minutes - b.minutes;
+    }
+    return a.idx - b.idx;
+  });
+
+  let manualLiveIndex = -1;
+  for (let i = 0; i < parsedEvents.length; i++) {
+    if (parsedEvents[i].isExplicitLive && parsedEvents[i].isManual) {
+      manualLiveIndex = i;
+      break;
+    }
+  }
+
+  let lastPastIndex = -1;
+  for (let i = 0; i < parsedEvents.length; i++) {
+    const item = parsedEvents[i];
+    if (item.minutes >= 0 && item.minutes <= currentMinutes) {
+      lastPastIndex = i;
+    }
+  }
+
+  let activeLiveIndex = -1;
+  let activeUpcomingIndex = -1;
+
+  if (manualLiveIndex !== -1) {
+    activeLiveIndex = manualLiveIndex;
+    activeUpcomingIndex = manualLiveIndex + 1 < parsedEvents.length ? manualLiveIndex + 1 : -1;
+  } else if (lastPastIndex !== -1) {
+    const latestPastItem = parsedEvents[lastPastIndex];
+    if (latestPastItem.isExplicitCompleted && latestPastItem.isManual) {
+      activeLiveIndex = -1;
+      activeUpcomingIndex = lastPastIndex + 1 < parsedEvents.length ? lastPastIndex + 1 : -1;
+    } else {
+      activeLiveIndex = lastPastIndex;
+      activeUpcomingIndex = lastPastIndex + 1 < parsedEvents.length ? lastPastIndex + 1 : -1;
+    }
+  } else {
+    activeLiveIndex = -1;
+    activeUpcomingIndex = 0;
+  }
+
+  return parsedEvents.map((item, index) => {
+    const orig = item.evt;
+
+    if (item.isExplicitCompleted && item.isManual) {
+      return { ...orig, statusType: "completed", isManual: true };
+    }
+    if (item.isExplicitLive && item.isManual) {
+      return { ...orig, statusType: "live", isManual: true };
+    }
+    if (item.isExplicitUpNext && item.isManual) {
+      return { ...orig, statusType: "up_next", isManual: true };
+    }
+    if (item.isExplicitScheduled && item.isManual && !item.isAutoMode) {
+      return { ...orig, statusType: "scheduled", isManual: true };
+    }
+
+    let computedStatusType = "scheduled";
+    if (activeLiveIndex !== -1) {
+      if (index < activeLiveIndex) computedStatusType = "completed";
+      else if (index === activeLiveIndex) computedStatusType = "live";
+      else if (index === activeUpcomingIndex) computedStatusType = "up_next";
+      else computedStatusType = "scheduled";
+    } else {
+      if (activeUpcomingIndex !== -1 && index === activeUpcomingIndex) computedStatusType = "up_next";
+      else if (activeUpcomingIndex !== -1 && index < activeUpcomingIndex) computedStatusType = "completed";
+      else if (activeUpcomingIndex === -1) computedStatusType = "completed";
+      else computedStatusType = "scheduled";
+    }
+
+    return {
+      ...orig,
+      statusType: computedStatusType,
+      isManual: false,
+    };
+  });
+}
+
 export default function HomeCardManagementDashboard() {
   const [data, setData] = useState<{
     morningBrief: any[];
@@ -184,7 +327,7 @@ export default function HomeCardManagementDashboard() {
           </div>
           <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs">
             <span className="text-emerald-400 font-bold">
-              {data.todaysAgenda.filter((e) => e.statusType === "live").length} Live Now
+              {resolveDynamicAgendaEvents(data.todaysAgenda).filter((e) => e.statusType === "live").length} Live Now
             </span>
             <Link
               href="/admin/homecardmanagement/TodaysAgenda/list"
