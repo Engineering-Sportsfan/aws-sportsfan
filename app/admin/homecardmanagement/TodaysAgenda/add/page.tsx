@@ -51,26 +51,35 @@ function TodaysAgendaForm() {
   const [icon, setIcon] = useState("🏸");
   const [subEvent, setSubEvent] = useState("");
   const [detail, setDetail] = useState("");
-  const [statusType, setStatusType] = useState<"completed" | "live" | "up_next" | "scheduled">("live");
-  const [statusLabel, setStatusLabel] = useState("LIVE");
-  const [nodeColor, setNodeColor] = useState<"gray" | "emerald" | "amber" | "blue">("emerald");
+  const [statusType, setStatusType] = useState<"auto" | "completed" | "live" | "up_next" | "scheduled">("auto");
+  const [statusMode, setStatusMode] = useState<"auto" | "manual">("auto");
+  const [statusLabel, setStatusLabel] = useState("AUTO");
+  const [nodeColor, setNodeColor] = useState<"gray" | "emerald" | "amber" | "blue" | "purple">("purple");
   const [venue, setVenue] = useState("");
   const [order, setOrder] = useState<number>(1);
   const [active, setActive] = useState(true);
 
   // Auto-sync status label and node color when statusType changes
-  const handleStatusTypeChange = (type: "completed" | "live" | "up_next" | "scheduled") => {
+  const handleStatusTypeChange = (type: "auto" | "completed" | "live" | "up_next" | "scheduled") => {
     setStatusType(type);
-    if (type === "completed") {
+    if (type === "auto") {
+      setStatusMode("auto");
+      setStatusLabel("AUTO");
+      setNodeColor("purple");
+    } else if (type === "completed") {
+      setStatusMode("manual");
       setStatusLabel("COMPLETED");
       setNodeColor("gray");
     } else if (type === "live") {
+      setStatusMode("manual");
       setStatusLabel("LIVE");
       setNodeColor("emerald");
     } else if (type === "up_next") {
+      setStatusMode("manual");
       setStatusLabel("UP NEXT");
       setNodeColor("amber");
     } else {
+      setStatusMode("manual");
       setStatusLabel("SCHEDULED");
       setNodeColor("blue");
     }
@@ -93,37 +102,48 @@ function TodaysAgendaForm() {
           setDetail(item.detail || "");
           
           const rawStatus = (item.statusType || "").toLowerCase();
-          const resolvedStatus: "completed" | "live" | "up_next" | "scheduled" =
-            rawStatus === "completed"
-              ? "completed"
-              : rawStatus === "up_next"
-              ? "up_next"
-              : rawStatus === "afternoon" || rawStatus === "scheduled" || rawStatus === "evening"
-              ? "scheduled"
-              : "live";
+          const isItemAuto = rawStatus === "auto" || item.statusMode === "auto" || (item.isManual === false && rawStatus !== "completed" && rawStatus !== "live" && rawStatus !== "up_next");
 
-          setStatusType(resolvedStatus);
-          setStatusLabel(
-            item.statusLabel && item.statusLabel !== "AFTERNOON"
-              ? item.statusLabel
-              : resolvedStatus === "completed"
-              ? "COMPLETED"
-              : resolvedStatus === "live"
-              ? "LIVE"
-              : resolvedStatus === "up_next"
-              ? "UP NEXT"
-              : "SCHEDULED"
-          );
-          setNodeColor(
-            item.nodeColor ||
-              (resolvedStatus === "completed"
-                ? "gray"
+          if (isItemAuto) {
+            setStatusType("auto");
+            setStatusMode("auto");
+            setStatusLabel(item.statusLabel || "AUTO");
+            setNodeColor(item.nodeColor || "purple");
+          } else {
+            const resolvedStatus: "completed" | "live" | "up_next" | "scheduled" =
+              rawStatus === "completed"
+                ? "completed"
+                : rawStatus === "up_next"
+                ? "up_next"
+                : rawStatus === "afternoon" || rawStatus === "scheduled" || rawStatus === "evening"
+                ? "scheduled"
+                : "live";
+
+            setStatusType(resolvedStatus);
+            setStatusMode("manual");
+            setStatusLabel(
+              item.statusLabel && item.statusLabel !== "AFTERNOON" && item.statusLabel !== "AUTO"
+                ? item.statusLabel
+                : resolvedStatus === "completed"
+                ? "COMPLETED"
                 : resolvedStatus === "live"
-                ? "emerald"
+                ? "LIVE"
                 : resolvedStatus === "up_next"
-                ? "amber"
-                : "blue")
-          );
+                ? "UP NEXT"
+                : "SCHEDULED"
+            );
+            setNodeColor(
+              item.nodeColor ||
+                (resolvedStatus === "completed"
+                  ? "gray"
+                  : resolvedStatus === "live"
+                  ? "emerald"
+                  : resolvedStatus === "up_next"
+                  ? "amber"
+                  : "blue")
+            );
+          }
+
           setVenue(item.venue || "");
           setOrder(item.order || 1);
           setActive(item.active !== false);
@@ -150,6 +170,18 @@ function TodaysAgendaForm() {
       setLoading(true);
       setSavedSuccess(false);
 
+      const isAuto = statusType === "auto";
+      const resolvedLabel = isAuto
+        ? "AUTO"
+        : statusLabel.trim() ||
+          (statusType === "completed"
+            ? "COMPLETED"
+            : statusType === "live"
+            ? "LIVE"
+            : statusType === "up_next"
+            ? "UP NEXT"
+            : "SCHEDULED");
+
       const payload = {
         id: editId || `agenda_${Date.now()}`,
         type: "todays_agenda",
@@ -159,16 +191,10 @@ function TodaysAgendaForm() {
         subEvent: subEvent.trim(),
         detail: detail.trim(),
         statusType,
-        statusLabel:
-          statusLabel.trim() ||
-          (statusType === "completed"
-            ? "COMPLETED"
-            : statusType === "live"
-            ? "LIVE"
-            : statusType === "up_next"
-            ? "UP NEXT"
-            : "SCHEDULED"),
-        nodeColor,
+        statusMode: isAuto ? "auto" : "manual",
+        isManual: !isAuto,
+        statusLabel: resolvedLabel,
+        nodeColor: isAuto ? "purple" : nodeColor,
         venue: venue.trim(),
         order: Number(order || 1),
         active,
@@ -248,17 +274,38 @@ function TodaysAgendaForm() {
 
                 <div>
                   <label className="block text-xs font-bold text-gray-300 mb-1.5">
-                    Status Badge *
+                    Status Mode & Badge *
                   </label>
                   <select
                     value={statusType}
                     onChange={(e) => handleStatusTypeChange(e.target.value as any)}
-                    className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors font-bold"
+                    className={`w-full bg-[#090C15] border rounded-xl px-3 py-2.5 text-xs focus:outline-none transition-colors font-bold ${
+                      statusType === "auto"
+                        ? "text-purple-300 border-purple-500/50"
+                        : statusType === "live"
+                        ? "text-emerald-400 border-emerald-500/50"
+                        : statusType === "completed"
+                        ? "text-gray-400 border-gray-600"
+                        : statusType === "up_next"
+                        ? "text-amber-400 border-amber-500/50"
+                        : "text-blue-400 border-blue-500/50"
+                    }`}
                   >
-                    <option value="completed">COMPLETED (Gray)</option>
-                    <option value="live">LIVE (Green)</option>
-                    <option value="up_next">UP NEXT (Amber)</option>
-                    <option value="scheduled">SCHEDULED (Blue)</option>
+                    <option value="auto" className="bg-[#090C15] text-purple-400">
+                      ⚡ AUTO (Synchronize with Clock)
+                    </option>
+                    <option value="live" className="bg-[#090C15] text-emerald-400">
+                      🟢 LIVE (Manual Lock)
+                    </option>
+                    <option value="completed" className="bg-[#090C15] text-gray-400">
+                      ✓ COMPLETED (Manual Lock)
+                    </option>
+                    <option value="up_next" className="bg-[#090C15] text-amber-400">
+                      ⏳ UP NEXT (Manual Lock)
+                    </option>
+                    <option value="scheduled" className="bg-[#090C15] text-blue-400">
+                      📅 SCHEDULED (Manual Lock)
+                    </option>
                   </select>
                 </div>
 
@@ -443,7 +490,9 @@ function TodaysAgendaForm() {
                 <div className="pt-1">
                   <div
                     className={`w-2.5 h-2.5 rounded-full ${
-                      statusType === "completed"
+                      statusType === "auto"
+                        ? "bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.6)]"
+                        : statusType === "completed"
                         ? "bg-gray-400 shadow-[0_0_8px_rgba(156,163,175,0.4)]"
                         : statusType === "live"
                         ? "bg-emerald-400 shadow-[0_0_10px_#34D399]"
@@ -482,7 +531,9 @@ function TodaysAgendaForm() {
                   <div className="shrink-0">
                     <span
                       className={`inline-flex items-center gap-1 text-[9.5px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider ${
-                        statusType === "completed"
+                        statusType === "auto"
+                          ? "bg-[#251846] text-[#B794F4] border border-[#583C87]/60"
+                          : statusType === "completed"
                           ? "bg-[#1e293b] text-[#94a3b8] border border-[#475569]/50"
                           : statusType === "live"
                           ? "bg-[#04281E] text-[#10B981] border border-[#10B981]/50"
@@ -491,17 +542,23 @@ function TodaysAgendaForm() {
                           : "bg-[#0b1c33] text-[#60A5FA] border border-[#1E40AF]/60"
                       }`}
                     >
+                      {statusType === "auto" && <span>⚡</span>}
                       {statusType === "live" && (
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                       )}
-                      {statusLabel ||
-                        (statusType === "completed"
-                          ? "COMPLETED"
-                          : statusType === "live"
-                          ? "LIVE"
-                          : statusType === "up_next"
-                          ? "UP NEXT"
-                          : "SCHEDULED")}
+                      {statusType === "completed" && <span>✓</span>}
+                      <span>
+                        {statusType === "auto"
+                          ? "AUTO SYNC"
+                          : statusLabel ||
+                            (statusType === "completed"
+                              ? "COMPLETED"
+                              : statusType === "live"
+                              ? "LIVE"
+                              : statusType === "up_next"
+                              ? "UP NEXT"
+                              : "SCHEDULED")}
+                      </span>
                     </span>
                   </div>
                 </div>
