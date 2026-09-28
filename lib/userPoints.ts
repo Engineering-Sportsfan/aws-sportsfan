@@ -98,7 +98,7 @@ export async function getUserInfo(
       const d = snap.data()!;
       const userName = d.firstName
         ? [d.firstName, d.lastName].filter(Boolean).join(" ")
-        : d.name ||
+        : d.username || d.name ||
         (d.email ? d.email.split("@")[0] : fallbackName) ||
         "User";
       resolvedProfile = {
@@ -109,13 +109,85 @@ export async function getUserInfo(
         authUserId: userId,
       };
     } else {
-      resolvedProfile = {
-        userName: fallbackName || "User",
-        userEmail: fallbackEmail || "",
-        exists: false,
-        actualUserId: userId,
-        authUserId: userId,
-      };
+      // Check DynamoDB IdentityAndAccess table
+      let dynamoItem: any = null;
+      const candidateKeys = new Set<string>();
+      candidateKeys.add(userId);
+      if (fallbackEmail) candidateKeys.add(fallbackEmail);
+      if (userId.includes("@")) {
+        candidateKeys.add(userId.toLowerCase());
+        candidateKeys.add(userId.replace(/[@.]/g, "_"));
+      } else {
+        const parts = userId.split("_");
+        if (parts.length >= 3) {
+          const last = parts[parts.length - 1];
+          const secondLast = parts[parts.length - 2];
+          if (["com", "in", "org", "net", "edu", "io", "co"].includes(last.toLowerCase())) {
+            if (["edu", "co", "ac", "gov"].includes(secondLast.toLowerCase()) && parts.length >= 4) {
+              candidateKeys.add(`${parts.slice(0, parts.length - 3).join("_")}@${parts.slice(parts.length - 3).join(".")}`.toLowerCase());
+            } else {
+              candidateKeys.add(`${parts.slice(0, parts.length - 2).join("_")}@${parts.slice(parts.length - 2).join(".")}`.toLowerCase());
+            }
+          }
+        }
+      }
+
+      for (const cand of candidateKeys) {
+        try {
+          const getRes = await docClient.send(new GetCommand({
+            TableName: TABLES.IdentityAndAccess,
+            Key: { entityId: `USER#${cand}`, sk: "USER#META" }
+          }));
+          if (getRes.Item) {
+            dynamoItem = getRes.Item;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!dynamoItem) {
+        for (const cand of candidateKeys) {
+          if (cand.includes("@")) {
+            try {
+              const qRes = await docClient.send(new QueryCommand({
+                TableName: TABLES.IdentityAndAccess,
+                IndexName: "email-index",
+                KeyConditionExpression: "email = :email",
+                ExpressionAttributeValues: { ":email": cand.toLowerCase() },
+                Limit: 1
+              }));
+              if (qRes.Items && qRes.Items.length > 0) {
+                dynamoItem = qRes.Items[0];
+                break;
+              }
+            } catch {}
+          }
+        }
+      }
+
+      if (dynamoItem) {
+        const d = dynamoItem;
+        const userName = d.username || d.displayName ||
+          (d.firstName ? [d.firstName, d.lastName].filter(Boolean).join(" ") : null) ||
+          d.name ||
+          (d.email ? d.email.split("@")[0] : fallbackName) ||
+          "User";
+        resolvedProfile = {
+          userName,
+          userEmail: d.email || fallbackEmail || "",
+          exists: true,
+          actualUserId: d.userId || d.email || userId,
+          authUserId: userId,
+        };
+      } else {
+        resolvedProfile = {
+          userName: fallbackName || "User",
+          userEmail: fallbackEmail || "",
+          exists: false,
+          actualUserId: userId,
+          authUserId: userId,
+        };
+      }
     }
 
     userProfileCache.set(userId, {

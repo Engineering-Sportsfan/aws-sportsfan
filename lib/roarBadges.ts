@@ -161,7 +161,7 @@ export function getFeatureBadgeState(feature: FeatureKey, count: number): Featur
     : 100;
 
   // Locked (level 0) badges show the L1 icon dimmed/greyscaled in the UI
-  // (handled by Profile.tsx's `filter: grayscale` on fb.level === 0), so we
+  // (handled by Profile's `filter: grayscale` on fb.level === 0), so we
   // still return the L1 icon as a preview of "what you're working toward" —
   // index by `level - 1`, clamped to 0 when not yet unlocked.
   const iconIndex = Math.max(0, level - 1);
@@ -192,6 +192,8 @@ export interface SpecialBadgeState {
   name: string;
   unlocked: boolean;
   description: string;
+  icon: string;
+  category?: string;
 }
 
 export interface SpecialBadgeInputs {
@@ -200,20 +202,86 @@ export interface SpecialBadgeInputs {
   hasSeasonTop100?: boolean;
   hasSeasonTop3?: boolean;
   hasViralPost?: boolean;          // 1,000+ shares on a single post
+  onboardingCompleted?: boolean;
 }
 
 export function getSpecialBadges(inputs: SpecialBadgeInputs, featureBadges: FeatureBadgeState[]): SpecialBadgeState[] {
   const l5Count = featureBadges.filter((f) => f.level === 5).length;
   const streak = inputs.longestStreak ?? 0;
+  const isOnboarded = inputs.onboardingCompleted ?? true;
 
   return [
-    { id: "ON_FIRE", name: "On Fire", unlocked: streak >= 7, description: "Reach a 7-day streak." },
-    { id: "FLAME_ICON", name: "Flame Icon", unlocked: streak >= 30, description: "Reach a 30-day streak." },
-    { id: "EXCLUSIVE_FRAME", name: "Exclusive Frame", unlocked: streak >= 100, description: "Reach a 100-day streak." },
-    { id: "UNSTOPPABLE", name: "Unstoppable", unlocked: streak >= 365, description: "Reach a 365-day streak." },
-    { id: "VIRAL_VOICE_POST", name: "Viral Voice (Post)", unlocked: !!inputs.hasViralPost, description: "A post crosses 1,000+ shares." },
-    { id: "COMPLETIONIST", name: "Completionist", unlocked: l5Count >= 3, description: "Hit L5 in 3+ different feature ladders." },
-    { id: "SEASON_BADGE", name: "Season Badge", unlocked: !!inputs.hasSeasonTop100, description: "Finish Top 100 in any season." },
-    { id: "HALL_OF_FAME_SEASON", name: "Hall of Fame (Season)", unlocked: !!inputs.hasSeasonTop3, description: "Finish Top 3 in any season." },
+    { 
+      id: "ROOKIE_FAN", 
+      name: "Rookie Fan", 
+      unlocked: isOnboarded, 
+      description: "Welcome to SportsFan360! Awarded to every verified fan upon signup and onboarding.", 
+      icon: "/images/badges/postl1.png",
+      category: "Welcome"
+    },
+    { 
+      id: "ON_FIRE", 
+      name: "On Fire", 
+      unlocked: streak >= 7, 
+      description: "Reach a 7-day login or participation streak.", 
+      icon: "/images/badges/globalspark.png",
+      category: "Streak"
+    },
+    { 
+      id: "FLAME_ICON", 
+      name: "Flame Icon", 
+      unlocked: streak >= 30, 
+      description: "Reach a 30-day streak.", 
+      icon: "/images/badges/globalchant.png",
+      category: "Streak"
+    },
+    { 
+      id: "EXCLUSIVE_FRAME", 
+      name: "Exclusive Frame", 
+      unlocked: streak >= 100, 
+      description: "Reach a 100-day streak.", 
+      icon: "/images/badges/globalroar.png",
+      category: "Streak"
+    },
+    { 
+      id: "UNSTOPPABLE", 
+      name: "Unstoppable", 
+      unlocked: streak >= 365, 
+      description: "Reach a 365-day streak.", 
+      icon: "/images/badges/globalstorm.png",
+      category: "Streak"
+    },
+    { 
+      id: "VIRAL_VOICE_POST", 
+      name: "Viral Voice", 
+      unlocked: !!inputs.hasViralPost, 
+      description: "A post crosses 1,000+ shares.", 
+      icon: "/images/badges/sharesl4.png",
+      category: "Social"
+    },
+    { 
+      id: "COMPLETIONIST", 
+      name: "Completionist", 
+      unlocked: l5Count >= 3, 
+      description: "Hit Level 5 in 3+ different feature ladders.", 
+      icon: "/images/badges/globallegend.png",
+      category: "Mastery"
+    },
+    { 
+      id: "SEASON_BADGE", 
+      name: "Season Top 100", 
+      unlocked: !!inputs.hasSeasonTop100, 
+      description: "Finish Top 100 in any season leaderboard.", 
+      icon: "/images/badges/globalicon.png",
+      category: "Leaderboard"
+    },
+    { 
+      id: "HALL_OF_FAME_SEASON", 
+      name: "Hall of Fame", 
+      unlocked: !!inputs.hasSeasonTop3, 
+      description: "Finish Top 3 in any season leaderboard.", 
+      icon: "/images/badges/globalgoat.png",
+      category: "Leaderboard"
+    },
   ];
 }

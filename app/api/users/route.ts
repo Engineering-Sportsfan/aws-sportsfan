@@ -110,13 +110,19 @@ export async function GET() {
         authMethod = "Email & Password";
       }
 
+      const resolvedAvatar = u.avatarUrl || u.avatar || u.photoURL || u.picture || u.image || "";
+
       return {
         email: u.email,
         userId: u.userId || u.email.replace(/[^a-zA-Z0-9]/g, "_"),
         firstName: u.firstName || "",
         lastName: u.lastName || "",
         name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.name || u.email.split("@")[0],
-        avatar: u.avatar || "",
+        avatar: resolvedAvatar,
+        avatarUrl: resolvedAvatar,
+        photoURL: resolvedAvatar,
+        picture: resolvedAvatar,
+        image: resolvedAvatar,
         role: u.role || "user",
         status: u.status || "active",
         authMethod,

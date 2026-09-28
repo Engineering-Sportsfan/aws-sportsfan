@@ -4,7 +4,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
-import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import type { Post } from "@/app/models/Post";
 import {
@@ -15,120 +15,226 @@ import {
   FEATURE_ICONS,
   FeatureKey,
 } from "@/lib/roarBadges";
+import cloudinary from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
 
-// ── Canonical doc resolution ──
-async function resolveUserDoc(userId: string, email: string) {
-  // Try direct lookup from DynamoDB first
-  try {
-    const getRes = await docClient.send(new GetCommand({
-      TableName: TABLES.IdentityAndAccess,
-      Key: { entityId: `USER#${userId}`, sk: "USER#META" }
-    }));
-    if (getRes.Item) {
-      return { id: userId, data: getRes.Item };
-    }
-  } catch (dynErr) {
-    console.warn("[profile resolveUserDoc] DynamoDB direct get failed:", dynErr);
-  }
+function extractCandidateKeys(raw?: string | null): string[] {
+  if (!raw) return [];
+  const candidates = new Set<string>();
+  const clean = String(raw).trim().replace(/^USER#/i, "");
+  if (!clean) return [];
 
-  // Try direct lookup with email as partition key next
-  if (email && email !== userId) {
-    try {
-      const getRes = await docClient.send(new GetCommand({
-        TableName: TABLES.IdentityAndAccess,
-        Key: { entityId: `USER#${email}`, sk: "USER#META" }
-      }));
-      if (getRes.Item) {
-        return { id: email, data: getRes.Item };
+  candidates.add(clean);
+  candidates.add(clean.toLowerCase());
+
+  if (clean.includes("@")) {
+    const lower = clean.toLowerCase();
+    candidates.add(lower);
+    candidates.add(lower.replace(/[@.]/g, "_"));
+    candidates.add(lower.replace(/@/g, "_"));
+  } else {
+    // Check if sanitized email with underscores (e.g. antarip_nag28_ssss_edu_in, srikakulamchandu_gmail_com)
+    const parts = clean.split("_");
+    if (parts.length >= 2) {
+      const last = parts[parts.length - 1].toLowerCase();
+      const secondLast = parts.length >= 2 ? parts[parts.length - 2].toLowerCase() : "";
+      const tlds = ["com", "in", "org", "net", "edu", "io", "co", "ac", "gov", "app", "dev", "ai", "uk", "au", "ca"];
+
+      if (tlds.includes(last)) {
+        if (["edu", "co", "ac", "gov", "org", "net"].includes(secondLast) && parts.length >= 4) {
+          const domain = parts.slice(parts.length - 3).join(".");
+          const localParts = parts.slice(0, parts.length - 3);
+
+          candidates.add(`${localParts.join("_")}@${domain}`.toLowerCase());
+          candidates.add(`${localParts.join(".")}@${domain}`.toLowerCase());
+          candidates.add(`${localParts.join("-")}@${domain}`.toLowerCase());
+          candidates.add(`${localParts.join("")}@${domain}`.toLowerCase());
+        } else if (parts.length >= 3) {
+          const domain = parts.slice(parts.length - 2).join(".");
+          const localParts = parts.slice(0, parts.length - 2);
+
+          candidates.add(`${localParts.join("_")}@${domain}`.toLowerCase());
+          candidates.add(`${localParts.join(".")}@${domain}`.toLowerCase());
+          candidates.add(`${localParts.join("-")}@${domain}`.toLowerCase());
+          candidates.add(`${localParts.join("")}@${domain}`.toLowerCase());
+        }
       }
-    } catch (dynErr) {
-      console.warn("[profile resolveUserDoc] DynamoDB direct get by email failed:", dynErr);
+    }
+    const match = clean.match(/^(.+)_([a-zA-Z0-9]+)_([a-zA-Z0-9]+)$/);
+    if (match) {
+      candidates.add(`${match[1]}@${match[2]}.${match[3]}`.toLowerCase());
+      candidates.add(`${match[1].replace(/_/g, ".")}@${match[2]}.${match[3]}`.toLowerCase());
     }
   }
 
-  // Check by email in DynamoDB GSI
-  if (email) {
-    try {
-      const emailRes = await docClient.send(new QueryCommand({
-        TableName: TABLES.IdentityAndAccess,
-        IndexName: "email-index",
-        KeyConditionExpression: "email = :email",
-        ExpressionAttributeValues: { ":email": email },
-        Limit: 5
-      }));
-      if (emailRes.Items && emailRes.Items.length > 0) {
-        const metaItem = emailRes.Items.find(item => item.sk === "USER#META");
-        const item = metaItem || emailRes.Items[0];
-        const uid = (item.entityId as string).replace(/^USER#/, "");
-        return { id: uid, data: item };
+  return Array.from(candidates);
+}
+
+// ── Direct DynamoDB user lookup by userId, email, or entityId ──
+async function resolveUserDoc(targetId?: string | null, targetEmail?: string | null) {
+  const candidateKeys = new Set<string>();
+
+  const inputs = [targetId, targetEmail].filter(Boolean) as string[];
+  if (inputs.length === 0) return null;
+
+  for (const input of inputs) {
+    const raw = String(input).trim();
+    if (!raw) continue;
+    const clean = raw.replace(/^USER#/i, "");
+    if (!clean) continue;
+
+    candidateKeys.add(raw);
+    candidateKeys.add(clean);
+    candidateKeys.add(clean.toLowerCase());
+    candidateKeys.add(`USER#${clean}`);
+    candidateKeys.add(`USER#${clean.toLowerCase()}`);
+
+    if (clean.toLowerCase().startsWith("user_")) {
+      const stripped = clean.slice(5);
+      candidateKeys.add(stripped);
+      candidateKeys.add(stripped.toLowerCase());
+      candidateKeys.add(`USER#${stripped}`);
+      candidateKeys.add(`USER#${stripped.toLowerCase()}`);
+      extractCandidateKeys(stripped).forEach((k) => {
+        candidateKeys.add(k);
+        candidateKeys.add(k.toLowerCase());
+        candidateKeys.add(`USER#${k}`);
+        candidateKeys.add(`USER#${k.toLowerCase()}`);
+      });
+    }
+
+    extractCandidateKeys(clean).forEach((k) => {
+      candidateKeys.add(k);
+      candidateKeys.add(k.toLowerCase());
+      candidateKeys.add(`USER#${k}`);
+      candidateKeys.add(`USER#${k.toLowerCase()}`);
+    });
+  }
+
+  const tableNames = Array.from(new Set([
+    TABLES.IdentityAndAccess,
+    "IdentityAndAccess",
+    "IdentityAndAccess-dev"
+  ])).filter(Boolean);
+
+  // 1. Direct GET by entityId across all table candidates
+  for (const tableName of tableNames) {
+    for (const cand of candidateKeys) {
+      try {
+        const entityId = cand.startsWith("USER#") ? cand : `USER#${cand}`;
+        const getRes = await docClient.send(new GetCommand({
+          TableName: tableName,
+          Key: { entityId, sk: "USER#META" }
+        }));
+        if (getRes.Item) {
+          const uid = getRes.Item.userId || getRes.Item.email || cand.replace(/^USER#/i, "");
+          const targetEntityId = (getRes.Item.entityId as string) || entityId;
+          return { id: uid, entityId: targetEntityId, tableName, data: getRes.Item };
+        }
+      } catch {}
+    }
+  }
+
+  // 2. Query email-index for any email candidate
+  for (const tableName of tableNames) {
+    for (const cand of candidateKeys) {
+      const cleanEmail = cand.replace(/^USER#/i, "").toLowerCase();
+      if (cleanEmail.includes("@")) {
+        try {
+          const emailRes = await docClient.send(new QueryCommand({
+            TableName: tableName,
+            IndexName: "email-index",
+            KeyConditionExpression: "email = :email",
+            ExpressionAttributeValues: { ":email": cleanEmail },
+          }));
+          if (emailRes.Items && emailRes.Items.length > 0) {
+            const meta = emailRes.Items.find(i => i.sk === "USER#META") || emailRes.Items[0];
+            const uid = meta.userId || (meta.entityId as string).replace(/^USER#/i, "");
+            return { id: uid, entityId: meta.entityId as string, tableName, data: meta };
+          }
+        } catch {}
       }
-    } catch (dynErr) {
-      console.warn("[profile resolveUserDoc] DynamoDB email GSI check failed:", dynErr);
     }
   }
 
-  // Fallback to Firestore
-  let docRef = db.collection(getFirestoreCollection("users")).doc(userId);
-  let snap = await docRef.get();
-  if (!snap.exists) {
-    docRef = db.collection(getFirestoreCollection("users")).doc(email);
-    snap = await docRef.get();
-    if (!snap.exists) return null;
+  // 3. Scan for userId = clean, email = clean, or username = clean (without restrictive evaluation limits)
+  for (const tableName of tableNames) {
+    for (const rawClean of candidateKeys) {
+      const clean = rawClean.replace(/^USER#/i, "");
+      try {
+        const scanRes = await docClient.send(new ScanCommand({
+          TableName: tableName,
+          FilterExpression: "sk = :meta AND (userId = :c OR email = :c OR entityId = :uc OR username = :c)",
+          ExpressionAttributeValues: {
+            ":meta": "USER#META",
+            ":c": clean,
+            ":uc": `USER#${clean}`,
+          },
+        }));
+        if (scanRes.Items && scanRes.Items.length > 0) {
+          const meta = scanRes.Items[0];
+          const uid = meta.userId || (meta.entityId as string).replace(/^USER#/i, "");
+          return { id: uid, entityId: meta.entityId as string, tableName, data: meta };
+        }
+      } catch {}
+    }
   }
-  return { id: docRef.id, data: snap.data() };
+
+  // 4. Fallback to Firestore
+  for (const cand of candidateKeys) {
+    const cleanCand = cand.replace(/^USER#/i, "");
+    try {
+      const snap = await db.collection(getFirestoreCollection("users")).doc(cleanCand).get();
+      if (snap.exists) {
+        return { id: snap.id, entityId: `USER#${snap.id}`, tableName: TABLES.IdentityAndAccess, data: snap.data() };
+      }
+    } catch {}
+  }
+
+  return null;
 }
 
 // GET: Inquire profile stats
 export async function GET(req: NextRequest) {
   try {
-    const user = await getUser(req);
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
     const { searchParams } = new URL(req.url);
     const targetUserId = searchParams.get("userId");
+    const user = await getUser(req);
+
+    if (!targetUserId && !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     let resolvedUserId = "";
     let userData: any = null;
 
     if (targetUserId) {
-      const info = await getUserInfo(targetUserId);
-      if (!info.exists) {
-        return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-      }
-      resolvedUserId = info.actualUserId;
-
-      // Load profile details from DynamoDB first
-      try {
-        const getRes = await docClient.send(new GetCommand({
-          TableName: TABLES.IdentityAndAccess,
-          Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" }
-        }));
-        if (getRes.Item) {
-          userData = getRes.Item;
-        } else {
-          const resolved = await resolveUserDoc(resolvedUserId, resolvedUserId.includes("@") ? resolvedUserId : "");
-          if (resolved) {
-            userData = resolved.data;
-          }
+      const resolved = await resolveUserDoc(targetUserId, user?.email);
+      if (resolved) {
+        resolvedUserId = resolved.id;
+        userData = resolved.data;
+      } else {
+        const info = await getUserInfo(targetUserId);
+        if (!info.exists) {
+          return NextResponse.json({ error: "Profile not found" }, { status: 404 });
         }
-      } catch (dynErr) {
-        console.warn("[profile GET] DynamoDB target user get failed:", dynErr);
+        resolvedUserId = info.actualUserId;
+        userData = {
+          name: info.userName,
+          username: info.userName,
+          email: info.userEmail,
+          userId: info.actualUserId,
+        };
       }
-
-      if (!userData) {
-        const snap = await db.collection(getFirestoreCollection("users")).doc(resolvedUserId).get();
-        if (snap.exists) {
-          userData = snap.data();
-        }
-      }
-    } else {
+    } else if (user) {
       // Self
       const resolved = await resolveUserDoc(user.userId, user.email);
       if (!resolved) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
       resolvedUserId = resolved.id;
       userData = resolved.data;
+    } else {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     if (!userData) {
@@ -254,6 +360,7 @@ export async function GET(req: NextRequest) {
         hasViralPost: userData.hasViralPost ?? false,
         hasSeasonTop100: userData.hasSeasonTop100 ?? false,
         hasSeasonTop3: userData.hasSeasonTop3 ?? false,
+        onboardingCompleted: userData.onboardingCompleted ?? true,
       },
       featureBadges
     );
@@ -272,7 +379,8 @@ export async function GET(req: NextRequest) {
         institution: userData.institution ?? userData.university ?? null,
         favPlayer: userData.favPlayer ?? null,
         about: userData.about ?? null,
-        avatarUrl: userData.avatarUrl ?? null,
+        avatarUrl: userData.avatarUrl || userData.photoURL || userData.picture || userData.image || userData.profilePicture || userData.avatar || null,
+        photoURL: userData.photoURL || userData.picture || userData.image || userData.avatarUrl || null,
         coverPhotoUrl: userData.coverPhotoUrl ?? null,
 
         // New Gamification Fields
@@ -323,24 +431,38 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (body.favPlayer !== undefined) {
-      updates.favPlayer = String(body.favPlayer).trim().slice(0, 60);
+      updates.favPlayer = body.favPlayer ? String(body.favPlayer).trim().slice(0, 60) : "";
     }
 
     if (body.university !== undefined) {
-      updates.university = String(body.university).trim().slice(0, 100);
+      const u = body.university ? String(body.university).trim().slice(0, 100) : "";
+      updates.university = u;
+      updates.institution = u;
     }
 
     if (body.institution !== undefined) {
-      updates.institution = String(body.institution).trim().slice(0, 100);
+      const u = body.institution ? String(body.institution).trim().slice(0, 100) : "";
+      updates.institution = u;
+      updates.university = u;
     }
 
     if (body.about !== undefined) {
-      updates.about = String(body.about).trim().slice(0, 300);
+      updates.about = body.about ? String(body.about).trim().slice(0, 300) : "";
     }
 
     if (body.avatarUrl !== undefined) {
       const v = String(body.avatarUrl).trim();
-      if (v.startsWith("data:image/") || v.startsWith("https://") || v.startsWith("http://")) {
+      if (v.startsWith("data:image/")) {
+        try {
+          const uploadRes = await cloudinary.uploader.upload(v, {
+            folder: "profile-images",
+          });
+          updates.avatarUrl = uploadRes.secure_url;
+        } catch (uploadErr) {
+          console.error("[profile PATCH] Cloudinary avatar upload failed:", uploadErr);
+          updates.avatarUrl = v;
+        }
+      } else if (v.startsWith("https://") || v.startsWith("http://")) {
         updates.avatarUrl = v;
       } else {
         return NextResponse.json({ error: "Invalid avatarUrl." }, { status: 422 });
@@ -351,7 +473,17 @@ export async function PATCH(req: NextRequest) {
       const v = String(body.coverPhotoUrl).trim();
       if (v === "") {
         updates.coverPhotoUrl = null;
-      } else if (v.startsWith("data:image/") || v.startsWith("https://") || v.startsWith("http://")) {
+      } else if (v.startsWith("data:image/")) {
+        try {
+          const uploadRes = await cloudinary.uploader.upload(v, {
+            folder: "profile-covers",
+          });
+          updates.coverPhotoUrl = uploadRes.secure_url;
+        } catch (uploadErr) {
+          console.error("[profile PATCH] Cloudinary cover photo upload failed:", uploadErr);
+          updates.coverPhotoUrl = v;
+        }
+      } else if (v.startsWith("https://") || v.startsWith("http://")) {
         updates.coverPhotoUrl = v;
       } else {
         return NextResponse.json({ error: "Invalid coverPhotoUrl." }, { status: 422 });
@@ -379,42 +511,85 @@ export async function PATCH(req: NextRequest) {
     if (!resolved) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
 
     const resolvedUserId = resolved.id;
+    const targetEntityId = resolved.entityId || (resolved.data?.entityId as string) || (resolvedUserId.startsWith("USER#") ? resolvedUserId : `USER#${resolvedUserId}`);
 
-    // 1. Update in DynamoDB first
-    try {
-      let updateExpression = "SET";
-      const expressionAttributeNames: Record<string, string> = {};
-      const expressionAttributeValues: Record<string, any> = {};
+    // Tables to update: the table where the user document was found, plus TABLES.IdentityAndAccess
+    const targetTables = Array.from(new Set([
+      resolved.tableName,
+      TABLES.IdentityAndAccess,
+      "IdentityAndAccess",
+    ])).filter(Boolean) as string[];
 
-      Object.keys(updates).forEach((key, index) => {
-        const valKey = `:val${index}`;
-        const nameKey = `#name${index}`;
-        updateExpression += ` ${nameKey} = ${valKey},`;
-        expressionAttributeNames[nameKey] = key;
-        expressionAttributeValues[valKey] = updates[key];
-      });
+    // Entity IDs to update: primary entityId, plus email-based entityId and userId-based entityId if different
+    const targetEntityIds = Array.from(new Set([
+      targetEntityId,
+      resolved.data?.entityId,
+      user.email ? `USER#${user.email.trim().toLowerCase()}` : null,
+      resolved.data?.email ? `USER#${String(resolved.data.email).trim().toLowerCase()}` : null,
+      resolvedUserId ? (resolvedUserId.startsWith("USER#") ? resolvedUserId : `USER#${resolvedUserId}`) : null,
+    ])).filter(Boolean) as string[];
 
-      updateExpression = updateExpression.slice(0, -1);
+    let updateExpression = "SET";
+    const expressionAttributeNames: Record<string, string> = {};
+    const expressionAttributeValues: Record<string, any> = {};
 
-      await docClient.send(new UpdateCommand({
-        TableName: TABLES.IdentityAndAccess,
-        Key: { entityId: `USER#${resolvedUserId}`, sk: "USER#META" },
-        UpdateExpression: updateExpression,
-        ExpressionAttributeNames: expressionAttributeNames,
-        ExpressionAttributeValues: expressionAttributeValues
-      }));
-    } catch (dynErr) {
-      console.warn("[profile PATCH] DynamoDB update profile failed:", dynErr);
+    Object.keys(updates).forEach((key, index) => {
+      const valKey = `:val${index}`;
+      const nameKey = `#name${index}`;
+      updateExpression += ` ${nameKey} = ${valKey},`;
+      expressionAttributeNames[nameKey] = key;
+      expressionAttributeValues[valKey] = updates[key];
+    });
+
+    updateExpression = updateExpression.slice(0, -1);
+
+    // 1. Update in DynamoDB across all relevant tables and key variants
+    for (const tbl of targetTables) {
+      for (const eid of targetEntityIds) {
+        try {
+          await docClient.send(new UpdateCommand({
+            TableName: tbl,
+            Key: { entityId: eid, sk: "USER#META" },
+            UpdateExpression: updateExpression,
+            ExpressionAttributeNames: expressionAttributeNames,
+            ExpressionAttributeValues: expressionAttributeValues
+          }));
+        } catch (dynErr) {
+          console.warn(`[profile PATCH] DynamoDB update on ${tbl} (${eid}) failed:`, dynErr);
+        }
+      }
     }
 
     // 2. Sync to Firestore
     try {
-      await db.collection(getFirestoreCollection("users")).doc(resolvedUserId).set(updates, { merge: true });
+      const usersCol = getFirestoreCollection("users");
+      const firestoreDocIds = Array.from(new Set([
+        resolvedUserId,
+        user.email?.toLowerCase(),
+        user.email,
+        resolved.data?.email,
+        resolved.data?.userId,
+      ])).filter(Boolean) as string[];
+
+      for (const docId of firestoreDocIds) {
+        try {
+          await db.collection(usersCol).doc(docId).set(updates, { merge: true });
+        } catch {}
+      }
     } catch (fsErr) {
       console.warn("[profile PATCH] Firestore fallback update profile failed:", fsErr);
     }
 
-    return NextResponse.json({ success: true, updatedFields: meaningfulKeys });
+    return NextResponse.json({
+      success: true,
+      updatedFields: meaningfulKeys,
+      user: {
+        ...(resolved.data || {}),
+        ...updates,
+      },
+      avatarUrl: updates.avatarUrl,
+      coverPhotoUrl: updates.coverPhotoUrl,
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("PATCH /api/roar/profile error:", error);
