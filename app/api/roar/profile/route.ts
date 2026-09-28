@@ -210,7 +210,7 @@ export async function GET(req: NextRequest) {
     let userData: any = null;
 
     if (targetUserId) {
-      const resolved = await resolveUserDoc(targetUserId, user?.email);
+      const resolved = await resolveUserDoc(targetUserId);
       if (resolved) {
         resolvedUserId = resolved.id;
         userData = resolved.data;
