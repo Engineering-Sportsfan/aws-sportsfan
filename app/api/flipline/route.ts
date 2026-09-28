@@ -89,6 +89,8 @@ export interface FlipLineCard {
   isScheduled?: boolean;
   scheduledAt?: number;
   scheduledTimeMs?: number;
+  postingTime?: number;
+  updatedAt?: number;
   poll?: any;
 }
 
@@ -630,6 +632,7 @@ export async function POST(req: NextRequest) {
         authorPhoto: body.authorPhoto,
         time: timeStr,
         timeMs,
+        postingTime: timeMs,
         isScheduled,
         scheduledAt,
         scheduledTimeMs: scheduledAt,
@@ -654,6 +657,7 @@ export async function POST(req: NextRequest) {
         image: body.image,
         videoUrl: body.videoUrl,
         mediaType: body.mediaType,
+        updatedAt: Date.now(),
       };
 
       await docClient.send(
@@ -788,6 +792,7 @@ export async function POST(req: NextRequest) {
       authorPhoto,
       time: timeStr,
       timeMs,
+      postingTime: timeMs,
       isScheduled,
       scheduledAt,
       scheduledTimeMs: scheduledAt,
@@ -815,6 +820,7 @@ export async function POST(req: NextRequest) {
       isUserPost: true,
       userId,
       email,
+      updatedAt: Date.now(),
 
       hasAttachedImage: !!imageUrl,
       hasAttachedVideo: !!videoUrl,
@@ -1245,12 +1251,17 @@ async function handleFlipLineAction(body: any) {
       return NextResponse.json({ success: false, error: "Post not found" }, { status: 404 });
     }
 
+    const now = Date.now();
+    const currentTimeStr = formatCurrentTime();
+    const currentDateStr = formatCurrentDate();
+
     const updatedCard: FlipLineCard = {
       ...existingCard,
       content: content !== undefined ? content.trim() : existingCard.content,
       sport: sport || existingCard.sport,
       channel: sport || existingCard.channel,
       tags: typeof content === "string" ? content.match(/#[a-zA-Z0-9_]+/g) || [] : existingCard.tags,
+      updatedAt: now,
     };
 
     if (sport && SPORT_META[sport.toLowerCase()]) {
@@ -1267,14 +1278,32 @@ async function handleFlipLineAction(body: any) {
         updatedCard.scheduledAt = schedTime;
         updatedCard.scheduledTimeMs = schedTime;
         updatedCard.timeMs = schedTime;
-        if (day) updatedCard.day = day;
-        if (time) updatedCard.time = time;
+        (updatedCard as any).postingTime = schedTime;
+        updatedCard.day = day || currentDateStr;
+        updatedCard.time = time || currentTimeStr;
       } else if (!isSched) {
         updatedCard.scheduledAt = undefined;
         updatedCard.scheduledTimeMs = undefined;
-        if (timeMs) updatedCard.timeMs = Number(timeMs);
-        if (day) updatedCard.day = day;
-        if (time) updatedCard.time = time;
+        updatedCard.timeMs = timeMs ? Number(timeMs) : now;
+        (updatedCard as any).postingTime = timeMs ? Number(timeMs) : now;
+        updatedCard.day = day || currentDateStr;
+        updatedCard.time = time || currentTimeStr;
+      }
+    } else {
+      if (time) {
+        updatedCard.time = time;
+      } else if (!existingCard.isScheduled) {
+        updatedCard.time = currentTimeStr;
+      }
+      if (timeMs) {
+        updatedCard.timeMs = Number(timeMs);
+        (updatedCard as any).postingTime = Number(timeMs);
+      } else if (!existingCard.isScheduled) {
+        updatedCard.timeMs = now;
+        (updatedCard as any).postingTime = now;
+      }
+      if (day) {
+        updatedCard.day = day;
       }
     }
 
@@ -1403,12 +1432,17 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Post not found" }, { status: 404 });
     }
 
+    const now = Date.now();
+    const currentTimeStr = formatCurrentTime();
+    const currentDateStr = formatCurrentDate();
+
     const updatedCard: FlipLineCard = {
       ...existingCard,
       content: content !== undefined ? content.trim() : existingCard.content,
       sport: sport || existingCard.sport,
       channel: sport || existingCard.channel,
       tags: typeof content === "string" ? content.match(/#[a-zA-Z0-9_]+/g) || [] : existingCard.tags,
+      updatedAt: now,
     };
 
     if (sport && SPORT_META[sport.toLowerCase()]) {
@@ -1423,14 +1457,32 @@ export async function PUT(req: NextRequest) {
         updatedCard.scheduledAt = scheduledAt;
         updatedCard.scheduledTimeMs = scheduledAt;
         updatedCard.timeMs = scheduledAt;
-        if (day) updatedCard.day = day;
-        if (time) updatedCard.time = time;
+        (updatedCard as any).postingTime = scheduledAt;
+        updatedCard.day = day || currentDateStr;
+        updatedCard.time = time || currentTimeStr;
       } else if (!isScheduled) {
         updatedCard.scheduledAt = undefined;
         updatedCard.scheduledTimeMs = undefined;
-        if (timeMs) updatedCard.timeMs = timeMs;
-        if (day) updatedCard.day = day;
-        if (time) updatedCard.time = time;
+        updatedCard.timeMs = timeMs || now;
+        (updatedCard as any).postingTime = timeMs || now;
+        updatedCard.day = day || currentDateStr;
+        updatedCard.time = time || currentTimeStr;
+      }
+    } else {
+      if (time) {
+        updatedCard.time = time;
+      } else if (!existingCard.isScheduled) {
+        updatedCard.time = currentTimeStr;
+      }
+      if (timeMs) {
+        updatedCard.timeMs = timeMs;
+        (updatedCard as any).postingTime = timeMs;
+      } else if (!existingCard.isScheduled) {
+        updatedCard.timeMs = now;
+        (updatedCard as any).postingTime = now;
+      }
+      if (day) {
+        updatedCard.day = day;
       }
     }
 

@@ -470,6 +470,7 @@ export async function POST(req: NextRequest) {
           engagementId: id,
           engagementType: type,
           engagementTitle: title,
+          syncQuizLeaderboard: type === "quiz",
         });
         if (ptsResult.success) {
           pointsAwarded = ptsResult.pointsAwarded;
