@@ -54,14 +54,16 @@ export async function GET(req: NextRequest) {
       const answered = Number(item.totalAnswered ?? (corr + incorr));
       const activityTime = Number(item.lastAnsweredAt ?? item.updatedAt ?? Date.now());
 
+      const rawAvatar = item.userAvatar || "";
+      const cleanAvatar = typeof rawAvatar === "string" && !rawAvatar.includes("dicebear") ? rawAvatar.trim() : "";
+
       const existing = entriesMap.get(uid);
       if (!existing) {
         entriesMap.set(uid, {
           rank: 0,
           userId: uid,
           userName: item.userName || "Fan Quizzer",
-          userAvatar:
-            item.userAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+          userAvatar: cleanAvatar,
           userEmail: item.userEmail || "",
           totalPoints: pts,
           correctCount: corr,
@@ -78,8 +80,8 @@ export async function GET(req: NextRequest) {
         if (item.userName && existing.userName === "Fan Quizzer") {
           existing.userName = item.userName;
         }
-        if (item.userAvatar && existing.userAvatar?.includes("dicebear")) {
-          existing.userAvatar = item.userAvatar;
+        if (cleanAvatar) {
+          existing.userAvatar = cleanAvatar;
         }
       }
     };
@@ -335,8 +337,15 @@ export async function POST(req: NextRequest) {
       `anon_${req.headers.get("x-forwarded-for") || Date.now()}`;
 
     const displayName = userName || authUser?.name || "Fan Quizzer";
-    const avatar =
-      userAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`;
+    const rawAvatar =
+      userAvatar ||
+      (authUser as any)?.avatarUrl ||
+      (authUser as any)?.photoURL ||
+      (authUser as any)?.picture ||
+      (authUser as any)?.image ||
+      (authUser as any)?.avatar ||
+      "";
+    const avatar = typeof rawAvatar === "string" && !rawAvatar.includes("dicebear") ? rawAvatar.trim() : "";
     const pts = isCorrect ? Number(pointsEarned) : 0;
     const now = Date.now();
 
