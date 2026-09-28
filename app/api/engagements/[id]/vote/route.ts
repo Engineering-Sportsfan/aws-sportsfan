@@ -1065,11 +1065,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const isCorrect = isQuiz ? Boolean(responseData?.isCorrect) : false;
     const earnedPts = Number(responseData?.pointsAwarded ?? (isQuiz && isCorrect ? 12 : 2));
     const displayName = userName || authUser?.name || "Fan Quizzer";
-    const avatar =
+    const rawAvatar =
       userAvatar ||
-      (authUser as any)?.picture ||
+      (authUser as any)?.avatarUrl ||
       (authUser as any)?.photoURL ||
-      `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`;
+      (authUser as any)?.picture ||
+      (authUser as any)?.image ||
+      (authUser as any)?.avatar ||
+      "";
+    const avatar = typeof rawAvatar === "string" && !rawAvatar.includes("dicebear") ? rawAvatar.trim() : "";
 
     const userEmailVal = (authUser?.email || body.userEmail || "").trim() || `${userId}@sportsfan360.com`;
 
