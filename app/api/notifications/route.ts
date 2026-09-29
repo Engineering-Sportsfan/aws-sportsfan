@@ -1,6 +1,9 @@
-// app/api/notifications/route.ts — sf360-notifications (single-table schema)
+// app/api/notifications/route.ts — sf360-notifications (single-table schema with multi-environment candidate fallback)
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+import { getCandidateTableNames } from "@/lib/dualWrite";
+import { db } from "@/lib/firebaseAdmin";
 import {
   QueryCommand,
   UpdateCommand,
@@ -11,11 +14,7 @@ import { getUserInfo } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
-const TABLE = "sf360-notifications";
-
 // Resolve the canonical actualUserId the same way other routes do
-// (e.g. comments/[commentId]/route.ts), so notifications written under
-// actualUserId can still be found even if the caller only has email/uid.
 async function resolveActualUserId(uid?: string | null, email?: string | null) {
   const primaryId = uid || email;
   if (!primaryId) return null;
@@ -28,13 +27,51 @@ async function resolveActualUserId(uid?: string | null, email?: string | null) {
   return null;
 }
 
-// Mirrors lib/getUser.ts's NextAuth fallback exactly — when a session has no
-// real Firebase UID, getUser.ts derives one by sanitizing the email this way.
-// That sanitized value is what actually ends up as notifications' PK for
-// those users, independent of whatever getUserInfo()/Firestore resolves to.
+// Mirrors lib/getUser.ts's NextAuth fallback exactly
 function sanitizeEmailFallback(email?: string | null) {
   if (!email) return null;
   return email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_");
+}
+
+function cleanId(id?: string | null): string {
+  if (!id) return "";
+  return id.replace(/^USER#/, "").trim();
+}
+
+function extractCanonicalNotifId(rawId?: string | null, rawSk?: string | null): string {
+  let id = "";
+  if (rawSk && typeof rawSk === "string" && rawSk.startsWith("NOTIF#")) {
+    id = rawSk.split("#").pop() || "";
+  }
+  if (!id && rawId && typeof rawId === "string") {
+    id = rawId;
+  }
+  if (!id) return "";
+
+  // Strip user / candidate suffixes from dual-write Firestore doc IDs (e.g. ntf_xxx_u_fan123 or ntf_xxx_user@example.com)
+  return id
+    .replace(/_[^_@]+@[^.]+.*$/, "")
+    .replace(/_u_[^_]+$/, "")
+    .replace(/_anon_[^_]+$/, "")
+    .trim();
+}
+
+function getCanonicalDedupeKey(item: any): string {
+  if (!item) return "";
+  const baseId = extractCanonicalNotifId(item.id || item.notification_id, item.SK || item.sk);
+  if (baseId && (baseId.startsWith("ntf_") || baseId.length > 8)) {
+    return `ID#${baseId}`;
+  }
+  if (item.aggregation_key) {
+    return `AGGR#${item.aggregation_key}`;
+  }
+  if (baseId) {
+    return `ID#${baseId}`;
+  }
+  const type = item.notification_type || item.type || "unknown";
+  const entity = item.entity_id || item.entityId || item.title || "";
+  const body = item.body || item.message || "";
+  return `SIG#${type}###${entity}###${body}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -42,102 +79,195 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const email = searchParams.get("email");
     const uid = searchParams.get("uid");
+    const actualUserIdParam = searchParams.get("actualUserId") || searchParams.get("userId");
     const countOnly = searchParams.get("countOnly") === "true";
 
-    if (!email && !uid) {
-      return NextResponse.json({ error: "email or uid is required" }, { status: 400 });
+    if (!email && !uid && !actualUserIdParam) {
+      return NextResponse.json({ error: "email, uid, or actualUserId is required" }, { status: 400 });
     }
 
-    // Try every plausible PK value — uid, email, and the resolved
-    // canonical actualUserId (what createNotification() actually keys on).
-    const candidates: string[] = [];
-    if (uid) candidates.push(uid);
-    if (email) candidates.push(email);
+    // Build comprehensive candidates list
+    const candidateSet = new Set<string>();
 
-    const actualUserId = await resolveActualUserId(uid, email);
-    if (actualUserId && !candidates.includes(actualUserId)) {
-      candidates.push(actualUserId);
+    if (uid) {
+      const cUid = cleanId(uid);
+      if (cUid) {
+        candidateSet.add(cUid);
+        candidateSet.add(cUid.toLowerCase());
+      }
+    }
+
+    if (email) {
+      const cEmail = cleanId(email);
+      if (cEmail) {
+        candidateSet.add(cEmail);
+        candidateSet.add(cEmail.toLowerCase());
+        candidateSet.add(cEmail.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_"));
+        candidateSet.add(cEmail.toLowerCase().replace(/[@.]/g, "_"));
+      }
+    }
+
+    if (actualUserIdParam) {
+      const cAct = cleanId(actualUserIdParam);
+      if (cAct) {
+        candidateSet.add(cAct);
+        candidateSet.add(cAct.toLowerCase());
+      }
+    }
+
+    const resolvedActualUserId = await resolveActualUserId(uid, email);
+    if (resolvedActualUserId) {
+      const cRes = cleanId(resolvedActualUserId);
+      if (cRes) {
+        candidateSet.add(cRes);
+        candidateSet.add(cRes.toLowerCase());
+      }
     }
 
     const sanitizedFallback = sanitizeEmailFallback(email);
-    if (sanitizedFallback && !candidates.includes(sanitizedFallback)) {
-      candidates.push(sanitizedFallback);
+    if (sanitizedFallback) {
+      candidateSet.add(sanitizedFallback);
     }
 
-    // Always include system-wide global/system notification keys
-    candidates.push("all_users");
-    candidates.push("all");
-    candidates.push("system");
+    // Global / system notification keys
+    candidateSet.add("all_users");
+    candidateSet.add("all");
+    candidateSet.add("system");
+
+    const candidates = Array.from(candidateSet).filter(Boolean);
+    const candidateTables = getCandidateTableNames(TABLES.Notifications);
 
     let notifications: any[] = [];
     let unreadCount = 0;
+    const seenNotifKeys = new Set<string>();
 
-    for (const identifier of candidates) {
-      // ── Full list via PK, newest first ──
-      try {
-        const res = await docClient.send(
-          new QueryCommand({
-            TableName: TABLE,
-            KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
-            ExpressionAttributeValues: {
-              ":pk": `USER#${identifier}`,
-              ":prefix": "NOTIF#",
-            },
-            ScanIndexForward: false,
-            Limit: 50,
-          })
-        );
-        if (res.Items && res.Items.length > 0) {
-          res.Items.forEach((item) => {
-            notifications.push({
-              id: (item.SK as string)?.split("#").pop() || item.id,
-              ...item,
-            });
-          });
+    // 1. Query across candidate DynamoDB tables
+    for (const table of candidateTables) {
+      for (const identifier of candidates) {
+        try {
+          const res = await docClient.send(
+            new QueryCommand({
+              TableName: table,
+              KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+              ExpressionAttributeValues: {
+                ":pk": `USER#${identifier}`,
+                ":prefix": "NOTIF#",
+              },
+              ScanIndexForward: false,
+              Limit: 50,
+            })
+          );
+
+          if (res.Items && res.Items.length > 0) {
+            for (const item of res.Items) {
+              const canonicalId = extractCanonicalNotifId(item.id || item.notification_id, item.SK);
+              const dedupeKey = getCanonicalDedupeKey(item);
+              if (!seenNotifKeys.has(dedupeKey)) {
+                seenNotifKeys.add(dedupeKey);
+                notifications.push({
+                  ...item,
+                  id: canonicalId || item.id || (item.SK as string)?.split("#").pop(),
+                });
+              }
+            }
+          }
+        } catch (dynErr: any) {
+          const isTableMissing =
+            dynErr?.name === "ResourceNotFoundException" ||
+            dynErr?.message?.includes("Cannot do operations on a non-existent table");
+          if (!isTableMissing) {
+            console.warn(`[notifications GET] Query notice for table ${table}, id ${identifier}:`, dynErr?.message || dynErr);
+          }
         }
-      } catch (dynErr) {
-        console.warn("[notifications GET] Query notice for", identifier, dynErr);
-      }
 
-      // ── Unread count via sparse GSI2Index ──
-      try {
-        const unreadRes = await docClient.send(
-          new QueryCommand({
-            TableName: TABLE,
-            IndexName: "GSI2Index",
-            KeyConditionExpression: "GSI2PK = :g",
-            ExpressionAttributeValues: { ":g": `USER#${identifier}#UNREAD` },
-            Select: "COUNT",
-          })
-        );
-        unreadCount += unreadRes.Count ?? 0;
-      } catch (e) {
-        console.warn("[notifications GET] GSI2Index unread notice for", identifier, e);
+        // Unread count via sparse GSI2Index
+        try {
+          const unreadRes = await docClient.send(
+            new QueryCommand({
+              TableName: table,
+              IndexName: "GSI2Index",
+              KeyConditionExpression: "GSI2PK = :g",
+              ExpressionAttributeValues: { ":g": `USER#${identifier}#UNREAD` },
+              Select: "COUNT",
+            })
+          );
+          unreadCount += unreadRes.Count ?? 0;
+        } catch {}
       }
     }
 
-    // Dedupe in case multiple identifiers somehow returned overlapping items
-    const seen = new Set<string>();
-    notifications = notifications.filter((n) => {
-      const key = n.SK ?? n.id;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    // 2. Query Firestore notifications collection as fallback/supplement
+    if (db) {
+      try {
+        const firestoreCandidates = candidates.filter(
+          (c) => c !== "all_users" && c !== "all" && c !== "system"
+        );
+        for (const candidateId of firestoreCandidates) {
+          const [emailSnap, uidSnap] = await Promise.all([
+            db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", candidateId).limit(20).get().catch(() => null),
+            db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", candidateId).limit(20).get().catch(() => null),
+          ]);
+
+          for (const snap of [emailSnap, uidSnap]) {
+            if (!snap || snap.empty) continue;
+            for (const doc of snap.docs) {
+              const data = doc.data();
+              const rawId = data.id || doc.id;
+              const canonicalId = extractCanonicalNotifId(rawId, null);
+              const dedupeKey = getCanonicalDedupeKey({ ...data, id: rawId });
+              if (!seenNotifKeys.has(dedupeKey)) {
+                seenNotifKeys.add(dedupeKey);
+                notifications.push({
+                  id: canonicalId || rawId,
+                  PK: `USER#${candidateId}`,
+                  SK: `NOTIF#${new Date(data.createdAt || data.sent_at || 0).toISOString()}#${canonicalId || rawId}`,
+                  ...data,
+                });
+              }
+            }
+          }
+        }
+      } catch (fsErr) {
+        console.warn("[notifications GET] Firestore fallback check notice:", fsErr);
+      }
+    }
+
+    // Final deduplication pass across aggregation key and canonical ID
+    const finalDedupeMap = new Map<string, any>();
+    for (const n of notifications) {
+      const key = getCanonicalDedupeKey(n);
+      if (!finalDedupeMap.has(key)) {
+        finalDedupeMap.set(key, n);
+      } else {
+        const existing = finalDedupeMap.get(key);
+        const isExistingRead = existing.read !== undefined ? existing.read : existing.isRead;
+        const isCurrentRead = n.read !== undefined ? n.read : n.isRead;
+        if (isExistingRead && !isCurrentRead) {
+          finalDedupeMap.set(key, { ...existing, ...n, read: false, isRead: false });
+        }
+      }
+    }
+
+    notifications = Array.from(finalDedupeMap.values());
 
     notifications.sort(
-      (a, b) => new Date(b.sent_at ?? 0).getTime() - new Date(a.sent_at ?? 0).getTime()
+      (a, b) =>
+        new Date(b.sent_at || b.createdAt || 0).getTime() -
+        new Date(a.sent_at || a.createdAt || 0).getTime()
     );
+
+    const calculatedUnread = notifications.filter((n) => !(n.read || n.isRead)).length;
+    const finalUnreadCount = Math.max(unreadCount, calculatedUnread);
 
     if (countOnly) {
       return NextResponse.json(
-        { success: true, unreadCount },
+        { success: true, unreadCount: finalUnreadCount },
         { headers: { "Cache-Control": "no-store" } }
       );
     }
 
     return NextResponse.json(
-      { success: true, notifications, unreadCount },
+      { success: true, notifications, unreadCount: finalUnreadCount },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
@@ -151,102 +281,123 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, email, sk, action, pk } = body;
+    const { userId, email, sk, action, pk, id } = body;
 
-    // Resolve the canonical actualUserId as a fallback in case the caller
-    // passed a raw uid/email instead of the actualUserId notifications are
-    // actually keyed on.
     const resolvedUserId =
       userId ?? (await resolveActualUserId(undefined, email)) ?? userId;
     const sanitizedFallback = sanitizeEmailFallback(email);
+    const candidateSet = new Set<string>();
 
-    // Mark a single notification read — remove GSI2 keys (sparse index)
-    if (action === "markRead" && sk) {
-      const resolvedPk = pk && pk.startsWith("USER#") ? pk.replace(/^USER#/, "") : pk;
-      const candidates = Array.from(
-        new Set([resolvedPk, userId, resolvedUserId, sanitizedFallback].filter(Boolean))
+    if (pk) candidateSet.add(cleanId(pk));
+    if (userId) candidateSet.add(cleanId(userId));
+    if (email) candidateSet.add(cleanId(email));
+    if (resolvedUserId) candidateSet.add(cleanId(resolvedUserId));
+    if (sanitizedFallback) candidateSet.add(sanitizedFallback);
+
+    const candidates = Array.from(candidateSet).filter(Boolean);
+    const candidateTables = getCandidateTableNames(TABLES.Notifications);
+
+    if (candidates.length === 0) {
+      return NextResponse.json(
+        { error: "userId or email is required" },
+        { status: 400 }
       );
-
-      if (candidates.length === 0) {
-        return NextResponse.json(
-          { error: "userId (or email) is required for markRead" },
-          { status: 400 }
-        );
-      }
-
-      for (const uidCandidate of candidates) {
-        try {
-          await docClient.send(
-            new UpdateCommand({
-              TableName: TABLE,
-              Key: { PK: `USER#${uidCandidate}`, SK: sk },
-              UpdateExpression: "SET #r = :true REMOVE GSI2PK, GSI2SK",
-              ExpressionAttributeNames: { "#r": "read" },
-              ExpressionAttributeValues: { ":true": true },
-              ConditionExpression: "attribute_exists(PK)",
-            })
-          );
-          // Succeeded against this candidate — stop trying others.
-          break;
-        } catch (e) {
-          console.warn("[notifications PATCH] markRead notice for", uidCandidate, e);
-        }
-      }
-      return NextResponse.json({ success: true });
     }
 
-    // Mark all read — query unread via GSI2Index for every candidate, then batch-update
-    if (action === "markAllRead") {
-      const candidates = Array.from(
-        new Set([userId, resolvedUserId, sanitizedFallback].filter(Boolean))
-      );
-
-      if (candidates.length === 0) {
-        return NextResponse.json(
-          { error: "userId (or email) is required for markAllRead" },
-          { status: 400 }
-        );
-      }
-
-      for (const uidCandidate of candidates) {
-        try {
-          const unreadRes = await docClient.send(
-            new QueryCommand({
-              TableName: TABLE,
-              IndexName: "GSI2Index",
-              KeyConditionExpression: "GSI2PK = :g",
-              ExpressionAttributeValues: { ":g": `USER#${uidCandidate}#UNREAD` },
-            })
-          );
-
-          const items = unreadRes.Items ?? [];
-          await Promise.all(
-            items.map((item) =>
-              docClient.send(
+    // Mark single notification read
+    if (action === "markRead") {
+      for (const table of candidateTables) {
+        for (const uidCandidate of candidates) {
+          if (sk) {
+            try {
+              await docClient.send(
                 new UpdateCommand({
-                  TableName: TABLE,
-                  Key: { PK: item.PK, SK: item.SK },
+                  TableName: table,
+                  Key: { PK: `USER#${uidCandidate}`, SK: sk },
                   UpdateExpression: "SET #r = :true REMOVE GSI2PK, GSI2SK",
                   ExpressionAttributeNames: { "#r": "read" },
                   ExpressionAttributeValues: { ":true": true },
                 })
-              )
-            )
-          );
-        } catch (e) {
-          console.warn("[notifications PATCH] markAllRead notice for", uidCandidate, e);
+              );
+            } catch {}
+          }
         }
       }
+
+      // Also sync to Firestore
+      if (db && (id || sk)) {
+        try {
+          const docId = id || (sk ? sk.split("#").pop() : null);
+          if (docId) {
+            for (const cand of candidates) {
+              await db.collection(getFirestoreCollection("notifications")).doc(`${docId}_${cand}`).set({
+                read: true,
+                isRead: true,
+                readAt: Date.now(),
+              }, { merge: true }).catch(() => {});
+            }
+          }
+        } catch {}
+      }
+
       return NextResponse.json({ success: true });
     }
 
-    return NextResponse.json(
-      {
-        error:
-          "Invalid action or missing fields (need userId/email + sk for markRead, userId/email for markAllRead)",
-      },
-      { status: 400 }
-    );
+    // Mark all read
+    if (action === "markAllRead") {
+      for (const table of candidateTables) {
+        for (const uidCandidate of candidates) {
+          try {
+            const unreadRes = await docClient.send(
+              new QueryCommand({
+                TableName: table,
+                IndexName: "GSI2Index",
+                KeyConditionExpression: "GSI2PK = :g",
+                ExpressionAttributeValues: { ":g": `USER#${uidCandidate}#UNREAD` },
+              })
+            );
+
+            const items = unreadRes.Items ?? [];
+            await Promise.all(
+              items.map((item) =>
+                docClient.send(
+                  new UpdateCommand({
+                    TableName: table,
+                    Key: { PK: item.PK, SK: item.SK },
+                    UpdateExpression: "SET #r = :true REMOVE GSI2PK, GSI2SK",
+                    ExpressionAttributeNames: { "#r": "read" },
+                    ExpressionAttributeValues: { ":true": true },
+                  })
+                ).catch(() => {})
+              )
+            );
+          } catch {}
+        }
+      }
+
+      // Sync mark all read to Firestore
+      if (db) {
+        for (const cand of candidates) {
+          try {
+            const snaps = await Promise.all([
+              db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", cand).where("read", "==", false).get().catch(() => null),
+              db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", cand).where("read", "==", false).get().catch(() => null),
+            ]);
+            for (const s of snaps) {
+              if (s && !s.empty) {
+                const b = db.batch();
+                s.docs.forEach((d) => b.update(d.ref, { read: true, isRead: true, readAt: Date.now() }));
+                await b.commit();
+              }
+            }
+          } catch {}
+        }
+      }
+
+      return NextResponse.json({ success: true });
+    }
+
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("PATCH /api/notifications error:", error);
@@ -258,71 +409,102 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, email, sk, all, pk } = body;
+    const { userId, email, sk, all, pk, id } = body;
 
     const resolvedUserId =
       userId ?? (await resolveActualUserId(undefined, email)) ?? userId;
     const sanitizedFallback = sanitizeEmailFallback(email);
-    const resolvedPk = pk && pk.startsWith("USER#") ? pk.replace(/^USER#/, "") : pk;
-    const candidates = Array.from(
-      new Set([resolvedPk, userId, resolvedUserId, sanitizedFallback].filter(Boolean))
-    );
+    const candidateSet = new Set<string>();
+
+    if (pk) candidateSet.add(cleanId(pk));
+    if (userId) candidateSet.add(cleanId(userId));
+    if (email) candidateSet.add(cleanId(email));
+    if (resolvedUserId) candidateSet.add(cleanId(resolvedUserId));
+    if (sanitizedFallback) candidateSet.add(sanitizedFallback);
+
+    const candidates = Array.from(candidateSet).filter(Boolean);
+    const candidateTables = getCandidateTableNames(TABLES.Notifications);
 
     if (candidates.length === 0) {
-      return NextResponse.json(
-        { error: "userId (or email) is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "userId or email is required" }, { status: 400 });
     }
 
     if (sk && !all) {
-      for (const uidCandidate of candidates) {
-        try {
-          await docClient.send(
-            new DeleteCommand({
-              TableName: TABLE,
-              Key: { PK: `USER#${uidCandidate}`, SK: sk },
-            })
-          );
-        } catch (e) {
-          console.warn("[notifications DELETE] single delete notice for", uidCandidate, e);
+      for (const table of candidateTables) {
+        for (const uidCandidate of candidates) {
+          try {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: table,
+                Key: { PK: `USER#${uidCandidate}`, SK: sk },
+              })
+            );
+          } catch {}
         }
       }
+
+      if (db && (id || sk)) {
+        const docId = id || (sk ? sk.split("#").pop() : null);
+        if (docId) {
+          for (const cand of candidates) {
+            await db.collection(getFirestoreCollection("notifications")).doc(`${docId}_${cand}`).delete().catch(() => {});
+          }
+        }
+      }
+
       return NextResponse.json({ success: true });
     }
 
     if (all) {
-      for (const uidCandidate of candidates) {
-        try {
-          const res = await docClient.send(
-            new QueryCommand({
-              TableName: TABLE,
-              KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
-              ExpressionAttributeValues: {
-                ":pk": `USER#${uidCandidate}`,
-                ":prefix": "NOTIF#",
-              },
-            })
-          );
-
-          const items = res.Items ?? [];
-          // BatchWrite in chunks of 25 (DynamoDB limit)
-          for (let i = 0; i < items.length; i += 25) {
-            const chunk = items.slice(i, i + 25);
-            await docClient.send(
-              new BatchWriteCommand({
-                RequestItems: {
-                  [TABLE]: chunk.map((item) => ({
-                    DeleteRequest: { Key: { PK: item.PK, SK: item.SK } },
-                  })),
+      for (const table of candidateTables) {
+        for (const uidCandidate of candidates) {
+          try {
+            const res = await docClient.send(
+              new QueryCommand({
+                TableName: table,
+                KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+                ExpressionAttributeValues: {
+                  ":pk": `USER#${uidCandidate}`,
+                  ":prefix": "NOTIF#",
                 },
               })
             );
-          }
-        } catch (e) {
-          console.warn("[notifications DELETE] bulk delete notice for", uidCandidate, e);
+
+            const items = res.Items ?? [];
+            for (let i = 0; i < items.length; i += 25) {
+              const chunk = items.slice(i, i + 25);
+              await docClient.send(
+                new BatchWriteCommand({
+                  RequestItems: {
+                    [table]: chunk.map((item) => ({
+                      DeleteRequest: { Key: { PK: item.PK, SK: item.SK } },
+                    })),
+                  },
+                })
+              ).catch(() => {});
+            }
+          } catch {}
         }
       }
+
+      if (db) {
+        for (const cand of candidates) {
+          try {
+            const snaps = await Promise.all([
+              db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", cand).get().catch(() => null),
+              db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", cand).get().catch(() => null),
+            ]);
+            for (const s of snaps) {
+              if (s && !s.empty) {
+                const b = db.batch();
+                s.docs.forEach((d) => b.delete(d.ref));
+                await b.commit();
+              }
+            }
+          } catch {}
+        }
+      }
+
       return NextResponse.json({ success: true });
     }
 
@@ -335,4 +517,4 @@ export async function DELETE(req: NextRequest) {
     console.error("DELETE /api/notifications error:", error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
+}
