@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { ScanCommand, PutCommand, DeleteCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { getTableName } from "@/lib/tableNames";
+import { getMedalTally } from "@/lib/medalTallyService";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,8 @@ export async function GET(req: NextRequest) {
         briefSubtitle: "Top 5 stories to know today",
       };
 
+    const medalTally = await getMedalTally();
+
     // If a specific type was requested
     if (filterType === "morning_brief") {
       return NextResponse.json({ success: true, items: morningBrief });
@@ -65,6 +68,9 @@ export async function GET(req: NextRequest) {
     if (filterType === "radar_card") {
       return NextResponse.json({ success: true, items: radarCards });
     }
+    if (filterType === "medal_tally") {
+      return NextResponse.json({ success: true, item: medalTally });
+    }
 
     return NextResponse.json({
       success: true,
@@ -73,6 +79,7 @@ export async function GET(req: NextRequest) {
         morningBrief,
         todaysAgenda,
         radarCards,
+        medalTally,
       },
       counts: {
         morningBrief: morningBrief.length,

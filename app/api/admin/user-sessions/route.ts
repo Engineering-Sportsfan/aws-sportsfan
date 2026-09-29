@@ -7,11 +7,12 @@ import { ScanCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb"
 export const dynamic = "force-dynamic";
 
 function getTodayDateString(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 export async function GET(req: NextRequest) {
@@ -30,16 +31,31 @@ export async function GET(req: NextRequest) {
     try {
       if (dateParam && dateParam !== "all") {
         // Query specific date partition: entityId = USER_ACTIVITY#${dateParam}
-        const queryRes: any = await docClient.send(
-          new QueryCommand({
-            TableName: TABLES.IdentityAndAccess,
-            KeyConditionExpression: "entityId = :eId",
-            ExpressionAttributeValues: {
-              ":eId": `USER_ACTIVITY#${dateParam}`,
-            },
-          })
-        );
-        if (queryRes.Items) rawSessions.push(...queryRes.Items);
+        // Also query adjacent partition in case older logs were written with UTC date
+        const datesToQuery = [dateParam];
+        try {
+          const parts = dateParam.split("-").map(Number);
+          if (parts.length === 3) {
+            const dPrev = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] - 1));
+            const prevStr = dPrev.toISOString().split("T")[0];
+            if (prevStr && !datesToQuery.includes(prevStr)) {
+              datesToQuery.push(prevStr);
+            }
+          }
+        } catch {}
+
+        for (const dp of datesToQuery) {
+          const queryRes: any = await docClient.send(
+            new QueryCommand({
+              TableName: TABLES.IdentityAndAccess,
+              KeyConditionExpression: "entityId = :eId",
+              ExpressionAttributeValues: {
+                ":eId": `USER_ACTIVITY#${dp}`,
+              },
+            })
+          );
+          if (queryRes.Items) rawSessions.push(...queryRes.Items);
+        }
       } else {
         // Scan across all USER_ACTIVITY dates
         let lastEvaluatedKey: Record<string, any> | undefined = undefined;
@@ -92,18 +108,34 @@ export async function GET(req: NextRequest) {
       console.warn("Firestore user_sessions fallback notice:", fbErr?.message || fbErr);
     }
 
-    // 3. Normalize Session Objects
+    // 3. Normalize Session Objects in IST (Asia/Kolkata)
     const allSessions = rawSessions.map((item: any) => {
-      const timestamp = item.timestamp || item.createdAt || Date.now();
-      const date = item.date || new Date(timestamp).toISOString().split("T")[0];
-      const time =
-        item.time ||
-        new Date(timestamp).toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: true,
-        });
+      const rawTs = item.timestamp ?? item.createdAt;
+      const timestamp =
+        typeof rawTs === "number" && rawTs > 0
+          ? rawTs
+          : typeof rawTs === "string" && !isNaN(Number(rawTs)) && Number(rawTs) > 0
+          ? Number(rawTs)
+          : Date.now();
+
+      // Convert epoch timestamp to IST Date & Time
+      const istDate = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(timestamp));
+
+      const istTime = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      }).format(new Date(timestamp));
+
+      const date = istDate;
+      const time = istTime;
 
       return {
         activityId: item.activityId || `ACT_${timestamp}_${Math.random().toString(36).substring(2, 6)}`,
