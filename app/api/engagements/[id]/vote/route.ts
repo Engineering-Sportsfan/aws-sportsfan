@@ -993,8 +993,24 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // ─── Step 5: Save User Vote Record ────────────────────────────────────────
+    const userDisplayName =
+      userName ||
+      authUser?.name ||
+      (authUser as any)?.displayName ||
+      body.userDisplayName ||
+      (userId && userId.includes("@") ? userId.split("@")[0] : userId ? userId.replace(/^USER#/i, "") : "Fan");
+
+    const userProfileAvatar =
+      userAvatar ||
+      (authUser as any)?.avatar ||
+      (authUser as any)?.photoURL ||
+      body.userAvatar ||
+      null;
+
     const userRecord = {
       userId,
+      userName: userDisplayName,
+      userAvatar: userProfileAvatar,
       engagementId: id,
       type: item.type,
       selectedOptionId,

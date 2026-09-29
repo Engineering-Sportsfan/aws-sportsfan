@@ -741,6 +741,12 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Medal Tally", icon: "🏅", badge: "3 ENVS", badgeBg: "#e36209",
+        children: [
+          { href: "/admin/medaltally-management", label: "Medal Tally Dashboard" },
+        ],
+      },
+      {
         label: "Home Cards & Agenda", icon: "◉",
         children: [
           { href: "/admin/homecardmanagement", label: "Overview Dashboard" },

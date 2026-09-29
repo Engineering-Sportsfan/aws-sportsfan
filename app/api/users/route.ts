@@ -6,6 +6,104 @@ import { ScanCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb
 
 export const dynamic = "force-dynamic";
 
+function parseTimestamp(val: any): number | null {
+  if (val === null || val === undefined || val === "") return null;
+
+  // 1. If it's a Firestore Timestamp object with toDate() or _seconds
+  if (typeof val === "object") {
+    if (typeof val.toDate === "function") {
+      try {
+        const d = val.toDate();
+        if (d instanceof Date && !isNaN(d.getTime())) return d.getTime();
+      } catch {}
+    }
+    if (typeof val._seconds === "number") {
+      return val._seconds * 1000 + Math.floor((val._nanoseconds || 0) / 1000000);
+    }
+    if (typeof val.seconds === "number") {
+      return val.seconds * 1000 + Math.floor((val.nanoseconds || 0) / 1000000);
+    }
+  }
+
+  // 2. If it's a number
+  if (typeof val === "number") {
+    if (isNaN(val) || val <= 0) return null;
+    const ms = val < 10000000000 ? val * 1000 : val;
+    // Discard corrupt future timestamps beyond 1 day from now
+    if (ms > Date.now() + 86400000) return null;
+    return ms;
+  }
+
+  // 3. If it's a string
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (!trimmed || trimmed === "null" || trimmed === "undefined" || trimmed === "0") return null;
+
+    const num = Number(trimmed);
+    if (!isNaN(num) && num > 0) {
+      const ms = num < 10000000000 ? num * 1000 : num;
+      if (ms > Date.now() + 86400000) return null;
+      return ms;
+    }
+
+    const parsed = Date.parse(trimmed);
+    if (!isNaN(parsed) && parsed > 0) {
+      if (parsed > Date.now() + 86400000) return null;
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function resolveUserCreatedAt(u: any): number | null {
+  const candidates = [
+    u.createdAt,
+    u.registeredAt,
+    u.joinedAt,
+    u.created,
+    u.creationTime,
+    u.timestamp,
+  ];
+
+  for (const cand of candidates) {
+    const parsed = parseTimestamp(cand);
+    if (parsed) return parsed;
+  }
+
+  // Check if sk is USER#<timestamp>
+  if (typeof u.sk === "string" && u.sk.startsWith("USER#")) {
+    const rest = u.sk.replace(/^USER#/, "");
+    if (rest !== "META") {
+      const parsed = parseTimestamp(rest);
+      if (parsed) return parsed;
+    }
+  }
+
+  // Fallback to lastLoginAt or updatedAt if available as past timestamp
+  const fallback = parseTimestamp(u.lastLoginAt) || parseTimestamp(u.updatedAt);
+  if (fallback) return fallback;
+
+  return null;
+}
+
+function resolveUserLastLoginAt(u: any, resolvedCreatedAt: number | null): number | null {
+  const candidates = [
+    u.lastLoginAt,
+    u.lastLogin,
+    u.lastActive,
+    u.lastActiveAt,
+    u.updatedAt,
+  ];
+
+  for (const cand of candidates) {
+    const parsed = parseTimestamp(cand);
+    if (parsed) return parsed;
+  }
+
+  return resolvedCreatedAt;
+}
+
 export async function GET() {
   try {
     // 1. Scan DynamoDB IdentityAndAccess with full pagination
@@ -59,12 +157,16 @@ export async function GET() {
 
       const existing = usersMap.get(email);
       // Prefer canonical sk: USER#META record over timestamp records
-      if (!existing || item.sk === "USER#META") {
-        usersMap.set(email, {
-          ...(existing || {}),
-          ...item,
-          email,
-        });
+      if (!existing) {
+        usersMap.set(email, { ...item, email });
+      } else if (item.sk === "USER#META") {
+        const merged = { ...existing };
+        for (const [k, v] of Object.entries(item)) {
+          if (v !== undefined && v !== null && v !== "") {
+            merged[k] = v;
+          }
+        }
+        usersMap.set(email, merged);
       } else {
         // Merge attributes if missing
         usersMap.set(email, {
@@ -93,6 +195,7 @@ export async function GET() {
         if (!existing.lastName && fsUser.lastName) existing.lastName = fsUser.lastName;
         if (!existing.createdAt && fsUser.createdAt) existing.createdAt = fsUser.createdAt;
         if (!existing.lastLoginAt && fsUser.lastLoginAt) existing.lastLoginAt = fsUser.lastLoginAt;
+        if (!existing.updatedAt && fsUser.updatedAt) existing.updatedAt = fsUser.updatedAt;
       }
     }
 
@@ -111,6 +214,8 @@ export async function GET() {
       }
 
       const resolvedAvatar = u.avatarUrl || u.avatar || u.photoURL || u.picture || u.image || "";
+      const resolvedCreatedAt = resolveUserCreatedAt(u);
+      const resolvedLastLoginAt = resolveUserLastLoginAt(u, resolvedCreatedAt);
 
       return {
         email: u.email,
@@ -128,13 +233,18 @@ export async function GET() {
         authMethod,
         isVerified: u.isVerified !== false,
         totalPoints: u.totalPoints || 0,
-        createdAt: u.createdAt || Date.now(),
-        lastLoginAt: u.lastLoginAt || u.updatedAt || u.createdAt || Date.now(),
+        createdAt: resolvedCreatedAt,
+        lastLoginAt: resolvedLastLoginAt,
       };
     });
 
-    // 5. Sort: Most recent signups / logins at the top
-    users.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    // 5. Sort: Most recent signups at the top (with valid past timestamps first, then lastLoginAt)
+    users.sort((a, b) => {
+      const timeB = b.createdAt || 0;
+      const timeA = a.createdAt || 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return (b.lastLoginAt || 0) - (a.lastLoginAt || 0);
+    });
 
     return NextResponse.json(
       { users, total: users.length },
