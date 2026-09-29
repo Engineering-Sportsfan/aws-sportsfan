@@ -9,8 +9,8 @@ type User = {
   name?: string;
   avatar?: string;
   authMethod?: string;
-  createdAt: number;
-  lastLoginAt?: number;
+  createdAt?: number | null;
+  lastLoginAt?: number | null;
   status: "active" | "disabled";
   role: "user" | "moderator" | "admin" | "host";
 };
@@ -49,6 +49,36 @@ type SessionStats = {
   currentFilteredCount: number;
 };
 
+function formatIstTime(timeStr?: string, timestamp?: number): string {
+  if (timestamp && typeof timestamp === "number" && timestamp > 0) {
+    return (
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      }).format(new Date(timestamp)) + " IST"
+    );
+  }
+  if (timeStr) {
+    return timeStr.includes("IST") ? timeStr : `${timeStr} IST`;
+  }
+  return "—";
+}
+
+function formatIstDate(dateStr?: string, timestamp?: number): string {
+  if (timestamp && typeof timestamp === "number" && timestamp > 0) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(timestamp));
+  }
+  return dateStr || "—";
+}
+
 export default function SignupsAndActivityPage() {
   // Active Tab: "activity" (Date-wise Logs) or "users" (User Directory)
   const [activeTab, setActiveTab] = useState<"activity" | "users">("activity");
@@ -60,6 +90,8 @@ export default function SignupsAndActivityPage() {
   const [updatingUser, setUpdatingUser] = useState<string | null>(null);
   const [userSearch, setUserSearch] = useState("");
   const [methodFilter, setMethodFilter] = useState<string>("all");
+  const [userSortField, setUserSortField] = useState<"createdAt" | "lastLoginAt" | "name" | "email">("createdAt");
+  const [userSortOrder, setUserSortOrder] = useState<"desc" | "asc">("desc");
 
   // Activity Logs State
   const [sessions, setSessions] = useState<SessionActivity[]>([]);
@@ -85,14 +117,23 @@ export default function SignupsAndActivityPage() {
   const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>({});
 
   const todayStr = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
   }, []);
 
   const yesterdayStr = useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
   }, []);
 
   useEffect(() => {
@@ -210,10 +251,10 @@ export default function SignupsAndActivityPage() {
       return;
     }
 
-    const headers = ["Date", "Time", "User ID", "Email", "Name", "Action", "IP Address", "Location", "Device", "Timestamp"];
+    const headers = ["Date (IST)", "Time (IST)", "User ID", "Email", "Name", "Action", "IP Address", "Location", "Device", "Timestamp"];
     const rows = filteredSessions.map(s => [
-      `"${s.date}"`,
-      `"${s.time}"`,
+      `"${formatIstDate(s.date, s.timestamp)}"`,
+      `"${formatIstTime(s.time, s.timestamp)}"`,
       `"${s.userId}"`,
       `"${s.email}"`,
       `"${s.userName.replace(/"/g, '""')}"`,
@@ -325,22 +366,46 @@ export default function SignupsAndActivityPage() {
     }
   }
 
-  // Filtered Users Directory
-  const filteredUsers = users.filter(u => {
-    const query = userSearch.toLowerCase();
-    const matchesSearch =
-      (u.name || "").toLowerCase().includes(query) ||
-      (u.firstName || "").toLowerCase().includes(query) ||
-      (u.lastName || "").toLowerCase().includes(query) ||
-      (u.email || "").toLowerCase().includes(query) ||
-      (u.authMethod || "").toLowerCase().includes(query) ||
-      (u.role || "").toLowerCase().includes(query);
+  // Filtered & Sorted Users Directory
+  const filteredUsers = useMemo(() => {
+    const list = users.filter(u => {
+      const query = userSearch.toLowerCase();
+      const matchesSearch =
+        (u.name || "").toLowerCase().includes(query) ||
+        (u.firstName || "").toLowerCase().includes(query) ||
+        (u.lastName || "").toLowerCase().includes(query) ||
+        (u.email || "").toLowerCase().includes(query) ||
+        (u.authMethod || "").toLowerCase().includes(query) ||
+        (u.role || "").toLowerCase().includes(query);
 
-    if (methodFilter === "all") return matchesSearch;
-    if (methodFilter === "google") return matchesSearch && u.authMethod?.includes("Google");
-    if (methodFilter === "email") return matchesSearch && (u.authMethod?.includes("Email") || u.authMethod?.includes("Password"));
-    return matchesSearch;
-  });
+      if (methodFilter === "all") return matchesSearch;
+      if (methodFilter === "google") return matchesSearch && u.authMethod?.includes("Google");
+      if (methodFilter === "email") return matchesSearch && (u.authMethod?.includes("Email") || u.authMethod?.includes("Password"));
+      return matchesSearch;
+    });
+
+    return list.sort((a, b) => {
+      if (userSortField === "createdAt") {
+        const timeA = a.createdAt || 0;
+        const timeB = b.createdAt || 0;
+        return userSortOrder === "desc" ? timeB - timeA : timeA - timeB;
+      }
+      if (userSortField === "lastLoginAt") {
+        const timeA = a.lastLoginAt || 0;
+        const timeB = b.lastLoginAt || 0;
+        return userSortOrder === "desc" ? timeB - timeA : timeA - timeB;
+      }
+      if (userSortField === "name") {
+        const nameA = (a.name || a.email).toLowerCase();
+        const nameB = (b.name || b.email).toLowerCase();
+        return userSortOrder === "desc" ? nameB.localeCompare(nameA) : nameA.localeCompare(nameB);
+      }
+      if (userSortField === "email") {
+        return userSortOrder === "desc" ? b.email.localeCompare(a.email) : a.email.localeCompare(b.email);
+      }
+      return 0;
+    });
+  }, [users, userSearch, methodFilter, userSortField, userSortOrder]);
 
   const totalActiveUsers = users.filter(u => u.status === "active").length;
   const totalGoogleUsers = users.filter(u => u.authMethod?.includes("Google")).length;
@@ -625,7 +690,7 @@ export default function SignupsAndActivityPage() {
                 label: "Today's Logins",
                 value: activityStats.totalLoginsToday,
                 color: "#2ea043",
-                desc: `Date: ${todayStr}`,
+                desc: `Date: ${todayStr} (IST)`,
                 icon: "🟢",
               },
               {
@@ -953,8 +1018,12 @@ export default function SignupsAndActivityPage() {
 
                             {/* Date & Time */}
                             <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                              <div style={{ fontSize: 12, fontWeight: 600, color: "#e6edf3" }}>{session.time}</div>
-                              <div style={{ fontSize: 10, color: "#8b949e", fontFamily: "var(--font-mono)" }}>{session.date}</div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#e6edf3" }}>
+                                {formatIstTime(session.time, session.timestamp)}
+                              </div>
+                              <div style={{ fontSize: 10, color: "#8b949e", fontFamily: "var(--font-mono)" }}>
+                                {formatIstDate(session.date, session.timestamp)}
+                              </div>
                             </td>
 
                             {/* Action Badge */}
@@ -1232,7 +1301,7 @@ export default function SignupsAndActivityPage() {
                                   >
                                     {item.action.toUpperCase()}
                                   </span>
-                                  <span style={{ fontWeight: 600, color: "#e6edf3" }}>{item.time}</span>
+                                  <span style={{ fontWeight: 600, color: "#e6edf3" }}>{formatIstTime(item.time, item.timestamp)}</span>
                                 </div>
 
                                 <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "#8b949e" }}>
@@ -1336,6 +1405,36 @@ export default function SignupsAndActivityPage() {
                 ))}
               </div>
 
+              {/* Sort Selector */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "#7d8590" }}>Sort:</span>
+                <select
+                  value={`${userSortField}_${userSortOrder}`}
+                  onChange={e => {
+                    const [f, o] = e.target.value.split("_") as [any, any];
+                    setUserSortField(f);
+                    setUserSortOrder(o);
+                  }}
+                  style={{
+                    background: "#21262d",
+                    color: "#e6edf3",
+                    border: "1px solid #30363d",
+                    borderRadius: 6,
+                    padding: "4px 8px",
+                    fontSize: 11,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <option value="createdAt_desc">Signed Up (Newest First)</option>
+                  <option value="createdAt_asc">Signed Up (Oldest First)</option>
+                  <option value="lastLoginAt_desc">Last Login (Most Recent First)</option>
+                  <option value="lastLoginAt_asc">Last Login (Oldest First)</option>
+                  <option value="name_asc">Name (A → Z)</option>
+                  <option value="email_asc">Email (A → Z)</option>
+                </select>
+              </div>
+
               <div style={{ marginLeft: "auto", fontSize: 12, color: "#7d8590" }}>
                 {filteredUsers.length} of {users.length} users
               </div>
@@ -1346,23 +1445,55 @@ export default function SignupsAndActivityPage() {
               <table>
                 <thead>
                   <tr style={{ background: "#1c2330", borderBottom: "1px solid #21282f" }}>
-                    {["#", "User", "Email", "Login / Signup Method", "Role", "Signed Up", "Last Login", "Status", "Actions"].map(h => (
-                      <th
-                        key={h}
-                        style={{
-                          textAlign: "left",
-                          padding: "10px 14px",
-                          fontSize: 10,
-                          fontWeight: 600,
-                          letterSpacing: ".07em",
-                          textTransform: "uppercase",
-                          color: "#7d8590",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {h}
-                      </th>
-                    ))}
+                    {[
+                      { key: "index", label: "#", sortable: false },
+                      { key: "name", label: "User", sortable: true },
+                      { key: "email", label: "Email", sortable: true },
+                      { key: "method", label: "Login / Signup Method", sortable: false },
+                      { key: "role", label: "Role", sortable: false },
+                      { key: "createdAt", label: "Signed Up", sortable: true },
+                      { key: "lastLoginAt", label: "Last Login", sortable: true },
+                      { key: "status", label: "Status", sortable: false },
+                      { key: "actions", label: "Actions", sortable: false },
+                    ].map(col => {
+                      const isCurrent = userSortField === col.key;
+                      return (
+                        <th
+                          key={col.key}
+                          onClick={() => {
+                            if (!col.sortable) return;
+                            if (userSortField === col.key) {
+                              setUserSortOrder(prev => (prev === "desc" ? "asc" : "desc"));
+                            } else {
+                              setUserSortField(col.key as any);
+                              setUserSortOrder("desc");
+                            }
+                          }}
+                          style={{
+                            textAlign: "left",
+                            padding: "10px 14px",
+                            fontSize: 10,
+                            fontWeight: 600,
+                            letterSpacing: ".07em",
+                            textTransform: "uppercase",
+                            color: isCurrent ? "#58a6ff" : "#7d8590",
+                            whiteSpace: "nowrap",
+                            cursor: col.sortable ? "pointer" : "default",
+                            userSelect: "none",
+                          }}
+                          title={col.sortable ? `Click to sort by ${col.label}` : undefined}
+                        >
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            {col.label}
+                            {col.sortable && (
+                              <span style={{ fontSize: 9, opacity: isCurrent ? 1 : 0.4 }}>
+                                {isCurrent ? (userSortOrder === "desc" ? "▼" : "▲") : "↕"}
+                              </span>
+                            )}
+                          </span>
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -1529,21 +1660,23 @@ export default function SignupsAndActivityPage() {
 
                           {/* Signed Up */}
                           <td style={{ padding: "10px 14px", fontFamily: "var(--font-mono)", fontSize: 11, color: "#8b949e", whiteSpace: "nowrap" }}>
-                            {u.createdAt
+                            {u.createdAt && u.createdAt > 0
                               ? new Date(u.createdAt).toLocaleString("en-IN", {
+                                  timeZone: "Asia/Kolkata",
                                   dateStyle: "medium",
                                   timeStyle: "short",
-                                })
+                                }) + " IST"
                               : "—"}
                           </td>
 
                           {/* Last Login */}
                           <td style={{ padding: "10px 14px", fontFamily: "var(--font-mono)", fontSize: 11, color: "#8b949e", whiteSpace: "nowrap" }}>
-                            {u.lastLoginAt
+                            {u.lastLoginAt && u.lastLoginAt > 0
                               ? new Date(u.lastLoginAt).toLocaleString("en-IN", {
+                                  timeZone: "Asia/Kolkata",
                                   dateStyle: "medium",
                                   timeStyle: "short",
-                                })
+                                }) + " IST"
                               : "—"}
                           </td>
 

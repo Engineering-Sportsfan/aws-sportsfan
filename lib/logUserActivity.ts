@@ -124,20 +124,25 @@ function extractLocation(req?: NextRequest | Request, ip?: string): string {
 }
 
 /**
- * Format timestamp into YYYY-MM-DD and hh:mm:ss A in standard local/IST timezone
+ * Format timestamp into YYYY-MM-DD and hh:mm:ss A in Indian Standard Time (IST, Asia/Kolkata)
  */
 function formatDateAndTime(now: Date): { date: string; time: string } {
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const dateStr = `${year}-${month}-${day}`;
+  // Use en-CA for standard YYYY-MM-DD in Asia/Kolkata
+  const dateStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
 
-  const timeStr = now.toLocaleTimeString("en-US", {
+  // Use en-US for 12-hour hh:mm:ss A in Asia/Kolkata
+  const timeStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: true,
-  });
+  }).format(now);
 
   return { date: dateStr, time: timeStr };
 }

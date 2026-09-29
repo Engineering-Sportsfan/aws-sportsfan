@@ -7,6 +7,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { getUser } from "@/lib/getUser";
+import { dispatchFlipArenaNotification } from "@/lib/fliparenaNotifications";
 
 export const dynamic = "force-dynamic";
 
@@ -203,6 +204,40 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             createdAt: now,
           });
         } catch {}
+      }
+
+      // 4. Dispatch FlipArena Notification to Creator (Async / Non-blocking)
+      const recipientId =
+        item.creatorId ||
+        item.creatorEmail ||
+        item.userId ||
+        item.authorId ||
+        item.createdBy;
+
+      if (recipientId && String(recipientId) !== String(userId)) {
+        const actorName =
+          authUser?.name ||
+          body?.userName ||
+          body?.actorName ||
+          (userId.includes("@") ? userId.split("@")[0] : "A sports fan");
+        const actorAvatar =
+          authUser?.photoURL ||
+          body?.userAvatar ||
+          body?.actorAvatar ||
+          `https://api.dicebear.com/7.x/bottts/svg?seed=${userId}`;
+
+        dispatchFlipArenaNotification({
+          type: "fliparena.post_liked",
+          actorId: userId,
+          actorName,
+          actorAvatar,
+          recipientId: String(recipientId),
+          engagementId: id,
+          engagementType: item.type || "quiz",
+          engagementTitle: item.title || item.memeData?.title || item.subtitle || "Engagement",
+        }).catch((notifErr) => {
+          console.warn("[POST /api/engagements/[id]/like] Notification dispatch notice:", notifErr);
+        });
       }
     } else {
       // Standardized delete: contentId = ENGAGEMENT#{id}, sk = LIKE#{userId}
