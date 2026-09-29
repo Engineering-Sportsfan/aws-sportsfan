@@ -144,8 +144,13 @@ export async function GET(req: NextRequest) {
     }
 
     // 3. Hydrate user interactions (userLiked, userVoted, userVote) matching candidate IDs
+    const targetUserId = searchParams.get("userId");
     const candidateIds = Array.from(
-      new Set([authUser?.userId, authUser?.email, searchParams.get("userId")].filter(Boolean))
+      new Set(
+        targetUserId
+          ? [targetUserId, targetUserId.includes("@") ? targetUserId.replace(/[@.]/g, "_") : null].filter(Boolean)
+          : [authUser?.userId, authUser?.email].filter(Boolean)
+      )
     ) as string[];
 
     if (candidateIds.length > 0 && items.length > 0) {

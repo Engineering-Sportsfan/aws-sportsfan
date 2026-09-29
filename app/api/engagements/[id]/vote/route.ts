@@ -8,6 +8,7 @@ import { GetCommand, UpdateCommand, PutCommand, QueryCommand } from "@aws-sdk/li
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
+import { dispatchFlipArenaNotification } from "@/lib/fliparenaNotifications";
 
 export const dynamic = "force-dynamic";
 
@@ -593,6 +594,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
             existingVote.accuracyBonusAwarded = true;
             existingVote.wonBonusPoints = 10;
+
+            // Dispatch notification to user for winning accuracy bonus
+            dispatchFlipArenaNotification({
+              type: "fliparena.prediction_won",
+              actorId: "system",
+              actorName: "SportsFan360",
+              recipientId: awardUid,
+              engagementId: id,
+              engagementType: engagementItem.type || "prediction",
+              engagementTitle: engagementItem.title || "Prediction",
+              bonusPoints: 10,
+              priority: "HIGH",
+            }).catch((err) => console.warn("[FlipArena prediction_won notice]:", err));
           } catch (e) {
             console.warn("POST claim bonus error:", e);
           }
@@ -979,8 +993,24 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // ─── Step 5: Save User Vote Record ────────────────────────────────────────
+    const userDisplayName =
+      userName ||
+      authUser?.name ||
+      (authUser as any)?.displayName ||
+      body.userDisplayName ||
+      (userId && userId.includes("@") ? userId.split("@")[0] : userId ? userId.replace(/^USER#/i, "") : "Fan");
+
+    const userProfileAvatar =
+      userAvatar ||
+      (authUser as any)?.avatar ||
+      (authUser as any)?.photoURL ||
+      body.userAvatar ||
+      null;
+
     const userRecord = {
       userId,
+      userName: userDisplayName,
+      userAvatar: userProfileAvatar,
       engagementId: id,
       type: item.type,
       selectedOptionId,
@@ -1165,6 +1195,55 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       } catch (lbFbErr) {
         console.warn("Firestore quiz leaderboard update notice:", lbFbErr);
       }
+    }
+
+    // ─── Step 7: Dispatch FlipArena Notifications (Async / Non-blocking) ──────
+    // 1. Notify Creator of Vote / Meme Reaction / Quiz Play
+    const recipientId =
+      item.creatorId ||
+      item.creatorEmail ||
+      item.userId ||
+      item.authorId ||
+      item.createdBy;
+
+    if (recipientId && String(recipientId) !== String(userId)) {
+      const actorName =
+        displayName ||
+        (userId.includes("@") ? userId.split("@")[0] : "A sports fan");
+      const actorAvatar =
+        avatar ||
+        `https://api.dicebear.com/7.x/bottts/svg?seed=${userId}`;
+
+      dispatchFlipArenaNotification({
+        type: item.type === "meme" ? "fliparena.meme_reaction" : "fliparena.post_voted",
+        actorId: userId,
+        actorName,
+        actorAvatar,
+        recipientId: String(recipientId),
+        engagementId: id,
+        engagementType: item.type || "quiz",
+        engagementTitle: item.title || item.memeData?.title || item.subtitle || "Engagement",
+        reactionEmoji: item.type === "meme" ? selectedOptionId : undefined,
+      }).catch((notifErr) => {
+        console.warn("[POST /api/engagements/[id]/vote] Creator notification dispatch notice:", notifErr);
+      });
+    }
+
+    // 2. Notify Quiz Player if they answered correctly and won +10 SXPs
+    if (isQuiz && isCorrect) {
+      dispatchFlipArenaNotification({
+        type: "fliparena.prediction_won",
+        actorId: "system",
+        actorName: "SportsFan360",
+        recipientId: userId,
+        engagementId: id,
+        engagementType: "quiz",
+        engagementTitle: item.title || "Quiz",
+        bonusPoints: 10,
+        priority: "HIGH",
+      }).catch((notifErr) => {
+        console.warn("[POST /api/engagements/[id]/vote] Quiz win notification dispatch notice:", notifErr);
+      });
     }
 
     return NextResponse.json(responseData);
