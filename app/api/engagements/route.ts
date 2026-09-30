@@ -131,6 +131,30 @@ export async function GET(req: NextRequest) {
 
     let items = Array.from(itemsMap.values());
 
+    // Helper to resolve the latest numeric timestamp for sorting
+    const getItemTimestamp = (it: any) => {
+      const raw =
+        it.createdAt ||
+        it.updatedAt ||
+        (it as any).postingTime ||
+        (it as any).postedAt ||
+        it.quizData?.startTime ||
+        it.quizData?.scheduledStartTime ||
+        it.pollData?.startTime ||
+        it.pollData?.scheduledStartTime ||
+        it.predictionData?.startTime ||
+        it.predictionData?.scheduledStartTime ||
+        it.fanBattleData?.startTime ||
+        it.fanBattleData?.scheduledStartTime ||
+        0;
+      if (typeof raw === "number") return raw;
+      const parsed = new Date(raw).getTime();
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Sort descending so the latest created engagements are at the top
+    items.sort((a, b) => getItemTimestamp(b) - getItemTimestamp(a));
+
     // Apply Filters
     if (type && type !== ("all" as any)) {
       items = items.filter(i => (i.type || "").toLowerCase() === type.toLowerCase());
@@ -307,10 +331,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Type is required" }, { status: 400 });
     }
 
-    if (!isMeme && !title) {
-      return NextResponse.json({ error: "Type and Title are required" }, { status: 400 });
-    }
-
     const resolvedImageUrl =
       uploadedMediaUrl ||
       imageUrl ||
@@ -430,7 +450,18 @@ export async function POST(req: NextRequest) {
           }
         : undefined;
 
-    const finalTitle = title || (isMeme ? formattedMemeData?.title || formattedMemeData?.caption || "Meme Arena" : "");
+    const finalTitle =
+      (title || "").trim() ||
+      (type === "quiz" ? formattedQuizData?.question || formattedQuizData?.questions?.[0]?.question || "Live Cricket Quiz" : "") ||
+      (type === "poll" ? formattedPollData?.question || "Live Fan Poll" : "") ||
+      (type === "prediction" ? formattedPredData?.question || "Live Match Prediction" : "") ||
+      (type === "fan_battle" ? (fanBattleData ? `${fanBattleData.leftCompetitor?.name || "Player 1"} vs ${fanBattleData.rightCompetitor?.name || "Player 2"}` : "Fan Battle") : "") ||
+      (isMeme ? formattedMemeData?.title || formattedMemeData?.caption || "Meme Arena" : "") ||
+      "Live Arena Event";
+
+    if (!isMeme && !finalTitle) {
+      return NextResponse.json({ error: "Title or Question is required" }, { status: 400 });
+    }
 
     const newEngagement: EngagementItem = {
       id,
