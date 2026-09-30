@@ -71,6 +71,7 @@ export async function GET(req: NextRequest) {
                 creatorId: it.creatorId || undefined,
                 creatorEmail: it.creatorEmail || undefined,
                 creatorName: it.creatorName || undefined,
+                creatorAvatar: it.creatorAvatar || undefined,
               });
             }
           }
@@ -119,6 +120,7 @@ export async function GET(req: NextRequest) {
               creatorId: it.creatorId || undefined,
               creatorEmail: it.creatorEmail || undefined,
               creatorName: it.creatorName || undefined,
+              creatorAvatar: it.creatorAvatar || undefined,
             });
           }
         }
@@ -343,6 +345,7 @@ export async function POST(req: NextRequest) {
       ""
     ).trim().toLowerCase();
     const creatorName = authUser?.name || body.userName || body.creatorName || "";
+    const creatorAvatar = (authUser as any)?.avatarUrl || (authUser as any)?.picture || (authUser as any)?.photoURL || body.userAvatar || body.creatorAvatar || "";
 
     // Set default tags based on type if omitted
     let computedTags = tags;
@@ -440,6 +443,7 @@ export async function POST(req: NextRequest) {
       creatorId: creatorId || undefined,
       creatorEmail: creatorEmail || undefined,
       creatorName: creatorName || undefined,
+      creatorAvatar: creatorAvatar || undefined,
       fanBattleData: type === "fan_battle" ? fanBattleData : undefined,
       quizData: formattedQuizData,
       pollData: formattedPollData,
