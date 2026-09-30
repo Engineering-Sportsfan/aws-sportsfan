@@ -61,6 +61,11 @@ class InMemoryDynamoDBStore {
       const updated = { ...existing };
       if (values[":body"]) updated.body = values[":body"];
       if (values[":cnt"]) updated.aggregation_count = values[":cnt"];
+      if (values[":dCnt"]) {
+        updated.aggregation_count = values[":dCnt"];
+        updated.dropped_count = values[":dCnt"];
+      }
+      if (values[":dTypes"]) updated.dropped_types = values[":dTypes"];
       if (values[":actId"]) updated.actor_id = values[":actId"];
       if (values[":actName"]) updated.actor_name = values[":actName"];
       if (values[":actAvatar"]) updated.actor_avatar = values[":actAvatar"];
@@ -292,6 +297,59 @@ async function runFlipArenaNotificationTestSuite() {
     assert(updatedTarget?.read === true, "Notification read status updated to true");
     assert(updatedTarget?.GSI2PK === undefined, "Sparse unread index GSI2PK successfully removed");
 
+    // ─── TEST 8: 60-Minute Content Drop Notification Aggregation ───────────────
+    console.log("\n--- TEST 8: 60-Minute Content Drop Notification Aggregation ---");
+    const { dispatchFlipArenaContentDropNotification, formatContentDropMessage } = await import("../lib/fliparenaNotifications");
+
+    // 8.1 Format message tests
+    const msg1 = formatContentDropMessage(["quiz"]);
+    assert(msg1.body === "New Quiz dropped in FlipArena! Test your sports knowledge and earn bonus SXPs.", `Msg 1 body: ${msg1.body}`);
+
+    const msg2 = formatContentDropMessage(["quiz", "poll"]);
+    assert(msg2.body === "New Quiz & Poll dropped in FlipArena! Test your sports knowledge, vote & earn bonus SXPs.", `Msg 2 body: ${msg2.body}`);
+
+    const msg3 = formatContentDropMessage(["quiz", "poll", "meme"]);
+    assert(msg3.body === "New Quiz, Poll & Memes dropped in FlipArena! Test your sports knowledge, vote & earn bonus SXPs.", `Msg 3 body: ${msg3.body}`);
+
+    // 8.2 End-to-end 60-min window aggregation
+    const testRecipient = "fan_target_123";
+    await dispatchFlipArenaContentDropNotification({
+      engagementId: "eng_quiz_drop_1",
+      engagementType: "quiz",
+      engagementTitle: "IPL Mega Quiz",
+      recipientIds: [testRecipient],
+    });
+
+    const dropNotifs1 = mockDb.getItems().filter((i) => i.PK === `USER#${testRecipient}` && i.notification_type === "fliparena.content_dropped");
+    assert(dropNotifs1.length === 1, `1 drop notification created initially (found: ${dropNotifs1.length})`);
+    assert(dropNotifs1[0]?.body?.includes("New Quiz dropped"), `Body has Quiz: ${dropNotifs1[0]?.body}`);
+
+    // Drop second item (poll) within 60 mins -> should collapse and update the same notification
+    await dispatchFlipArenaContentDropNotification({
+      engagementId: "eng_poll_drop_2",
+      engagementType: "poll",
+      engagementTitle: "Match Winner Poll",
+      recipientIds: [testRecipient],
+    });
+
+    const dropNotifs2 = mockDb.getItems().filter((i) => i.PK === `USER#${testRecipient}` && i.notification_type === "fliparena.content_dropped");
+    assert(dropNotifs2.length === 1, `Still only 1 consolidated notification after second drop (found: ${dropNotifs2.length})`);
+    assert(dropNotifs2[0]?.body?.includes("New Quiz & Poll dropped"), `Updated body contains both Quiz & Poll: ${dropNotifs2[0]?.body}`);
+    assert(dropNotifs2[0]?.aggregation_count === 2, `Aggregation count === 2`);
+
+    // Drop third item (meme) within 60 mins -> collapses into Quiz, Poll & Memes
+    await dispatchFlipArenaContentDropNotification({
+      engagementId: "eng_meme_drop_3",
+      engagementType: "meme",
+      engagementTitle: "Funny Match Meme",
+      recipientIds: [testRecipient],
+    });
+
+    const dropNotifs3 = mockDb.getItems().filter((i) => i.PK === `USER#${testRecipient}` && i.notification_type === "fliparena.content_dropped");
+    assert(dropNotifs3.length === 1, `Still only 1 consolidated notification after 3 drops (found: ${dropNotifs3.length})`);
+    assert(dropNotifs3[0]?.body?.includes("New Quiz, Poll & Memes dropped"), `Updated body contains Quiz, Poll & Memes: ${dropNotifs3[0]?.body}`);
+    assert(dropNotifs3[0]?.aggregation_count === 3, `Aggregation count === 3`);
+
     console.log("\n==================================================================");
     console.log(`🎉 ALL TESTS COMPLETED: ${passed} PASSED, ${failed} FAILED`);
     console.log("==================================================================");
@@ -308,3 +366,4 @@ async function runFlipArenaNotificationTestSuite() {
 }
 
 runFlipArenaNotificationTestSuite();
+

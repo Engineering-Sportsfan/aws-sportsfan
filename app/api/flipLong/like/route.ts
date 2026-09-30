@@ -240,7 +240,7 @@ export async function GET(req: NextRequest) {
           }
         }
       }
-    } catch {}
+    } catch { }
 
     if (!videoItem && db) {
       try {
@@ -249,7 +249,7 @@ export async function GET(req: NextRequest) {
         if (doc.exists) {
           videoItem = { id: doc.id, ...doc.data() };
         }
-      } catch {}
+      } catch { }
     }
 
     const likes = Number(videoItem?.likes ?? videoItem?.likeCount ?? 0);
