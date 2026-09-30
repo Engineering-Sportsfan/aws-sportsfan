@@ -8,6 +8,7 @@ import { ScanCommand, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-
 import { EngagementItem, EngagementType, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
+import { dispatchFlipArenaContentDropNotification } from "@/lib/fliparenaNotifications";
 import cloudinary from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
@@ -478,6 +479,20 @@ export async function POST(req: NextRequest) {
       } catch (awardErr) {
         console.warn("[POST /api/engagements] Creator points award notice:", awardErr);
       }
+    }
+
+    // Dispatch 60-Minute Aggregated Content Drop Notification to fans
+    try {
+      await dispatchFlipArenaContentDropNotification({
+        engagementId: id,
+        engagementType: type,
+        engagementTitle: finalTitle,
+        creatorId,
+        creatorName,
+        creatorAvatar: newEngagement.creatorAvatar,
+      });
+    } catch (dropNotifErr) {
+      console.warn("[POST /api/engagements] Content drop notification notice:", dropNotifErr);
     }
 
     return NextResponse.json({

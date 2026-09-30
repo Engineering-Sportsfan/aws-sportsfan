@@ -347,3 +347,290 @@ export async function dispatchFlipArenaNotification(
   return writtenDynamo ? notifId : notifId;
 }
 
+export interface ContentDropPayload {
+  engagementId: string;
+  engagementType: "quiz" | "poll" | "fan_battle" | "battle" | "prediction" | "meme" | string;
+  engagementTitle?: string;
+  creatorId?: string;
+  creatorName?: string;
+  creatorAvatar?: string;
+  recipientIds?: string[];
+}
+
+/**
+ * Formats dynamic, anti-spam consolidated notification copy based on distinct dropped types
+ */
+export function formatContentDropMessage(types: string[]): { title: string; body: string; ctaLabel: string } {
+  const uniqueTypes = Array.from(
+    new Set(
+      types.map((t) => {
+        const c = t.toLowerCase().trim();
+        if (c === "fan_battle" || c === "battle") return "battle";
+        return c;
+      })
+    )
+  );
+
+  const hasQuiz = uniqueTypes.includes("quiz");
+  const hasPoll = uniqueTypes.includes("poll");
+  const hasMeme = uniqueTypes.includes("meme");
+  const hasBattle = uniqueTypes.includes("battle");
+  const hasPrediction = uniqueTypes.includes("prediction");
+
+  const typeNames: string[] = [];
+  if (hasQuiz) typeNames.push("Quiz");
+  if (hasPoll) typeNames.push("Poll");
+  if (hasBattle) typeNames.push("Fan Battle");
+  if (hasPrediction) typeNames.push("Prediction");
+  if (hasMeme) typeNames.push("Memes");
+
+  let typePhrase = "New Challenges";
+  let actionPhrase = "Tap to participate and earn bonus SXPs.";
+
+  if (typeNames.length === 1) {
+    const single = typeNames[0];
+    if (single === "Quiz") {
+      typePhrase = "New Quiz";
+      actionPhrase = "Test your sports knowledge and earn bonus SXPs.";
+    } else if (single === "Poll") {
+      typePhrase = "New Poll";
+      actionPhrase = "Vote now and earn bonus SXPs.";
+    } else if (single === "Memes") {
+      typePhrase = "New Memes";
+      actionPhrase = "React to the latest drops and earn bonus SXPs.";
+    } else if (single === "Fan Battle") {
+      typePhrase = "New Fan Battle";
+      actionPhrase = "Pick your side and earn bonus SXPs.";
+    } else if (single === "Prediction") {
+      typePhrase = "New Match Prediction";
+      actionPhrase = "Predict outcomes and win bonus SXPs.";
+    }
+  } else if (typeNames.length === 2) {
+    typePhrase = `New ${typeNames[0]} & ${typeNames[1]}`;
+    if (hasQuiz && hasPoll) {
+      actionPhrase = "Test your sports knowledge, vote & earn bonus SXPs.";
+    } else if (hasQuiz && hasMeme) {
+      actionPhrase = "Test your knowledge, react & earn bonus SXPs.";
+    } else if (hasPoll && hasMeme) {
+      actionPhrase = "Vote, react & earn bonus SXPs.";
+    } else {
+      actionPhrase = "Play now to earn bonus SXPs.";
+    }
+  } else {
+    // 3 or more types (e.g. Quiz, Poll & Memes)
+    const last = typeNames[typeNames.length - 1];
+    const rest = typeNames.slice(0, -1).join(", ");
+    typePhrase = `New ${rest} & ${last}`;
+    if (hasQuiz) {
+      actionPhrase = "Test your sports knowledge, vote & earn bonus SXPs.";
+    } else {
+      actionPhrase = "Tap to participate and earn bonus SXPs.";
+    }
+  }
+
+  return {
+    title: "FlipARENA",
+    body: `${typePhrase} dropped in FlipArena! ${actionPhrase}`,
+    ctaLabel: "Play & Earn",
+  };
+}
+
+/**
+ * Dispatches 60-Minute Aggregated Content Drop Notification to all users
+ */
+export async function dispatchFlipArenaContentDropNotification(
+  payload: ContentDropPayload
+): Promise<string[]> {
+  const windowMs = 60 * 60 * 1000; // 60-Minute Aggregation Window
+  const aggregationKey = "AGGR#fliparena.content_dropped";
+  const now = new Date();
+  const sentAt = now.toISOString();
+  const expiresAt = Math.floor(now.getTime() / 1000) + DEFAULT_TTL_DAYS * 86400;
+
+  // Resolve target recipients
+  let targetRecipients: string[] = [];
+  if (payload.recipientIds && payload.recipientIds.length > 0) {
+    targetRecipients = payload.recipientIds;
+  } else {
+    try {
+      if (db) {
+        const usersSnap = await db.collection("users").limit(100).get();
+        targetRecipients = usersSnap.docs.map((d) => d.id || d.data().userId || d.data().email).filter(Boolean);
+      }
+    } catch {
+      // Fallback
+    }
+  }
+
+  const cleanCreator = String(payload.creatorId || "").replace(/^USER#/, "").trim();
+  const distinctRecipients = Array.from(new Set(targetRecipients))
+    .map((r) => String(r).replace(/^USER#/, "").trim())
+    .filter((r) => r && r !== cleanCreator);
+
+  if (distinctRecipients.length === 0) {
+    distinctRecipients.push("ALL_USERS");
+  }
+
+  const dispatchedIds: string[] = [];
+  const candidateTables = getCandidateTableNames(TABLES.Notifications);
+
+  for (const recipientId of distinctRecipients) {
+    const existingResult = await findUnreadAggregation(recipientId, aggregationKey, windowMs);
+
+    if (existingResult) {
+      const { item: existing, table: matchedTable } = existingResult;
+      const existingTypes: string[] = Array.isArray(existing.dropped_types)
+        ? existing.dropped_types
+        : [existing.engagement_type || payload.engagementType];
+
+      const mergedTypes = Array.from(new Set([...existingTypes, payload.engagementType]));
+      const nextDropCount = (Number(existing.dropped_count) || existingTypes.length) + 1;
+      const formatted = formatContentDropMessage(mergedTypes);
+
+      try {
+        await docClient.send(
+          new UpdateCommand({
+            TableName: matchedTable,
+            Key: { PK: existing.PK, SK: existing.SK },
+            UpdateExpression:
+              "SET #body = :body, #msg = :body, dropped_types = :dTypes, dropped_count = :dCnt, aggregation_count = :dCnt, sent_at = :now, GSI2SK = :nowGsi",
+            ExpressionAttributeNames: { "#body": "body", "#msg": "message" },
+            ExpressionAttributeValues: {
+              ":body": formatted.body,
+              ":dTypes": mergedTypes,
+              ":dCnt": nextDropCount,
+              ":now": sentAt,
+              ":nowGsi": `SENTAT#${sentAt}#${(existing.SK as string)?.split("#").pop() || "drop"}`,
+            },
+          })
+        );
+
+        if (db) {
+          const docKey = `${(existing.SK as string)?.split("#").pop() || "drop"}_${recipientId}`;
+          await db
+            .collection(getFirestoreCollection("notifications"))
+            .doc(docKey)
+            .set(
+              {
+                message: formatted.body,
+                body: formatted.body,
+                dropped_types: mergedTypes,
+                dropped_count: nextDropCount,
+                updatedAt: Date.now(),
+              },
+              { merge: true }
+            )
+            .catch(() => {});
+        }
+
+        dispatchedIds.push((existing.SK as string)?.split("#").pop() || "updated");
+        continue;
+      } catch (updateErr) {
+        console.warn("[dispatchFlipArenaContentDropNotification] Update notice:", updateErr);
+      }
+    }
+
+    // Fresh Notification creation within the 60-min window
+    const notifId = `ntf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const formatted = formatContentDropMessage([payload.engagementType]);
+    const ctaTarget = "/MainModules/FlipArena";
+
+    const item: Record<string, any> = {
+      PK: `USER#${recipientId}`,
+      SK: `NOTIF#${sentAt}#${notifId}`,
+      entity_type: "NOTIFICATION",
+      notification_type: "fliparena.content_dropped",
+      entity_id: payload.engagementId,
+      actor_id: cleanCreator || "SYSTEM",
+      actor_name: payload.creatorName || "FlipARENA",
+      actor_avatar: payload.creatorAvatar || "https://api.dicebear.com/7.x/bottts/svg?seed=fliparena",
+      actor_names: [payload.creatorName || "FlipARENA"],
+      aggregation_key: aggregationKey,
+      aggregation_count: 1,
+      dropped_types: [payload.engagementType],
+      dropped_count: 1,
+      title: formatted.title,
+      body: formatted.body,
+      message: formatted.body,
+      cta_label: formatted.ctaLabel,
+      cta_target: ctaTarget,
+      priority: "NORMAL",
+      read: false,
+      isRead: false,
+      response_given: false,
+      cta_clicked: false,
+      sent_at: sentAt,
+      createdAt: Date.now(),
+      expires_at: expiresAt,
+      category: "fliparena",
+      feature_area: "fliparena",
+      GSI1PK: "TYPE#fliparena.content_dropped",
+      GSI1SK: `SENTAT#${sentAt}#${notifId}`,
+      GSI2PK: `USER#${recipientId}#UNREAD`,
+      GSI2SK: `SENTAT#${sentAt}#${notifId}`,
+    };
+
+    for (const table of candidateTables) {
+      try {
+        await docClient.send(
+          new PutCommand({
+            TableName: table,
+            Item: item,
+          })
+        );
+        break;
+      } catch (putErr: any) {
+        const isTableMissing =
+          putErr?.name === "ResourceNotFoundException" ||
+          putErr?.message?.includes("Cannot do operations on a non-existent table");
+        if (!isTableMissing) {
+          console.warn(`[dispatchFlipArenaContentDropNotification] DynamoDB write notice (${table}):`, putErr?.message || putErr);
+          break;
+        }
+      }
+    }
+
+    if (db) {
+      try {
+        const firestoreDocId = `${notifId}_${recipientId}`;
+        await db
+          .collection(getFirestoreCollection("notifications"))
+          .doc(firestoreDocId)
+          .set({
+            id: notifId,
+            recipientEmail: recipientId,
+            recipientUid: recipientId,
+            type: "fliparena.content_dropped",
+            notification_type: "fliparena.content_dropped",
+            title: formatted.title,
+            body: formatted.body,
+            message: formatted.body,
+            cta_label: formatted.ctaLabel,
+            ctaLabel: formatted.ctaLabel,
+            cta_target: ctaTarget,
+            ctaTarget,
+            actor_id: cleanCreator || "SYSTEM",
+            actor_name: payload.creatorName || "FlipARENA",
+            actor_avatar: item.actor_avatar,
+            priority: "NORMAL",
+            read: false,
+            isRead: false,
+            dropped_types: [payload.engagementType],
+            dropped_count: 1,
+            createdAt: Date.now(),
+            sent_at: sentAt,
+            category: "fliparena",
+            feature_area: "fliparena",
+          });
+      } catch (fbErr) {
+        console.warn("[dispatchFlipArenaContentDropNotification] Firestore sync notice:", fbErr);
+      }
+    }
+
+    dispatchedIds.push(notifId);
+  }
+
+  return dispatchedIds;
+}
+
+
