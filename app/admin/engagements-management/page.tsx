@@ -104,8 +104,30 @@ export default function EngagementsManagementPage() {
     try {
       const res = await fetch(`/api/engagements?type=${typeFilter}`);
       const data = await res.json();
+      const getItemTimestamp = (it: any) => {
+        const raw =
+          it.createdAt ||
+          it.updatedAt ||
+          it.postingTime ||
+          it.postedAt ||
+          it.quizData?.startTime ||
+          it.quizData?.scheduledStartTime ||
+          it.pollData?.startTime ||
+          it.pollData?.scheduledStartTime ||
+          it.predictionData?.startTime ||
+          it.predictionData?.scheduledStartTime ||
+          it.fanBattleData?.startTime ||
+          it.fanBattleData?.scheduledStartTime ||
+          0;
+        if (typeof raw === "number") return raw;
+        const parsed = new Date(raw).getTime();
+        return isNaN(parsed) ? 0 : parsed;
+      };
+
       const list: EngagementItem[] = Array.isArray(data.engagements)
-        ? data.engagements.filter((it: any) => Boolean(it && (it.title || it.type)))
+        ? (data.engagements
+            .filter((it: any) => Boolean(it && (it.title || it.type))) as EngagementItem[])
+            .sort((a: EngagementItem, b: EngagementItem) => getItemTimestamp(b) - getItemTimestamp(a))
         : [];
       setEngagements(list);
     } catch {
@@ -378,6 +400,7 @@ export default function EngagementsManagementPage() {
       if (activeTab === "fan_battle") {
         const startMs = battleStartTime ? new Date(battleStartTime).getTime() : Date.now();
         payload.tags = ["⚔️ FAN BATTLE", "🔥 TRENDING"];
+        payload.title = title.trim() || `${fbLeftName} vs ${fbRightName} · Vote Now!`;
         payload.fanBattleData = {
           leftCompetitor: { code: fbLeftCode, name: fbLeftName, stat: fbLeftStat, votes: editingItem?.fanBattleData?.leftCompetitor?.votes || 0 },
           rightCompetitor: { code: fbRightCode, name: fbRightName, stat: fbRightStat, votes: editingItem?.fanBattleData?.rightCompetitor?.votes || 0 },
@@ -411,6 +434,7 @@ export default function EngagementsManagementPage() {
           `⏳ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
         ];
 
+        payload.title = title.trim() || formattedQuestions[0]?.question || "Live Cricket Quiz";
         payload.expiresAt = expiresAt;
 
         payload.quizData = {
@@ -422,7 +446,7 @@ export default function EngagementsManagementPage() {
           expiresAt,
           questions: formattedQuestions,
           // Backwards compatibility for single-question readers
-          question: formattedQuestions[0]?.question || title,
+          question: formattedQuestions[0]?.question || payload.title,
           options: formattedQuestions[0]?.options || [],
           correctOptionId: formattedQuestions[0]?.correctOptionId || "B",
           pointsReward: Number(formattedQuestions[0]?.pointsReward) || 10,
@@ -437,6 +461,7 @@ export default function EngagementsManagementPage() {
           "📊 POLL",
           `⏱️ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
         ];
+        payload.title = title.trim() || pollQuestion.trim() || "Live Fan Poll";
         payload.expiresAt = expiresAt;
         payload.pollData = {
           ...(editingItem?.pollData || {}),
@@ -465,6 +490,7 @@ export default function EngagementsManagementPage() {
           "💎 POINTS",
           `⏱️ ${durationMins < 60 ? `${durationMins}m` : `${durationMins / 60}h`}`,
         ];
+        payload.title = title.trim() || predQuestion.trim() || "Live Match Prediction";
         payload.expiresAt = expiresAt;
         const choiceId =
           predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "left"
@@ -523,7 +549,7 @@ export default function EngagementsManagementPage() {
         }
 
         payload.type = "meme";
-        payload.title = memeTitle.trim() || "Meme Arena";
+        payload.title = memeTitle.trim() || title.trim() || "Meme Arena";
         payload.subtitle = memeDescription.trim();
         payload.tags = ["🔥 MEME ARENA", "🌶️ HOT TAKES"];
         payload.memeData = {
@@ -550,7 +576,10 @@ export default function EngagementsManagementPage() {
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) throw new Error("Failed to save engagement");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || errJson.message || "Failed to save engagement");
+      }
 
       alert(editingItem ? "Updated successfully!" : "Created successfully!");
       setActiveTab("list");
