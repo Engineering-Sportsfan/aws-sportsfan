@@ -79,8 +79,8 @@ function formatDisplayDate(timestampOrMs?: number | string): string {
       typeof timestampOrMs === "number"
         ? new Date(timestampOrMs)
         : isNaN(Number(timestampOrMs))
-        ? new Date(timestampOrMs)
-        : new Date(Number(timestampOrMs));
+          ? new Date(timestampOrMs)
+          : new Date(Number(timestampOrMs));
 
     if (isNaN(d.getTime())) return String(timestampOrMs);
 
@@ -105,8 +105,8 @@ function formatRelativeTime(timestampOrMs?: number | string): string {
       typeof timestampOrMs === "number"
         ? timestampOrMs
         : isNaN(Number(timestampOrMs))
-        ? Date.parse(timestampOrMs)
-        : Number(timestampOrMs);
+          ? Date.parse(timestampOrMs)
+          : Number(timestampOrMs);
 
     if (isNaN(ts) || ts <= 0) return "";
     const diffMs = Date.now() - ts;
@@ -495,11 +495,10 @@ function FlipLongManagementContent() {
       {/* ── Toast Notification ────────────────────────────────────────────── */}
       {toastMessage && (
         <div
-          className={`mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-medium animate-in fade-in slide-in-from-top-2 duration-200 ${
-            toastMessage.type === "success"
+          className={`mt-4 p-3.5 rounded-xl border flex items-center justify-between text-xs font-medium animate-in fade-in slide-in-from-top-2 duration-200 ${toastMessage.type === "success"
               ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-300"
               : "bg-rose-950/40 border-rose-500/40 text-rose-300"
-          }`}
+            }`}
         >
           <div className="flex items-center gap-2.5">
             {toastMessage.type === "success" ? (
@@ -633,18 +632,16 @@ function FlipLongManagementContent() {
           <div className="flex items-center border border-[#30363d] rounded-lg overflow-hidden bg-[#0d1117]">
             <button
               onClick={() => setViewMode("grid")}
-              className={`p-2 transition-colors ${
-                viewMode === "grid" ? "bg-rose-600 text-white" : "text-gray-400 hover:text-white"
-              }`}
+              className={`p-2 transition-colors ${viewMode === "grid" ? "bg-rose-600 text-white" : "text-gray-400 hover:text-white"
+                }`}
               title="Grid View"
             >
               <LayoutGrid className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => setViewMode("table")}
-              className={`p-2 transition-colors ${
-                viewMode === "table" ? "bg-rose-600 text-white" : "text-gray-400 hover:text-white"
-              }`}
+              className={`p-2 transition-colors ${viewMode === "table" ? "bg-rose-600 text-white" : "text-gray-400 hover:text-white"
+                }`}
               title="Table View"
             >
               <ListIcon className="w-3.5 h-3.5" />
