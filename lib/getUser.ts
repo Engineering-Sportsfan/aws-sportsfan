@@ -11,6 +11,9 @@ export interface AuthUser {
   email: string;
   name: string;
   role: string;
+  avatarUrl?: string;
+  photoURL?: string;
+  picture?: string;
 }
 
 const verifiedUserCache = new Set<string>();

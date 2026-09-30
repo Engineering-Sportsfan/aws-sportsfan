@@ -172,6 +172,7 @@ export interface EngagementItem {
   creatorId?: string;
   creatorEmail?: string;
   creatorName?: string;
+  creatorAvatar?: string;
 
   // Specific data payloads
   fanBattleData?: FanBattlePayload;
