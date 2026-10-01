@@ -83,6 +83,18 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async rewrites() {
+    return [
+      {
+        source: "/api/fliplong",
+        destination: "/api/flipLong",
+      },
+      {
+        source: "/api/fliplong/:path*",
+        destination: "/api/flipLong/:path*",
+      },
+    ];
+  },
 };
 
 export default nextConfig;
