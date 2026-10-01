@@ -663,6 +663,12 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Campus Ambassadors", icon: "🎓", badge: "NEW", badgeBg: "#10b981",
+        children: [
+          { href: "/admin/campus-ambassadors", label: "Campus Ambassadors Hub" },
+        ],
+      },
+      {
         label: "Club Profiles", icon: "◉",
         children: [
           { href: "/admin/clubprofile-management/add-clubprofile", label: "Add Club Profile" },

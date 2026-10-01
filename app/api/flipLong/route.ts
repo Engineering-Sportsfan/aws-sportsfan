@@ -161,8 +161,8 @@ export async function POST(req: NextRequest) {
       scheduledAt = body.scheduledAt
         ? Number(body.scheduledAt)
         : body.scheduledTimeMs
-        ? Number(body.scheduledTimeMs)
-        : undefined;
+          ? Number(body.scheduledTimeMs)
+          : undefined;
       day = body.day;
       time = body.time;
       timeMs = isScheduled && scheduledAt ? scheduledAt : body.timeMs ? Number(body.timeMs) : Date.now();

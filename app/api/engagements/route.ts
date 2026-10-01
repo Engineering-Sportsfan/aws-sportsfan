@@ -71,6 +71,7 @@ export async function GET(req: NextRequest) {
                 creatorId: it.creatorId || undefined,
                 creatorEmail: it.creatorEmail || undefined,
                 creatorName: it.creatorName || undefined,
+                creatorAvatar: it.creatorAvatar || undefined,
               });
             }
           }
@@ -119,6 +120,7 @@ export async function GET(req: NextRequest) {
               creatorId: it.creatorId || undefined,
               creatorEmail: it.creatorEmail || undefined,
               creatorName: it.creatorName || undefined,
+              creatorAvatar: it.creatorAvatar || undefined,
             });
           }
         }
@@ -128,6 +130,30 @@ export async function GET(req: NextRequest) {
     }
 
     let items = Array.from(itemsMap.values());
+
+    // Helper to resolve the latest numeric timestamp for sorting
+    const getItemTimestamp = (it: any) => {
+      const raw =
+        it.createdAt ||
+        it.updatedAt ||
+        (it as any).postingTime ||
+        (it as any).postedAt ||
+        it.quizData?.startTime ||
+        it.quizData?.scheduledStartTime ||
+        it.pollData?.startTime ||
+        it.pollData?.scheduledStartTime ||
+        it.predictionData?.startTime ||
+        it.predictionData?.scheduledStartTime ||
+        it.fanBattleData?.startTime ||
+        it.fanBattleData?.scheduledStartTime ||
+        0;
+      if (typeof raw === "number") return raw;
+      const parsed = new Date(raw).getTime();
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Sort descending so the latest created engagements are at the top
+    items.sort((a, b) => getItemTimestamp(b) - getItemTimestamp(a));
 
     // Apply Filters
     if (type && type !== ("all" as any)) {
@@ -345,10 +371,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Type is required" }, { status: 400 });
     }
 
-    if (!isMeme && !title) {
-      return NextResponse.json({ error: "Type and Title are required" }, { status: 400 });
-    }
-
     const resolvedImageUrl =
       uploadedMediaUrl ||
       imageUrl ||
@@ -383,6 +405,7 @@ export async function POST(req: NextRequest) {
       ""
     ).trim().toLowerCase();
     const creatorName = authUser?.name || body.userName || body.creatorName || "";
+    const creatorAvatar = (authUser as any)?.avatarUrl || (authUser as any)?.picture || (authUser as any)?.photoURL || body.userAvatar || body.creatorAvatar || "";
 
     // Set default tags based on type if omitted
     let computedTags = tags;
@@ -506,6 +529,7 @@ export async function POST(req: NextRequest) {
       creatorId: creatorId || undefined,
       creatorEmail: creatorEmail || undefined,
       creatorName: creatorName || undefined,
+      creatorAvatar: creatorAvatar || undefined,
       fanBattleData: type === "fan_battle" ? fanBattleData : undefined,
       quizData: formattedQuizData,
       pollData: formattedPollData,
