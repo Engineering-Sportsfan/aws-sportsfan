@@ -66,22 +66,22 @@ function mapResource(resource: CloudinaryResource): MediaItem {
 
     const thumbnailUrl = isVideo
         ? cloudinary.url(resource.public_id, {
-              resource_type: "video",
-              format: "jpg",
-              transformation: [{ width: 400, height: 300, crop: "fill" }],
-          })
+            resource_type: "video",
+            format: "jpg",
+            transformation: [{ width: 400, height: 300, crop: "fill" }],
+        })
         : cloudinary.url(resource.public_id, {
-              resource_type: "image",
-              transformation: [{ width: 400, height: 300, crop: "fill" }],
-          });
+            resource_type: "image",
+            transformation: [{ width: 400, height: 300, crop: "fill" }],
+        });
 
     // Force browser-playable mp4 for video delivery; images use secure_url as-is
     const deliveryUrl = isVideo
         ? cloudinary.url(resource.public_id, {
-              resource_type: "video",
-              format: "mp4",
-              transformation: [{ quality: "auto" }],
-          })
+            resource_type: "video",
+            format: "mp4",
+            transformation: [{ quality: "auto" }],
+        })
         : resource.secure_url;
 
     return {
@@ -244,23 +244,47 @@ export async function PUT(req: NextRequest) {
 }
 
 // ---------- DELETE: remove media ----------
-// query: ?publicId=...&resourceType=image
+// query or JSON body: ?publicId=... or ?id=... (resourceType optional: "video" | "image")
 export async function DELETE(req: NextRequest) {
     try {
         const searchParams = req.nextUrl.searchParams;
-        const publicId = searchParams.get("publicId");
-        const resourceType = searchParams.get("resourceType") || "image";
+        let publicId = searchParams.get("publicId") || searchParams.get("id");
+        let resourceType = searchParams.get("resourceType") as "video" | "image" | null;
+
+        if (!publicId) {
+            try {
+                const body = await req.json();
+                publicId = body.publicId || body.id;
+                if (body.resourceType) resourceType = body.resourceType;
+            } catch {
+                // Not JSON or empty body
+            }
+        }
 
         if (!publicId) {
             return NextResponse.json(
-                { success: false, error: "`publicId` query param is required" },
+                { success: false, error: "`publicId` or `id` query parameter/body is required" },
                 { status: 400 }
             );
         }
 
-        const result = await cloudinary.uploader.destroy(publicId, {
-            resource_type: resourceType,
-        });
+        let result: { result?: string } = {};
+
+        if (resourceType) {
+            result = await cloudinary.uploader.destroy(publicId, {
+                resource_type: resourceType,
+            });
+        } else {
+            // Try video first, then image if not found
+            result = await cloudinary.uploader.destroy(publicId, {
+                resource_type: "video",
+            });
+            if (result.result === "not found") {
+                result = await cloudinary.uploader.destroy(publicId, {
+                    resource_type: "image",
+                });
+            }
+        }
 
         if (result.result !== "ok" && result.result !== "not found") {
             return NextResponse.json(
@@ -269,7 +293,7 @@ export async function DELETE(req: NextRequest) {
             );
         }
 
-        return NextResponse.json({ success: true, publicId, result: result.result });
+        return NextResponse.json({ success: true, publicId, result: result.result || "ok" });
     } catch (error) {
         console.error("Error deleting cricket media:", error);
         return NextResponse.json(
