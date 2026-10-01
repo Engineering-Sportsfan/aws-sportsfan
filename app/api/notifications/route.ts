@@ -240,11 +240,10 @@ export async function GET(req: NextRequest) {
         finalDedupeMap.set(key, n);
       } else {
         const existing = finalDedupeMap.get(key);
-        const isExistingRead = existing.read !== undefined ? existing.read : existing.isRead;
-        const isCurrentRead = n.read !== undefined ? n.read : n.isRead;
-        if (isExistingRead && !isCurrentRead) {
-          finalDedupeMap.set(key, { ...existing, ...n, read: false, isRead: false });
-        }
+        const isExistingRead = Boolean(existing.read || existing.isRead);
+        const isCurrentRead = Boolean(n.read || n.isRead);
+        const mergedRead = isExistingRead || isCurrentRead;
+        finalDedupeMap.set(key, { ...existing, ...n, read: mergedRead, isRead: mergedRead });
       }
     }
 
@@ -306,17 +305,22 @@ export async function PATCH(req: NextRequest) {
 
     // Mark single notification read
     if (action === "markRead") {
+      const targetPkList = [
+        ...(pk ? [pk.startsWith("USER#") ? pk : `USER#${cleanId(pk)}`] : []),
+        ...candidates.map((c) => `USER#${c}`),
+      ];
+
       for (const table of candidateTables) {
-        for (const uidCandidate of candidates) {
+        for (const fullPk of targetPkList) {
           if (sk) {
             try {
               await docClient.send(
                 new UpdateCommand({
                   TableName: table,
-                  Key: { PK: `USER#${uidCandidate}`, SK: sk },
-                  UpdateExpression: "SET #r = :true REMOVE GSI2PK, GSI2SK",
+                  Key: { PK: fullPk, SK: sk },
+                  UpdateExpression: "SET #r = :true, isRead = :true, readAt = :now REMOVE GSI2PK, GSI2SK",
                   ExpressionAttributeNames: { "#r": "read" },
-                  ExpressionAttributeValues: { ":true": true },
+                  ExpressionAttributeValues: { ":true": true, ":now": Date.now() },
                 })
               );
             } catch {}
@@ -347,6 +351,36 @@ export async function PATCH(req: NextRequest) {
     if (action === "markAllRead") {
       for (const table of candidateTables) {
         for (const uidCandidate of candidates) {
+          // 1. Primary key query to mark all notifications read
+          try {
+            const queryRes = await docClient.send(
+              new QueryCommand({
+                TableName: table,
+                KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefix)",
+                ExpressionAttributeValues: {
+                  ":pk": `USER#${uidCandidate}`,
+                  ":prefix": "NOTIF#",
+                },
+              })
+            );
+            if (queryRes.Items && queryRes.Items.length > 0) {
+              await Promise.all(
+                queryRes.Items.map((item) =>
+                  docClient.send(
+                    new UpdateCommand({
+                      TableName: table,
+                      Key: { PK: item.PK, SK: item.SK },
+                      UpdateExpression: "SET #r = :true, isRead = :true, readAt = :now REMOVE GSI2PK, GSI2SK",
+                      ExpressionAttributeNames: { "#r": "read" },
+                      ExpressionAttributeValues: { ":true": true, ":now": Date.now() },
+                    })
+                  ).catch(() => {})
+                )
+              );
+            }
+          } catch {}
+
+          // 2. GSI2 query for unread records
           try {
             const unreadRes = await docClient.send(
               new QueryCommand({
@@ -358,19 +392,21 @@ export async function PATCH(req: NextRequest) {
             );
 
             const items = unreadRes.Items ?? [];
-            await Promise.all(
-              items.map((item) =>
-                docClient.send(
-                  new UpdateCommand({
-                    TableName: table,
-                    Key: { PK: item.PK, SK: item.SK },
-                    UpdateExpression: "SET #r = :true REMOVE GSI2PK, GSI2SK",
-                    ExpressionAttributeNames: { "#r": "read" },
-                    ExpressionAttributeValues: { ":true": true },
-                  })
-                ).catch(() => {})
-              )
-            );
+            if (items.length > 0) {
+              await Promise.all(
+                items.map((item) =>
+                  docClient.send(
+                    new UpdateCommand({
+                      TableName: table,
+                      Key: { PK: item.PK, SK: item.SK },
+                      UpdateExpression: "SET #r = :true, isRead = :true, readAt = :now REMOVE GSI2PK, GSI2SK",
+                      ExpressionAttributeNames: { "#r": "read" },
+                      ExpressionAttributeValues: { ":true": true, ":now": Date.now() },
+                    })
+                  ).catch(() => {})
+                )
+              );
+            }
           } catch {}
         }
       }
@@ -380,8 +416,8 @@ export async function PATCH(req: NextRequest) {
         for (const cand of candidates) {
           try {
             const snaps = await Promise.all([
-              db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", cand).where("read", "==", false).get().catch(() => null),
-              db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", cand).where("read", "==", false).get().catch(() => null),
+              db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", cand).get().catch(() => null),
+              db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", cand).get().catch(() => null),
             ]);
             for (const s of snaps) {
               if (s && !s.empty) {

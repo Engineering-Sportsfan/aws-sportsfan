@@ -216,6 +216,46 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Check if any scheduled engagement has just become live and needs notification
+    const nowMs = Date.now();
+    for (const it of items) {
+      const itStartMs =
+        Number((it as any).scheduledStartTime) ||
+        Number((it as any).startTime) ||
+        Number((it as any).postingTime) ||
+        Number(it.quizData?.scheduledStartTime) ||
+        Number(it.quizData?.startTime) ||
+        Number(it.pollData?.scheduledStartTime) ||
+        Number(it.predictionData?.scheduledStartTime) ||
+        Number(it.fanBattleData?.scheduledStartTime) ||
+        0;
+
+      const isLiveNow = itStartMs > 0 && itStartMs <= nowMs;
+      if (isLiveNow && (it as any).notifiedLive === false) {
+        (it as any).notifiedLive = true;
+        (async () => {
+          try {
+            await dispatchFlipArenaContentDropNotification({
+              engagementId: it.id,
+              engagementType: it.type,
+              engagementTitle: it.title,
+              creatorId: it.creatorId,
+              creatorName: it.creatorName,
+            });
+            await dualWrite("engagements", it.id, TABLES.SocialAndContent, {
+              contentId: `ENGAGEMENT#${it.id}`,
+              sk: "ENGAGEMENT#META",
+              entityId: `ENGAGEMENT#${it.type.toUpperCase()}`,
+              ...it,
+              notifiedLive: true,
+            });
+          } catch (e) {
+            console.warn("[GET /api/engagements] Scheduled live notify notice:", e);
+          }
+        })();
+      }
+    }
+
     return NextResponse.json({
       success: true,
       engagements: items,
@@ -427,16 +467,42 @@ export async function POST(req: NextRequest) {
           }
         : undefined;
 
-    const finalTitle = title || (isMeme ? formattedMemeData?.title || formattedMemeData?.caption || "Meme Arena" : "");
+    const rawScheduledTime =
+      (body as any).startTime ||
+      (body as any).scheduledStartTime ||
+      (body as any).postingTime ||
+      quizData?.startTime ||
+      quizData?.scheduledStartTime ||
+      quizData?.postingTime ||
+      pollData?.startTime ||
+      pollData?.scheduledStartTime ||
+      predictionData?.startTime ||
+      predictionData?.scheduledStartTime ||
+      fanBattleData?.startTime ||
+      fanBattleData?.scheduledStartTime;
 
-    const newEngagement: EngagementItem = {
+    const startMs = rawScheduledTime
+      ? typeof rawScheduledTime === "number"
+        ? rawScheduledTime
+        : new Date(rawScheduledTime).getTime()
+      : now;
+
+    const isFutureScheduled = Boolean(startMs && !isNaN(startMs) && startMs > now + 30000);
+
+    const newEngagement: EngagementItem & {
+      startTime?: number;
+      scheduledStartTime?: number;
+      postingTime?: number;
+      isScheduled?: boolean;
+      notifiedLive?: boolean;
+    } = {
       id,
       type,
       title: finalTitle,
       subtitle: subtitle || (isMeme ? formattedMemeData?.caption || formattedMemeData?.description || "" : ""),
       tags: computedTags,
       sport: (sport || "cricket").toLowerCase(),
-      status: status || "active",
+      status: status || (isFutureScheduled ? "scheduled" : "active"),
       creatorId: creatorId || undefined,
       creatorEmail: creatorEmail || undefined,
       creatorName: creatorName || undefined,
@@ -448,6 +514,11 @@ export async function POST(req: NextRequest) {
       likes: Number(likes) || 0,
       shares: Number(shares) || 0,
       totalEngaged: Number(totalEngaged) || 0,
+      startTime: startMs,
+      scheduledStartTime: startMs,
+      postingTime: startMs,
+      isScheduled: isFutureScheduled,
+      notifiedLive: !isFutureScheduled,
       createdAt: now,
       updatedAt: now,
       expiresAt: computedExpiresAt,
@@ -486,18 +557,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Dispatch 60-Minute Aggregated Content Drop Notification to fans
-    try {
-      await dispatchFlipArenaContentDropNotification({
-        engagementId: id,
-        engagementType: type,
-        engagementTitle: finalTitle,
-        creatorId,
-        creatorName,
-        creatorAvatar: newEngagement.creatorAvatar,
-      });
-    } catch (dropNotifErr) {
-      console.warn("[POST /api/engagements] Content drop notification notice:", dropNotifErr);
+    // Dispatch 60-Minute Aggregated Content Drop Notification ONLY if item is live now (not scheduled for future)
+    if (!isFutureScheduled) {
+      try {
+        await dispatchFlipArenaContentDropNotification({
+          engagementId: id,
+          engagementType: type,
+          engagementTitle: finalTitle,
+          creatorId,
+          creatorName,
+          creatorAvatar: newEngagement.creatorAvatar,
+        });
+      } catch (dropNotifErr) {
+        console.warn("[POST /api/engagements] Content drop notification notice:", dropNotifErr);
+      }
     }
 
     return NextResponse.json({
