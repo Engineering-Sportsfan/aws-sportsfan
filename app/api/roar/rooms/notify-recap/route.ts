@@ -1,9 +1,8 @@
-// api/cron/notify-recap/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { transporter } from "@/lib/mailer";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, UpdateCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -73,7 +72,7 @@ export async function GET(req: NextRequest) {
         const candidates = [`ROOM#${roomId}`, roomId];
         for (const cand of candidates) {
           const getRes = await docClient.send(new GetCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: { roomId: cand, sk: `META#${roomId}` }
           }));
           if (getRes.Item) {
@@ -86,7 +85,7 @@ export async function GET(req: NextRequest) {
         console.warn("[NotifyRecap] DynamoDB room fetch failed:", dynErr);
       }
 
-      const roomRef = db.collection("roarRooms").doc(roomId);
+      const roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId);
 
       if (!fetchedRoomFromDynamo) {
         try {
@@ -111,7 +110,7 @@ export async function GET(req: NextRequest) {
         const candidates = [`ROOM#${roomId}`, roomId];
         for (const cand of candidates) {
           await docClient.send(new UpdateCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: { roomId: cand, sk: `META#${roomId}` },
             UpdateExpression: "SET recapNotifiedAt = :r",
             ExpressionAttributeValues: { ":r": now }
@@ -132,7 +131,7 @@ export async function GET(req: NextRequest) {
       let fetchedJoinedFromDynamo = false;
       try {
         const res = await docClient.send(new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
           ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": "JOINED#" },
           Limit: MAX_RECIPIENTS_PER_ROOM
@@ -176,13 +175,13 @@ export async function GET(req: NextRequest) {
 
         const batchResults = await docClient.send(new BatchGetCommand({
           RequestItems: {
-            "IdentityAndAccess": {
+            [TABLES.IdentityAndAccess]: {
               Keys: keys
             }
           }
         }));
 
-        const items = batchResults.Responses?.["IdentityAndAccess"] || [];
+        const items = batchResults.Responses?.[TABLES.IdentityAndAccess] || [];
         userProfiles.push(...items);
         fetchedProfiles = true;
       } catch (dynErr) {
@@ -196,7 +195,7 @@ export async function GET(req: NextRequest) {
           const CHUNK = 30;
           for (let i = 0; i < missingUserIds.length; i += CHUNK) {
             const chunk = missingUserIds.slice(i, i + CHUNK);
-            const snap = await db.collection("users").where("userId", "in", chunk).get();
+            const snap = await db.collection(getFirestoreCollection("users")).where("userId", "in", chunk).get();
             snap.docs.forEach(doc => {
               userProfiles.push({
                 entityId: `USER#${doc.id}`,

@@ -1,11 +1,8 @@
-// api/roar/posts/[postId]/reactions/route.ts
-// GET  /api/roar/posts/:postId/reactions
-// GET  /api/roar/posts/:postId/reactions?roomId=xyz
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +32,7 @@ export async function GET(
       if (roomId) {
         // Query parent room message in RealTimeChat
         const msgRes = await docClient.send(new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND sk = :s",
           ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${postId}` },
           Limit: 1
@@ -44,7 +41,7 @@ export async function GET(
           parentExists = true;
           // Fetch reactions for this message in RealTimeChat
           const reactionsRes = await docClient.send(new QueryCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
             ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": `LIKE#${postId}#` },
             Limit: limit
@@ -61,7 +58,7 @@ export async function GET(
       } else {
         // Query parent post in SocialAndContent
         const postRes = await docClient.send(new QueryCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
           ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
           Limit: 1
@@ -70,7 +67,7 @@ export async function GET(
           parentExists = true;
           // Fetch likes for this post in SocialAndContent
           const reactionsRes = await docClient.send(new QueryCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
             ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "LIKE#" },
             Limit: limit
@@ -93,8 +90,8 @@ export async function GET(
     if (!fetchedFromDynamo) {
       try {
         const parentRef = roomId
-          ? db.collection("roarRooms").doc(roomId).collection("messages").doc(postId)
-          : db.collection("roarPosts").doc(postId);
+          ? db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("messages").doc(postId)
+          : db.collection(getFirestoreCollection("roarPosts")).doc(postId);
 
         const parentSnap = await parentRef.get();
         if (parentSnap.exists) {
@@ -148,7 +145,7 @@ export async function GET(
       const batchResults = await Promise.all(chunks.map(chunk =>
         docClient.send(new BatchGetCommand({
           RequestItems: {
-            "IdentityAndAccess": {
+            [TABLES.IdentityAndAccess]: {
               Keys: chunk
             }
           }
@@ -156,7 +153,7 @@ export async function GET(
       ));
 
       batchResults.forEach(res => {
-        const items = res.Responses?.["IdentityAndAccess"] || [];
+        const items = res.Responses?.[TABLES.IdentityAndAccess] || [];
         items.forEach(item => {
           const uid = (item.entityId as string).replace(/^USER#/, "");
           profileMap.set(uid, item);
@@ -172,7 +169,7 @@ export async function GET(
       try {
         const missingUserIds = userIds.filter(uid => !profileMap.has(uid));
         const profileSnaps = await Promise.all(
-          missingUserIds.map((uid) => db.collection("users").doc(uid).get())
+          missingUserIds.map((uid) => db.collection(getFirestoreCollection("users")).doc(uid).get())
         );
         profileSnaps.forEach((snap, idx) => {
           const uid = missingUserIds[idx];

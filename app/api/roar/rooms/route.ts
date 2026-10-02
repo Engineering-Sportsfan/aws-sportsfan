@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { ChatRoom } from "@/app/models/ChatRoom";
 import cloudinary from "@/lib/cloudinary";
@@ -14,7 +15,7 @@ export async function getRoomName(roomId: string): Promise<string> {
     const cleanRoomId = roomId.replace(/^ROOM#/, "");
     const res = await docClient.send(
       new GetCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${cleanRoomId}`, sk: `META#${cleanRoomId}` },
       })
     );
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
         do {
           const qRes: any = await docClient.send(
             new QueryCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               IndexName: "isActive-order-index",
               KeyConditionExpression: "isActive = :act",
               FilterExpression: "begins_with(sk, :p)",
@@ -105,9 +106,9 @@ export async function GET(req: NextRequest) {
     // Firestore fallback if DynamoDB had no rooms
     if (roomMap.size === 0) {
       try {
-        let query = db.collection("roarRooms").orderBy("createdAt", "desc").limit(limit);
+        let query = db.collection(getFirestoreCollection("roarRooms")).orderBy("createdAt", "desc").limit(limit);
         if (!includeInactive) {
-          query = db.collection("roarRooms").where("isActive", "==", true).orderBy("createdAt", "desc").limit(limit);
+          query = db.collection(getFirestoreCollection("roarRooms")).where("isActive", "==", true).orderBy("createdAt", "desc").limit(limit);
         }
         const snapshot = await query.get();
         for (const doc of snapshot.docs) {
@@ -255,11 +256,11 @@ export async function POST(req: NextRequest) {
     };
 
     // 1. Write to DynamoDB
-    await docClient.send(new PutCommand({ TableName: "RealTimeChat", Item: dynamoItem }));
+    await docClient.send(new PutCommand({ TableName: TABLES.RealTimeChat, Item: dynamoItem }));
 
     // 2. Dual-write to Firestore
     try {
-      await db.collection("roarRooms").doc(roomId).set(newRoom);
+      await db.collection(getFirestoreCollection("roarRooms")).doc(roomId).set(newRoom);
     } catch (fbErr) {
       console.warn("Firestore roarRooms dual-write notice:", fbErr);
     }

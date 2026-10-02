@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post } from "@/app/models/Post";
 
@@ -35,7 +36,7 @@ export async function GET(
     // 1. Try finding user in DynamoDB first by username Scan
     try {
       const res = await docClient.send(new ScanCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         FilterExpression: "username = :u AND sk = :s",
         ExpressionAttributeValues: {
           ":u": username,
@@ -57,7 +58,7 @@ export async function GET(
     if (!fetchedUserFromDynamo) {
       try {
         const usersSnap = await db
-          .collection("users")
+          .collection(getFirestoreCollection("users"))
           .where("username", "==", username)
           .limit(1)
           .get();
@@ -86,7 +87,7 @@ export async function GET(
     // Fetch badges, posts, and rivals from DynamoDB first
     try {
       const badgesRes = await docClient.send(new QueryCommand({
-        TableName: "GamificationAndWallet",
+        TableName: TABLES.GamificationAndWallet,
         KeyConditionExpression: "userId = :u AND begins_with(sk, :p)",
         ExpressionAttributeValues: {
           ":u": `USER#${resolvedUserId}`,
@@ -107,7 +108,7 @@ export async function GET(
     try {
       const keys = [`USER#${resolvedUserId}`, resolvedUserId];
       const postsPromises = keys.map(k => docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         IndexName: "authorId-createdAt-index",
         KeyConditionExpression: "authorId = :a",
         ExpressionAttributeValues: { ":a": k }
@@ -135,7 +136,7 @@ export async function GET(
 
     try {
       const getRival = await docClient.send(new GetCommand({
-        TableName: "SportsData",
+        TableName: TABLES.SportsData,
         Key: { entityId: `RIVAL#${resolvedUserId}`, sk: `RIVAL#${resolvedUserId}` }
       }));
       if (getRival.Item) {
@@ -149,7 +150,7 @@ export async function GET(
     // Fallbacks
     if (!fetchedBadgesFromDynamo) {
       try {
-        const badgesSnap = await db.collection("roarBadges").doc(resolvedUserId).collection("roarProgress").get();
+        const badgesSnap = await db.collection(getFirestoreCollection("roarBadges")).doc(resolvedUserId).collection("roarProgress").get();
         badges = badgesSnap.docs.map((d) => ({ ...d.data(), badgeId: d.id }));
       } catch (fsErr) {
         console.error("[FanProfile GET] Firestore badges fallback failed:", fsErr);
@@ -158,7 +159,7 @@ export async function GET(
 
     if (!fetchedPostsFromDynamo) {
       try {
-        const postsSnap = await db.collection("roarPosts").where("authorUid", "==", resolvedUserId).get();
+        const postsSnap = await db.collection(getFirestoreCollection("roarPosts")).where("authorUid", "==", resolvedUserId).get();
         posts = postsSnap.docs.map((d) => ({ ...(d.data() as Post), postId: d.id }));
       } catch (fsErr) {
         console.error("[FanProfile GET] Firestore posts fallback failed:", fsErr);
@@ -167,7 +168,7 @@ export async function GET(
 
     if (!fetchedRivalFromDynamo) {
       try {
-        const rivalSnap = await db.collection("rivals").doc(resolvedUserId).get();
+        const rivalSnap = await db.collection(getFirestoreCollection("rivals")).doc(resolvedUserId).get();
         rivalData = rivalSnap.exists ? rivalSnap.data() : null;
       } catch (fsErr) {
         console.error("[FanProfile GET] Firestore rival fallback failed:", fsErr);

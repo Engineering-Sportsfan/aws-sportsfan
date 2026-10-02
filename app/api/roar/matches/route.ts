@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { ScanCommand, PutCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -14,42 +15,54 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    let matches: any[] = [];
-    let fetchedFromDynamo = false;
+    const matchesMap = new Map<string, any>();
 
     // 1. Try fetching from DynamoDB first
     try {
       const res = await docClient.send(new ScanCommand({
-        TableName: "SportsData",
-        FilterExpression: "sk = :m",
-        ExpressionAttributeValues: { ":m": "MATCH#META" }
+        TableName: TABLES.SportsData,
+        FilterExpression: "sk = :m OR begins_with(sk, :mPrefix)",
+        ExpressionAttributeValues: { 
+          ":m": "MATCH#META",
+          ":mPrefix": "MATCH#"
+        }
       }));
 
-      if (res.Items) {
-        matches = res.Items.map(item => ({
-          id: (item.entityId as string).replace(/^MATCH#/, "") || item.id,
-          ...item
-        }));
-        // Sort in memory by kickoff_time asc
-        matches.sort((a, b) => (a.kickoff_time || 0) - (b.kickoff_time || 0));
-        fetchedFromDynamo = true;
+      if (res.Items && res.Items.length > 0) {
+        for (const item of res.Items) {
+          const rawId = item.entityId || item.pk || item.id || item.matchId || "";
+          const cleanId = String(rawId).replace(/^(MATCH#|WATCHALONG_MATCH#)/, "") || item.id || `m_${Date.now()}`;
+          matchesMap.set(cleanId, {
+            id: cleanId,
+            ...item,
+            sport: (item.sport || "cricket").toLowerCase(),
+          });
+        }
       }
     } catch (dynErr) {
       console.warn("[Matches GET] DynamoDB fetch failed:", dynErr);
     }
 
-    // 2. Fallback to Firestore
-    if (!fetchedFromDynamo) {
-      try {
-        const snapshot = await db.collection("matches").orderBy("kickoff_time", "asc").get();
-        matches = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-      } catch (fsErr) {
-        console.error("[Matches GET] Firestore fallback failed:", fsErr);
-      }
+    // 2. Also check Firestore to ensure no matches are lost
+    try {
+      const snapshot = await db.collection(getFirestoreCollection("matches")).orderBy("kickoff_time", "asc").get();
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (!matchesMap.has(doc.id)) {
+          matchesMap.set(doc.id, {
+            id: doc.id,
+            ...data,
+            sport: (data.sport || "cricket").toLowerCase(),
+          });
+        }
+      });
+    } catch (fsErr) {
+      console.warn("[Matches GET] Firestore fallback failed:", fsErr);
     }
+
+    const matches = Array.from(matchesMap.values());
+    // Sort in memory by kickoff_time asc
+    matches.sort((a, b) => (Number(a.kickoff_time) || 0) - (Number(b.kickoff_time) || 0));
 
     return NextResponse.json({ success: true, matches });
   } catch (error: any) {
@@ -77,7 +90,9 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
 
     const matchData = {
-      sport,
+      id: matchId,
+      matchId,
+      sport: (sport || "cricket").toLowerCase(),
       competition: competition || "",
       team_a,
       team_b,
@@ -91,9 +106,10 @@ export async function POST(req: NextRequest) {
     // 1. Put to DynamoDB
     try {
       await docClient.send(new PutCommand({
-        TableName: "SportsData",
+        TableName: TABLES.SportsData,
         Item: {
           entityId: `MATCH#${matchId}`,
+          pk: `MATCH#${matchId}`,
           sk: "MATCH#META",
           ...matchData
         }
@@ -104,12 +120,12 @@ export async function POST(req: NextRequest) {
 
     // 2. Sync to Firestore
     try {
-      await db.collection("matches").doc(matchId).set(matchData);
+      await db.collection(getFirestoreCollection("matches")).doc(matchId).set(matchData);
     } catch (fsErr) {
       console.warn("[Matches POST] Firestore fallback sync failed:", fsErr);
     }
 
-    return NextResponse.json({ success: true, id: matchId });
+    return NextResponse.json({ success: true, id: matchId, match: matchData });
   } catch (error: any) {
     console.error("POST /api/roar/matches error:", error);
     return NextResponse.json({ error: error.message || "Failed to create match." }, { status: 500 });
@@ -160,7 +176,7 @@ export async function PATCH(req: NextRequest) {
       updateExpression = updateExpression.slice(0, -1);
 
       await docClient.send(new UpdateCommand({
-        TableName: "SportsData",
+        TableName: TABLES.SportsData,
         Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
         UpdateExpression: updateExpression,
         ExpressionAttributeNames: expressionAttributeNames,
@@ -172,7 +188,7 @@ export async function PATCH(req: NextRequest) {
 
     // 2. Sync to Firestore
     try {
-      await db.collection("matches").doc(id).update(updateData);
+      await db.collection(getFirestoreCollection("matches")).doc(id).update(updateData);
     } catch (fsErr) {
       console.warn("[Matches PATCH] Firestore fallback sync failed:", fsErr);
     }
@@ -202,7 +218,7 @@ export async function DELETE(req: NextRequest) {
     // 1. Delete from DynamoDB
     try {
       await docClient.send(new DeleteCommand({
-        TableName: "SportsData",
+        TableName: TABLES.SportsData,
         Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" }
       }));
     } catch (dynErr) {
@@ -211,7 +227,7 @@ export async function DELETE(req: NextRequest) {
 
     // 2. Sync to Firestore
     try {
-      await db.collection("matches").doc(id).delete();
+      await db.collection(getFirestoreCollection("matches")).doc(id).delete();
     } catch (fsErr) {
       console.warn("[Matches DELETE] Firestore fallback sync failed:", fsErr);
     }

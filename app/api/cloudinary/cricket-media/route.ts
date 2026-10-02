@@ -173,18 +173,26 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        const isVideo = file.type.startsWith("video/");
+        const isVideo = file.type.startsWith("video/") || file.name.endsWith(".mp4") || file.name.endsWith(".mov") || file.name.endsWith(".webm");
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
-        const base64 = `data:${file.type};base64,${buffer.toString("base64")}`;
 
-        const uploadResult = await cloudinary.uploader.upload(base64, {
-            resource_type: isVideo ? "video" : "image",
-            asset_folder: FOLDER, // Dynamic Folders field (replaces `folder`)
-            display_name: fileName || file.name,
-            use_filename: true,
-            unique_filename: true,
-            overwrite: false,
+        const uploadResult = await new Promise<any>((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    resource_type: isVideo ? "video" : "image",
+                    asset_folder: FOLDER, // Dynamic Folders field (replaces `folder`)
+                    display_name: fileName || file.name,
+                    use_filename: true,
+                    unique_filename: true,
+                    overwrite: false,
+                },
+                (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                }
+            );
+            uploadStream.end(buffer);
         });
 
         return NextResponse.json({

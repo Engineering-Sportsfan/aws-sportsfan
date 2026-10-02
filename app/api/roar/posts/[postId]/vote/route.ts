@@ -17,6 +17,7 @@ import { getUserInfo } from "@/lib/userPoints";
 import { awardRoarPointsByReason, ROAR_EVENT_POINTS } from "@/lib/roarPoints";
 import { FieldValue } from "firebase-admin/firestore";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -49,7 +50,7 @@ async function upsertLikeNotification({
   if (likerUid === postAuthorUid) return;
 
   const notifId = `roar_like_${postId}`;
-  const notifRef = db.collection("notifications").doc(notifId);
+  const notifRef = db.collection(getFirestoreCollection("notifications")).doc(notifId);
 
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(notifRef);
@@ -117,7 +118,7 @@ export async function POST(
     let fetchedPostFromDynamo = false;
     try {
       const qRes = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
         Limit: 1
@@ -130,7 +131,7 @@ export async function POST(
       console.warn("[Vote POST] DynamoDB post fetch failed:", dynErr);
     }
 
-    const postRef = db.collection("roarPosts").doc(postId);
+    const postRef = db.collection(getFirestoreCollection("roarPosts")).doc(postId);
     let postExists = fetchedPostFromDynamo;
     let fallbackPostData: any = null;
 
@@ -175,7 +176,7 @@ export async function POST(
     let fetchedVoteFromDynamo = false;
     try {
       const getRes = await docClient.send(new GetCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: { contentId: `POST#${postId}`, sk: `VOTE#${actualUserId}` }
       }));
       if (getRes.Item) {
@@ -225,12 +226,12 @@ export async function POST(
     try {
       if (vote === null) {
         await docClient.send(new DeleteCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: `VOTE#${actualUserId}` }
         }));
       } else {
         await docClient.send(new PutCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Item: {
             contentId: `POST#${postId}`,
             sk: `VOTE#${actualUserId}`,
@@ -242,7 +243,7 @@ export async function POST(
 
       if (postItem) {
         await docClient.send(new UpdateCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: postItem.sk },
           UpdateExpression: "SET agreeCount = :ac, disagreeCount = :dc, predictionOptionCounts = :poc, updatedAt = :u",
           ExpressionAttributeValues: {
@@ -320,7 +321,7 @@ export async function POST(
     if (vote === "agree" && previousVote !== "agree") {
       (async () => {
         try {
-          const authorSnap = await db.collection("users").doc(postData.authorUid).get();
+          const authorSnap = await db.collection(getFirestoreCollection("users")).doc(postData.authorUid).get();
           const authorEmail = (authorSnap.data() as { email?: string } | undefined)?.email;
           if (authorEmail) {
             await upsertLikeNotification({

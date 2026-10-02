@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { GetCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 
@@ -114,7 +115,7 @@ export async function GET(req: NextRequest) {
 
       const res = await docClient.send(
         new ScanCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           FilterExpression: filterParts.join(" AND "),
           ExpressionAttributeNames,
           ExpressionAttributeValues,
@@ -158,30 +159,34 @@ export async function GET(req: NextRequest) {
 
     // 2. Firestore Fallback if DynamoDB returned no items
     if (!fetchedFromDynamo) {
-      let query = db
-        .collection("chats")
-        .where("participantIds", "array-contains", CURRENT_USER_ID)
-        .orderBy("updatedAt", "desc");
-
-      if (type === "dm" || type === "group") {
-        query = db
+      try {
+        let query = db
           .collection("chats")
           .where("participantIds", "array-contains", CURRENT_USER_ID)
-          .where("type", "==", type)
           .orderBy("updatedAt", "desc");
+
+        if (type === "dm" || type === "group") {
+          query = db
+            .collection("chats")
+            .where("participantIds", "array-contains", CURRENT_USER_ID)
+            .where("type", "==", type)
+            .orderBy("updatedAt", "desc");
+        }
+
+        query = query.limit(limit);
+
+        if (lastDocId && lastDocUpdatedAt) {
+          const lastRef = db.collection("chats").doc(lastDocId);
+          const lastDocSnap = await lastRef.get();
+          if (lastDocSnap.exists) query = query.startAfter(lastDocSnap);
+        }
+
+        const snapshot = await query.get();
+        chats = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      } catch (fsErr) {
+        console.warn("[chats GET] Firestore fallback notice (missing index ignored):", fsErr);
       }
-
-      query = query.limit(limit);
-
-      if (lastDocId && lastDocUpdatedAt) {
-        const lastRef = db.collection("chats").doc(lastDocId);
-        const lastDocSnap = await lastRef.get();
-        if (lastDocSnap.exists) query = query.startAfter(lastDocSnap);
-      }
-
-      const snapshot = await query.get();
-      chats = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      lastDoc = snapshot.docs[snapshot.docs.length - 1];
     }
 
     // Enrich DM chats with latest recipient profiles (name, avatarUrl)
@@ -205,7 +210,7 @@ export async function GET(req: NextRequest) {
         try {
           const uRes = await docClient.send(
             new GetCommand({
-              TableName: "IdentityAndAccess",
+              TableName: TABLES.IdentityAndAccess,
               Key: { entityId: `USER#${id}`, sk: `USER#META` },
             }),
           );
@@ -387,7 +392,7 @@ export async function POST(req: NextRequest) {
       try {
         const scanRes = await docClient.send(
           new ScanCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             FilterExpression:
               "#sk = :sk AND #tp = :tp AND contains(#pids, :u1) AND contains(#pids, :u2)",
             ExpressionAttributeNames: {
@@ -424,22 +429,26 @@ export async function POST(req: NextRequest) {
 
       // Check Firestore if not found in DynamoDB
       if (!alreadyExists) {
-        const existing = await db
-          .collection("chats")
-          .where("type", "==", "dm")
-          .where("participantIds", "array-contains", CURRENT_USER_ID)
-          .get();
+        try {
+          const existing = await db
+            .collection("chats")
+            .where("type", "==", "dm")
+            .where("participantIds", "array-contains", CURRENT_USER_ID)
+            .get();
 
-        const firestoreMatch = existing.docs.find((d) => {
-          const pids = (d.data().participantIds as string[]).map(normalizeId);
-          return pids.some((p) => isSameUser(p, normParticipantId));
-        });
+          const firestoreMatch = existing.docs.find((d) => {
+            const pids = (d.data().participantIds as string[]).map(normalizeId);
+            return pids.some((p) => isSameUser(p, normParticipantId));
+          });
 
-        if (firestoreMatch) {
-          alreadyExists = {
-            id: firestoreMatch.id,
-            ...firestoreMatch.data(),
-          };
+          if (firestoreMatch) {
+            alreadyExists = {
+              id: firestoreMatch.id,
+              ...firestoreMatch.data(),
+            };
+          }
+        } catch (fsErr) {
+          console.warn("[chats POST DM] Firestore lookup notice:", fsErr);
         }
       }
 
@@ -451,7 +460,7 @@ export async function POST(req: NextRequest) {
         try {
           const uRes = await docClient.send(
             new GetCommand({
-              TableName: "IdentityAndAccess",
+              TableName: TABLES.IdentityAndAccess,
               Key: { entityId: `USER#${normParticipantId}`, sk: `USER#META` },
             }),
           );
@@ -470,32 +479,36 @@ export async function POST(req: NextRequest) {
         } catch {}
 
         if (!recipientName) {
-          let userDoc = await db
-            .collection("users")
-            .doc(normParticipantId)
-            .get();
-          if (!userDoc.exists) {
-            const querySnap = await db
+          try {
+            let userDoc = await db
               .collection("users")
-              .where("userId", "==", normParticipantId)
-              .limit(1)
+              .doc(normParticipantId)
               .get();
-            if (!querySnap.empty) {
-              userDoc = querySnap.docs[0];
+            if (!userDoc.exists) {
+              const querySnap = await db
+                .collection("users")
+                .where("userId", "==", normParticipantId)
+                .limit(1)
+                .get();
+              if (!querySnap.empty) {
+                userDoc = querySnap.docs[0];
+              }
             }
-          }
 
-          if (userDoc && userDoc.exists) {
-            const udata = userDoc.data()!;
-            recipientName =
-              udata.name ||
-              udata.username ||
-              [udata.firstName, udata.lastName]
-                .filter(Boolean)
-                .join(" ")
-                .trim() ||
-              recipientName;
-            avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+            if (userDoc && userDoc.exists) {
+              const udata = userDoc.data()!;
+              recipientName =
+                udata.name ||
+                udata.username ||
+                [udata.firstName, udata.lastName]
+                  .filter(Boolean)
+                  .join(" ")
+                  .trim() ||
+                recipientName;
+              avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+            }
+          } catch (fsErr) {
+            console.warn("[chats POST DM] Firestore profile lookup notice:", fsErr);
           }
         }
 
@@ -537,7 +550,7 @@ export async function POST(req: NextRequest) {
       try {
         const uRes = await docClient.send(
           new GetCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${normParticipantId}`, sk: `USER#META` },
           }),
         );
@@ -556,32 +569,36 @@ export async function POST(req: NextRequest) {
       } catch {}
 
       if (!recipientName) {
-        let userDoc = await db
-          .collection("users")
-          .doc(normParticipantId)
-          .get();
-        if (!userDoc.exists) {
-          const querySnap = await db
+        try {
+          let userDoc = await db
             .collection("users")
-            .where("userId", "==", normParticipantId)
-            .limit(1)
+            .doc(normParticipantId)
             .get();
-          if (!querySnap.empty) {
-            userDoc = querySnap.docs[0];
+          if (!userDoc.exists) {
+            const querySnap = await db
+              .collection("users")
+              .where("userId", "==", normParticipantId)
+              .limit(1)
+              .get();
+            if (!querySnap.empty) {
+              userDoc = querySnap.docs[0];
+            }
           }
-        }
 
-        if (userDoc && userDoc.exists) {
-          const udata = userDoc.data()!;
-          recipientName =
-            udata.name ||
-            udata.username ||
-            [udata.firstName, udata.lastName]
-              .filter(Boolean)
-              .join(" ")
-              .trim() ||
-            recipientName;
-          newChat.avatarUrl = udata.avatarUrl || udata.avatar || "";
+          if (userDoc && userDoc.exists) {
+            const udata = userDoc.data()!;
+            recipientName =
+              udata.name ||
+              udata.username ||
+              [udata.firstName, udata.lastName]
+                .filter(Boolean)
+                .join(" ")
+                .trim() ||
+              recipientName;
+            newChat.avatarUrl = udata.avatarUrl || udata.avatar || "";
+          }
+        } catch (fsErr) {
+          console.warn("[chats POST DM] Firestore profile lookup notice:", fsErr);
         }
       }
 
@@ -589,7 +606,7 @@ export async function POST(req: NextRequest) {
       try {
         await docClient.send(
           new PutCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Item: {
               roomId: `ROOM#${chatId}`,
               sk: "ROOM#META",
@@ -658,7 +675,7 @@ export async function POST(req: NextRequest) {
     try {
       await docClient.send(
         new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${chatId}`,
             sk: "ROOM#META",

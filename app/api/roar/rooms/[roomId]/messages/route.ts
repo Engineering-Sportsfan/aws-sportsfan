@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { dualWrite } from "@/lib/dualWrite";
 import { FieldValue } from "firebase-admin/firestore";
 import { awardRoarPoints } from "@/lib/roarPoints";
@@ -33,7 +34,7 @@ async function resolveUser(email: string, userId: string): Promise<{ id: string;
   if (!info.exists) return null;
   try {
     const res = await docClient.send(new GetCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${info.actualUserId}`, sk: "USER#META" }
     }));
     return {
@@ -267,7 +268,7 @@ export async function GET(
       for (const cand of candidates) {
         const qRes = await docClient.send(
           new QueryCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
             ExpressionAttributeValues: {
               ":r": cand,
@@ -292,7 +293,7 @@ export async function GET(
               const likeChecks = await Promise.all(
                 messages.map((m) =>
                   docClient.send(new QueryCommand({
-                    TableName: "RealTimeChat",
+                    TableName: TABLES.RealTimeChat,
                     KeyConditionExpression: "roomId = :r AND sk = :s",
                     ExpressionAttributeValues: {
                       ":r": `ROOM#${roomId}`,
@@ -315,7 +316,7 @@ export async function GET(
                 const voteChecks = await Promise.all(
                   messages.map((m) =>
                     docClient.send(new GetCommand({
-                      TableName: "RealTimeChat",
+                      TableName: TABLES.RealTimeChat,
                       Key: { roomId: `ROOM#${roomId}`, sk: `VOTE#${m.msgId}#${resolvedUserId}` },
                     }))
                   )
@@ -338,10 +339,10 @@ export async function GET(
 
     // 2. Fallback to Firebase
     if (messages.length === 0) {
-      let roomRef = db.collection("roarRooms").doc(roomId);
+      let roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId);
       let roomSnap = await roomRef.get();
       if (!roomSnap.exists) {
-        roomRef = db.collection("watchAlongRooms").doc(roomId);
+        roomRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(roomId);
         roomSnap = await roomRef.get();
       }
 
@@ -367,13 +368,11 @@ export async function GET(
       }
     }
 
-    // 3. Room-wide type counts — read from the room-meta row rather than
-    // counting whatever page of messages we happen to have fetched, since
-    // rooms can hold far more than the max `limit` (100) messages.
+    // 3. Room-wide type counts — accurately count all messages (including bot posts, predictions, debates, trivia, battles)
     let counts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
     try {
       const metaRes = await docClient.send(new GetCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
       }));
       if (metaRes.Item?.typeCounts) {
@@ -382,6 +381,55 @@ export async function GET(
     } catch (metaErr) {
       console.warn("Failed to fetch room type counts:", metaErr);
     }
+
+    const dynCounts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
+    try {
+      const candidates = [`ROOM#${roomId}`, roomId];
+      for (const cand of candidates) {
+        const typeQueryRes = await docClient.send(new QueryCommand({
+          TableName: TABLES.RealTimeChat,
+          KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
+          ExpressionAttributeValues: {
+            ":r": cand,
+            ":mPrefix": "MSG#",
+          },
+          ProjectionExpression: "#t, postType",
+          ExpressionAttributeNames: { "#t": "type" },
+        }));
+        if (typeQueryRes.Items && typeQueryRes.Items.length > 0) {
+          typeQueryRes.Items.forEach((item) => {
+            const t = (item.type || item.postType || "post").toLowerCase();
+            if (t === "debate") dynCounts.debate++;
+            else if (t === "prediction" || t === "predictions_live") dynCounts.prediction++;
+            else if (t === "trivia" || t === "quiz") dynCounts.trivia++;
+            else if (t === "battle") dynCounts.battle++;
+            else dynCounts.post++;
+          });
+          break;
+        }
+      }
+    } catch (dynCountErr) {
+      console.warn("Fast type counting notice:", dynCountErr);
+    }
+
+    // Also factor in the loaded messages array in case of Firestore fallbacks
+    const localLoadedCounts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
+    messages.forEach((m) => {
+      const t = (m.type || "post").toLowerCase();
+      if (t === "debate") localLoadedCounts.debate++;
+      else if (t === "prediction" || t === "predictions_live") localLoadedCounts.prediction++;
+      else if (t === "trivia" || t === "quiz") localLoadedCounts.trivia++;
+      else if (t === "battle") localLoadedCounts.battle++;
+      else localLoadedCounts.post++;
+    });
+
+    counts = {
+      post: Math.max(counts.post || 0, dynCounts.post, localLoadedCounts.post),
+      debate: Math.max(counts.debate || 0, dynCounts.debate, localLoadedCounts.debate),
+      prediction: Math.max(counts.prediction || 0, dynCounts.prediction, localLoadedCounts.prediction),
+      trivia: Math.max(counts.trivia || 0, dynCounts.trivia, localLoadedCounts.trivia),
+      battle: Math.max(counts.battle || 0, dynCounts.battle, localLoadedCounts.battle),
+    };
 
     return NextResponse.json({
       success: true,
@@ -584,24 +632,24 @@ export async function POST(
       ...(battleQuestions?.length && { battleQuestions }),
     };
 
-    await docClient.send(new PutCommand({ TableName: "RealTimeChat", Item: dynamoMessage }));
+    await docClient.send(new PutCommand({ TableName: TABLES.RealTimeChat, Item: dynamoMessage }));
 
     // ── Bump room-level per-type counter (drives the header category counts) ──
     const countKey =
       type === "debate" ? "debate" :
-      type === "prediction" || type === "predictions_live" ? "prediction" :
-      type === "trivia" ? "trivia" :
-      type === "battle" ? "battle" : "post";
+        type === "prediction" || type === "predictions_live" ? "prediction" :
+          type === "trivia" ? "trivia" :
+            type === "battle" ? "battle" : "post";
 
     try {
       await docClient.send(new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
         UpdateExpression: "SET typeCounts = if_not_exists(typeCounts, :emptyMap)",
         ExpressionAttributeValues: { ":emptyMap": { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 } },
       }));
       await docClient.send(new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
         UpdateExpression: "ADD typeCounts.#k :one",
         ExpressionAttributeNames: { "#k": countKey },

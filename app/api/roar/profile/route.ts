@@ -114,8 +114,9 @@ async function resolveUserDoc(targetId?: string | null, targetEmail?: string | n
 
   const tableNames = Array.from(new Set([
     TABLES.IdentityAndAccess,
-    "IdentityAndAccess",
-    "IdentityAndAccess-dev"
+    "IdentityAndAccess-dev",
+    "IdentityAndAccess-release",
+    "IdentityAndAccess"
   ])).filter(Boolean);
 
   // 1. Direct GET by entityId across all table candidates
@@ -250,7 +251,7 @@ export async function GET(req: NextRequest) {
     try {
       const keys = [`USER#${resolvedUserId}`, resolvedUserId];
       const postsPromises = keys.map(k => docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         IndexName: "authorId-createdAt-index",
         KeyConditionExpression: "authorId = :a",
         ExpressionAttributeValues: { ":a": k }
@@ -278,7 +279,7 @@ export async function GET(req: NextRequest) {
 
     try {
       const getRival = await docClient.send(new GetCommand({
-        TableName: "SportsData",
+        TableName: TABLES.SportsData,
         Key: { entityId: `RIVAL#${resolvedUserId}`, sk: `RIVAL#${resolvedUserId}` }
       }));
       if (getRival.Item) {
@@ -292,7 +293,7 @@ export async function GET(req: NextRequest) {
     // 2. Fallbacks
     if (!fetchedPostsFromDynamo) {
       try {
-        const postsSnap = await db.collection("roarPosts").where("authorUid", "==", resolvedUserId).get();
+        const postsSnap = await db.collection(getFirestoreCollection("roarPosts")).where("authorUid", "==", resolvedUserId).get();
         posts = postsSnap.docs.map((d) => ({ ...(d.data() as Post), postId: d.id }));
       } catch (fsErr) {
         console.error("[profile GET] Firestore posts fallback failed:", fsErr);
@@ -301,7 +302,7 @@ export async function GET(req: NextRequest) {
 
     if (!fetchedRivalsFromDynamo) {
       try {
-        const rivalSnap = await db.collection("rivals").doc(resolvedUserId).get();
+        const rivalSnap = await db.collection(getFirestoreCollection("rivals")).doc(resolvedUserId).get();
         rivalData = rivalSnap.exists ? rivalSnap.data() : null;
       } catch (fsErr) {
         console.error("[profile GET] Firestore rivals fallback failed:", fsErr);
@@ -517,7 +518,6 @@ export async function PATCH(req: NextRequest) {
     const targetTables = Array.from(new Set([
       resolved.tableName,
       TABLES.IdentityAndAccess,
-      "IdentityAndAccess",
     ])).filter(Boolean) as string[];
 
     // Entity IDs to update: primary entityId, plus email-based entityId and userId-based entityId if different
