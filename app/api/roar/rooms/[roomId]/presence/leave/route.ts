@@ -5,6 +5,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -19,10 +20,10 @@ async function resolveUser(
 }
 
 async function getRoomRef(roomId: string) {
-  let roomRef = db.collection("roarRooms").doc(roomId);
+  let roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId);
   let snap = await roomRef.get();
   if (!snap.exists) {
-    const fallbackRef = db.collection("watchAlongRooms").doc(roomId);
+    const fallbackRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(roomId);
     const fallbackSnap = await fallbackRef.get();
     if (fallbackSnap.exists) {
       roomRef = fallbackRef;
@@ -49,7 +50,7 @@ export async function POST(
     // 1. Delete from DynamoDB first
     try {
       await docClient.send(new DeleteCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `PRESENCE#${resolved.id}` }
       }));
     } catch (dynErr) {

@@ -77,4 +77,19 @@ if (!admin.apps.length) {
   auth = admin.auth(app);
 }
 
+// Automatically resolve environment-isolated collection names (dev, release, prod)
+import { getFirestoreCollection } from "./tableNames";
+const originalCollection = db.collection.bind(db);
+db.collection = function (collectionPath: string) {
+  if (typeof collectionPath === "string") {
+    if (collectionPath.includes("/")) {
+      const parts = collectionPath.split("/");
+      parts[0] = getFirestoreCollection(parts[0]);
+      return originalCollection(parts.join("/"));
+    }
+    return originalCollection(getFirestoreCollection(collectionPath));
+  }
+  return originalCollection(collectionPath);
+} as any;
+
 export { db, auth };

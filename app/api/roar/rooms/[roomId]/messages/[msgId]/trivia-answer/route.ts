@@ -1,13 +1,14 @@
 // api/roar/rooms/[roomId]/messages/[msgId]/trivia-answer/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { FieldValue } from "firebase-admin/firestore";
-import { awardRoarPoints } from "@/lib/roarPoints";
+import { awardRoarPointsByReason, ROAR_EVENT_POINTS } from "@/lib/roarPoints";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
-import { GetCommand, PutCommand, UpdateCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { findRoomMessage } from "@/lib/roarRoomHelpers";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +17,7 @@ export async function POST(
   { params }: { params: Promise<{ roomId: string; msgId: string }> }
 ) {
   try {
-    const resolvedParams = await params;
-    const { roomId, msgId } = resolvedParams;
+    const { roomId, msgId } = await params;
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -27,127 +27,55 @@ export async function POST(
     }
 
     const info = await getUserInfo(user.userId, undefined, user.email);
-    if (!info.exists) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
-    const resolvedUserId = info.actualUserId;
+    const resolvedUserId = info.exists ? info.actualUserId : user.userId;
 
-    // 1. Fetch parent message from DynamoDB first
-    let msgItem: any = null;
-    let msgSk: string | null = null;
-    let fetchedMsgFromDynamo = false;
-    try {
-      const qRes = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
-        KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
-        FilterExpression: "chatId = :m",
-        ExpressionAttributeValues: {
-          ":r": `ROOM#${roomId}`,
-          ":p": `MSG#${roomId}#`,
-          ":m": msgId
-        },
-        Limit: 1
-      }));
-      if (qRes.Items && qRes.Items.length > 0) {
-        msgItem = qRes.Items[0];
-        msgSk = msgItem.sk;
-        fetchedMsgFromDynamo = true;
-      }
-    } catch (dynErr) {
-      console.warn("[TriviaAnswer POST] DynamoDB message fetch failed:", dynErr);
-    }
-
-    let roomRef = db.collection("roarRooms").doc(roomId);
-    let isWatchalongFallback = false;
-    let msgExists = fetchedMsgFromDynamo;
-    let fallbackMsgData: any = null;
-
-    if (!msgExists) {
-      try {
-        let msgSnap = await roomRef.collection("messages").doc(msgId).get();
-        if (!msgSnap.exists) {
-          const fallbackRef = db.collection("watchAlongRooms").doc(roomId);
-          const fallbackSnap = await fallbackRef.collection("messages").doc(msgId).get();
-          if (fallbackSnap.exists) {
-            roomRef = fallbackRef;
-            msgSnap = fallbackSnap;
-            isWatchalongFallback = true;
-          }
-        }
-        if (msgSnap.exists) {
-          msgExists = true;
-          fallbackMsgData = msgSnap.data();
-        }
-      } catch (fsErr) {
-        console.warn("[TriviaAnswer POST] Firestore message fetch failed:", fsErr);
-      }
-    }
-
-    if (!msgExists) {
+    // 1. Fetch parent message
+    const found = await findRoomMessage(roomId, msgId);
+    if (!found) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
 
-    const msgRef = roomRef.collection("messages").doc(msgId);
-    const data = msgItem || fallbackMsgData || {};
-    if (data.type !== "trivia") return NextResponse.json({ error: "Not a trivia message" }, { status: 400 });
-    const q = data.triviaQuestions?.[questionIndex];
-    if (!q) return NextResponse.json({ error: "Invalid questionIndex" }, { status: 400 });
+    const { msgItem, roomIdKey, msgSk, fromDynamo, rawMsgId } = found;
+    const targetMsgId = rawMsgId || msgId;
 
-    const correctOpt = q.options.find((o: any) => o.isCorrect);
-    const correctOption = correctOpt?.label ?? null;
+    const questions: any[] = Array.isArray(msgItem.triviaQuestions) ? msgItem.triviaQuestions : [];
+    if (questionIndex < 0 || questionIndex >= questions.length) {
+      return NextResponse.json({ error: "Invalid questionIndex" }, { status: 400 });
+    }
 
-    // 2. Check if already answered in DynamoDB first
-    let existingAnswerData: any = null;
-    let fetchedAnswerFromDynamo = false;
+    const q = questions[questionIndex];
+    const options: any[] = Array.isArray(q.options) ? q.options : [];
+    const correctOpt = options.find((o: any) => o.isCorrect === true || o.correct === true);
+    const correctOption = correctOpt?.label || q.correctOption || null;
+    const isCorrect = correctOption ? selectedOption === correctOption : false;
 
+    // 2. Check if already answered in DynamoDB
+    let alreadyAnswered = false;
     try {
-      const getRes = await docClient.send(new GetCommand({
-        TableName: "RealTimeChat",
-        Key: { roomId: `ROOM#${roomId}`, sk: `TRIVIA_ANSWER#${msgId}#${resolvedUserId}#${questionIndex}` }
+      const ansRes = await docClient.send(new GetCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId: roomIdKey, sk: `TRIVIA_ANS#${targetMsgId}#${resolvedUserId}#q${questionIndex}` }
       }));
-      if (getRes.Item) {
-        existingAnswerData = getRes.Item;
-        fetchedAnswerFromDynamo = true;
+      if (ansRes.Item) {
+        alreadyAnswered = true;
       }
     } catch (dynErr) {
-      console.warn("[TriviaAnswer POST] DynamoDB answer check failed:", dynErr);
+      console.warn("[TriviaAnswer POST] DynamoDB ans check notice:", dynErr);
     }
 
-    const answerRef = msgRef.collection("triviaAnswers").doc(`${resolvedUserId}_${questionIndex}`);
-
-    if (!fetchedAnswerFromDynamo) {
-      try {
-        const snap = await answerRef.get();
-        if (snap.exists) {
-          existingAnswerData = snap.data();
-        }
-      } catch (fsErr) {
-        console.warn("[TriviaAnswer POST] Firestore answer check failed:", fsErr);
-      }
+    if (alreadyAnswered) {
+      return NextResponse.json({ error: "Already answered", correctOption, isCorrect }, { status: 409 });
     }
 
-    if (existingAnswerData) {
-      return NextResponse.json({
-        success: true,
-        message: "Already answered",
-        isCorrect: existingAnswerData.isCorrect,
-        correctOption,
-        selectedOption: existingAnswerData.selectedOption,
-        triviaParticipants: data.triviaParticipants?.[questionIndex] ?? 0,
-      });
-    }
-
-    const isCorrect = selectedOption === correctOption;
     const now = Date.now();
-    const updatedParticipantsMap = { ...(data.triviaParticipants || {}) };
-    updatedParticipantsMap[questionIndex] = (updatedParticipantsMap[questionIndex] || 0) + 1;
 
-    // 3. Write to DynamoDB
+    // 3. Record answer in DynamoDB
     try {
-      // A. Put answer record
       await docClient.send(new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: {
-          roomId: `ROOM#${roomId}`,
-          sk: `TRIVIA_ANSWER#${msgId}#${resolvedUserId}#${questionIndex}`,
+          roomId: roomIdKey,
+          sk: `TRIVIA_ANS#${targetMsgId}#${resolvedUserId}#q${questionIndex}`,
           userId: resolvedUserId,
           questionIndex,
           selectedOption,
@@ -155,93 +83,52 @@ export async function POST(
           createdAt: now,
         }
       }));
-
-      // B. Update Parent Message triviaParticipants map
-      if (msgItem && msgSk) {
-        await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
-          Key: { roomId: `ROOM#${roomId}`, sk: msgSk },
-          UpdateExpression: "SET triviaParticipants = :tp, updatedAt = :u",
-          ExpressionAttributeValues: {
-            ":tp": updatedParticipantsMap,
-            ":u": now
-          }
-        }));
-      }
     } catch (dynErr) {
-      console.warn("[TriviaAnswer POST] DynamoDB write failed:", dynErr);
+      console.warn("[TriviaAnswer POST] DynamoDB write notice:", dynErr);
     }
 
-    // 4. Sync/Fallback to Firestore
+    // 4. Record answer in Firestore
     try {
-      const batch = db.batch();
-      batch.set(answerRef, {
+      const cleanRoomId = roomId.replace(/^ROOM#/, "");
+      await db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId).collection("messages").doc(targetMsgId).collection("triviaAnswers").doc(`${resolvedUserId}_q${questionIndex}`).set({
         userId: resolvedUserId,
         questionIndex,
         selectedOption,
         isCorrect,
         createdAt: now,
       });
-      batch.update(msgRef, {
-        [`triviaParticipants.${questionIndex}`]: FieldValue.increment(1),
-      });
-      await batch.commit();
     } catch (fsErr) {
-      console.warn("[TriviaAnswer POST] Firestore sync failed:", fsErr);
+      console.warn("[TriviaAnswer POST] Firestore sync notice:", fsErr);
     }
 
+    // 5. Award points if correct
     if (isCorrect) {
-      let watchAlongRoomId = null;
-      let roarRoomId = null;
-
-      if (isWatchalongFallback) {
-        watchAlongRoomId = roomId;
-        db.collection("roarRooms")
-          .where("watchAlongRoomId", "==", roomId)
-          .limit(1)
-          .get()
-          .then((snap) => {
-            if (!snap.empty) roarRoomId = snap.docs[0].id;
-          })
-          .catch(() => {});
-      } else {
-        roarRoomId = roomId;
-        db.collection("roarRooms").doc(roomId).get()
-          .then((doc) => {
-            if (doc.exists) watchAlongRoomId = doc.data()?.watchAlongRoomId ?? null;
-          })
-          .catch(() => {});
-      }
-
-      awardRoarPoints({
+      awardRoarPointsByReason({
         actualUserId: resolvedUserId,
         authUserId: user.userId,
-        userName: info.userName ?? "",
+        userName: info.userName || user.name || user.email?.split("@")[0] || "Fan",
         userEmail: user.email,
-        userExists: true,
-        postType: "quiz",
-        transactionId: `roar_trivia_${msgId}_${questionIndex}_${resolvedUserId}`,
+        userExists: info.exists,
+        reason: "ROAR_TRIVIA_CORRECT",
+        points: ROAR_EVENT_POINTS.ROAR_TRIVIA_CORRECT ?? 2,
+        transactionId: `roar_trivia_${targetMsgId}_q${questionIndex}_${resolvedUserId}`,
         metadata: {
-          postId: msgId,
           roomId,
+          postId: targetMsgId,
+          type: "trivia",
           questionIndex,
-          watchAlongRoomId,
-          roarRoomId
-        },
-      }).catch((err) => console.warn("[trivia-answer] award points failed:", err));
+          selectedOption,
+        }
+      }).catch(() => {});
     }
-
-    const updatedParticipants = (data.triviaParticipants?.[questionIndex] ?? 0) + 1;
 
     return NextResponse.json({
       success: true,
-      isCorrect,
       correctOption,
-      triviaParticipants: updatedParticipants,
+      isCorrect,
     });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : "Unexpected error";
-    console.error("POST trivia-answer error:", error);
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error: any) {
+    console.error("POST /api/roar/rooms/[roomId]/messages/[msgId]/trivia-answer error:", error);
+    return NextResponse.json({ error: error.message || "Failed to submit trivia answer" }, { status: 500 });
   }
 }

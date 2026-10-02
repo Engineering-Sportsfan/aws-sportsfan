@@ -1,23 +1,14 @@
-// api/roar/rooms/[roomId]/messages/[msgId]/comments/[commentId]/react/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+import { findRoomMessage, normalizeReaction, reactionCountField } from "@/lib/roarRoomHelpers";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getUserInfo } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
-
-function reactionCountField(reaction: string): string {
-  const map: Record<string, string> = {
-    heart: "heartCount", fire: "fireCount", mindblown: "mindblownCount",
-    goat: "goatCount", clap: "clapCount", nochance: "nochanceCount",
-    laugh: "laughCount", sad: "sadCount", thumb: "thumbCount",
-  };
-  return map[reaction] ?? `${reaction}Count`;
-}
 
 export async function POST(
   req: NextRequest,
@@ -29,18 +20,24 @@ export async function POST(
 
     const resolvedParams = await params;
     const { roomId, msgId, commentId } = resolvedParams;
-    const { reaction } = await req.json();
-    if (!reaction) return NextResponse.json({ error: "reaction is required" }, { status: 400 });
+    const { reaction: rawReaction } = await req.json();
+    if (!rawReaction) return NextResponse.json({ error: "reaction is required" }, { status: 400 });
 
+    const reaction = normalizeReaction(rawReaction) || "heart";
     const userId = user.userId;
+    const cleanRoomId = roomId.replace(/^ROOM#/, "");
+
+    const found = await findRoomMessage(cleanRoomId, msgId);
+    const targetMsgId = found?.rawMsgId || msgId;
+    const roomCand = found?.roomIdKey || `ROOM#${cleanRoomId}`;
 
     // 1. Fetch parent comment from DynamoDB first
     let commentItem: any = null;
     try {
       const qRes = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND sk = :s",
-        ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `COMMENT#${msgId}#${commentId}` },
+        ExpressionAttributeValues: { ":r": roomCand, ":s": `COMMENT#${targetMsgId}#${commentId}` },
         Limit: 1
       }));
       if (qRes.Items && qRes.Items.length > 0) {
@@ -51,8 +48,8 @@ export async function POST(
     }
 
     const commentRef = db
-      .collection("roarRooms").doc(roomId)
-      .collection("messages").doc(msgId)
+      .collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId)
+      .collection("messages").doc(targetMsgId)
       .collection("comments").doc(commentId);
 
     // Fallback: Check Firestore
@@ -90,15 +87,15 @@ export async function POST(
       try {
         // A. Delete reaction record
         await docClient.send(new DeleteCommand({
-          TableName: "RealTimeChat",
-          Key: { roomId: `ROOM#${roomId}`, sk: `LIKE#${commentId}#${userId}` }
+          TableName: TABLES.RealTimeChat,
+          Key: { roomId: roomCand, sk: `LIKE#${commentId}#${userId}` }
         }));
 
         // B. Update Parent Item
         if (commentItem) {
           await docClient.send(new UpdateCommand({
-            TableName: "RealTimeChat",
-            Key: { roomId: `ROOM#${roomId}`, sk: `COMMENT#${msgId}#${commentId}` },
+            TableName: TABLES.RealTimeChat,
+            Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${commentId}` },
             UpdateExpression: "SET reactions = :r, heartCount = :hc, #pf = :pfc",
             ExpressionAttributeNames: { "#pf": prevField },
             ExpressionAttributeValues: { ":r": reactions, ":hc": newHeartCount, ":pfc": newPrevFieldCount }
@@ -146,9 +143,9 @@ export async function POST(
     try {
       // A. Put reaction record
       await docClient.send(new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: {
-          roomId: `ROOM#${roomId}`,
+          roomId: roomCand,
           sk: `LIKE#${commentId}#${userId}`,
           reaction: reaction,
           reactedAt: Date.now()
@@ -158,8 +155,8 @@ export async function POST(
       // B. Update Parent Item
       if (commentItem) {
         await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
-          Key: { roomId: `ROOM#${roomId}`, sk: `COMMENT#${msgId}#${commentId}` },
+          TableName: TABLES.RealTimeChat,
+          Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${commentId}` },
           UpdateExpression: updateExpr,
           ExpressionAttributeNames: attrNames,
           ExpressionAttributeValues: attrVals

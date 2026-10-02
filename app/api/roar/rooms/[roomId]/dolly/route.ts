@@ -5,6 +5,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ async function resolveUser(
   const info = await getUserInfo(userId, undefined, email);
   if (!info.exists) return null;
 
-  const snap = await db.collection("users").doc(info.actualUserId).get();
+  const snap = await db.collection(getFirestoreCollection("users")).doc(info.actualUserId).get();
   if (!snap.exists) return null;
 
   const data = snap.data() as { username?: string };
@@ -46,7 +47,7 @@ export async function GET(
     // 1. Try reading from DynamoDB first
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
         ExpressionAttributeValues: {
           ":r": `ROOM#${roomId}`,
@@ -74,7 +75,7 @@ export async function GET(
     if (!fetchedFromDynamo) {
       try {
         const snap = await db
-          .collection("roarRooms")
+          .collection(getFirestoreCollection("roarRooms"))
           .doc(roomId)
           .collection("dollyReplies")
           .where("userId", "==", resolved.id)
@@ -139,7 +140,7 @@ export async function POST(
     let fetchedContextFromDynamo = false;
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
         ExpressionAttributeValues: {
           ":r": `ROOM#${roomId}`,
@@ -164,7 +165,7 @@ export async function POST(
     if (!fetchedContextFromDynamo) {
       try {
         const recentSnap = await db
-          .collection("roarRooms")
+          .collection(getFirestoreCollection("roarRooms"))
           .doc(roomId)
           .collection("dollyReplies")
           .where("userId", "==", resolved.id)
@@ -226,7 +227,7 @@ export async function POST(
     // 1. Put reply to DynamoDB first
     try {
       await docClient.send(new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: {
           roomId: `ROOM#${roomId}`,
           sk: `DOLLY#${resolved.id}#${replyId}`,
@@ -240,7 +241,7 @@ export async function POST(
     // 2. Sync to Firestore
     try {
       const replyRef = db
-        .collection("roarRooms")
+        .collection(getFirestoreCollection("roarRooms"))
         .doc(roomId)
         .collection("dollyReplies")
         .doc(replyId);

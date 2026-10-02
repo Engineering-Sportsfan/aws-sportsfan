@@ -18,7 +18,7 @@ interface AdminQuizQuestion {
 }
 
 export default function EngagementsManagementPage() {
-  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "meme_arena">("list");
+  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "meme_arena" | "fliplong">("list");
   const [engagements, setEngagements] = useState<EngagementItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -31,6 +31,15 @@ export default function EngagementsManagementPage() {
   const [subtitle, setSubtitle] = useState("");
   const [sport, setSport] = useState("cricket");
   const [status, setStatus] = useState<"active" | "inactive">("active");
+
+  // ── FlipLONG Cloudinary Media State ─────────────────────────────────────────
+  const [flipLongMedia, setFlipLongMedia] = useState<any[]>([]);
+  const [loadingFlipLong, setLoadingFlipLong] = useState(false);
+  const [flipLongSearch, setFlipLongSearch] = useState("");
+  const [uploadingFlipLong, setUploadingFlipLong] = useState(false);
+  const [uploadFlipLongProgress, setUploadFlipLongProgress] = useState<string | null>(null);
+  const [previewFlipLongVideo, setPreviewFlipLongVideo] = useState<any | null>(null);
+  const flipLongFileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Meme Arena State ─────────────────────────────────────────────────────────
   const [memeTitle, setMemeTitle] = useState("");
@@ -94,6 +103,76 @@ export default function EngagementsManagementPage() {
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
   const [selectedLeaderboardQuizId, setSelectedLeaderboardQuizId] = useState<string>("global");
   const [leaderboardSearch, setLeaderboardSearch] = useState<string>("");
+
+  const fetchFlipLongMedia = useCallback(async (q?: string) => {
+    setLoadingFlipLong(true);
+    try {
+      const url = q && q.trim()
+        ? `/api/cloudinary/cricket-media?search=${encodeURIComponent(q.trim())}`
+        : `/api/cloudinary/cricket-media`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.success) {
+        setFlipLongMedia(data.mediaFiles || []);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch FlipLONG media:", err);
+    } finally {
+      setLoadingFlipLong(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "fliplong") {
+      fetchFlipLongMedia(flipLongSearch);
+    }
+  }, [activeTab, fetchFlipLongMedia, flipLongSearch]);
+
+  const handleUploadFlipLong = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploadingFlipLong(true);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setUploadFlipLongProgress(`Uploading ${i + 1} of ${files.length}: ${file.name}`);
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("fileName", file.name);
+      try {
+        const res = await fetch("/api/cloudinary/cricket-media", {
+          method: "POST",
+          body: formData,
+        });
+        const resData = await res.json();
+        if (resData.success && resData.media) {
+          setFlipLongMedia(prev => [resData.media, ...prev]);
+        }
+      } catch (err) {
+        console.error("FlipLONG upload error:", err);
+      }
+    }
+    setUploadingFlipLong(false);
+    setUploadFlipLongProgress(null);
+    if (flipLongFileInputRef.current) flipLongFileInputRef.current.value = "";
+    fetchFlipLongMedia(flipLongSearch);
+  };
+
+  const handleDeleteFlipLongMedia = async (publicId: string, resourceType: string = "video") => {
+    if (!confirm("Are you sure you want to delete this FlipLONG media item from Cloudinary?")) return;
+    try {
+      const res = await fetch(`/api/cloudinary/cricket-media?publicId=${encodeURIComponent(publicId)}&resourceType=${resourceType}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (data.success) {
+        setFlipLongMedia(prev => prev.filter(m => m.id !== publicId));
+      } else {
+        alert(data.error || "Failed to delete");
+      }
+    } catch {
+      alert("Failed to delete media");
+    }
+  };
 
   useEffect(() => {
     fetchEngagements();
@@ -730,6 +809,7 @@ export default function EngagementsManagementPage() {
       <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #30363d", paddingBottom: 10, marginBottom: 20, overflowX: "auto" }}>
         {[
           { id: "list", label: "📋 All Engagements" },
+          { id: "fliplong", label: "🎬 FlipLONG Videos (Cloudinary)" },
           { id: "meme_arena", label: "🔥 Meme Arena Feed" },
           { id: "leaderboard", label: "🏆 Quiz Leaderboard" },
           { id: "meme", label: "🔥 Meme Arena Creator" },
@@ -742,14 +822,14 @@ export default function EngagementsManagementPage() {
             key={tab.id}
             onClick={() => {
               setActiveTab(tab.id as any);
-              if (tab.id !== "list" && tab.id !== "leaderboard" && tab.id !== "meme_arena") setEditingItem(null);
+              if (tab.id !== "list" && tab.id !== "leaderboard" && tab.id !== "meme_arena" && tab.id !== "fliplong") setEditingItem(null);
             }}
             style={{
               padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600,
-              background: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : tab.id === "meme" || tab.id === "meme_arena" ? "#ff5e00" : "#388bfd") : "transparent",
+              background: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : tab.id === "meme" || tab.id === "meme_arena" ? "#ff5e00" : tab.id === "fliplong" ? "#e11d48" : "#388bfd") : "transparent",
               color: activeTab === tab.id ? (tab.id === "leaderboard" ? "#000" : "#fff") : "#8b949e",
               border: "1px solid",
-              borderColor: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : tab.id === "meme" || tab.id === "meme_arena" ? "#ff5e00" : "#388bfd") : "transparent",
+              borderColor: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : tab.id === "meme" || tab.id === "meme_arena" ? "#ff5e00" : tab.id === "fliplong" ? "#e11d48" : "#388bfd") : "transparent",
               cursor: "pointer",
               whiteSpace: "nowrap",
             }}
@@ -2691,6 +2771,256 @@ export default function EngagementsManagementPage() {
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* ── TAB 9: FLIPLONG CLOUDINARY MEDIA ──────────────────────────────────── */}
+      {activeTab === "fliplong" && (
+        <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 12, padding: 20 }}>
+          {/* Header Bar */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+                🎬 FlipLONG Videos & Media <span style={{ fontSize: 11, background: "rgba(225, 29, 72, 0.2)", color: "#f43f5e", padding: "2px 8px", borderRadius: 12, border: "1px solid rgba(244, 63, 94, 0.3)" }}>Cloudinary</span>
+              </h2>
+              <p style={{ fontSize: 12, color: "#8b949e", marginTop: 2 }}>
+                Upload & manage media files stored in Cloudinary for FlipLONG.
+              </p>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <input
+                ref={flipLongFileInputRef}
+                type="file"
+                accept="video/*,image/*"
+                multiple
+                onChange={handleUploadFlipLong}
+                style={{ display: "none" }}
+                id="fliplong-engagement-upload-input"
+              />
+              <label
+                htmlFor="fliplong-engagement-upload-input"
+                style={{
+                  background: "linear-gradient(135deg, #e11d48 0%, #be123c 100%)",
+                  color: "#fff",
+                  padding: "8px 16px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: uploadingFlipLong ? "not-allowed" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  opacity: uploadingFlipLong ? 0.6 : 1,
+                  boxShadow: "0 4px 12px rgba(225, 29, 72, 0.35)",
+                }}
+              >
+                + {uploadingFlipLong ? "Uploading..." : "Upload FlipLONG Video"}
+              </label>
+
+              <button
+                onClick={() => fetchFlipLongMedia(flipLongSearch)}
+                disabled={loadingFlipLong}
+                style={{
+                  background: "#21262d",
+                  color: "#c9d1d9",
+                  border: "1px solid #30363d",
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                🔄 Refresh
+              </button>
+            </div>
+          </div>
+
+          {/* Upload Progress */}
+          {uploadFlipLongProgress && (
+            <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, background: "rgba(225, 29, 72, 0.15)", border: "1px solid rgba(225, 29, 72, 0.4)", color: "#f43f5e", fontSize: 12 }}>
+              ⏳ {uploadFlipLongProgress}
+            </div>
+          )}
+
+          {/* Search Bar */}
+          <div style={{ marginBottom: 18 }}>
+            <input
+              placeholder="Search FlipLONG media by title or fileName…"
+              value={flipLongSearch}
+              onChange={(e) => {
+                setFlipLongSearch(e.target.value);
+                fetchFlipLongMedia(e.target.value);
+              }}
+              style={{
+                width: "100%",
+                maxWidth: 400,
+                background: "#0d1117",
+                border: "1px solid #30363d",
+                borderRadius: 8,
+                padding: "8px 14px",
+                fontSize: 13,
+                color: "#fff",
+                outline: "none",
+              }}
+            />
+          </div>
+
+          {/* Media Grid */}
+          {loadingFlipLong ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#8b949e", fontSize: 13 }}>
+              Loading FlipLONG videos from Cloudinary…
+            </div>
+          ) : flipLongMedia.length === 0 ? (
+            <div style={{ padding: 50, textAlign: "center", color: "#8b949e", background: "#0d1117", borderRadius: 10, border: "1px solid #21262d" }}>
+              <div style={{ fontSize: 32, marginBottom: 10 }}>🎬</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", marginBottom: 6 }}>No FlipLONG media found</div>
+              <div style={{ fontSize: 12, color: "#8b949e", marginBottom: 16 }}>Click the upload button above to add videos directly to Cloudinary.</div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+              {flipLongMedia.map((m: any) => (
+                <div
+                  key={m.id}
+                  style={{
+                    background: "#0d1117",
+                    border: "1px solid #30363d",
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
+                  {/* Thumbnail / Video Preview */}
+                  <div style={{ position: "relative", width: "100%", height: 160, background: "#000" }}>
+                    {m.thumbnailUrl ? (
+                      <img
+                        src={m.thumbnailUrl}
+                        alt={m.title}
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                    ) : (
+                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b949e" }}>
+                        🎬 Video
+                      </div>
+                    )}
+                    {m.duration && (
+                      <span style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.8)", color: "#fff", padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
+                        ⏱ {m.duration}
+                      </span>
+                    )}
+                    <span style={{ position: "absolute", top: 8, left: 8, background: "rgba(225,29,72,0.85)", color: "#fff", padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 800, textTransform: "uppercase" }}>
+                      {m.resourceType || "VIDEO"}
+                    </span>
+                  </div>
+
+                  {/* Body */}
+                  <div style={{ padding: 12, flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#f0f6fc", marginBottom: 4, wordBreak: "break-word" }}>
+                        {m.title || m.fileName}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 8, wordBreak: "break-all" }}>
+                        📁 {m.fileName} {m.sizeFormatted ? `· ${m.sizeFormatted}` : ""}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                      <button
+                        onClick={() => setPreviewFlipLongVideo(m)}
+                        style={{
+                          flex: 1,
+                          background: "#21262d",
+                          border: "1px solid #30363d",
+                          color: "#58a6ff",
+                          borderRadius: 6,
+                          padding: "6px 10px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        ▶ Preview
+                      </button>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(m.url);
+                          alert("Media URL copied!");
+                        }}
+                        style={{
+                          background: "#21262d",
+                          border: "1px solid #30363d",
+                          color: "#c9d1d9",
+                          borderRadius: 6,
+                          padding: "6px 10px",
+                          fontSize: 11,
+                          cursor: "pointer",
+                        }}
+                      >
+                        🔗 Copy
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFlipLongMedia(m.id, m.resourceType)}
+                        style={{
+                          background: "#21262d",
+                          border: "1px solid #da3633",
+                          color: "#f85149",
+                          borderRadius: 6,
+                          padding: "6px 10px",
+                          fontSize: 11,
+                          cursor: "pointer",
+                        }}
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Video Preview Modal */}
+          {previewFlipLongVideo && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.85)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 9999,
+                padding: 20,
+              }}
+              onClick={() => setPreviewFlipLongVideo(null)}
+            >
+              <div
+                style={{
+                  background: "#161b22",
+                  border: "1px solid #30363d",
+                  borderRadius: 12,
+                  maxWidth: 680,
+                  width: "100%",
+                  overflow: "hidden",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #30363d", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{previewFlipLongVideo.title || previewFlipLongVideo.fileName}</div>
+                  <button onClick={() => setPreviewFlipLongVideo(null)} style={{ background: "transparent", border: "none", color: "#8b949e", fontSize: 18, cursor: "pointer" }}>✕</button>
+                </div>
+                <div style={{ padding: 16, background: "#000" }}>
+                  {previewFlipLongVideo.resourceType === "video" || previewFlipLongVideo.url?.endsWith(".mp4") ? (
+                    <video src={previewFlipLongVideo.url} controls autoPlay style={{ width: "100%", maxHeight: 420, borderRadius: 8 }} />
+                  ) : (
+                    <img src={previewFlipLongVideo.url} alt={previewFlipLongVideo.title} style={{ width: "100%", maxHeight: 420, objectFit: "contain" }} />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

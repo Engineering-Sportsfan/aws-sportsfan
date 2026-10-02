@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import {
   GetCommand,
   PutCommand,
@@ -107,7 +108,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const cRes = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${chatId}`, sk: "ROOM#META" },
         }),
       );
@@ -115,15 +116,21 @@ export async function DELETE(req: NextRequest) {
     } catch {}
 
     if (!chatData) {
-      const chatDoc = await db.collection("chats").doc(chatId).get();
-      if (!chatDoc.exists) {
+      try {
+        const chatDoc = await db.collection("chats").doc(chatId).get();
+        if (chatDoc.exists) {
+          chatData = chatDoc.data()!;
+        }
+      } catch (fsErr) {
+        console.warn("[message DELETE] Firestore chat lookup notice:", fsErr);
+      }
+      if (!chatData) {
         return NextResponse.json({ error: "Chat not found" }, { status: 404 });
       }
-      chatData = chatDoc.data()!;
     }
 
     if (
-      !(chatData.participantIds as string[] || []).some((pid) =>
+      !(chatData.participantIds as string[] || []).some((pid: string) =>
         isSameUser(pid, CURRENT_USER_ID),
       )
     ) {
@@ -137,7 +144,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const mRes = await docClient.send(
         new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND begins_with(sk, :msg)",
           ExpressionAttributeValues: {
             ":r": `ROOM#${chatId}`,
@@ -147,7 +154,7 @@ export async function DELETE(req: NextRequest) {
       );
       if (mRes.Items && mRes.Items.length > 0) {
         const found = mRes.Items.find(
-          (i) => i.id === messageId || (i.sk as string).endsWith(messageId),
+          (i: any) => i.id === messageId || (i.sk as string).endsWith(messageId),
         );
         if (found) {
           messageData = found;
@@ -157,14 +164,20 @@ export async function DELETE(req: NextRequest) {
     } catch {}
 
     if (!messageData) {
-      const messageDoc = await db.collection("messages").doc(messageId).get();
-      if (!messageDoc.exists) {
+      try {
+        const messageDoc = await db.collection("messages").doc(messageId).get();
+        if (messageDoc.exists) {
+          messageData = { id: messageDoc.id, ...messageDoc.data() };
+        }
+      } catch (fsErr) {
+        console.warn("[message DELETE] Firestore message lookup notice:", fsErr);
+      }
+      if (!messageData) {
         return NextResponse.json(
           { error: "Message not found" },
           { status: 404 },
         );
       }
-      messageData = { id: messageDoc.id, ...messageDoc.data() };
     }
 
     if (messageData.chatId !== chatId) {
@@ -199,7 +212,7 @@ export async function DELETE(req: NextRequest) {
         try {
           await docClient.send(
             new PutCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               Item: {
                 ...dynamoItemKey,
                 ...updatedMsg,
@@ -239,7 +252,7 @@ export async function DELETE(req: NextRequest) {
         try {
           await docClient.send(
             new PutCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               Item: {
                 ...dynamoItemKey,
                 ...updatedMsg,
@@ -303,7 +316,7 @@ export async function PATCH(req: NextRequest) {
     try {
       const cRes = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${chatId}`, sk: "ROOM#META" },
         }),
       );
@@ -311,15 +324,21 @@ export async function PATCH(req: NextRequest) {
     } catch {}
 
     if (!chatData) {
-      const chatDoc = await db.collection("chats").doc(chatId).get();
-      if (!chatDoc.exists) {
+      try {
+        const chatDoc = await db.collection("chats").doc(chatId).get();
+        if (chatDoc.exists) {
+          chatData = chatDoc.data()!;
+        }
+      } catch (fsErr) {
+        console.warn("[message PATCH] Firestore chat lookup notice:", fsErr);
+      }
+      if (!chatData) {
         return NextResponse.json({ error: "Chat not found" }, { status: 404 });
       }
-      chatData = chatDoc.data()!;
     }
 
     if (
-      !(chatData.participantIds as string[] || []).some((pid) =>
+      !(chatData.participantIds as string[] || []).some((pid: string) =>
         isSameUser(pid, CURRENT_USER_ID),
       )
     ) {
@@ -333,7 +352,7 @@ export async function PATCH(req: NextRequest) {
     try {
       const mRes = await docClient.send(
         new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND begins_with(sk, :msg)",
           ExpressionAttributeValues: {
             ":r": `ROOM#${chatId}`,
@@ -343,7 +362,7 @@ export async function PATCH(req: NextRequest) {
       );
       if (mRes.Items && mRes.Items.length > 0) {
         const found = mRes.Items.find(
-          (i) => i.id === messageId || (i.sk as string).endsWith(messageId),
+          (i: any) => i.id === messageId || (i.sk as string).endsWith(messageId),
         );
         if (found) {
           messageData = found;
@@ -353,14 +372,20 @@ export async function PATCH(req: NextRequest) {
     } catch {}
 
     if (!messageData) {
-      const messageDoc = await db.collection("messages").doc(messageId).get();
-      if (!messageDoc.exists) {
+      try {
+        const messageDoc = await db.collection("messages").doc(messageId).get();
+        if (messageDoc.exists) {
+          messageData = { id: messageDoc.id, ...messageDoc.data() };
+        }
+      } catch (fsErr) {
+        console.warn("[message PATCH] Firestore message lookup notice:", fsErr);
+      }
+      if (!messageData) {
         return NextResponse.json(
           { error: "Message not found" },
           { status: 404 },
         );
       }
-      messageData = { id: messageDoc.id, ...messageDoc.data() };
     }
 
     if (messageData.chatId !== chatId) {
@@ -406,7 +431,7 @@ export async function PATCH(req: NextRequest) {
       try {
         await docClient.send(
           new PutCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Item: {
               ...dynamoItemKey,
               ...updatedMsg,

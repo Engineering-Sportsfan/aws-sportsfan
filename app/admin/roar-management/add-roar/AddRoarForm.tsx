@@ -558,6 +558,8 @@ export default function AddRoarForm() {
           >
             <option value="cricket">Cricket 🏏</option>
             <option value="football">Football ⚽</option>
+            <option value="hockey">Hockey 🏑</option>
+            <option value="athletics">Athletics (Asian Games) 🏃</option>
           </select>
         </div>
 
@@ -572,11 +574,15 @@ export default function AddRoarForm() {
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500"
           >
             <option value="">-- No Match Linked (Normal Fallback Mode) --</option>
-            {matches.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.sport === "cricket" ? "🏏" : "⚽"} {m.team_a} vs {m.team_b} ({m.sport.toUpperCase()})
-              </option>
-            ))}
+            {matches.map((m) => {
+              const s = (m.sport || "").toLowerCase();
+              const badge = s === "cricket" ? "🏏" : s === "football" ? "⚽" : s === "hockey" ? "🏑" : s === "athletics" ? "🏃" : "🏆";
+              return (
+                <option key={m.id} value={m.id}>
+                  {badge} {m.team_a} vs {m.team_b} ({m.sport?.toUpperCase()})
+                </option>
+              );
+            })}
           </select>
         </div>
 

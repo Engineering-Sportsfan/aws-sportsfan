@@ -1,9 +1,8 @@
-// api/roar/rooms/presence-preview/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +31,7 @@ export async function POST(req: NextRequest) {
         // Try DynamoDB
         try {
           const res = await docClient.send(new QueryCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
             FilterExpression: "lastSeenAt >= :c",
             ExpressionAttributeValues: {
@@ -51,7 +50,7 @@ export async function POST(req: NextRequest) {
           const candidates = [`ROOM#${roomId}`, roomId];
           for (const cand of candidates) {
             const getMeta = await docClient.send(new GetCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               Key: { roomId: cand, sk: `META#${roomId}` }
             }));
             if (getMeta.Item) {
@@ -67,7 +66,7 @@ export async function POST(req: NextRequest) {
         if (!fetchedFromDynamo) {
           try {
             const snap = await db
-              .collection("roarRooms")
+              .collection(getFirestoreCollection("roarRooms"))
               .doc(roomId)
               .collection("presence")
               .where("lastSeenAt", ">=", cutoff)
@@ -76,14 +75,14 @@ export async function POST(req: NextRequest) {
               .get();
 
             const countSnap = await db
-              .collection("roarRooms")
+              .collection(getFirestoreCollection("roarRooms"))
               .doc(roomId)
               .collection("presence")
               .where("lastSeenAt", ">=", cutoff)
               .count()
               .get();
 
-            const roomSnap = await db.collection("roarRooms").doc(roomId).get();
+            const roomSnap = await db.collection(getFirestoreCollection("roarRooms")).doc(roomId).get();
             totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
 
             const fans = snap.docs.map((d) => {

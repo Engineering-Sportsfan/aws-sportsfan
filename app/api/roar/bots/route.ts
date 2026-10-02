@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, PutCommand, UpdateCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -30,13 +31,13 @@ export async function GET(req: NextRequest) {
 
       const res = await docClient.send(new BatchGetCommand({
         RequestItems: {
-          "IdentityAndAccess": {
+          [TABLES.IdentityAndAccess]: {
             Keys: keys
           }
         }
       }));
 
-      const items = res.Responses?.["IdentityAndAccess"] || [];
+      const items = res.Responses?.[TABLES.IdentityAndAccess] || [];
       items.forEach(item => {
         const botId = (item.entityId as string).replace(/^USER#/, "");
         dbBots.set(botId, item);
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
     // Fallback to Firestore
     if (!fetchedFromDynamo) {
       try {
-        const snapshot = await db.collection("users").where("isBot", "==", true).get();
+        const snapshot = await db.collection(getFirestoreCollection("users")).where("isBot", "==", true).get();
         snapshot.docs.forEach(doc => {
           dbBots.set(doc.id, doc.data());
         });
@@ -90,7 +91,7 @@ export async function PUT(req: NextRequest) {
     // 1. Update in DynamoDB first
     try {
       await docClient.send(new UpdateCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Key: { entityId: `USER#${botId}`, sk: "USER#META" },
         UpdateExpression: "SET isBotActive = :a, isBot = :b",
         ExpressionAttributeValues: { ":a": active, ":b": true }
@@ -101,7 +102,7 @@ export async function PUT(req: NextRequest) {
 
     // 2. Sync to Firestore
     try {
-      await db.collection("users").doc(botId).set({
+      await db.collection(getFirestoreCollection("users")).doc(botId).set({
         isBotActive: active,
         isBot: true
       }, { merge: true });
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest) {
       });
 
       await docClient.send(new UpdateCommand({
-        TableName: "IdentityAndAccess",
+        TableName: TABLES.IdentityAndAccess,
         Key: { entityId: `USER#${botId}`, sk: "USER#META" },
         UpdateExpression: updateExpression,
         ExpressionAttributeNames: Object.keys(expressionAttributeNames).length > 0 ? expressionAttributeNames : undefined,
@@ -157,7 +158,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Sync to Firestore
     try {
-      await db.collection("users").doc(botId).set(updateData, { merge: true });
+      await db.collection(getFirestoreCollection("users")).doc(botId).set(updateData, { merge: true });
     } catch (fsErr) {
       console.warn("[Bots POST] Firestore fallback failed:", fsErr);
     }

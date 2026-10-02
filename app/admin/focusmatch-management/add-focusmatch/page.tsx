@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 // Form Component for adding matches
 export default function AddFocusMatchPage() {
   const router = useRouter();
-  const [sport, setSport] = useState<"football" | "cricket">("cricket");
+  const [sport, setSport] = useState<"cricket" | "football" | "hockey" | "athletics">("cricket");
   const [competition, setCompetition] = useState("");
   const [teamA, setTeamA] = useState("");
   const [teamB, setTeamB] = useState("");
@@ -50,10 +50,12 @@ export default function AddFocusMatchPage() {
         throw new Error(resData.error || "Failed to save match.");
       }
 
-      // Auto-trigger pre-match research pipeline in the background on Dolly's Render server
+      // Non-blocking auto-trigger pre-match research pipeline in background
       try {
-        await fetch(`https://sportsfan360-sentiment.onrender.com/run-research?match_id=${resData.id}&team_a=${encodeURIComponent(teamA)}&team_b=${encodeURIComponent(teamB)}&sport=${sport}&competition=${encodeURIComponent(competition)}`, {
+        fetch(`https://sportsfan360-sentiment.onrender.com/run-research?match_id=${resData.id}&team_a=${encodeURIComponent(teamA)}&team_b=${encodeURIComponent(teamB)}&sport=${sport}&competition=${encodeURIComponent(competition)}`, {
           method: "POST"
+        }).catch((triggerErr) => {
+          console.warn("Could not auto-trigger match research background pipeline:", triggerErr);
         });
       } catch (triggerErr) {
         console.warn("Could not auto-trigger match research background pipeline:", triggerErr);
@@ -67,10 +69,10 @@ export default function AddFocusMatchPage() {
       setTeamB("");
       setKickoffTime("");
       
-      router.push("/admin/focusmatch-management/focusmatch-list");
+      router.push(`/admin/focusmatch-management/focusmatch-list?sport=${sport}`);
     } catch (err: any) {
       console.error("Error adding match:", err);
-      setError(err.message || "Failed to save match to Firestore.");
+      setError(err.message || "Failed to save match.");
     } finally {
       setLoading(false);
     }
@@ -88,11 +90,13 @@ export default function AddFocusMatchPage() {
           <label style={{ display: "block", fontSize: 12, marginBottom: 5, color: "#8b949e" }}>Sport Category</label>
           <select 
             value={sport} 
-            onChange={(e) => setSport(e.target.value as "football" | "cricket")}
+            onChange={(e) => setSport(e.target.value as "cricket" | "football" | "hockey" | "athletics")}
             style={{ width: "100%", padding: 8, background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff" }}
           >
             <option value="cricket">Cricket 🏏</option>
             <option value="football">Football ⚽</option>
+            <option value="hockey">Hockey 🏑</option>
+            <option value="athletics">Athletics (Asian Games) 🏃</option>
           </select>
         </div>
 
