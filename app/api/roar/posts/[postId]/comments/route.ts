@@ -1,11 +1,10 @@
-// app/api/roar/posts/[postId]/comments/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import {  notifyRoomMessageComment } from "@/lib/roarNotifyHelpers";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, PutCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +29,7 @@ export async function GET(
     // 1. Try DynamoDB first
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "COMMENT#" }
       }));
@@ -52,7 +51,7 @@ export async function GET(
     if (!fetchedFromDynamo) {
       try {
         let query = db
-          .collection("roarPosts")
+          .collection(getFirestoreCollection("roarPosts"))
           .doc(postId)
           .collection("comments")
           .orderBy("createdAt", "desc")
@@ -87,7 +86,7 @@ export async function GET(
 
         try {
           const userRes = await docClient.send(new GetCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${uid}`, sk: "USER#META" }
           }));
           if (userRes.Item) {
@@ -99,7 +98,7 @@ export async function GET(
 
         if (!fetchedAuthor) {
           try {
-            const snap = await db.collection("users").doc(uid).get();
+            const snap = await db.collection(getFirestoreCollection("users")).doc(uid).get();
             if (snap.exists) {
               const data = snap.data() as any;
               avatarUrl = data?.avatarUrl ?? null;
@@ -155,8 +154,8 @@ export async function POST(
     const isRoomMessage = !!roomId;
 
     const commentRef = isRoomMessage
-      ? db.collection("roarRooms").doc(roomId).collection("messages").doc(postId).collection("comments").doc()
-      : db.collection("roarPosts").doc(postId).collection("comments").doc();
+      ? db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("messages").doc(postId).collection("comments").doc()
+      : db.collection(getFirestoreCollection("roarPosts")).doc(postId).collection("comments").doc();
 
     const commentId = commentRef.id;
 
@@ -165,7 +164,7 @@ export async function POST(
       if (isRoomMessage) {
         // A. Put comment item
         await docClient.send(new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${roomId}`,
             sk: `COMMENT#${postId}#${commentId}`,
@@ -181,7 +180,7 @@ export async function POST(
 
         // B. Increment replyCount on parent message
         await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${postId}` },
           UpdateExpression: "ADD replyCount :one",
           ExpressionAttributeValues: { ":one": 1 }
@@ -190,7 +189,7 @@ export async function POST(
       } else {
         // A. Put comment item
         await docClient.send(new PutCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Item: {
             contentId: `POST#${postId}`,
             sk: `COMMENT#${commentId}`,
@@ -206,7 +205,7 @@ export async function POST(
 
         // B. Find parent post and increment replyCount
         const postRes = await docClient.send(new QueryCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
           ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
           Limit: 1
@@ -214,7 +213,7 @@ export async function POST(
         if (postRes.Items && postRes.Items.length > 0) {
           const postSk = postRes.Items[0].sk;
           await docClient.send(new UpdateCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `POST#${postId}`, sk: postSk },
             UpdateExpression: "ADD replyCount :one",
             ExpressionAttributeValues: { ":one": 1 }
@@ -240,8 +239,8 @@ export async function POST(
 
       // Increment replyCount on the correct parent doc
       const parentRef = isRoomMessage
-        ? db.collection("roarRooms").doc(roomId).collection("messages").doc(postId)
-        : db.collection("roarPosts").doc(postId);
+        ? db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("messages").doc(postId)
+        : db.collection(getFirestoreCollection("roarPosts")).doc(postId);
 
       parentRef.update({ replyCount: FieldValue.increment(1) }).catch(() => {});
     } catch (fsErr) {
@@ -280,14 +279,14 @@ export async function POST(
 async function resolveUsername(userId: string, name: string, email: string): Promise<string> {
   try {
     const userRes = await docClient.send(new GetCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${userId}`, sk: "USER#META" }
     }));
     if (userRes.Item?.username) return userRes.Item.username;
   } catch {}
 
   try {
-    const snap = await db.collection("roarProfiles").doc(userId).get();
+    const snap = await db.collection(getFirestoreCollection("roarProfiles")).doc(userId).get();
     if (snap.exists) {
       const d = snap.data()!;
       if (d.username) return d.username as string;

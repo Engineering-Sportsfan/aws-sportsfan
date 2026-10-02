@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ export async function DELETE(
       const candidates = [`ROOM#${roomId}`, roomId];
       for (const cand of candidates) {
         const getRes = await docClient.send(new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: cand, sk: `META#${roomId}` }
         }));
         if (getRes.Item) {
@@ -31,7 +32,7 @@ export async function DELETE(
             delete newConfig[botId];
 
             await docClient.send(new UpdateCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               Key: { roomId: cand, sk: `META#${roomId}` },
               UpdateExpression: "SET botConfig = :b",
               ExpressionAttributeValues: { ":b": newConfig }
@@ -45,7 +46,7 @@ export async function DELETE(
     
     // 2. Sync to Firestore
     try {
-      const roomRef = db.collection("roarRooms").doc(roomId);
+      const roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId);
       const roomSnap = await roomRef.get();
       if (roomSnap.exists) {
         const data = roomSnap.data();

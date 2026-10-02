@@ -1,10 +1,9 @@
-//api/roar/posts/[postId]/comments/[commentId]/react/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { FieldValue } from "firebase-admin/firestore";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export async function POST(
@@ -20,16 +19,16 @@ export async function POST(
 
     // Resolve user ID
     let resolvedUserId = user.email;
-    let userSnap = await db.collection("users").doc(user.email).get();
+    let userSnap = await db.collection(getFirestoreCollection("users")).doc(user.email).get();
     if (!userSnap.exists) {
-      userSnap = await db.collection("users").doc(user.userId).get();
+      userSnap = await db.collection(getFirestoreCollection("users")).doc(user.userId).get();
       if (userSnap.exists) {
         resolvedUserId = user.userId;
       }
     }
 
     const commentRef = db
-      .collection("roarPosts")
+      .collection(getFirestoreCollection("roarPosts"))
       .doc(postId)
       .collection("comments")
       .doc(commentId);
@@ -42,11 +41,11 @@ export async function POST(
     try {
       const [commentRes, reactionRes] = await Promise.all([
         docClient.send(new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: `COMMENT#${commentId}` }
         })),
         docClient.send(new GetCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: `COMMENT_REACT#${commentId}#${resolvedUserId}` }
         }))
       ]);
@@ -88,7 +87,7 @@ export async function POST(
     // 2. Write to DynamoDB
     try {
       await docClient.send(new PutCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Item: {
           contentId: `POST#${postId}`,
           sk: `COMMENT_REACT#${commentId}#${resolvedUserId}`,
@@ -97,7 +96,7 @@ export async function POST(
       }));
 
       await docClient.send(new UpdateCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: { contentId: `POST#${postId}`, sk: `COMMENT#${commentId}` },
         UpdateExpression: "SET heartCount = :hc",
         ExpressionAttributeValues: { ":hc": finalHeartCount }

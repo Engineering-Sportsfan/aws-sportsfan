@@ -12,7 +12,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { awardRoarPoints } from "@/lib/roarPoints";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, UpdateCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post, PostType, SportType } from "@/app/models/Post";
 
@@ -71,12 +71,12 @@ async function resolveUser(
 
   let userData: any = null;
   let snap: FirebaseFirestore.DocumentSnapshot | undefined;
-  const ref = db.collection("users").doc(info.actualUserId);
+  const ref = db.collection(getFirestoreCollection("users")).doc(info.actualUserId);
 
   // 1. Try DynamoDB
   try {
     const userRes = await docClient.send(new GetCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: {
         entityId: `USER#${info.actualUserId}`,
         sk: "USER#META"
@@ -137,7 +137,7 @@ async function markExpiredPredictionClosed(postId: string, post: PredictionClose
 
   // 2. Sync to Firestore
   try {
-    const postRef = db.collection("roarPosts").doc(postId);
+    const postRef = db.collection(getFirestoreCollection("roarPosts")).doc(postId);
     await db.runTransaction(async (tx) => {
       const freshPostSnap = await tx.get(postRef);
       if (!freshPostSnap.exists) return;
@@ -147,11 +147,11 @@ async function markExpiredPredictionClosed(postId: string, post: PredictionClose
       tx.update(postRef, { closedAt: latestNow, updatedAt: latestNow });
 
       const notificationRef = db
-        .collection("notifications")
+        .collection(getFirestoreCollection("notifications"))
         .doc(freshPost.authorUid)
         .collection("items")
         .doc(`roar_prediction_closed_${postId}`);
-      const summaryRef = db.collection("notifications").doc(freshPost.authorUid).collection("meta").doc("summary");
+      const summaryRef = db.collection(getFirestoreCollection("notifications")).doc(freshPost.authorUid).collection("meta").doc("summary");
 
       tx.set(notificationRef, {
         type: "ROAR_PREDICTION_RESOLVE_READY",
@@ -313,7 +313,7 @@ export async function GET(req: NextRequest) {
 
             if (!fetchedVote) {
               try {
-                const voteSnap = await db.collection("roarPosts").doc(postId).collection("roarVotes").doc(resolvedUserId).get();
+                const voteSnap = await db.collection(getFirestoreCollection("roarPosts")).doc(postId).collection("roarVotes").doc(resolvedUserId).get();
                 if (voteSnap.exists) {
                   vote = (voteSnap.data() as any)?.vote ?? null;
                 }
@@ -341,7 +341,7 @@ export async function GET(req: NextRequest) {
 
             if (!fetchedLike) {
               try {
-                const likeSnap = await db.collection("roarPosts").doc(postId).collection("likes").doc(resolvedUserId).get();
+                const likeSnap = await db.collection(getFirestoreCollection("roarPosts")).doc(postId).collection("likes").doc(resolvedUserId).get();
                 if (likeSnap.exists) {
                   liked = true;
                   reaction = (likeSnap.data() as any)?.reaction ?? "heart";
@@ -369,7 +369,7 @@ export async function GET(req: NextRequest) {
 
             if (!fetchedQuiz) {
               try {
-                const quizSnap = await db.collection("roarPosts").doc(postId).collection("quizAnswers").doc(resolvedUserId).get();
+                const quizSnap = await db.collection(getFirestoreCollection("roarPosts")).doc(postId).collection("quizAnswers").doc(resolvedUserId).get();
                 if (quizSnap.exists) {
                   selectedOption = (quizSnap.data() as any)?.selectedOption ?? null;
                 }
@@ -405,7 +405,7 @@ export async function GET(req: NextRequest) {
 
         if (!fetchedAuthor) {
           try {
-            const snap = await db.collection("users").doc(uid).get();
+            const snap = await db.collection(getFirestoreCollection("users")).doc(uid).get();
             if (snap.exists) {
               const data = snap.data() as any;
               avatarUrl = data?.avatarUrl ?? null;
@@ -595,7 +595,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Sync to Firestore
     try {
-      const postRef = db.collection("roarPosts").doc(postId);
+      const postRef = db.collection(getFirestoreCollection("roarPosts")).doc(postId);
       const batch = db.batch();
       batch.set(postRef, newPost);
 

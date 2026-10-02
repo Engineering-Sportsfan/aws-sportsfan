@@ -1,11 +1,10 @@
-// api/roar/rooms/[roomId]/messages/[msgId]/comments/[commentId]/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, DeleteCommand, UpdateCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +25,7 @@ export async function DELETE(
 
     try {
       const getRes = await docClient.send(new GetCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `COMMENT#${msgId}#${commentId}` }
       }));
       if (getRes.Item) {
@@ -38,7 +37,7 @@ export async function DELETE(
     }
 
     const commentRef = db
-      .collection("roarRooms")
+      .collection(getFirestoreCollection("roarRooms"))
       .doc(roomId)
       .collection("messages")
       .doc(msgId)
@@ -78,7 +77,7 @@ export async function DELETE(
     try {
       // A. Delete comment item
       await docClient.send(new DeleteCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `COMMENT#${msgId}#${commentId}` }
       }));
 
@@ -86,7 +85,7 @@ export async function DELETE(
       let msgSk: string | null = null;
       try {
         const qRes = await docClient.send(new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
           FilterExpression: "chatId = :m",
           ExpressionAttributeValues: {
@@ -105,7 +104,7 @@ export async function DELETE(
 
       if (msgSk) {
         await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${roomId}`, sk: msgSk },
           UpdateExpression: "SET replyCount = replyCount - :one",
           ExpressionAttributeValues: { ":one": 1 }
@@ -119,7 +118,7 @@ export async function DELETE(
     try {
       await commentRef.delete();
 
-      db.collection("roarRooms")
+      db.collection(getFirestoreCollection("roarRooms"))
         .doc(roomId)
         .collection("messages")
         .doc(msgId)

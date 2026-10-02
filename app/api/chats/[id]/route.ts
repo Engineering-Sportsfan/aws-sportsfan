@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import {
   GetCommand,
   PutCommand,
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
     try {
       const res = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
         }),
       );
@@ -115,12 +116,18 @@ export async function GET(req: NextRequest) {
 
     // 2. Firestore Fallback
     if (!fetchedFromDynamo || !data) {
-      const docRef = db.collection("chats").doc(id);
-      const docSnap = await docRef.get();
-      if (!docSnap.exists) {
+      try {
+        const docRef = db.collection("chats").doc(id);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          data = { id: docSnap.id, ...docSnap.data() };
+        }
+      } catch (fsErr) {
+        console.warn("[chats/[id] GET] Firestore fallback notice:", fsErr);
+      }
+      if (!data) {
         return NextResponse.json({ error: "Chat not found" }, { status: 404 });
       }
-      data = { id: docSnap.id, ...docSnap.data() };
     }
 
     const pids = (data.participantIds as string[] || []).map(normalizeId);
@@ -142,8 +149,8 @@ export async function GET(req: NextRequest) {
         try {
           const uRes = await docClient.send(
             new GetCommand({
-              TableName: "IdentityAndAccess",
-              Key: { entityId: `USER#${normOtherId}`, sk: "USER#META" },
+              TableName: TABLES.IdentityAndAccess,
+              Key: { entityId: `USER#${normOtherId}`, sk: `USER#META` },
             }),
           );
           if (uRes.Item) {
@@ -161,32 +168,36 @@ export async function GET(req: NextRequest) {
         } catch {}
 
         if (!chatName) {
-          let userDoc = await db
-            .collection("users")
-            .doc(normOtherId)
-            .get();
-          if (!userDoc.exists) {
-            const querySnap = await db
+          try {
+            let userDoc = await db
               .collection("users")
-              .where("userId", "==", normOtherId)
-              .limit(1)
+              .doc(normOtherId)
               .get();
-            if (!querySnap.empty) {
-              userDoc = querySnap.docs[0];
+            if (!userDoc.exists) {
+              const querySnap = await db
+                .collection("users")
+                .where("userId", "==", normOtherId)
+                .limit(1)
+                .get();
+              if (!querySnap.empty) {
+                userDoc = querySnap.docs[0];
+              }
             }
-          }
 
-          if (userDoc && userDoc.exists) {
-            const udata = userDoc.data()!;
-            chatName =
-              udata.name ||
-              udata.username ||
-              [udata.firstName, udata.lastName]
-                .filter(Boolean)
-                .join(" ")
-                .trim() ||
-              chatName;
-            avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+            if (userDoc && userDoc.exists) {
+              const udata = userDoc.data()!;
+              chatName =
+                udata.name ||
+                udata.username ||
+                [udata.firstName, udata.lastName]
+                  .filter(Boolean)
+                  .join(" ")
+                  .trim() ||
+                chatName;
+              avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+            }
+          } catch (fsErr) {
+            console.warn("[chats/[id] GET] Firestore profile notice:", fsErr);
           }
         }
       }
@@ -232,7 +243,7 @@ export async function PATCH(req: NextRequest) {
     try {
       const res = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
         }),
       );
@@ -245,12 +256,18 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (!fetchedFromDynamo || !data) {
-      const docRef = db.collection("chats").doc(id);
-      const docSnap = await docRef.get();
-      if (!docSnap.exists) {
+      try {
+        const docRef = db.collection("chats").doc(id);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          data = { id: docSnap.id, ...docSnap.data() };
+        }
+      } catch (fsErr) {
+        console.warn("[chats/[id] PATCH] Firestore doc notice:", fsErr);
+      }
+      if (!data) {
         return NextResponse.json({ error: "Chat not found" }, { status: 404 });
       }
-      data = { id: docSnap.id, ...docSnap.data() };
     }
 
     if (
@@ -294,7 +311,7 @@ export async function PATCH(req: NextRequest) {
     try {
       await docClient.send(
         new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${id}`,
             sk: "ROOM#META",
@@ -325,8 +342,8 @@ export async function PATCH(req: NextRequest) {
         try {
           const uRes = await docClient.send(
             new GetCommand({
-              TableName: "IdentityAndAccess",
-              Key: { entityId: `USER#${normOtherId}`, sk: "USER#META" },
+              TableName: TABLES.IdentityAndAccess,
+              Key: { entityId: `USER#${normOtherId}`, sk: `USER#META` },
             }),
           );
           if (uRes.Item) {
@@ -340,25 +357,29 @@ export async function PATCH(req: NextRequest) {
         } catch {}
 
         if (!chatName) {
-          let userDoc = await db.collection("users").doc(normOtherId).get();
-          if (!userDoc.exists) {
-            const querySnap = await db
-              .collection("users")
-              .where("userId", "==", normOtherId)
-              .limit(1)
-              .get();
-            if (!querySnap.empty) {
-              userDoc = querySnap.docs[0];
+          try {
+            let userDoc = await db.collection("users").doc(normOtherId).get();
+            if (!userDoc.exists) {
+              const querySnap = await db
+                .collection("users")
+                .where("userId", "==", normOtherId)
+                .limit(1)
+                .get();
+              if (!querySnap.empty) {
+                userDoc = querySnap.docs[0];
+              }
             }
-          }
 
-          if (userDoc && userDoc.exists) {
-            const udata = userDoc.data()!;
-            chatName =
-              udata.name ||
-              [udata.firstName, udata.lastName].filter(Boolean).join(" ").trim() ||
-              "";
-            avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+            if (userDoc && userDoc.exists) {
+              const udata = userDoc.data()!;
+              chatName =
+                udata.name ||
+                [udata.firstName, udata.lastName].filter(Boolean).join(" ").trim() ||
+                "";
+              avatarUrl = udata.avatarUrl || udata.avatar || avatarUrl;
+            }
+          } catch (fsErr) {
+            console.warn("[chats/[id] PATCH] Firestore profile notice:", fsErr);
           }
         }
       }
@@ -408,7 +429,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const res = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
         }),
       );
@@ -421,12 +442,18 @@ export async function DELETE(req: NextRequest) {
     }
 
     if (!fetchedFromDynamo || !data) {
-      const docRef = db.collection("chats").doc(id);
-      const docSnap = await docRef.get();
-      if (!docSnap.exists) {
+      try {
+        const docRef = db.collection("chats").doc(id);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          data = { id: docSnap.id, ...docSnap.data() };
+        }
+      } catch (fsErr) {
+        console.warn("[chats/[id] DELETE] Firestore doc notice:", fsErr);
+      }
+      if (!data) {
         return NextResponse.json({ error: "Chat not found" }, { status: 404 });
       }
-      data = { id: docSnap.id, ...docSnap.data() };
     }
 
     if (
@@ -442,7 +469,7 @@ export async function DELETE(req: NextRequest) {
       try {
         await docClient.send(
           new DeleteCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: { roomId: `ROOM#${id}`, sk: "ROOM#META" },
           }),
         );
@@ -477,7 +504,7 @@ export async function DELETE(req: NextRequest) {
     try {
       await docClient.send(
         new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${id}`,
             sk: "ROOM#META",
