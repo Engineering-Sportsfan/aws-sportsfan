@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import {
   GetCommand,
   PutCommand,
@@ -104,7 +105,7 @@ export async function GET(req: NextRequest) {
     try {
       const cRes = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${chatId}`, sk: "ROOM#META" },
         }),
       );
@@ -112,11 +113,17 @@ export async function GET(req: NextRequest) {
     } catch {}
 
     if (!chatData) {
-      const chatDoc = await db.collection("chats").doc(chatId).get();
-      if (!chatDoc.exists) {
+      try {
+        const chatDoc = await db.collection("chats").doc(chatId).get();
+        if (chatDoc.exists) {
+          chatData = chatDoc.data()!;
+        }
+      } catch (fsErr) {
+        console.warn("[messages GET] Firestore chat doc notice:", fsErr);
+      }
+      if (!chatData) {
         return NextResponse.json({ error: "Chat not found" }, { status: 404 });
       }
-      chatData = chatDoc.data()!;
     }
 
     if (
@@ -135,7 +142,7 @@ export async function GET(req: NextRequest) {
     try {
       const qRes = await docClient.send(
         new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND begins_with(sk, :msg)",
           ExpressionAttributeValues: {
             ":r": `ROOM#${chatId}`,
@@ -165,37 +172,41 @@ export async function GET(req: NextRequest) {
 
     // 3. Fallback to Firestore if not found in DynamoDB
     if (!fetchedFromDynamo) {
-      let query = db
-        .collection("messages")
-        .where("chatId", "==", chatId)
-        .orderBy("createdAt", "desc")
-        .limit(limit);
+      try {
+        let query = db
+          .collection("messages")
+          .where("chatId", "==", chatId)
+          .orderBy("createdAt", "desc")
+          .limit(limit);
 
-      if (lastDocId && lastDocCreatedAt) {
-        const lastRef = db.collection("messages").doc(lastDocId);
-        const lastDocSnap = await lastRef.get();
-        if (lastDocSnap.exists) query = query.startAfter(lastDocSnap);
-      }
+        if (lastDocId && lastDocCreatedAt) {
+          const lastRef = db.collection("messages").doc(lastDocId);
+          const lastDocSnap = await lastRef.get();
+          if (lastDocSnap.exists) query = query.startAfter(lastDocSnap);
+        }
 
-      const snapshot = await query.get();
-      messages = snapshot.docs
-        .map((doc) => ({ id: doc.id, ...(doc.data() as any) }))
-        .filter((msg) => !msg.deletedForUsers?.includes(CURRENT_USER_ID))
-        .reverse();
-      lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        const snapshot = await query.get();
+        messages = snapshot.docs
+          .map((doc) => ({ id: doc.id, ...(doc.data() as any) }))
+          .filter((msg) => !msg.deletedForUsers?.includes(CURRENT_USER_ID))
+          .reverse();
+        lastDoc = snapshot.docs[snapshot.docs.length - 1];
 
-      const unreadDocs = snapshot.docs.filter(
-        (doc) =>
-          !doc.data().isRead &&
-          !isSameUser(doc.data().senderId, CURRENT_USER_ID),
-      );
-      if (unreadDocs.length > 0) {
-        const batch = db.batch();
-        unreadDocs.forEach((doc) => batch.update(doc.ref, { isRead: true }));
-        batch.update(db.collection("chats").doc(chatId), {
-          [`unreadCount.${normalizeId(CURRENT_USER_ID)}`]: 0,
-        });
-        await batch.commit();
+        const unreadDocs = snapshot.docs.filter(
+          (doc) =>
+            !doc.data().isRead &&
+            !isSameUser(doc.data().senderId, CURRENT_USER_ID),
+        );
+        if (unreadDocs.length > 0) {
+          const batch = db.batch();
+          unreadDocs.forEach((doc) => batch.update(doc.ref, { isRead: true }));
+          batch.update(db.collection("chats").doc(chatId), {
+            [`unreadCount.${normalizeId(CURRENT_USER_ID)}`]: 0,
+          });
+          await batch.commit().catch(() => {});
+        }
+      } catch (fsErr) {
+        console.warn("[messages GET] Firestore fallback notice (missing index ignored):", fsErr);
       }
     }
 
@@ -264,7 +275,7 @@ export async function POST(req: NextRequest) {
     try {
       const cRes = await docClient.send(
         new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${chatId}`, sk: "ROOM#META" },
         }),
       );
@@ -272,11 +283,17 @@ export async function POST(req: NextRequest) {
     } catch {}
 
     if (!chatData) {
-      const chatDoc = await db.collection("chats").doc(chatId).get();
-      if (!chatDoc.exists) {
+      try {
+        const chatDoc = await db.collection("chats").doc(chatId).get();
+        if (chatDoc.exists) {
+          chatData = chatDoc.data()!;
+        }
+      } catch (fsErr) {
+        console.warn("[messages POST] Firestore chat lookup notice:", fsErr);
+      }
+      if (!chatData) {
         return NextResponse.json({ error: "Chat not found" }, { status: 404 });
       }
-      chatData = chatDoc.data()!;
     }
 
     if (
@@ -292,7 +309,7 @@ export async function POST(req: NextRequest) {
       try {
         const rRes = await docClient.send(
           new QueryCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             KeyConditionExpression: "roomId = :r AND begins_with(sk, :msg)",
             ExpressionAttributeValues: {
               ":r": `ROOM#${chatId}`,
@@ -311,12 +328,16 @@ export async function POST(req: NextRequest) {
       } catch {}
 
       if (!replyExists) {
-        const replyDoc = await db.collection("messages").doc(replyToId).get();
-        if (!replyDoc.exists || replyDoc.data()?.chatId !== chatId) {
-          return NextResponse.json(
-            { error: "Replied-to message not found in this chat" },
-            { status: 404 },
-          );
+        try {
+          const replyDoc = await db.collection("messages").doc(replyToId).get();
+          if (!replyDoc.exists || replyDoc.data()?.chatId !== chatId) {
+            return NextResponse.json(
+              { error: "Replied-to message not found in this chat" },
+              { status: 404 },
+            );
+          }
+        } catch {
+          // ignore
         }
       }
     }
@@ -357,7 +378,7 @@ export async function POST(req: NextRequest) {
       // Put message
       await docClient.send(
         new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${chatId}`,
             sk: `MSG#${now}#${msgId}`,
@@ -369,7 +390,7 @@ export async function POST(req: NextRequest) {
       // Update room meta
       await docClient.send(
         new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${chatId}`,
             sk: "ROOM#META",

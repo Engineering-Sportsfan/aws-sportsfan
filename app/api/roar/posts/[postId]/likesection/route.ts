@@ -1,5 +1,3 @@
-// app/api/roar/posts/[postId]/likesection/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -8,6 +6,7 @@ import { getUserInfo } from "@/lib/userPoints";
 import {  notifyRoomMessageReaction } from "@/lib/roarNotifyHelpers";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -16,9 +15,9 @@ type ReactionType = "heart" | "fire" | "mindblown" | "goat" | "clap" | "nochance
 
 function getTargetRef(postId: string, roomId?: string) {
   if (roomId) {
-    return db.collection("roarRooms").doc(roomId).collection("messages").doc(postId);
+    return db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("messages").doc(postId);
   }
-  return db.collection("roarPosts").doc(postId);
+  return db.collection(getFirestoreCollection("roarPosts")).doc(postId);
 }
 
 function reactionCountField(reaction: string): string {
@@ -65,7 +64,7 @@ export async function POST(
     try {
       if (roomId) {
         const msgRes = await docClient.send(new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND sk = :s",
           ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${postId}` },
           Limit: 1
@@ -75,7 +74,7 @@ export async function POST(
         }
       } else {
         const postRes = await docClient.send(new QueryCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
           ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
           Limit: 1
@@ -125,12 +124,12 @@ export async function POST(
       try {
         if (roomId) {
           await docClient.send(new DeleteCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: { roomId: `ROOM#${roomId}`, sk: `LIKE#${postId}#${userId}` }
           }));
         } else {
           await docClient.send(new DeleteCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `POST#${postId}`, sk: `LIKE#${userId}` }
           }));
         }
@@ -138,7 +137,7 @@ export async function POST(
         if (parentItem) {
           if (roomId) {
             await docClient.send(new UpdateCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${postId}` },
               UpdateExpression: "SET reactions = :r, likeCount = :lc, #pf = :pfc",
               ExpressionAttributeNames: { "#pf": prevField },
@@ -146,7 +145,7 @@ export async function POST(
             }));
           } else {
             await docClient.send(new UpdateCommand({
-              TableName: "SocialAndContent",
+              TableName: TABLES.SocialAndContent,
               Key: { contentId: `POST#${postId}`, sk: parentItem.sk },
               UpdateExpression: "SET reactions = :r, likeCount = :lc, #pf = :pfc",
               ExpressionAttributeNames: { "#pf": prevField },
@@ -167,7 +166,7 @@ export async function POST(
         });
         if (roomId) await targetRef.collection("likes").doc(userId).delete();
         if (postOwnerId && postOwnerId !== userId) {
-          db.collection("users").doc(postOwnerId).set(
+          db.collection(getFirestoreCollection("users")).doc(postOwnerId).set(
             { [`activityCounts.likesReceived`]: FieldValue.increment(-1) },
             { merge: true }
           ).catch(() => { });
@@ -202,7 +201,7 @@ export async function POST(
     try {
       if (roomId) {
         await docClient.send(new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${roomId}`,
             sk: `LIKE#${postId}#${userId}`,
@@ -212,7 +211,7 @@ export async function POST(
         }));
       } else {
         await docClient.send(new PutCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Item: {
             contentId: `POST#${postId}`,
             sk: `LIKE#${userId}`,
@@ -225,7 +224,7 @@ export async function POST(
       if (parentItem) {
         if (roomId) {
           await docClient.send(new UpdateCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${postId}` },
             UpdateExpression: updateExpr,
             ExpressionAttributeNames: attrNames,
@@ -233,7 +232,7 @@ export async function POST(
           }));
         } else {
           await docClient.send(new UpdateCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `POST#${postId}`, sk: parentItem.sk },
             UpdateExpression: updateExpr,
             ExpressionAttributeNames: attrNames,
@@ -266,7 +265,7 @@ export async function POST(
       }
 
       if (postOwnerId && postOwnerId !== userId && !previousReaction) {
-        db.collection("users").doc(postOwnerId).set(
+        db.collection(getFirestoreCollection("users")).doc(postOwnerId).set(
           { [`activityCounts.likesReceived`]: FieldValue.increment(1) },
           { merge: true }
         ).catch(() => { });
@@ -334,7 +333,7 @@ export async function DELETE(
     try {
       if (roomId) {
         const msgRes = await docClient.send(new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND sk = :s",
           ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `MSG#${postId}` },
           Limit: 1
@@ -344,7 +343,7 @@ export async function DELETE(
         }
       } else {
         const postRes = await docClient.send(new QueryCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
           ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
           Limit: 1
@@ -392,12 +391,12 @@ export async function DELETE(
     try {
       if (roomId) {
         await docClient.send(new DeleteCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${roomId}`, sk: `LIKE#${postId}#${userId}` }
         }));
       } else {
         await docClient.send(new DeleteCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: `LIKE#${userId}` }
         }));
       }
@@ -405,7 +404,7 @@ export async function DELETE(
       if (parentItem) {
         if (roomId) {
           await docClient.send(new UpdateCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: { roomId: `ROOM#${roomId}`, sk: `MSG#${postId}` },
             UpdateExpression: "SET reactions = :r, likeCount = :lc, #pf = :pfc",
             ExpressionAttributeNames: { "#pf": prevField },
@@ -413,7 +412,7 @@ export async function DELETE(
           }));
         } else {
           await docClient.send(new UpdateCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `POST#${postId}`, sk: parentItem.sk },
             UpdateExpression: "SET reactions = :r, likeCount = :lc, #pf = :pfc",
             ExpressionAttributeNames: { "#pf": prevField },
@@ -435,7 +434,7 @@ export async function DELETE(
       if (roomId) await targetRef.collection("likes").doc(userId).delete();
       const postOwnerId: string | undefined = data.authorUid;
       if (postOwnerId && postOwnerId !== userId) {
-        db.collection("users").doc(postOwnerId).set(
+        db.collection(getFirestoreCollection("users")).doc(postOwnerId).set(
           { [`activityCounts.likesReceived`]: FieldValue.increment(-1) },
           { merge: true }
         ).catch(() => { });

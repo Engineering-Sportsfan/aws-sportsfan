@@ -1,10 +1,9 @@
-//api/roar/posts/[postId]/comments/[commentId]/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { FieldValue } from "firebase-admin/firestore";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, DeleteCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export async function DELETE(
@@ -24,7 +23,7 @@ export async function DELETE(
 
     try {
       const getRes = await docClient.send(new GetCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: { contentId: `POST#${postId}`, sk: `COMMENT#${commentId}` }
       }));
       if (getRes.Item) {
@@ -36,7 +35,7 @@ export async function DELETE(
     }
 
     const commentRef = db
-      .collection("roarPosts")
+      .collection(getFirestoreCollection("roarPosts"))
       .doc(postId)
       .collection("comments")
       .doc(commentId);
@@ -70,13 +69,13 @@ export async function DELETE(
     try {
       // A. Delete comment item
       await docClient.send(new DeleteCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: { contentId: `POST#${postId}`, sk: `COMMENT#${commentId}` }
       }));
 
       // B. Find parent post and decrement replyCount
       const postRes = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
         Limit: 1
@@ -84,14 +83,14 @@ export async function DELETE(
       if (postRes.Items && postRes.Items.length > 0) {
         const postSk = postRes.Items[0].sk;
         await docClient.send(new UpdateCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: postSk },
           UpdateExpression: "SET replyCount = size(replyCount) - :one", // fallback logic or conditional if positive
           ExpressionAttributeValues: { ":one": 1 }
         })).catch(async () => {
           // Fallback simple UpdateCommand if expression size() is not ideal
           await docClient.send(new UpdateCommand({
-            TableName: "SocialAndContent",
+            TableName: TABLES.SocialAndContent,
             Key: { contentId: `POST#${postId}`, sk: postSk },
             UpdateExpression: "ADD replyCount :negOne",
             ExpressionAttributeValues: { ":negOne": -1 }
@@ -106,7 +105,7 @@ export async function DELETE(
     try {
       const batch = db.batch();
       batch.delete(commentRef);
-      batch.update(db.collection("roarPosts").doc(postId), {
+      batch.update(db.collection(getFirestoreCollection("roarPosts")).doc(postId), {
         replyCount: FieldValue.increment(-1),
         updatedAt: Date.now(),
       });

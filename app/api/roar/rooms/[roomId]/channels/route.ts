@@ -5,6 +5,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import type { Channel } from "@/app/models/Channel";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export async function GET(
     // 1. Try fetching from DynamoDB first
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": "CHANNEL#" }
       }));
@@ -112,7 +113,7 @@ export async function POST(
       const candidates = [`ROOM#${roomId}`, roomId];
       for (const cand of candidates) {
         const roomRes = await docClient.send(new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: cand, sk: `META#${roomId}` }
         }));
         if (roomRes.Item) {
@@ -124,7 +125,7 @@ export async function POST(
 
     if (!roomExists) {
       try {
-        const roomSnap = await db.collection("roarRooms").doc(roomId).get();
+        const roomSnap = await db.collection(getFirestoreCollection("roarRooms")).doc(roomId).get();
         if (roomSnap.exists) roomExists = true;
       } catch (e) {}
     }
@@ -146,7 +147,7 @@ export async function POST(
     let slugExists = false;
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": "CHANNEL#" }
       }));
@@ -157,7 +158,7 @@ export async function POST(
 
     if (!slugExists) {
       try {
-        const channelsRef = db.collection("roarRooms").doc(roomId).collection("channels");
+        const channelsRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("channels");
         const existing = await channelsRef.where("slug", "==", normalizedSlug).limit(1).get();
         if (!existing.empty) slugExists = true;
       } catch (e) {}
@@ -185,7 +186,7 @@ export async function POST(
     // 1. Put to DynamoDB
     try {
       await docClient.send(new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: {
           roomId: `ROOM#${roomId}`,
           sk: `CHANNEL#${channelId}`,
@@ -198,7 +199,7 @@ export async function POST(
 
     // 2. Sync to Firestore
     try {
-      const channelsRef = db.collection("roarRooms").doc(roomId).collection("channels");
+      const channelsRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("channels");
       await channelsRef.doc(channelId).set(channel);
     } catch (fsErr) {
       console.warn("[Channels POST] Firestore fallback sync failed:", fsErr);

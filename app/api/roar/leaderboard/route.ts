@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest) {
     // 1. Try querying DynamoDB first using leaderboardType-points-index
     try {
       const queryParams: any = {
-        TableName: "GamificationAndWallet",
+        TableName: TABLES.GamificationAndWallet,
         IndexName: "leaderboardType-points-index",
         KeyConditionExpression: "leaderboardType = :t",
         ExpressionAttributeValues: {
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
       if (cursorId) {
         // Resolve cursor record points to structure ExclusiveStartKey
         const getRes = await docClient.send(new GetCommand({
-          TableName: "GamificationAndWallet",
+          TableName: TABLES.GamificationAndWallet,
           Key: { userId: `USER#${cursorId}`, sk: "LEADERBOARD#GLOBAL" }
         }));
         if (getRes.Item) {
@@ -117,13 +118,13 @@ export async function GET(req: NextRequest) {
           : ["userId", "userName", "userEmail", "totalPoints", "reputationScore", "badge", "team", "accuracy", "predictions", "lastUpdated"];
 
         let query = db
-          .collection("globalLeaderboard")
+          .collection(getFirestoreCollection("globalLeaderboard"))
           .orderBy("totalPoints", "desc")
           .select(...fields)
           .limit(limit);
 
         if (cursorId) {
-          const cursorDoc = await db.collection("globalLeaderboard").doc(cursorId).get();
+          const cursorDoc = await db.collection(getFirestoreCollection("globalLeaderboard")).doc(cursorId).get();
           if (cursorDoc.exists) {
             query = query.startAfter(cursorDoc);
           }

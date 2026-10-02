@@ -928,6 +928,7 @@
 
 import { createNotification } from "@/lib/notifications";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 const TAG = "[roarNotify]";
@@ -940,7 +941,7 @@ async function getPostMeta(postId: string): Promise<{
 } | null> {
   try {
     const res = await docClient.send(new QueryCommand({
-      TableName: "SocialAndContent",
+      TableName: TABLES.SocialAndContent,
       KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
       ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" }
     }));
@@ -967,7 +968,7 @@ async function getRoomMessageMeta(roomId: string, msgId: string): Promise<{
 } | null> {
   try {
     const res = await docClient.send(new QueryCommand({
-      TableName: "RealTimeChat",
+      TableName: TABLES.RealTimeChat,
       KeyConditionExpression: "roomId = :r AND sk = :s",
       ExpressionAttributeValues: {
         ":r": `ROOM#${roomId}`,
@@ -995,7 +996,7 @@ async function resolveActorName(userId: string): Promise<string> {
   if (!userId) return "A fan";
   try {
     const res = await docClient.send(new GetCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       Key: { entityId: `USER#${userId}`, sk: "USER#META" }
     }));
     const name = res.Item?.username ?? res.Item?.name ?? null;
@@ -1017,7 +1018,7 @@ async function resolveActorName(userId: string): Promise<string> {
 async function resolveUserIdByUsername(username: string): Promise<string | null> {
   try {
     const res = await docClient.send(new QueryCommand({
-      TableName: "IdentityAndAccess",
+      TableName: TABLES.IdentityAndAccess,
       IndexName: "username-index",
       KeyConditionExpression: "username = :u",
       ExpressionAttributeValues: { ":u": username },
@@ -1137,7 +1138,7 @@ export async function notifyFollowedRoomNewPost(
       let lastNotifiedAt = 0;
       try {
         const res = await docClient.send(new GetCommand({
-          TableName: "sf360-notifications",
+          TableName: TABLES.Notifications,
           Key: { PK: `USER#${followerId}`, SK: debounceKey },
         }));
         lastNotifiedAt = res.Item?.lastNotifiedAt ?? 0;
@@ -1157,7 +1158,7 @@ export async function notifyFollowedRoomNewPost(
 
       try {
         await docClient.send(new PutCommand({
-          TableName: "sf360-notifications",
+          TableName: TABLES.Notifications,
           Item: { PK: `USER#${followerId}`, SK: debounceKey, lastNotifiedAt: now, expires_at: Math.floor(now / 1000) + 3600 },
         }));
       } catch (e) { console.warn(`${TAG} notifyFollowedRoomNewPost debounce write notice:`, e); }

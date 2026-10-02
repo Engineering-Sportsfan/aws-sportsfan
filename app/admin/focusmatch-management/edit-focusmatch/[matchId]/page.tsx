@@ -8,7 +8,7 @@ export default function EditFocusMatchPage({ params }: { params: Promise<{ match
   const router = useRouter();
   const { matchId } = use(params);
   
-  const [sport, setSport] = useState<"football" | "cricket">("cricket");
+  const [sport, setSport] = useState<"cricket" | "football" | "hockey" | "athletics">("cricket");
   const [competition, setCompetition] = useState("");
   const [teamA, setTeamA] = useState("");
   const [teamB, setTeamB] = useState("");
@@ -36,7 +36,7 @@ export default function EditFocusMatchPage({ params }: { params: Promise<{ match
           throw new Error("Match not found in database.");
         }
 
-        setSport(currentMatch.sport);
+        setSport(currentMatch.sport || "cricket");
         setCompetition(currentMatch.competition || "");
         setTeamA(currentMatch.team_a);
         setTeamB(currentMatch.team_b);
@@ -92,7 +92,7 @@ export default function EditFocusMatchPage({ params }: { params: Promise<{ match
       }
 
       setSuccess("Match updated successfully!");
-      router.push("/admin/focusmatch-management/focusmatch-list");
+      router.push(`/admin/focusmatch-management/focusmatch-list?sport=${sport}`);
     } catch (err: any) {
       console.error("Error updating match:", err);
       setError(err.message || "Failed to save match changes.");
@@ -121,11 +121,13 @@ export default function EditFocusMatchPage({ params }: { params: Promise<{ match
           <label style={{ display: "block", fontSize: 12, marginBottom: 5, color: "#8b949e" }}>Sport Category</label>
           <select 
             value={sport} 
-            onChange={(e) => setSport(e.target.value as "football" | "cricket")}
+            onChange={(e) => setSport(e.target.value as "cricket" | "football" | "hockey" | "athletics")}
             style={{ width: "100%", padding: 8, background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff" }}
           >
             <option value="cricket">Cricket 🏏</option>
             <option value="football">Football ⚽</option>
+            <option value="hockey">Hockey 🏑</option>
+            <option value="athletics">Athletics (Asian Games) 🏃</option>
           </select>
         </div>
 

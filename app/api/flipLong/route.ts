@@ -43,15 +43,23 @@ interface UploadedMediaResult {
 async function uploadVideoFile(file: File, title?: string): Promise<UploadedMediaResult> {
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
-  const base64 = `data:${file.type || "video/mp4"};base64,${buffer.toString("base64")}`;
 
   const baseName = title ? slugifyTitle(title) : "fliplong";
-  const uploadResult = await cloudinary.uploader.upload(base64, {
-    resource_type: "video",
-    asset_folder: VIDEO_FOLDER,
-    public_id: `${baseName}_${Date.now()}`,
-    display_name: title || baseName,
-    overwrite: false,
+  const uploadResult = await new Promise<any>((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "video",
+        asset_folder: VIDEO_FOLDER,
+        public_id: `${baseName}_${Date.now()}`,
+        display_name: title || baseName,
+        overwrite: false,
+      },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      }
+    );
+    uploadStream.end(buffer);
   });
 
   const durationSec = uploadResult.duration ? Math.round(uploadResult.duration) : 0;

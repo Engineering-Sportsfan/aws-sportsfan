@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, DeleteCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { ChatRoom } from "@/app/models/ChatRoom";
 import cloudinary from "@/lib/cloudinary";
@@ -35,7 +36,7 @@ export async function GET(
       for (const cand of candidates) {
         const getRes = await docClient.send(
           new GetCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: cand,
           })
         );
@@ -57,10 +58,10 @@ export async function GET(
 
     // 2. Fallback to Firestore
     if (!room) {
-      let roomRef = db.collection("roarRooms").doc(cleanRoomId);
+      let roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId);
       let snap = await roomRef.get();
       if (!snap.exists) {
-        const fallbackRef = db.collection("watchAlongRooms").doc(cleanRoomId);
+        const fallbackRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(cleanRoomId);
         const fallbackSnap = await fallbackRef.get();
         if (fallbackSnap.exists) {
           roomRef = fallbackRef;
@@ -133,7 +134,7 @@ export async function PUT(
       for (const cand of candidates) {
         const getRes = await docClient.send(
           new GetCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: cand,
           })
         );
@@ -148,7 +149,7 @@ export async function PUT(
 
     if (!existing) {
       try {
-        const snap = await db.collection("roarRooms").doc(cleanRoomId).get();
+        const snap = await db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId).get();
         if (snap.exists) {
           existing = snap.data();
         }
@@ -249,11 +250,11 @@ export async function PUT(
     };
 
     // 1. Write to DynamoDB
-    await docClient.send(new PutCommand({ TableName: "RealTimeChat", Item: finalItem }));
+    await docClient.send(new PutCommand({ TableName: TABLES.RealTimeChat, Item: finalItem }));
 
     // 2. Dual-write to Firestore
     try {
-      await db.collection("roarRooms").doc(cleanRoomId).set(
+      await db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId).set(
         {
           ...finalItem,
           roomId: cleanRoomId,
@@ -333,7 +334,7 @@ export async function PATCH(
 
       await docClient.send(
         new UpdateCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: {
             roomId: `ROOM#${cleanRoomId}`,
             sk: `META#${cleanRoomId}`,
@@ -349,7 +350,7 @@ export async function PATCH(
 
     // 2. Update in Firebase
     try {
-      await db.collection("roarRooms").doc(cleanRoomId).set(
+      await db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId).set(
         {
           ...updateData,
           updatedAt: Date.now(),
@@ -391,7 +392,7 @@ export async function DELETE(
       try {
         await docClient.send(
           new DeleteCommand({
-            TableName: "RealTimeChat",
+            TableName: TABLES.RealTimeChat,
             Key: cand,
           })
         );
@@ -402,7 +403,7 @@ export async function DELETE(
 
     // 2. Delete from Firebase
     try {
-      await db.collection("roarRooms").doc(cleanRoomId).delete();
+      await db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId).delete();
     } catch (fbErr) {
       console.warn("Firebase delete room notice:", fbErr);
     }
