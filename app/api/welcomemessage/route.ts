@@ -177,6 +177,41 @@ export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
 
+    // Support batch reorder
+    if (body.action === "reorder" && Array.isArray(body.items)) {
+      const now = Date.now();
+      const updatePromises = body.items.map(async (item: { id: string; order?: number; storyNumber?: number }) => {
+        if (!item.id) return;
+        const existingRes = await docClient.send(
+          new GetCommand({
+            TableName: TABLE_NAME,
+            Key: { id: item.id },
+          })
+        );
+        const existing = existingRes.Item || {};
+        const updated = {
+          ...existing,
+          ...item,
+          ...(item.order !== undefined ? { order: Number(item.order) } : {}),
+          ...(item.storyNumber !== undefined ? { storyNumber: Number(item.storyNumber) } : {}),
+          updatedAt: now,
+        };
+        return docClient.send(
+          new PutCommand({
+            TableName: TABLE_NAME,
+            Item: updated,
+          })
+        );
+      });
+
+      await Promise.all(updatePromises);
+
+      return NextResponse.json({
+        success: true,
+        message: "Items reordered successfully in homeDatabase",
+      });
+    }
+
     if (!body.id) {
       return NextResponse.json(
         { success: false, error: "Field 'id' is required for update" },
