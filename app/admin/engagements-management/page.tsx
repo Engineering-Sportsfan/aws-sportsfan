@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { EngagementItem, EngagementType, QuizOption, QuizLeaderboardEntry } from "@/types/engagements";
+import { EngagementItem, EngagementType, QuizOption, QuizLeaderboardEntry, PredictionChoice } from "@/types/engagements";
 import MemeCard from "@/components/Engagements/MemeCard";
 import { Upload, Image as ImageIcon, Flame, Sparkles, X, Check, HelpCircle, Swords, BarChart2, Brain, Target, MessageSquare, Radio } from "lucide-react";
 
@@ -18,7 +18,7 @@ interface AdminQuizQuestion {
 }
 
 export default function EngagementsManagementPage() {
-  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "meme_arena" | "fliplong">("list");
+  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "meme_arena">("list");
   const [engagements, setEngagements] = useState<EngagementItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -31,15 +31,6 @@ export default function EngagementsManagementPage() {
   const [subtitle, setSubtitle] = useState("");
   const [sport, setSport] = useState("cricket");
   const [status, setStatus] = useState<"active" | "inactive">("active");
-
-  // ── FlipLONG Cloudinary Media State ─────────────────────────────────────────
-  const [flipLongMedia, setFlipLongMedia] = useState<any[]>([]);
-  const [loadingFlipLong, setLoadingFlipLong] = useState(false);
-  const [flipLongSearch, setFlipLongSearch] = useState("");
-  const [uploadingFlipLong, setUploadingFlipLong] = useState(false);
-  const [uploadFlipLongProgress, setUploadFlipLongProgress] = useState<string | null>(null);
-  const [previewFlipLongVideo, setPreviewFlipLongVideo] = useState<any | null>(null);
-  const flipLongFileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Meme Arena State ─────────────────────────────────────────────────────────
   const [memeTitle, setMemeTitle] = useState("");
@@ -92,87 +83,17 @@ export default function EngagementsManagementPage() {
   const [predTimerMinutes, setPredTimerMinutes] = useState<number>(30);
   const [predAnswer, setPredAnswer] = useState<string>("");
   const [predQuestion, setPredQuestion] = useState("India win the 1st Galle Test?");
-  const [predLeftText, setPredLeftText] = useState("Yes, India win");
-  const [predLeftCode, setPredLeftCode] = useState("IN");
-  const [predRightText, setPredRightText] = useState("SL hold / win");
-  const [predRightCode, setPredRightCode] = useState("LK");
-  const [predCoinStake, setPredCoinStake] = useState(25);
+  const [predOptions, setPredOptions] = useState<string[]>([
+    "Yes, India win",
+    "SL hold / win",
+  ]);
+  const [predCoinStake, setPredCoinStake] = useState(10);
 
   // ── Leaderboard Tab State ────────────────────────────────────────────────────
   const [leaderboardData, setLeaderboardData] = useState<QuizLeaderboardEntry[]>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
   const [selectedLeaderboardQuizId, setSelectedLeaderboardQuizId] = useState<string>("global");
   const [leaderboardSearch, setLeaderboardSearch] = useState<string>("");
-
-  const fetchFlipLongMedia = useCallback(async (q?: string) => {
-    setLoadingFlipLong(true);
-    try {
-      const url = q && q.trim()
-        ? `/api/cloudinary/cricket-media?search=${encodeURIComponent(q.trim())}`
-        : `/api/cloudinary/cricket-media`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data.success) {
-        setFlipLongMedia(data.mediaFiles || []);
-      }
-    } catch (err) {
-      console.warn("Failed to fetch FlipLONG media:", err);
-    } finally {
-      setLoadingFlipLong(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "fliplong") {
-      fetchFlipLongMedia(flipLongSearch);
-    }
-  }, [activeTab, fetchFlipLongMedia, flipLongSearch]);
-
-  const handleUploadFlipLong = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setUploadingFlipLong(true);
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      setUploadFlipLongProgress(`Uploading ${i + 1} of ${files.length}: ${file.name}`);
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("fileName", file.name);
-      try {
-        const res = await fetch("/api/cloudinary/cricket-media", {
-          method: "POST",
-          body: formData,
-        });
-        const resData = await res.json();
-        if (resData.success && resData.media) {
-          setFlipLongMedia(prev => [resData.media, ...prev]);
-        }
-      } catch (err) {
-        console.error("FlipLONG upload error:", err);
-      }
-    }
-    setUploadingFlipLong(false);
-    setUploadFlipLongProgress(null);
-    if (flipLongFileInputRef.current) flipLongFileInputRef.current.value = "";
-    fetchFlipLongMedia(flipLongSearch);
-  };
-
-  const handleDeleteFlipLongMedia = async (publicId: string, resourceType: string = "video") => {
-    if (!confirm("Are you sure you want to delete this FlipLONG media item from Cloudinary?")) return;
-    try {
-      const res = await fetch(`/api/cloudinary/cricket-media?publicId=${encodeURIComponent(publicId)}&resourceType=${resourceType}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (data.success) {
-        setFlipLongMedia(prev => prev.filter(m => m.id !== publicId));
-      } else {
-        alert(data.error || "Failed to delete");
-      }
-    } catch {
-      alert("Failed to delete media");
-    }
-  };
 
   useEffect(() => {
     fetchEngagements();
@@ -289,10 +210,7 @@ export default function EngagementsManagementPage() {
       setPredTimerMinutes(30);
       setPredAnswer("");
       setPredQuestion("India win the 1st Galle Test?");
-      setPredLeftText("Yes, India win");
-      setPredLeftCode("IN");
-      setPredRightText("SL hold / win");
-      setPredRightCode("LK");
+      setPredOptions(["Yes, India win", "SL hold / win"]);
       setPredCoinStake(25);
     } else if (type === "meme") {
       setTitle("Meme Arena");
@@ -408,11 +326,11 @@ export default function EngagementsManagementPage() {
       }
     } else if (item.type === "prediction" && item.predictionData) {
       setPredQuestion(item.predictionData.question || item.title || "");
-      setPredLeftText(item.predictionData.leftChoice?.text || "");
-      setPredLeftCode(item.predictionData.leftChoice?.code || "");
-      setPredRightText(item.predictionData.rightChoice?.text || "");
-      setPredRightCode(item.predictionData.rightChoice?.code || "");
-      setPredCoinStake(item.predictionData.coinStake || 25);
+      const loadedPredOptions = item.predictionData.options?.length
+        ? item.predictionData.options.map((o: PredictionChoice) => o.text)
+        : [item.predictionData.leftChoice?.text, item.predictionData.rightChoice?.text].filter(Boolean) as string[];
+      setPredOptions(loadedPredOptions.length >= 2 ? loadedPredOptions : ["Yes, India win", "SL hold / win"]);
+      setPredCoinStake(item.predictionData.coinStake || 10);
       setPredAnswer(item.predictionData.correctAnswer || item.predictionData.answer || item.predictionData.winningChoiceId || "");
       setPredTimerMinutes(item.predictionData.durationMinutes || item.predictionData.timerMinutes || 30);
       if (item.predictionData.startTime || item.predictionData.scheduledStartTime) {
@@ -571,29 +489,28 @@ export default function EngagementsManagementPage() {
         ];
         payload.title = title.trim() || predQuestion.trim() || "Live Match Prediction";
         payload.expiresAt = expiresAt;
+
+        const filteredPredOptions = predOptions.filter(o => o.trim());
         const choiceId =
-          predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "left"
+          predAnswer.trim().toLowerCase() === (filteredPredOptions[0] || "").trim().toLowerCase() || predAnswer === "left"
             ? "left"
-            : predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "right"
+            : predAnswer.trim().toLowerCase() === (filteredPredOptions[1] || "").trim().toLowerCase() || predAnswer === "right"
             ? "right"
             : predAnswer.trim() || null;
+
+        const optionsArray = filteredPredOptions.map((optText, idx) => ({
+          id: idx === 0 ? "left" : idx === 1 ? "right" : String(idx + 1),
+          text: optText.trim(),
+          votes: editingItem?.predictionData?.options?.[idx]?.votes || (idx === 0 ? editingItem?.predictionData?.leftChoice?.votes : idx === 1 ? editingItem?.predictionData?.rightChoice?.votes : 0) || 0,
+        }));
 
         payload.predictionData = {
           ...(editingItem?.predictionData || {}),
           question: predQuestion.trim(),
-          leftChoice: {
-            id: "left",
-            text: predLeftText.trim(),
-            code: predLeftCode.trim() || "IN",
-            votes: editingItem?.predictionData?.leftChoice?.votes || 0,
-          },
-          rightChoice: {
-            id: "right",
-            text: predRightText.trim(),
-            code: predRightCode.trim() || "PK",
-            votes: editingItem?.predictionData?.rightChoice?.votes || 0,
-          },
-          coinStake: Number(predCoinStake) || 25,
+          options: optionsArray,
+          leftChoice: optionsArray[0] || { id: "left", text: filteredPredOptions[0] || "Yes", votes: 0 },
+          rightChoice: optionsArray[1] || { id: "right", text: filteredPredOptions[1] || "No", votes: 0 },
+          coinStake: Number(predCoinStake) || 10,
           totalVotes: editingItem?.predictionData?.totalVotes || 0,
           status: editingItem?.predictionData?.status || "open",
           answer: predAnswer.trim(),
@@ -807,36 +724,26 @@ export default function EngagementsManagementPage() {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 8, borderBottom: "1px solid #30363d", paddingBottom: 10, marginBottom: 20, overflowX: "auto" }}>
-        {[
-          { id: "list", label: "📋 All Engagements" },
-          { id: "fliplong", label: "🎬 FlipLONG Videos (Cloudinary)" },
-          { id: "meme_arena", label: "🔥 Meme Arena Feed" },
-          { id: "leaderboard", label: "🏆 Quiz Leaderboard" },
-          { id: "meme", label: "🔥 Meme Arena Creator" },
-          { id: "fan_battle", label: "⚔️ Fan Battle Creator" },
-          { id: "quiz", label: "🧠 Multi-Question Quiz Creator" },
-          { id: "poll", label: "📊 Poll Creator" },
-          { id: "prediction", label: "🎯 Prediction Creator" },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => {
-              setActiveTab(tab.id as any);
-              if (tab.id !== "list" && tab.id !== "leaderboard" && tab.id !== "meme_arena" && tab.id !== "fliplong") setEditingItem(null);
-            }}
-            style={{
-              padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600,
-              background: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : tab.id === "meme" || tab.id === "meme_arena" ? "#ff5e00" : tab.id === "fliplong" ? "#e11d48" : "#388bfd") : "transparent",
-              color: activeTab === tab.id ? (tab.id === "leaderboard" ? "#000" : "#fff") : "#8b949e",
-              border: "1px solid",
-              borderColor: activeTab === tab.id ? (tab.id === "leaderboard" ? "#e3b341" : tab.id === "meme" || tab.id === "meme_arena" ? "#ff5e00" : tab.id === "fliplong" ? "#e11d48" : "#388bfd") : "transparent",
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
+        <button
+          onClick={() => {
+            setActiveTab("list");
+            setEditingItem(null);
+          }}
+          style={{
+            padding: "6px 14px",
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 600,
+            background: activeTab === "list" ? "#388bfd" : "transparent",
+            color: activeTab === "list" ? "#fff" : "#8b949e",
+            border: "1px solid",
+            borderColor: activeTab === "list" ? "#388bfd" : "#30363d",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          📋 All Engagements
+        </button>
       </div>
 
       {/* ── TAB 1: ENGAGEMENTS LIST ─────────────────────────────────────────── */}
@@ -2174,102 +2081,76 @@ export default function EngagementsManagementPage() {
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                  <div
-                    style={{
-                      background: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "rgba(46, 160, 67, 0.08)" : "#0d1117",
-                      border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#2ea043" : "#30363d"}`,
-                      borderRadius: 8,
-                      padding: "10px",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <label style={{ fontSize: 11, color: "#8b949e", fontWeight: 600 }}>Option 1 (Left Choice)</label>
+                <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>Prediction Options</label>
+                {predOptions.map((opt, i) => {
+                  const isSelectedAnswer = predAnswer && opt && predAnswer.trim().toLowerCase() === opt.trim().toLowerCase();
+                  return (
+                    <div key={i} style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 11, color: "#8b949e", width: 20 }}>{i + 1}.</span>
+                      <input
+                        value={opt}
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (isSelectedAnswer) setPredAnswer(val);
+                          const copy = [...predOptions];
+                          copy[i] = val;
+                          setPredOptions(copy);
+                        }}
+                        placeholder={`Option ${i + 1}`}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          background: "#0d1117",
+                          border: `1px solid ${isSelectedAnswer ? "#2ea043" : "#30363d"}`,
+                          borderRadius: 6,
+                          color: "#fff",
+                          fontSize: 12,
+                        }}
+                      />
                       <button
                         type="button"
-                        onClick={() => setPredAnswer(predLeftText || "Option 1")}
+                        onClick={() => setPredAnswer(opt)}
                         style={{
-                          background: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "rgba(46, 160, 67, 0.2)" : "#21262d",
-                          border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#2ea043" : "#30363d"}`,
-                          color: predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "#3fb950" : "#8b949e",
-                          borderRadius: 4,
-                          padding: "2px 8px",
-                          fontSize: 10,
+                          background: isSelectedAnswer ? "rgba(46, 160, 67, 0.2)" : "#21262d",
+                          border: `1px solid ${isSelectedAnswer ? "#2ea043" : "#30363d"}`,
+                          color: isSelectedAnswer ? "#3fb950" : "#8b949e",
+                          borderRadius: 6,
+                          padding: "5px 10px",
+                          fontSize: 11,
                           fontWeight: 700,
                           cursor: "pointer",
+                          whiteSpace: "nowrap",
                         }}
                       >
-                        {predAnswer && (predAnswer.trim().toLowerCase() === predLeftText.trim().toLowerCase() || predAnswer === "Option 1" || predAnswer === "left") ? "✓ Winner" : "Mark"}
+                        {isSelectedAnswer ? "✓ Winner" : "Mark"}
                       </button>
+                      {predOptions.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isSelectedAnswer) setPredAnswer("");
+                            setPredOptions(predOptions.filter((_, idx) => idx !== i));
+                          }}
+                          style={{ background: "transparent", border: "1px solid #da3633", color: "#f85149", borderRadius: 6, padding: "5px 10px", cursor: "pointer" }}
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
-                    <input
-                      placeholder="Text (e.g. Yes, India win)"
-                      value={predLeftText}
-                      onChange={e => {
-                        const val = e.target.value;
-                        if (predAnswer === predLeftText) setPredAnswer(val);
-                        setPredLeftText(val);
-                      }}
-                      required
-                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }}
-                    />
-                    <input
-                      placeholder="Code (e.g. IN)"
-                      value={predLeftCode}
-                      onChange={e => setPredLeftCode(e.target.value.toUpperCase())}
-                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }}
-                    />
-                  </div>
-
-                  <div
-                    style={{
-                      background: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "rgba(46, 160, 67, 0.08)" : "#0d1117",
-                      border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#2ea043" : "#30363d"}`,
-                      borderRadius: 8,
-                      padding: "10px",
-                    }}
+                  );
+                })}
+                {predOptions.length < 6 && (
+                  <button
+                    type="button"
+                    onClick={() => setPredOptions([...predOptions, ""])}
+                    style={{ background: "#21262d", border: "1px solid #30363d", color: "#58a6ff", borderRadius: 6, padding: "5px 12px", fontSize: 11, cursor: "pointer", marginTop: 4, marginBottom: 12 }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <label style={{ fontSize: 11, color: "#8b949e", fontWeight: 600 }}>Option 2 (Right Choice)</label>
-                      <button
-                        type="button"
-                        onClick={() => setPredAnswer(predRightText || "Option 2")}
-                        style={{
-                          background: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "rgba(46, 160, 67, 0.2)" : "#21262d",
-                          border: `1px solid ${predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#2ea043" : "#30363d"}`,
-                          color: predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "#3fb950" : "#8b949e",
-                          borderRadius: 4,
-                          padding: "2px 8px",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >
-                        {predAnswer && (predAnswer.trim().toLowerCase() === predRightText.trim().toLowerCase() || predAnswer === "Option 2" || predAnswer === "right") ? "✓ Winner" : "Mark"}
-                      </button>
-                    </div>
-                    <input
-                      placeholder="Text (e.g. SL hold / win)"
-                      value={predRightText}
-                      onChange={e => {
-                        const val = e.target.value;
-                        if (predAnswer === predRightText) setPredAnswer(val);
-                        setPredRightText(val);
-                      }}
-                      required
-                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 6 }}
-                    />
-                    <input
-                      placeholder="Code (e.g. LK)"
-                      value={predRightCode}
-                      onChange={e => setPredRightCode(e.target.value.toUpperCase())}
-                      style={{ width: "100%", padding: "6px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }}
-                    />
-                  </div>
-                </div>
+                    + Add Option
+                  </button>
+                )}
 
                 <div>
-                  <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>FlipCoin Reward Stake</label>
+                  <label style={{ fontSize: 11, color: "#8b949e", display: "block", marginBottom: 4 }}>SXP Reward Bonus</label>
                   <input type="number" value={predCoinStake} onChange={e => setPredCoinStake(Number(e.target.value))} style={{ width: 140, padding: "6px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 12 }} />
                 </div>
               </div>
@@ -2365,7 +2246,7 @@ export default function EngagementsManagementPage() {
                     {activeTab === "prediction" && (
                       <>
                         <span style={{ color: "#ff7b72" }}>🎯 PREDICTION</span>
-                        <span style={{ color: "#58a6ff" }}>💎 POINTS</span>
+                        <span style={{ color: "#58a6ff" }}>💎 SXP</span>
                       </>
                     )}
                   </div>
@@ -2513,11 +2394,8 @@ export default function EngagementsManagementPage() {
 
                 {/* Prediction Preview */}
                 {activeTab === "prediction" && (() => {
-                  const leftVotes = editingItem?.predictionData?.leftChoice?.votes || 0;
-                  const rightVotes = editingItem?.predictionData?.rightChoice?.votes || 0;
-                  const totalPred = leftVotes + rightVotes;
-                  const leftPct = totalPred > 0 ? Math.round((leftVotes / totalPred) * 100) : 50;
-                  const rightPct = totalPred > 0 ? 100 - leftPct : 50;
+                  const opts = predOptions.filter(o => o.trim());
+                  const optionsList = opts.length > 0 ? opts : ["Yes, India win", "SL hold / win"];
                   return (
                     <div>
                       <div
@@ -2543,18 +2421,29 @@ export default function EngagementsManagementPage() {
                         )}
                       </div>
                       <div style={{ fontSize: 13, color: "#c9d1d9", marginBottom: 10 }}>{predQuestion}</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <div style={{ border: "2px solid #238636", background: "rgba(35,134,54,0.1)", borderRadius: 8, padding: 12, textAlign: "center" }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: "#3fb950" }}>{predLeftText} <span style={{ fontSize: 10 }}>{predLeftCode}</span></div>
-                          <div style={{ fontSize: 18, fontWeight: 800, color: "#3fb950", marginTop: 4 }}>{leftPct}%</div>
-                        </div>
-                        <div style={{ border: "1px solid #30363d", background: "#0d1117", borderRadius: 8, padding: 12, textAlign: "center" }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: "#c9d1d9" }}>{predRightText} <span style={{ fontSize: 10 }}>{predRightCode}</span></div>
-                          <div style={{ fontSize: 18, fontWeight: 800, color: "#ff7b72", marginTop: 4 }}>{rightPct}%</div>
-                        </div>
+                      <div style={{ display: "grid", gridTemplateColumns: optionsList.length === 2 ? "1fr 1fr" : "1fr", gap: 10 }}>
+                        {optionsList.map((opt, i) => {
+                          const isSelectedWinner = predAnswer && opt && predAnswer.trim().toLowerCase() === opt.trim().toLowerCase();
+                          return (
+                            <div
+                              key={i}
+                              style={{
+                                border: isSelectedWinner ? "2px solid #238636" : "1px solid #30363d",
+                                background: isSelectedWinner ? "rgba(35,134,54,0.1)" : "#0d1117",
+                                borderRadius: 8,
+                                padding: 12,
+                                textAlign: "center",
+                              }}
+                            >
+                              <div style={{ fontSize: 12, fontWeight: 700, color: isSelectedWinner ? "#3fb950" : "#c9d1d9" }}>
+                                {opt} {isSelectedWinner ? "✓" : ""}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                       <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: "8px", marginTop: 10, textAlign: "center", fontSize: 11, color: "#e3b341", fontWeight: 600 }}>
-                        🔒 +{predCoinStake} FlipCoins locked in · Results after match
+                        🔒 +{predCoinStake} SXPs locked in · Results after match
                       </div>
                     </div>
                   );
@@ -2771,256 +2660,6 @@ export default function EngagementsManagementPage() {
               </div>
             );
           })()}
-        </div>
-      )}
-
-      {/* ── TAB 9: FLIPLONG CLOUDINARY MEDIA ──────────────────────────────────── */}
-      {activeTab === "fliplong" && (
-        <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 12, padding: 20 }}>
-          {/* Header Bar */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
-            <div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-                🎬 FlipLONG Videos & Media <span style={{ fontSize: 11, background: "rgba(225, 29, 72, 0.2)", color: "#f43f5e", padding: "2px 8px", borderRadius: 12, border: "1px solid rgba(244, 63, 94, 0.3)" }}>Cloudinary</span>
-              </h2>
-              <p style={{ fontSize: 12, color: "#8b949e", marginTop: 2 }}>
-                Upload & manage media files stored in Cloudinary for FlipLONG.
-              </p>
-            </div>
-
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <input
-                ref={flipLongFileInputRef}
-                type="file"
-                accept="video/*,image/*"
-                multiple
-                onChange={handleUploadFlipLong}
-                style={{ display: "none" }}
-                id="fliplong-engagement-upload-input"
-              />
-              <label
-                htmlFor="fliplong-engagement-upload-input"
-                style={{
-                  background: "linear-gradient(135deg, #e11d48 0%, #be123c 100%)",
-                  color: "#fff",
-                  padding: "8px 16px",
-                  borderRadius: 8,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: uploadingFlipLong ? "not-allowed" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  opacity: uploadingFlipLong ? 0.6 : 1,
-                  boxShadow: "0 4px 12px rgba(225, 29, 72, 0.35)",
-                }}
-              >
-                + {uploadingFlipLong ? "Uploading..." : "Upload FlipLONG Video"}
-              </label>
-
-              <button
-                onClick={() => fetchFlipLongMedia(flipLongSearch)}
-                disabled={loadingFlipLong}
-                style={{
-                  background: "#21262d",
-                  color: "#c9d1d9",
-                  border: "1px solid #30363d",
-                  padding: "8px 14px",
-                  borderRadius: 8,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                🔄 Refresh
-              </button>
-            </div>
-          </div>
-
-          {/* Upload Progress */}
-          {uploadFlipLongProgress && (
-            <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, background: "rgba(225, 29, 72, 0.15)", border: "1px solid rgba(225, 29, 72, 0.4)", color: "#f43f5e", fontSize: 12 }}>
-              ⏳ {uploadFlipLongProgress}
-            </div>
-          )}
-
-          {/* Search Bar */}
-          <div style={{ marginBottom: 18 }}>
-            <input
-              placeholder="Search FlipLONG media by title or fileName…"
-              value={flipLongSearch}
-              onChange={(e) => {
-                setFlipLongSearch(e.target.value);
-                fetchFlipLongMedia(e.target.value);
-              }}
-              style={{
-                width: "100%",
-                maxWidth: 400,
-                background: "#0d1117",
-                border: "1px solid #30363d",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 13,
-                color: "#fff",
-                outline: "none",
-              }}
-            />
-          </div>
-
-          {/* Media Grid */}
-          {loadingFlipLong ? (
-            <div style={{ padding: 40, textAlign: "center", color: "#8b949e", fontSize: 13 }}>
-              Loading FlipLONG videos from Cloudinary…
-            </div>
-          ) : flipLongMedia.length === 0 ? (
-            <div style={{ padding: 50, textAlign: "center", color: "#8b949e", background: "#0d1117", borderRadius: 10, border: "1px solid #21262d" }}>
-              <div style={{ fontSize: 32, marginBottom: 10 }}>🎬</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", marginBottom: 6 }}>No FlipLONG media found</div>
-              <div style={{ fontSize: 12, color: "#8b949e", marginBottom: 16 }}>Click the upload button above to add videos directly to Cloudinary.</div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
-              {flipLongMedia.map((m: any) => (
-                <div
-                  key={m.id}
-                  style={{
-                    background: "#0d1117",
-                    border: "1px solid #30363d",
-                    borderRadius: 10,
-                    overflow: "hidden",
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                >
-                  {/* Thumbnail / Video Preview */}
-                  <div style={{ position: "relative", width: "100%", height: 160, background: "#000" }}>
-                    {m.thumbnailUrl ? (
-                      <img
-                        src={m.thumbnailUrl}
-                        alt={m.title}
-                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                      />
-                    ) : (
-                      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b949e" }}>
-                        🎬 Video
-                      </div>
-                    )}
-                    {m.duration && (
-                      <span style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.8)", color: "#fff", padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
-                        ⏱ {m.duration}
-                      </span>
-                    )}
-                    <span style={{ position: "absolute", top: 8, left: 8, background: "rgba(225,29,72,0.85)", color: "#fff", padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 800, textTransform: "uppercase" }}>
-                      {m.resourceType || "VIDEO"}
-                    </span>
-                  </div>
-
-                  {/* Body */}
-                  <div style={{ padding: 12, flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#f0f6fc", marginBottom: 4, wordBreak: "break-word" }}>
-                        {m.title || m.fileName}
-                      </div>
-                      <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 8, wordBreak: "break-all" }}>
-                        📁 {m.fileName} {m.sizeFormatted ? `· ${m.sizeFormatted}` : ""}
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                      <button
-                        onClick={() => setPreviewFlipLongVideo(m)}
-                        style={{
-                          flex: 1,
-                          background: "#21262d",
-                          border: "1px solid #30363d",
-                          color: "#58a6ff",
-                          borderRadius: 6,
-                          padding: "6px 10px",
-                          fontSize: 11,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                        }}
-                      >
-                        ▶ Preview
-                      </button>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(m.url);
-                          alert("Media URL copied!");
-                        }}
-                        style={{
-                          background: "#21262d",
-                          border: "1px solid #30363d",
-                          color: "#c9d1d9",
-                          borderRadius: 6,
-                          padding: "6px 10px",
-                          fontSize: 11,
-                          cursor: "pointer",
-                        }}
-                      >
-                        🔗 Copy
-                      </button>
-                      <button
-                        onClick={() => handleDeleteFlipLongMedia(m.id, m.resourceType)}
-                        style={{
-                          background: "#21262d",
-                          border: "1px solid #da3633",
-                          color: "#f85149",
-                          borderRadius: 6,
-                          padding: "6px 10px",
-                          fontSize: 11,
-                          cursor: "pointer",
-                        }}
-                      >
-                        🗑
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Video Preview Modal */}
-          {previewFlipLongVideo && (
-            <div
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.85)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 9999,
-                padding: 20,
-              }}
-              onClick={() => setPreviewFlipLongVideo(null)}
-            >
-              <div
-                style={{
-                  background: "#161b22",
-                  border: "1px solid #30363d",
-                  borderRadius: 12,
-                  maxWidth: 680,
-                  width: "100%",
-                  overflow: "hidden",
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div style={{ padding: "12px 16px", borderBottom: "1px solid #30363d", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{previewFlipLongVideo.title || previewFlipLongVideo.fileName}</div>
-                  <button onClick={() => setPreviewFlipLongVideo(null)} style={{ background: "transparent", border: "none", color: "#8b949e", fontSize: 18, cursor: "pointer" }}>✕</button>
-                </div>
-                <div style={{ padding: 16, background: "#000" }}>
-                  {previewFlipLongVideo.resourceType === "video" || previewFlipLongVideo.url?.endsWith(".mp4") ? (
-                    <video src={previewFlipLongVideo.url} controls autoPlay style={{ width: "100%", maxHeight: 420, borderRadius: 8 }} />
-                  ) : (
-                    <img src={previewFlipLongVideo.url} alt={previewFlipLongVideo.title} style={{ width: "100%", maxHeight: 420, objectFit: "contain" }} />
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

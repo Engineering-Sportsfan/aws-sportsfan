@@ -31,6 +31,9 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
     status: "open",
   };
 
+  const left = pred.leftChoice || (pred.options && pred.options[0]) || { id: "left", text: "Yes, India win", code: "IN", votes: 71 };
+  const right = pred.rightChoice || (pred.options && pred.options[1]) || { id: "right", text: "SL hold / win", code: "LK", votes: 29 };
+
   // Check initial like status
   useEffect(() => {
     async function checkLike() {
@@ -138,7 +141,7 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
             🎯 PREDICTION
           </span>
           <span style={{ color: "#58a6ff", display: "flex", alignItems: "center", gap: 4 }}>
-            💎 POINTS
+            💎 SXP
           </span>
         </div>
         <span style={{ fontSize: 11, color: "#6e7681" }}>{formattedTime}</span>
@@ -172,10 +175,10 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
           }}
         >
           <div style={{ fontSize: 14, fontWeight: 700, color: selectedChoice === "left" ? "#3fb950" : "#e6edf3" }}>
-            {pred.leftChoice.text}{" "}
-            {pred.leftChoice.code && (
+            {left.text}{" "}
+            {left.code && (
               <span style={{ fontSize: 11, fontWeight: 800, color: selectedChoice === "left" ? "#3fb950" : "#7d8590" }}>
-                {pred.leftChoice.code}
+                {left.code}
               </span>
             )}
           </div>
@@ -207,10 +210,10 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
           }}
         >
           <div style={{ fontSize: 14, fontWeight: 700, color: selectedChoice === "right" ? "#ff7b72" : "#e6edf3" }}>
-            {pred.rightChoice.text}{" "}
-            {pred.rightChoice.code && (
+            {right.text}{" "}
+            {right.code && (
               <span style={{ fontSize: 11, fontWeight: 800, color: selectedChoice === "right" ? "#ff7b72" : "#7d8590" }}>
-                {pred.rightChoice.code}
+                {right.code}
               </span>
             )}
           </div>
@@ -227,7 +230,7 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
         </button>
       </div>
 
-      {/* FlipCoins Banner */}
+      {/* SXP Banner */}
       <div
         style={{
           background: "#0d131f",
@@ -245,7 +248,7 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
           gap: 6,
         }}
       >
-        <span>🔒</span> +{resultData?.coinsLocked || pred.coinStake || 10} FlipCoins locked in · Results after match
+        <span>🔒</span> +{resultData?.coinsLocked || pred.coinStake || 10} SXPs locked in · Results after match
       </div>
 
       {/* Footer / Counters with Dynamic Likes */}

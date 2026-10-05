@@ -703,6 +703,12 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Channels & Sports", icon: "🌐", badge: "UNIVERSAL", badgeBg: "#3b82f6",
+        children: [
+          { href: "/admin/channels-sports-management", label: "Channels & Sports Hub" },
+        ],
+      },
+      {
         label: "Feed Engagements", icon: "⚡",
         children: [
           { href: "/admin/engagements-management", label: "⚡ All Engagements & Creator" },
@@ -753,13 +759,13 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Home Cards & Agenda", icon: "◉",
+        label: "Home Cards & Schedule", icon: "◉",
         children: [
           { href: "/admin/homecardmanagement", label: "Overview Dashboard" },
           { href: "/admin/homecardmanagement/MorningBrief/list", label: "Morning Brief List" },
           { href: "/admin/homecardmanagement/MorningBrief/add", label: "Add Morning Story" },
-          { href: "/admin/homecardmanagement/TodaysAgenda/list", label: "Today's Agenda List" },
-          { href: "/admin/homecardmanagement/TodaysAgenda/add", label: "Add Agenda Event" },
+          { href: "/admin/homecardmanagement/Schedule/list", label: "Schedule List" },
+          { href: "/admin/homecardmanagement/Schedule/add", label: "Add Schedule Event" },
         ],
       },
       {
