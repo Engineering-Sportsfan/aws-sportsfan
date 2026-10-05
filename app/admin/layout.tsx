@@ -703,6 +703,12 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Channels & Sports", icon: "🌐", badge: "UNIVERSAL", badgeBg: "#3b82f6",
+        children: [
+          { href: "/admin/channels-sports-management", label: "Channels & Sports Hub" },
+        ],
+      },
+      {
         label: "Feed Engagements", icon: "⚡",
         children: [
           { href: "/admin/engagements-management", label: "⚡ All Engagements & Creator" },

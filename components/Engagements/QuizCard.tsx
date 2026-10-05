@@ -434,7 +434,7 @@ export default function QuizCard({
               gap: 4,
             }}
           >
-            ⭐ {totalPointsEarned > 0 ? `${totalPointsEarned} PTS EARNED` : `${currentQuestion?.pointsReward || 50} PTS/Q`}
+            ⭐ {totalPointsEarned > 0 ? `${totalPointsEarned} SXP EARNED` : `${currentQuestion?.pointsReward || 10} SXP/Q`}
           </span>
         </div>
 
@@ -676,7 +676,7 @@ export default function QuizCard({
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 16, fontWeight: 900, color: "#e3b341" }}>
-                {totalPointsEarned || currentUserEntry?.totalPoints || 0} PTS
+                {totalPointsEarned || currentUserEntry?.totalPoints || 0} SXP
               </div>
               <div style={{ fontSize: 11, color: "#3fb950", fontWeight: 700 }}>
                 {correctCount + incorrectCount > 0
@@ -738,7 +738,7 @@ export default function QuizCard({
 
                     <div style={{ textAlign: "right" }}>
                       <span style={{ fontSize: 14, fontWeight: 800, color: "#e3b341" }}>
-                        {entry.totalPoints} PTS
+                        {entry.totalPoints} SXP
                       </span>
                       <div style={{ fontSize: 10, color: "#3fb950", fontWeight: 600 }}>
                         {entry.accuracy || "100%"}
