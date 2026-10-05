@@ -58,36 +58,45 @@ export async function GET(req: NextRequest) {
 
     const medalTally = await getMedalTally();
 
+    const headers = {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    };
+
     // If a specific type was requested
     if (filterType === "morning_brief") {
-      return NextResponse.json({ success: true, items: morningBrief });
+      return NextResponse.json({ success: true, items: morningBrief }, { headers });
     }
     if (filterType === "todays_agenda") {
-      return NextResponse.json({ success: true, items: todaysAgenda });
+      return NextResponse.json({ success: true, items: todaysAgenda }, { headers });
     }
     if (filterType === "radar_card") {
-      return NextResponse.json({ success: true, items: radarCards });
+      return NextResponse.json({ success: true, items: radarCards }, { headers });
     }
     if (filterType === "medal_tally") {
-      return NextResponse.json({ success: true, item: medalTally });
+      return NextResponse.json({ success: true, item: medalTally }, { headers });
     }
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        config,
-        morningBrief,
-        todaysAgenda,
-        radarCards,
-        medalTally,
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          config,
+          morningBrief,
+          todaysAgenda,
+          radarCards,
+          medalTally,
+        },
+        counts: {
+          morningBrief: morningBrief.length,
+          todaysAgenda: todaysAgenda.length,
+          radarCards: radarCards.length,
+          total: items.length,
+        },
       },
-      counts: {
-        morningBrief: morningBrief.length,
-        todaysAgenda: todaysAgenda.length,
-        radarCards: radarCards.length,
-        total: items.length,
-      },
-    });
+      { headers }
+    );
   } catch (error: any) {
     console.error("[GET /api/welcomemessage] Error:", error);
     return NextResponse.json(

@@ -512,6 +512,24 @@ export async function POST(req: NextRequest) {
 
     const isFutureScheduled = Boolean(startMs && !isNaN(startMs) && startMs > now + 30000);
 
+    const finalTitle =
+      title ||
+      quizData?.title ||
+      quizData?.question ||
+      pollData?.question ||
+      pollData?.title ||
+      predictionData?.question ||
+      predictionData?.title ||
+      memeData?.title ||
+      memeData?.caption ||
+      memeData?.description ||
+      (fanBattleData?.leftCompetitor?.name && fanBattleData?.rightCompetitor?.name
+        ? `${fanBattleData.leftCompetitor.name} vs ${fanBattleData.rightCompetitor.name}`
+        : "") ||
+      (fanBattleData as any)?.title ||
+      (fanBattleData as any)?.topic ||
+      (type ? `${type.charAt(0).toUpperCase() + type.slice(1).replace("_", " ")} Arena` : "SportsFan Arena");
+
     const newEngagement: EngagementItem & {
       startTime?: number;
       scheduledStartTime?: number;
@@ -570,7 +588,7 @@ export async function POST(req: NextRequest) {
           action: "create",
           engagementId: id,
           engagementType: type,
-          engagementTitle: title,
+          engagementTitle: finalTitle,
           syncQuizLeaderboard: type === "quiz",
         });
         if (ptsResult.success) {
@@ -581,20 +599,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Dispatch 60-Minute Aggregated Content Drop Notification ONLY if item is live now (not scheduled for future)
+    // Dispatch 60-Minute Aggregated Content Drop Notification asynchronously (fire-and-forget) so creation is instant
     if (!isFutureScheduled) {
-      try {
-        await dispatchFlipArenaContentDropNotification({
-          engagementId: id,
-          engagementType: type,
-          engagementTitle: finalTitle,
-          creatorId,
-          creatorName,
-          creatorAvatar: newEngagement.creatorAvatar,
-        });
-      } catch (dropNotifErr) {
-        console.warn("[POST /api/engagements] Content drop notification notice:", dropNotifErr);
-      }
+      dispatchFlipArenaContentDropNotification({
+        engagementId: id,
+        engagementType: type,
+        engagementTitle: finalTitle,
+        creatorId,
+        creatorName,
+        creatorAvatar: newEngagement.creatorAvatar,
+      }).catch((dropNotifErr) => {
+        console.warn("[POST /api/engagements] Background content drop notification notice:", dropNotifErr);
+      });
     }
 
     return NextResponse.json({
