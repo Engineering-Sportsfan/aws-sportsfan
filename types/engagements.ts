@@ -30,7 +30,7 @@ export interface QuizQuestion {
   question: string;
   options: QuizOption[];
   correctOptionId: string; // "A", "B", "C", "D"
-  pointsReward?: number; // e.g. 50
+  pointsReward?: number; // e.g. 10
   explanation?: string; // e.g. "Correct: 29"
 }
 
@@ -38,7 +38,7 @@ export interface QuizPayload {
   question?: string;
   options?: QuizOption[];
   correctOptionId?: string; // "B"
-  pointsReward?: number; // e.g. 50
+  pointsReward?: number; // e.g. 10
   explanation?: string; // e.g. "Correct: 29"
   startTime?: number;
   scheduledStartTime?: number;
@@ -85,7 +85,7 @@ export interface PollPayload {
 
 // ─── 4. Prediction ─────────────────────────────────────────────────────────
 export interface PredictionChoice {
-  id: string; // "left" | "right"
+  id: string; // "left" | "right" | "1" | "2" etc.
   text: string; // e.g. "Yes, India win"
   code?: string; // e.g. "IN"
   votes: number;
@@ -93,9 +93,10 @@ export interface PredictionChoice {
 
 export interface PredictionPayload {
   question: string;
-  leftChoice: PredictionChoice;
-  rightChoice: PredictionChoice;
-  coinStake: number; // e.g. 25
+  options?: PredictionChoice[];
+  leftChoice?: PredictionChoice;
+  rightChoice?: PredictionChoice;
+  coinStake?: number; // default 10 SXP
   totalVotes: number;
   status?: "open" | "locked" | "settled";
   winningChoiceId?: string | null; // "left" | "right" once settled

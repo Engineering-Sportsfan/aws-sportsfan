@@ -162,6 +162,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
+import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
@@ -171,12 +172,20 @@ import { QueryCommand, PutCommand, UpdateCommand, DeleteCommand } from "@aws-sdk
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const email = searchParams.get("email");
-    const uid = searchParams.get("uid");
+    let email = searchParams.get("email");
+    let uid = searchParams.get("uid");
     const countOnly = searchParams.get("countOnly") === "true";
 
     if (!email && !uid) {
-      return NextResponse.json({ error: "email or uid is required" }, { status: 400 });
+      const user = await getUser(req);
+      if (user) {
+        email = user.email;
+        uid = user.userId;
+      }
+    }
+
+    if (!email && !uid) {
+      return NextResponse.json({ success: true, notifications: [], unreadCount: 0 });
     }
 
     // Resolve canonical user ID
@@ -200,6 +209,7 @@ export async function GET(req: NextRequest) {
       if (res.Items) {
         notifications = res.Items.map(item => ({
           id: (item.sk as string).replace(/^NOTIF#/, ""),
+          notifId: (item.sk as string).replace(/^NOTIF#/, ""),
           ...item
         }));
         // Sort newest first
@@ -228,7 +238,7 @@ export async function GET(req: NextRequest) {
           snap.docs.forEach((doc) => {
             if (!seen.has(doc.id)) {
               seen.add(doc.id);
-              notifications.push({ id: doc.id, ...doc.data() });
+              notifications.push({ id: doc.id, notifId: doc.id, ...doc.data() });
             }
           });
         }
@@ -240,13 +250,21 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const unreadCount = notifications.filter((n) => !n.isRead).length;
+    const unreadCount = notifications.filter((n) => !n.isRead && !n.read).length;
 
     if (countOnly) {
       return NextResponse.json({ success: true, unreadCount });
     }
 
-    return NextResponse.json({ success: true, notifications, unreadCount });
+    return NextResponse.json({
+      success: true,
+      notifications: notifications.map(n => ({
+        ...n,
+        notifId: n.notifId || n.id,
+        read: Boolean(n.read ?? n.isRead),
+      })),
+      unreadCount
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("GET /api/notifications error:", error);
@@ -258,7 +276,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const {
+    let {
       recipientEmail,
       recipientUid,
       type,
@@ -268,9 +286,17 @@ export async function POST(req: NextRequest) {
       audioDurationSeconds, audioFormat,
     } = body;
 
-    if (!recipientEmail || !type || !message) {
+    if (!recipientEmail && !recipientUid) {
+      const user = await getUser(req);
+      if (user) {
+        recipientEmail = user.email;
+        recipientUid = user.userId;
+      }
+    }
+
+    if ((!recipientEmail && !recipientUid) || !type || !message) {
       return NextResponse.json(
-        { error: "recipientEmail, type, and message are required" },
+        { error: "recipientEmail or recipientUid, type, and message are required" },
         { status: 400 }
       );
     }
@@ -283,11 +309,12 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
 
     const payload: Record<string, any> = {
-      recipientEmail,
+      recipientEmail: recipientEmail || null,
       recipientUid: recipientUid ?? null,
       type,
       message,
       isRead: false,
+      read: false,
       createdAt: now,
     };
 
@@ -322,7 +349,7 @@ export async function POST(req: NextRequest) {
       console.warn("[Notifications POST] Firestore fallback sync failed:", fsErr);
     }
 
-    return NextResponse.json({ success: true, id: notifId });
+    return NextResponse.json({ success: true, id: notifId, notifId });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     console.error("POST /api/notifications error:", error);
@@ -334,7 +361,23 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, email, uid, action } = body;
+    let { id, email, uid, action, notifId, markAll } = body;
+
+    if (!id && notifId) id = notifId;
+    if (!action && markAll) action = "markAllRead";
+    if (!action && id) action = "markRead";
+
+    if (!email && !uid) {
+      const user = await getUser(req);
+      if (user) {
+        email = user.email;
+        uid = user.userId;
+      }
+    }
+
+    if (!email && !uid) {
+      return NextResponse.json({ error: "Unauthorized or missing user identification" }, { status: 401 });
+    }
 
     // Resolve canonical user ID
     const userInfo = await getUserInfo(uid || email || "", undefined, email || undefined);
@@ -346,7 +389,8 @@ export async function PATCH(req: NextRequest) {
         await docClient.send(new UpdateCommand({
           TableName: TABLES.SocialAndContent,
           Key: { contentId: `USER#${resolvedUserId}`, sk: `NOTIF#${id}` },
-          UpdateExpression: "SET isRead = :t, readAt = :now",
+          UpdateExpression: "SET isRead = :t, #r = :t, readAt = :now",
+          ExpressionAttributeNames: { "#r": "read" },
           ExpressionAttributeValues: { ":t": true, ":now": Date.now() }
         }));
       } catch (dynErr) {
@@ -362,7 +406,7 @@ export async function PATCH(req: NextRequest) {
         console.warn("[Notifications PATCH] Firestore fallback update failed:", fsErr);
       }
 
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, updated: 1 });
     }
 
     if (action === "markAllRead" && (email || uid)) {
@@ -380,14 +424,15 @@ export async function PATCH(req: NextRequest) {
         }));
 
         if (res.Items) {
-          const unread = res.Items.filter(item => item.isRead === false);
+          const unread = res.Items.filter(item => item.isRead === false || item.read === false);
           unreadNotifIds = unread.map(item => (item.sk as string).replace(/^NOTIF#/, ""));
 
           for (const item of unread) {
             await docClient.send(new UpdateCommand({
               TableName: TABLES.SocialAndContent,
               Key: { contentId: `USER#${resolvedUserId}`, sk: item.sk },
-              UpdateExpression: "SET isRead = :t, readAt = :now",
+              UpdateExpression: "SET isRead = :t, #r = :t, readAt = :now",
+              ExpressionAttributeNames: { "#r": "read" },
               ExpressionAttributeValues: { ":t": true, ":now": Date.now() }
             })).catch(() => {});
           }
@@ -410,7 +455,7 @@ export async function PATCH(req: NextRequest) {
           snap.docs.forEach((doc) => {
             if (!seen.has(doc.id)) {
               seen.add(doc.id);
-              batch.update(doc.ref, { isRead: true, readAt: Date.now() });
+              batch.update(doc.ref, { isRead: true, read: true, readAt: Date.now() });
             }
           });
         }
@@ -437,7 +482,21 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, email, uid, all } = body;
+    let { id, email, uid, all, notifId } = body;
+
+    if (!id && notifId) id = notifId;
+
+    if (!email && !uid) {
+      const user = await getUser(req);
+      if (user) {
+        email = user.email;
+        uid = user.userId;
+      }
+    }
+
+    if (!email && !uid) {
+      return NextResponse.json({ error: "Unauthorized or missing user identification" }, { status: 401 });
+    }
 
     const userInfo = await getUserInfo(uid || email || "", undefined, email || undefined);
     const resolvedUserId = userInfo.actualUserId;

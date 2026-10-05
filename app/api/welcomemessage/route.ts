@@ -58,36 +58,45 @@ export async function GET(req: NextRequest) {
 
     const medalTally = await getMedalTally();
 
+    const headers = {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    };
+
     // If a specific type was requested
     if (filterType === "morning_brief") {
-      return NextResponse.json({ success: true, items: morningBrief });
+      return NextResponse.json({ success: true, items: morningBrief }, { headers });
     }
     if (filterType === "todays_agenda") {
-      return NextResponse.json({ success: true, items: todaysAgenda });
+      return NextResponse.json({ success: true, items: todaysAgenda }, { headers });
     }
     if (filterType === "radar_card") {
-      return NextResponse.json({ success: true, items: radarCards });
+      return NextResponse.json({ success: true, items: radarCards }, { headers });
     }
     if (filterType === "medal_tally") {
-      return NextResponse.json({ success: true, item: medalTally });
+      return NextResponse.json({ success: true, item: medalTally }, { headers });
     }
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        config,
-        morningBrief,
-        todaysAgenda,
-        radarCards,
-        medalTally,
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          config,
+          morningBrief,
+          todaysAgenda,
+          radarCards,
+          medalTally,
+        },
+        counts: {
+          morningBrief: morningBrief.length,
+          todaysAgenda: todaysAgenda.length,
+          radarCards: radarCards.length,
+          total: items.length,
+        },
       },
-      counts: {
-        morningBrief: morningBrief.length,
-        todaysAgenda: todaysAgenda.length,
-        radarCards: radarCards.length,
-        total: items.length,
-      },
-    });
+      { headers }
+    );
   } catch (error: any) {
     console.error("[GET /api/welcomemessage] Error:", error);
     return NextResponse.json(
@@ -167,6 +176,41 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
+
+    // Support batch reorder
+    if (body.action === "reorder" && Array.isArray(body.items)) {
+      const now = Date.now();
+      const updatePromises = body.items.map(async (item: { id: string; order?: number; storyNumber?: number }) => {
+        if (!item.id) return;
+        const existingRes = await docClient.send(
+          new GetCommand({
+            TableName: TABLE_NAME,
+            Key: { id: item.id },
+          })
+        );
+        const existing = existingRes.Item || {};
+        const updated = {
+          ...existing,
+          ...item,
+          ...(item.order !== undefined ? { order: Number(item.order) } : {}),
+          ...(item.storyNumber !== undefined ? { storyNumber: Number(item.storyNumber) } : {}),
+          updatedAt: now,
+        };
+        return docClient.send(
+          new PutCommand({
+            TableName: TABLE_NAME,
+            Item: updated,
+          })
+        );
+      });
+
+      await Promise.all(updatePromises);
+
+      return NextResponse.json({
+        success: true,
+        message: "Items reordered successfully in homeDatabase",
+      });
+    }
 
     if (!body.id) {
       return NextResponse.json(

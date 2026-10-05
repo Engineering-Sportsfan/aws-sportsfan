@@ -901,7 +901,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         selectedOptionId,
         leftPercentage: leftPct,
         rightPercentage: rightPct,
-        coinsLocked: item.predictionData.coinStake || 25,
+        coinsLocked: item.predictionData.coinStake || 10,
         totalVotes: total,
         totalEngaged: Number(item.totalEngaged) || 0,
         isFirstEngagement: isNewUserEngagement,

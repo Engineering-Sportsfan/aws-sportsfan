@@ -256,7 +256,7 @@ export default function HomeCardManagementDashboard() {
                 Home Cards & Welcome Message Management
               </h1>
               <p className="text-sm text-gray-400">
-                Manage Morning Brief stories, Today&apos;s Agenda events, and Welcome header settings in DynamoDB (<code className="text-amber-400">homeDatabase</code>)
+                Manage Morning Brief stories, Schedule timeline events, and Welcome header settings in DynamoDB (<code className="text-amber-400">homeDatabase</code>)
               </p>
             </div>
           </div>
@@ -269,10 +269,10 @@ export default function HomeCardManagementDashboard() {
               <span>Add Morning Story</span>
             </button>
           </Link>
-          <Link href="/admin/homecardmanagement/TodaysAgenda/add">
+          <Link href="/admin/homecardmanagement/Schedule/add">
             <button className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-95 text-white text-xs font-black transition-all shadow-md">
               <Plus size={15} />
-              <span>Add Agenda Event</span>
+              <span>Add Schedule Event</span>
             </button>
           </Link>
         </div>
@@ -309,11 +309,11 @@ export default function HomeCardManagementDashboard() {
           </div>
         </div>
 
-        {/* Today's Agenda Card */}
+        {/* Schedule Card */}
         <div className="p-5 rounded-2xl bg-[#111625] border border-purple-500/20 relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-purple-400">
-              Today&apos;s Agenda
+              Today&apos;s Schedule
             </span>
             <div className="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center">
               <Calendar size={18} />
@@ -330,7 +330,7 @@ export default function HomeCardManagementDashboard() {
               {resolveDynamicAgendaEvents(data.todaysAgenda).filter((e) => e.statusType === "live").length} Live Now
             </span>
             <Link
-              href="/admin/homecardmanagement/TodaysAgenda/list"
+              href="/admin/homecardmanagement/Schedule/list"
               className="text-purple-400 hover:underline flex items-center gap-0.5 font-bold"
             >
               Manage <ArrowRight size={12} />
@@ -420,13 +420,13 @@ export default function HomeCardManagementDashboard() {
             </div>
           </div>
 
-          {/* Today's Agenda Module Banner */}
+          {/* Schedule Module Banner */}
           <div className="p-6 rounded-2xl bg-gradient-to-br from-[#1A0D2E] via-[#10091D] to-[#07050E] border border-purple-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-2xl">📅</span>
                 <h3 className="text-lg font-black text-white uppercase tracking-wider">
-                  Today&apos;s Agenda Timeline
+                  Schedule Timeline
                 </h3>
               </div>
               <p className="text-xs text-gray-300 max-w-md leading-relaxed">
@@ -434,16 +434,16 @@ export default function HomeCardManagementDashboard() {
               </p>
             </div>
             <div className="flex items-center gap-2.5 shrink-0">
-              <Link href="/admin/homecardmanagement/TodaysAgenda/list">
+              <Link href="/admin/homecardmanagement/Schedule/list">
                 <button className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition-colors flex items-center gap-1.5">
                   <List size={14} />
                   <span>View All ({data.todaysAgenda.length})</span>
                 </button>
               </Link>
-              <Link href="/admin/homecardmanagement/TodaysAgenda/add">
+              <Link href="/admin/homecardmanagement/Schedule/add">
                 <button className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-95 text-white font-extrabold text-xs transition-colors flex items-center gap-1.5 shadow-md">
                   <Plus size={14} />
-                  <span>Add Event</span>
+                  <span>Add Schedule Event</span>
                 </button>
               </Link>
             </div>
@@ -516,7 +516,7 @@ export default function HomeCardManagementDashboard() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-gray-300">
-                    Today&apos;s Agenda Date Label
+                    Today&apos;s Schedule Date Label
                   </label>
                   <span className="text-[10px] text-purple-400 font-semibold flex items-center gap-1">
                     <Calendar size={11} /> 1-Click Select
