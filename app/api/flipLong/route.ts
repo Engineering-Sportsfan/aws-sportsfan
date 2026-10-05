@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
       id,
       videoId: id,
       title: title.trim(),
-      description: typeof description === "string" ? description.trim() : description,
+      description: typeof description === "string" ? description.trim().slice(0, 80) : description,
       url: finalUrl,
       mediaUrl: finalUrl,
       videoUrl: finalUrl,
@@ -200,6 +200,7 @@ export async function POST(req: NextRequest) {
       duration: finalDuration,
       durationSeconds: finalDurationSeconds,
       format: mediaResult?.format || "mp4",
+      publicId: mediaResult?.publicId || "",
       resourceType: "video",
       type: "VIDEO",
       badge: "VIDEO",
@@ -413,12 +414,29 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    // Deduplicate mapped videos by clean ID and URL
+    const seenIds = new Set<string>();
+    const seenUrls = new Set<string>();
+    const deduplicatedVideos: typeof mappedVideos = [];
+
+    for (const item of mappedVideos) {
+      const idKey = (item.id || "").toLowerCase().trim();
+      const rawUrl = (item.url || "").split("?")[0].replace(/\/v\d+\//, "/").toLowerCase().trim();
+
+      if (idKey && seenIds.has(idKey)) continue;
+      if (rawUrl && seenUrls.has(rawUrl)) continue;
+
+      if (idKey) seenIds.add(idKey);
+      if (rawUrl) seenUrls.add(rawUrl);
+      deduplicatedVideos.push(item);
+    }
+
     return NextResponse.json(
       {
         success: true,
-        videos: mappedVideos,
-        mediaFiles: mappedVideos,
-        totalCount: mappedVideos.length,
+        videos: deduplicatedVideos,
+        mediaFiles: deduplicatedVideos,
+        totalCount: deduplicatedVideos.length,
       },
       { headers: { "Cache-Control": "no-store" } }
     );
@@ -429,17 +447,54 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// ─── Helper to extract Cloudinary publicId from URL ─────────────────────────
+function extractCloudinaryPublicId(url?: string): string | null {
+  if (!url || !url.includes("cloudinary.com")) return null;
+  try {
+    const cleanUrl = url.split("?")[0].split("#")[0];
+    const match = cleanUrl.match(/\/upload\/(?:v\d+\/)?(.+?)(\.[a-zA-Z0-9]+)?$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+  } catch {}
+  return null;
+}
+
 // ─── DELETE: Delete a FlipLong Video ──────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id") || searchParams.get("videoId");
+    let id = searchParams.get("id") || searchParams.get("videoId");
+    let urlParam = searchParams.get("url") || searchParams.get("videoUrl") || searchParams.get("mediaUrl");
+    let publicIdParam = searchParams.get("publicId");
 
-    if (!id) {
-      return NextResponse.json({ success: false, error: "Video ID is required" }, { status: 400 });
+    if (!id && !urlParam && !publicIdParam) {
+      try {
+        const body = await req.json();
+        id = body.id || body.videoId;
+        urlParam = body.url || body.videoUrl || body.mediaUrl;
+        publicIdParam = body.publicId;
+      } catch {
+        // Body was empty or non-JSON
+      }
     }
 
-    const cleanId = id.replace(/^(VIDEO|FLIPLONG)#/, "").trim();
+    if (!id && !urlParam && !publicIdParam) {
+      return NextResponse.json({ success: false, error: "Video ID or URL is required" }, { status: 400 });
+    }
+
+    const publicIdsToDestroy = new Set<string>();
+    if (publicIdParam) publicIdsToDestroy.add(publicIdParam);
+
+    if (id && id.includes("/")) {
+      publicIdsToDestroy.add(id);
+    }
+    if (urlParam) {
+      const pId = extractCloudinaryPublicId(urlParam);
+      if (pId) publicIdsToDestroy.add(pId);
+    }
+
+    const cleanId = (id || "").replace(/^(VIDEO|FLIPLONG)#/, "").trim();
 
     // 1. Delete from DynamoDB RealTimeChat table
     try {
@@ -456,11 +511,18 @@ export async function DELETE(req: NextRequest) {
 
       if (qRes.Items && qRes.Items.length > 0) {
         for (const item of qRes.Items) {
-          if (
-            item.id === cleanId ||
-            item.videoId === cleanId ||
-            (item.sk as string)?.includes(cleanId)
-          ) {
+          const itemCleanId = (item.id || item.videoId || (item.sk as string)?.replace(/^VIDEO#\d+#/, "") || "").trim();
+          const itemUrl = item.url || item.videoUrl || item.mediaUrl || "";
+          const isMatch =
+            (cleanId && (itemCleanId === cleanId || item.id === cleanId || item.videoId === cleanId || (item.sk as string)?.includes(cleanId))) ||
+            (urlParam && itemUrl === urlParam) ||
+            (cleanId && itemUrl && itemUrl.includes(cleanId));
+
+          if (isMatch) {
+            if (item.publicId) publicIdsToDestroy.add(item.publicId);
+            const pId = extractCloudinaryPublicId(itemUrl);
+            if (pId) publicIdsToDestroy.add(pId);
+
             await docClient.send(
               new DeleteCommand({
                 TableName: TABLES.RealTimeChat,
@@ -480,16 +542,49 @@ export async function DELETE(req: NextRequest) {
     // 2. Delete from Firestore flipLongVideos
     if (db) {
       try {
-        await db.collection(getFirestoreCollection("flipLongVideos")).doc(cleanId).delete();
+        if (cleanId) {
+          const docRef = db.collection(getFirestoreCollection("flipLongVideos")).doc(cleanId);
+          const docSnap = await docRef.get();
+          if (docSnap.exists) {
+            const data = docSnap.data();
+            if (data?.publicId) publicIdsToDestroy.add(data.publicId);
+            const pId = extractCloudinaryPublicId(data?.url || data?.videoUrl || data?.mediaUrl);
+            if (pId) publicIdsToDestroy.add(pId);
+            await docRef.delete();
+          }
+        }
+
+        if (urlParam) {
+          const querySnap = await db
+            .collection(getFirestoreCollection("flipLongVideos"))
+            .where("url", "==", urlParam)
+            .get();
+          for (const doc of querySnap.docs) {
+            await doc.ref.delete();
+          }
+        }
       } catch (fbErr) {
         console.warn("Firestore flipLong delete notice:", fbErr);
       }
     }
 
+    // 3. Delete from Cloudinary (both video and image formats to clean up thumbnails/clips)
+    for (const pId of publicIdsToDestroy) {
+      try {
+        await cloudinary.uploader.destroy(pId, { resource_type: "video" });
+        if (!pId.startsWith("IndvsSl/")) {
+          await cloudinary.uploader.destroy(`IndvsSl/${pId}`, { resource_type: "video" });
+        }
+        await cloudinary.uploader.destroy(pId, { resource_type: "image" });
+      } catch (cErr) {
+        console.warn("Cloudinary delete notice for publicId:", pId, cErr);
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      message: "Video deleted successfully",
-      id: cleanId,
+      message: "Video deleted successfully from all stores",
+      id: cleanId || urlParam,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error deleting FlipLONG video";
@@ -657,7 +752,7 @@ export async function PUT(req: NextRequest) {
       description:
         description !== undefined
           ? typeof description === "string"
-            ? description.trim()
+            ? description.trim().slice(0, 80)
             : description
           : existingItem.description,
       url: finalUrl,
