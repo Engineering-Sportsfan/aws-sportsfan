@@ -164,27 +164,7 @@ function MorningBriefForm() {
           <div className="lg:col-span-2">
             <form onSubmit={handleSubmit} className="p-6 rounded-2xl bg-[#111625] border border-white/10 space-y-5">
               {/* Row 1: Story Number & Display Order */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-300 mb-1.5">
-                    Story Number (#) *
-                  </label>
-                  <select
-                    value={storyNumber}
-                    onChange={(e) => {
-                      const num = Number(e.target.value);
-                      setStoryNumber(num);
-                      if (!editId) setOrder(num);
-                    }}
-                    className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 transition-colors font-bold"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
-                      <option key={num} value={num}>
-                        Story #{num}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 
                 <div>
                   <label className="block text-xs font-bold text-gray-300 mb-1.5">
