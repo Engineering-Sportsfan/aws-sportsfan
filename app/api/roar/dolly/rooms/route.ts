@@ -3,6 +3,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ async function resolveUser(
   const info = await getUserInfo(userId, undefined, email);
   if (!info.exists) return null;
 
-  const snap = await db.collection("users").doc(info.actualUserId).get();
+  const snap = await db.collection(getFirestoreCollection("users")).doc(info.actualUserId).get();
   if (!snap.exists) return null;
 
   const data = snap.data() as { username?: string };
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
           const candidates = [`ROOM#${roomId}`, roomId];
           for (const cand of candidates) {
             const getMeta = await docClient.send(new GetCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               Key: { roomId: cand, sk: `META#${roomId}` }
             }));
             if (getMeta.Item) {
@@ -84,7 +85,7 @@ export async function GET(req: NextRequest) {
         // Fallback to Firestore
         if (!fetchedFromDynamo) {
           try {
-            const doc = await db.collection("roarRooms").doc(roomId).get();
+            const doc = await db.collection(getFirestoreCollection("roarRooms")).doc(roomId).get();
             if (doc.exists) {
               const data = doc.data() as { name?: string; sport?: string };
               name = data?.name ?? "Match";

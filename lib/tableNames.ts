@@ -3,8 +3,11 @@ function resolveEnv(): string {
   if (explicit === "prod" || explicit === "production" || explicit === "main") {
     return "prod";
   }
-  if (explicit === "develop") {
+  if (explicit === "develop" || explicit === "dev") {
     return "dev";
+  }
+  if (explicit === "release") {
+    return "release";
   }
   if (explicit) {
     return explicit;
@@ -51,6 +54,10 @@ export function getTableName(baseName: TableKey | string): string {
   if (baseName in TABLES) {
     return TABLES[baseName as TableKey];
   }
+  // Prevent double suffixing if table name already has an environment suffix
+  if (/-(dev|develop|release|prod|main|staging|test)$/i.test(baseName)) {
+    return baseName;
+  }
   return suffix ? `${baseName}${suffix}` : baseName;
 }
 
@@ -59,6 +66,10 @@ export function getTableName(baseName: TableKey | string): string {
  * @param baseName The base Firestore collection (e.g. 'engagements')
  */
 export function getFirestoreCollection(baseName: string): string {
+  // Prevent double suffixing if collection name already has an environment suffix
+  if (/_(dev|develop|release|prod|main|staging|test)$/i.test(baseName)) {
+    return baseName;
+  }
   return ENV === "prod" || ENV === "production" ? baseName : `${baseName}_${ENV}`;
 }
 

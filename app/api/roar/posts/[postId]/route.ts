@@ -1,9 +1,8 @@
-// api/roar/posts/[postId]/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post } from "@/app/models/Post";
 
@@ -26,7 +25,7 @@ export async function GET(
     // 1. Try reading from DynamoDB first
     try {
       const res = await docClient.send(new GetCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: {
           contentId: `POST#${postId}`,
           sk: "POST#META"
@@ -47,7 +46,7 @@ export async function GET(
     // 2. Fallback to Firestore
     if (!fetchedFromDynamo) {
       try {
-        const snap = await db.collection("roarPosts").doc(postId).get();
+        const snap = await db.collection(getFirestoreCollection("roarPosts")).doc(postId).get();
         if (snap.exists) {
           post = { ...(snap.data() as Post), postId: snap.id };
         }
@@ -68,7 +67,7 @@ export async function GET(
     if (post.authorUid) {
       try {
         const userRes = await docClient.send(new GetCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: {
             entityId: `USER#${post.authorUid}`,
             sk: "USER#META"
@@ -83,7 +82,7 @@ export async function GET(
 
       if (!fetchedAuthor) {
         try {
-          const authorSnap = await db.collection("users").doc(post.authorUid).get();
+          const authorSnap = await db.collection(getFirestoreCollection("users")).doc(post.authorUid).get();
           if (authorSnap.exists) {
             const authorData = authorSnap.data() as any;
             authorAvatarUrl = authorData?.avatarUrl ?? null;
@@ -125,7 +124,7 @@ export async function DELETE(
     // 1. Fetch post info to check author permissions
     try {
       const res = await docClient.send(new GetCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: {
           contentId: `POST#${postId}`,
           sk: "POST#META"
@@ -137,7 +136,7 @@ export async function DELETE(
     } catch (e) {}
 
     if (!post) {
-      const fsSnap = await db.collection("roarPosts").doc(postId).get();
+      const fsSnap = await db.collection(getFirestoreCollection("roarPosts")).doc(postId).get();
       if (fsSnap.exists) {
         post = fsSnap.data() as Post;
         snap = fsSnap;
@@ -159,7 +158,7 @@ export async function DELETE(
     // 1. Delete from DynamoDB
     try {
       await docClient.send(new DeleteCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: {
           contentId: `POST#${postId}`,
           sk: "POST#META"
@@ -171,7 +170,7 @@ export async function DELETE(
 
     // 2. Sync delete in Firestore
     try {
-      await db.collection("roarPosts").doc(postId).delete();
+      await db.collection(getFirestoreCollection("roarPosts")).doc(postId).delete();
     } catch (fsErr) {
       console.warn("[Post DELETE] Firestore delete failed:", fsErr);
     }

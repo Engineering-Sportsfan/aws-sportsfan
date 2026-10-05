@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +27,7 @@ export async function GET(
       const candidates = [`ROOM#${roomId}`, roomId];
       for (const cand of candidates) {
         const getRes = await docClient.send(new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: cand, sk: `META#${roomId}` }
         }));
         if (getRes.Item) {
@@ -39,14 +40,14 @@ export async function GET(
       console.warn("[Recap GET] DynamoDB room fetch failed:", dynErr);
     }
 
-    let roomRef = db.collection("roarRooms").doc(roomId);
+    let roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId);
     let fallbackRoomSnap: any = null;
 
     if (!roomExists) {
       try {
         let snap = await roomRef.get();
         if (!snap.exists) {
-          roomRef = db.collection("watchAlongRooms").doc(roomId);
+          roomRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(roomId);
           snap = await roomRef.get();
         }
         if (snap.exists) {
@@ -65,7 +66,7 @@ export async function GET(
     let fetchedMessagesFromDynamo = false;
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": "MSG#" },
         Limit: MAX_MESSAGES
@@ -164,7 +165,7 @@ export async function GET(
       // Query DynamoDB for prediction votes
       try {
         const res = await docClient.send(new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
           ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": `VOTE#${pollMsg.msgId || pollMsg.id}#` }
         }));

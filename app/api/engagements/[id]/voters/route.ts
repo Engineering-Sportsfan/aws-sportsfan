@@ -43,8 +43,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       } catch { }
     }
 
+    // 1.5 Extract searchParams for question-level isolation
+    const { searchParams } = new URL(req.url);
+    const targetQuestionId = searchParams.get("questionId")?.trim() || "";
+
     // 2. Fetch all votes for this engagement from DynamoDB
-    const rawVotesMap = new Map<string, any>();
+    const rawVotesList: any[] = [];
+
+    function isValidVoterUid(uid: string): boolean {
+      if (!uid) return false;
+      const clean = uid.trim().toLowerCase();
+      if (clean.startsWith("anon") || clean === "anonymous" || clean.includes(":") || clean.includes(",")) return false;
+      return true;
+    }
 
     try {
       const voteQuery = await docClient.send(
@@ -61,13 +72,17 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
       if (voteQuery.Items) {
         for (const item of voteQuery.Items) {
-          const uid = item.userId || String(item.sk || "").replace(/^VOTE#/, "").split("#")[0];
-          if (uid && !rawVotesMap.has(uid)) {
-            rawVotesMap.set(uid, {
+          const skParts = String(item.sk || "").replace(/^VOTE#/, "").split("#");
+          const uid = item.userId || skParts[0];
+          const itemQuestionId = item.questionId || (skParts.length > 1 ? skParts[1] : "");
+
+          if (uid && isValidVoterUid(uid)) {
+            rawVotesList.push({
               userId: uid,
               userName: item.userName || item.name || item.displayName,
               userAvatar: item.userAvatar || item.avatarUrl || item.avatar || item.photoURL,
               selectedOptionId: item.selectedOptionId || item.choice || item.reaction || "A",
+              questionId: itemQuestionId,
               votedAt: item.votedAt || item.timestamp,
             });
           }
@@ -78,18 +93,21 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // 3. Fallback: Query Firestore user_engagements collection
-    if (db && rawVotesMap.size === 0) {
+    if (db && rawVotesList.length === 0) {
       try {
         const snap = await db.collection("user_engagements").where("engagementId", "==", id).get();
         for (const doc of snap.docs) {
           const item = doc.data();
+          if (!item.selectedOptionId) continue; 
           const uid = item.userId || doc.id.split("_")[0];
-          if (uid && !rawVotesMap.has(uid)) {
-            rawVotesMap.set(uid, {
+          const itemQuestionId = item.questionId || (doc.id.split("_").length > 2 ? doc.id.split("_")[2] : "");
+          if (uid && isValidVoterUid(uid)) {
+            rawVotesList.push({
               userId: uid,
               userName: item.userName || item.name || item.displayName,
               userAvatar: item.userAvatar || item.avatarUrl || item.avatar || item.photoURL,
               selectedOptionId: item.selectedOptionId || item.choice || item.reaction || "A",
+              questionId: itemQuestionId,
               votedAt: item.votedAt || item.timestamp,
             });
           }
@@ -99,61 +117,28 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    const rawVotes = Array.from(rawVotesMap.values());
+    const rawVotes = rawVotesList;
 
-    // 4. Enrich missing user profile names and avatars
-    const userIdsToLookup = rawVotes
-      .filter((v) => !v.userName || !v.userAvatar)
-      .map((v) => v.userId);
-
-    const userProfileMap = new Map<string, { name: string; avatar: string | null }>();
-
-    if (userIdsToLookup.length > 0) {
-      // Look up in Firestore users or DynamoDB Users table
-      if (db) {
-        try {
-          const userSnapPromises = userIdsToLookup.slice(0, 50).map(async (uid) => {
-            try {
-              const uDoc = await db!.collection("users").doc(uid).get();
-              if (uDoc.exists) {
-                const ud = uDoc.data();
-                return {
-                  uid,
-                  name: ud?.displayName || ud?.name || ud?.username || ud?.email?.split("@")[0],
-                  avatar: ud?.avatarUrl || ud?.photoURL || ud?.avatar || null,
-                };
-              }
-            } catch { }
-            return null;
-          });
-          const resolved = await Promise.all(userSnapPromises);
-          for (const r of resolved) {
-            if (r) userProfileMap.set(r.uid, { name: r.name, avatar: r.avatar });
-          }
-        } catch { }
-      }
-    }
-
-    // 5. Build enriched voters list
-    const voters: VoterUser[] = rawVotes.map((v) => {
-      const profile = userProfileMap.get(v.userId);
+    // 4. Quick user profile name fallback without slow sequential network calls
+    const allEnrichedVoters: (VoterUser & { questionId?: string })[] = rawVotes.map((v) => {
       const cleanName =
         v.userName ||
-        profile?.name ||
         (v.userId.includes("@") ? v.userId.split("@")[0] : v.userId.replace(/^USER#/i, "Fan_"));
-      const cleanAvatar = v.userAvatar || profile?.avatar || null;
+      const cleanAvatar = v.userAvatar || null;
 
       return {
         userId: v.userId,
         userName: cleanName,
         userAvatar: cleanAvatar,
         selectedOptionId: String(v.selectedOptionId || "").trim(),
+        questionId: v.questionId,
         votedAt: v.votedAt,
       };
     });
 
     // 6. Structure options list according to engagement type
-    let optionsList: { id: string; text: string; count: number; voters: VoterUser[] }[] = [];
+    let optionsList: { id: string; text: string; count: number; voters: VoterUser[]; questionId?: string }[] = [];
+    let questionsList: Array<{ questionId: string; options: typeof optionsList }> = [];
 
     const type = (engagement?.type || "poll").toLowerCase();
 
@@ -161,7 +146,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       optionsList = engagement.pollData.options.map((opt: any) => {
         const optId = String(opt.id || "").trim();
         const optText = String(opt.text || opt.label || "").trim();
-        const optVoters = voters.filter(
+        const optVoters = allEnrichedVoters.filter(
           (v) =>
             v.selectedOptionId === optId ||
             v.selectedOptionId === optText ||
@@ -177,13 +162,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     } else if (type === "fan_battle" && engagement?.fanBattleData) {
       const left = engagement.fanBattleData.leftCompetitor;
       const right = engagement.fanBattleData.rightCompetitor;
-      const leftVoters = voters.filter(
+      const leftVoters = allEnrichedVoters.filter(
         (v) =>
           v.selectedOptionId === "left" ||
           v.selectedOptionId === left?.name ||
           v.selectedOptionId === left?.code
       );
-      const rightVoters = voters.filter(
+      const rightVoters = allEnrichedVoters.filter(
         (v) =>
           v.selectedOptionId === "right" ||
           v.selectedOptionId === right?.name ||
@@ -206,13 +191,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     } else if (type === "prediction" && engagement?.predictionData) {
       const left = engagement.predictionData.leftChoice;
       const right = engagement.predictionData.rightChoice;
-      const leftVoters = voters.filter(
+      const leftVoters = allEnrichedVoters.filter(
         (v) =>
           v.selectedOptionId === "left" ||
           v.selectedOptionId === left?.text ||
           v.selectedOptionId === left?.id
       );
-      const rightVoters = voters.filter(
+      const rightVoters = allEnrichedVoters.filter(
         (v) =>
           v.selectedOptionId === "right" ||
           v.selectedOptionId === right?.text ||
@@ -234,31 +219,65 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       ];
     } else if (type === "quiz") {
       const questions = engagement?.quizData?.questions || [engagement?.quizData];
-      const q = questions[0] || {};
-      const opts = q.options || [
-        { id: "A", text: "Option A" },
-        { id: "B", text: "Option B" },
-        { id: "C", text: "Option C" },
-        { id: "D", text: "Option D" },
-      ];
 
-      optionsList = opts.map((opt: any) => {
-        const optId = String(opt.id || "").trim();
-        const optText = String(opt.text || opt.label || "").trim();
-        const optVoters = voters.filter(
-          (v) =>
-            v.selectedOptionId.toUpperCase() === optId.toUpperCase() ||
-            v.selectedOptionId.toLowerCase() === optText.toLowerCase()
-        );
+      questionsList = questions.map((q: any, idx: number) => {
+        const qId = String(q?.id || `q_${idx + 1}`);
+        const opts = q?.options || [
+          { id: "A", text: "Option A" },
+          { id: "B", text: "Option B" },
+          { id: "C", text: "Option C" },
+          { id: "D", text: "Option D" },
+        ];
+
+        // Match voters strictly for this question
+        const qVoters = allEnrichedVoters.filter((v) => {
+          if (!v.questionId) return idx === 0; // Legacy unindexed votes map to question 1
+          return v.questionId === qId || v.questionId === `q_${idx + 1}`;
+        });
+
+        const qOptions = opts.map((opt: any) => {
+          const optId = String(opt.id || "").trim();
+          const optText = String(opt.text || opt.label || "").trim();
+          const optVoters = qVoters.filter(
+            (v) =>
+              v.selectedOptionId.toUpperCase() === optId.toUpperCase() ||
+              v.selectedOptionId.toLowerCase() === optText.toLowerCase()
+          );
+          return {
+            id: optId,
+            text: `${optId}. ${optText}`,
+            questionId: qId,
+            count: optVoters.length,
+            voters: optVoters,
+          };
+        });
+
         return {
-          id: optId,
-          text: `${optId}. ${optText}`,
-          count: optVoters.length,
-          voters: optVoters,
+          questionId: qId,
+          options: qOptions,
         };
       });
+
+      // Target question options for flat optionsList
+      // const matchedQ = targetQuestionId
+      //   ? questionsList.find((ql) => ql.questionId === targetQuestionId) || questionsList[0]
+      //   : questionsList[0];
+      const questionIndexParam = parseInt(searchParams.get("questionIndex") ?? "-1", 10);
+
+      let matchedQ = targetQuestionId
+        ? questionsList.find((ql) => ql.questionId === targetQuestionId)
+        : undefined;
+
+      if (!matchedQ && questionIndexParam >= 0) {
+        matchedQ = questionsList[questionIndexParam];
+      }
+      // Only default to Q1 when no targeting info was given at all
+      if (!matchedQ && !targetQuestionId && questionIndexParam < 0) {
+        matchedQ = questionsList[0];
+      }
+      optionsList = matchedQ?.options ?? [];
+      optionsList = matchedQ?.options || [];
     } else if (type === "meme") {
-      // For meme, provide reactions tabs or flat list
       const reactionTypes = ["mild", "funny", "hot", "fire", "nuclear"];
       const reactionLabels: Record<string, string> = {
         mild: "Mild 🥱",
@@ -269,7 +288,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       };
 
       optionsList = reactionTypes.map((r) => {
-        const rVoters = voters.filter((v) => v.selectedOptionId.toLowerCase() === r);
+        const rVoters = allEnrichedVoters.filter((v) => v.selectedOptionId.toLowerCase() === r);
         return {
           id: r,
           text: reactionLabels[r] || r,
@@ -279,13 +298,28 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       });
     }
 
+    // const filteredVoters = targetQuestionId && type === "quiz"
+    //   ? allEnrichedVoters.filter((v) => v.questionId === targetQuestionId)
+    //   : allEnrichedVoters;
+
+        const qIdx = questionsList.findIndex((q) => q.questionId === targetQuestionId);
+    const filteredVoters =
+      targetQuestionId && type === "quiz"
+        ? allEnrichedVoters.filter((v) =>
+            v.questionId
+              ? v.questionId === targetQuestionId || v.questionId === `q_${qIdx + 1}`
+              : qIdx === 0
+          )
+        : allEnrichedVoters;
+
     return NextResponse.json({
       success: true,
       engagementId: id,
       type,
-      totalVoters: voters.length,
-      voters,
+      totalVoters: new Set(filteredVoters.map((v) => String(v.userId).toLowerCase())).size,
+      voters: filteredVoters,
       options: optionsList,
+      questions: questionsList.length > 0 ? questionsList : undefined,
     });
   } catch (error: any) {
     console.error("[GET /api/engagements/[id]/voters] error:", error);
@@ -295,3 +329,4 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     );
   }
 }
+

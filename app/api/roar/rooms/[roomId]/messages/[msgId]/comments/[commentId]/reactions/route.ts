@@ -1,9 +1,9 @@
-// api/roar/rooms/[roomId]/messages/[msgId]/comments/[commentId]/reactions/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+import { findRoomMessage } from "@/lib/roarRoomHelpers";
 import { QueryCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +19,11 @@ export async function GET(
     const resolvedParams = await params;
     const { roomId, msgId, commentId } = resolvedParams;
 
+    const cleanRoomId = roomId.replace(/^ROOM#/, "");
+    const found = await findRoomMessage(cleanRoomId, msgId);
+    const targetMsgId = found?.rawMsgId || msgId;
+    const roomCand = found?.roomIdKey || `ROOM#${cleanRoomId}`;
+
     // 1. Fetch parent check & reactions from DynamoDB first
     let reactorsData: any[] = [];
     let commentExists = false;
@@ -27,9 +32,9 @@ export async function GET(
     try {
       // Check if comment exists
       const commentRes = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND sk = :s",
-        ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":s": `COMMENT#${msgId}#${commentId}` },
+        ExpressionAttributeValues: { ":r": roomCand, ":s": `COMMENT#${targetMsgId}#${commentId}` },
         Limit: 1
       }));
 
@@ -38,9 +43,9 @@ export async function GET(
 
         // Query reactions
         const reactionsRes = await docClient.send(new QueryCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
-          ExpressionAttributeValues: { ":r": `ROOM#${roomId}`, ":p": `LIKE#${commentId}#` },
+          ExpressionAttributeValues: { ":r": roomCand, ":p": `LIKE#${commentId}#` },
           Limit: 100
         }));
 
@@ -61,8 +66,8 @@ export async function GET(
     if (!fetchedFromDynamo) {
       try {
         const commentRef = db
-          .collection("roarRooms").doc(roomId)
-          .collection("messages").doc(msgId)
+          .collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId)
+          .collection("messages").doc(targetMsgId)
           .collection("comments").doc(commentId);
 
         const snap = await commentRef.get();
@@ -105,13 +110,13 @@ export async function GET(
 
       const batchResults = await docClient.send(new BatchGetCommand({
         RequestItems: {
-          "IdentityAndAccess": {
+          [TABLES.IdentityAndAccess]: {
             Keys: keys
           }
         }
       }));
 
-      const items = batchResults.Responses?.["IdentityAndAccess"] || [];
+      const items = batchResults.Responses?.[TABLES.IdentityAndAccess] || [];
       items.forEach(item => {
         const uid = (item.entityId as string).replace(/^USER#/, "");
         profileMap.set(uid, item);
@@ -126,7 +131,7 @@ export async function GET(
       try {
         const missingUserIds = userIds.filter(uid => !profileMap.has(uid));
         const profileSnaps = await Promise.all(
-          missingUserIds.map((uid) => db.collection("users").doc(uid).get())
+          missingUserIds.map((uid) => db.collection(getFirestoreCollection("users")).doc(uid).get())
         );
         profileSnaps.forEach((snap, idx) => {
           const uid = missingUserIds[idx];

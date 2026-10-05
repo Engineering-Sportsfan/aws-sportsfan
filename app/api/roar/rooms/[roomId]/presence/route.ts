@@ -5,6 +5,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import {
   PRESENCE_TTL_MS,
@@ -21,17 +22,17 @@ async function resolveUser(
   const info = await getUserInfo(userId, undefined, email);
   if (!info.exists) return null;
 
-  const snap = await db.collection("users").doc(info.actualUserId).get();
+  const snap = await db.collection(getFirestoreCollection("users")).doc(info.actualUserId).get();
   if (!snap.exists) return null;
 
   return { id: info.actualUserId, snap };
 }
 
 async function getRoomRef(roomId: string) {
-  let roomRef = db.collection("roarRooms").doc(roomId);
+  let roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId);
   let snap = await roomRef.get();
   if (!snap.exists) {
-    const fallbackRef = db.collection("watchAlongRooms").doc(roomId);
+    const fallbackRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(roomId);
     const fallbackSnap = await fallbackRef.get();
     if (fallbackSnap.exists) {
       roomRef = fallbackRef;
@@ -52,7 +53,7 @@ async function fetchActiveFanRecords(
 
   try {
     const res = await docClient.send(new QueryCommand({
-      TableName: "RealTimeChat",
+      TableName: TABLES.RealTimeChat,
       KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
       FilterExpression: "lastSeenAt >= :c",
       ExpressionAttributeValues: {
@@ -129,7 +130,7 @@ export async function POST(
     let isFirstJoin = true;
     try {
       const getJoined = await docClient.send(new GetCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `JOINED#${resolvedUserId}` }
       }));
       if (getJoined.Item) {
@@ -142,7 +143,7 @@ export async function POST(
     try {
       // A. Write presence doc
       await docClient.send(new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: {
           roomId: `ROOM#${roomId}`,
           sk: `PRESENCE#${resolvedUserId}`,
@@ -158,7 +159,7 @@ export async function POST(
       // B. If first join, write joined record and increment totalJoinCount
       if (isFirstJoin) {
         await docClient.send(new PutCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${roomId}`,
             sk: `JOINED#${resolvedUserId}`,
@@ -171,7 +172,7 @@ export async function POST(
         for (const cand of candidates) {
           try {
             await docClient.send(new UpdateCommand({
-              TableName: "RealTimeChat",
+              TableName: TABLES.RealTimeChat,
               Key: { roomId: cand, sk: `META#${roomId}` },
               UpdateExpression: "ADD totalJoinCount :one",
               ExpressionAttributeValues: { ":one": 1 }
@@ -225,7 +226,7 @@ export async function POST(
     let fetchedPinFromDynamo = false;
     try {
       const getPin = await docClient.send(new GetCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `PIN#${resolvedUserId}` }
       }));
       if (getPin.Item) {
@@ -249,7 +250,7 @@ export async function POST(
       const candidates = [`ROOM#${roomId}`, roomId];
       for (const cand of candidates) {
         const getMeta = await docClient.send(new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: cand, sk: `META#${roomId}` }
         }));
         if (getMeta.Item) {
@@ -299,7 +300,7 @@ export async function DELETE(
     // 1. Delete from DynamoDB first
     try {
       await docClient.send(new DeleteCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `PRESENCE#${resolved.id}` }
       }));
     } catch (dynErr) {
@@ -345,7 +346,7 @@ export async function GET(
     if (resolved) {
       try {
         const getPin = await docClient.send(new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${roomId}`, sk: `PIN#${resolved.id}` }
         }));
         if (getPin.Item) {
@@ -371,7 +372,7 @@ export async function GET(
       const candidates = [`ROOM#${roomId}`, roomId];
       for (const cand of candidates) {
         const getMeta = await docClient.send(new GetCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: cand, sk: `META#${roomId}` }
         }));
         if (getMeta.Item) {

@@ -1,13 +1,10 @@
-// api/roar/posts/[postId]/voters/route.ts
-//
-// Returns the list of voters for a debate post, grouped by side (agree / disagree).
-// Only the post author is allowed to call this endpoint.
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
+import { resolveUserProfiles, formatCleanUsername } from "@/lib/roarRoomHelpers";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +26,7 @@ export async function GET(
     let fetchedPostFromDynamo = false;
     try {
       const qRes = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
         Limit: 1
@@ -42,7 +39,7 @@ export async function GET(
       console.warn("[Voters GET] DynamoDB post fetch failed:", dynErr);
     }
 
-    const postRef = db.collection("roarPosts").doc(postId);
+    const postRef = db.collection(getFirestoreCollection("roarPosts")).doc(postId);
     let postExists = fetchedPostFromDynamo;
     let fallbackPostData: any = null;
 
@@ -84,7 +81,7 @@ export async function GET(
     let fetchedVotesFromDynamo = false;
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "VOTE#" }
       }));
@@ -112,67 +109,22 @@ export async function GET(
       }
     }
 
-    const agree: { uid: string; username: string; avatarUrl?: string }[] = [];
-    const disagree: { uid: string; username: string; avatarUrl?: string }[] = [];
+    const agree: { uid: string; username: string; avatarUrl?: string; badge?: string }[] = [];
+    const disagree: { uid: string; username: string; avatarUrl?: string; badge?: string }[] = [];
 
     const voterUids = votesData.map((v) => v.id);
-    const usernameByUid = new Map<string, { username: string; avatarUrl?: string }>();
-
-    if (voterUids.length > 0) {
-      let fetchedProfiles = false;
-      try {
-        const keys = voterUids.map(uid => ({
-          entityId: `USER#${uid}`,
-          sk: "USER#META"
-        }));
-
-        const batchResults = await docClient.send(new BatchGetCommand({
-          RequestItems: {
-            "IdentityAndAccess": {
-              Keys: keys
-            }
-          }
-        }));
-
-        const items = batchResults.Responses?.["IdentityAndAccess"] || [];
-        items.forEach(item => {
-          const uid = (item.entityId as string).replace(/^USER#/, "");
-          usernameByUid.set(uid, {
-            username: item.username || item.userName || uid,
-            avatarUrl: item.avatarUrl,
-          });
-        });
-        fetchedProfiles = true;
-      } catch (dynErr) {
-        console.warn("[Voters GET] DynamoDB batch profile lookup failed:", dynErr);
-      }
-
-      // Fallback: Check Firestore
-      if (!fetchedProfiles || usernameByUid.size < voterUids.length) {
-        try {
-          const missingUserIds = voterUids.filter(uid => !usernameByUid.has(uid));
-          const userRefs = missingUserIds.map((uid) => db.collection("users").doc(uid));
-          const userSnaps = userRefs.length > 0 ? await db.getAll(...userRefs) : [];
-          userSnaps.forEach((snap) => {
-            if (snap.exists) {
-              const d = snap.data() as { username?: string; avatarUrl?: string };
-              usernameByUid.set(snap.id, {
-                username: d.username ?? snap.id,
-                avatarUrl: d.avatarUrl,
-              });
-            }
-          });
-        } catch (fsErr) {
-          console.error("[Voters GET] Firestore fallback profile lookup failed:", fsErr);
-        }
-      }
-    }
+    const profileMap = await resolveUserProfiles(voterUids);
 
     votesData.forEach((voteItem) => {
       const { vote } = voteItem as { vote: "agree" | "disagree" };
       const uid = voteItem.id;
-      const info = usernameByUid.get(uid) ?? { username: uid, avatarUrl: undefined };
-      const entry = { uid, username: info.username, avatarUrl: info.avatarUrl };
+      const p = profileMap.get(uid);
+      const entry = {
+        uid,
+        username: p?.username || formatCleanUsername(uid),
+        avatarUrl: p?.avatarUrl,
+        badge: p?.badge || "Fan",
+      };
       if (vote === "agree") agree.push(entry);
       else disagree.push(entry);
     });
@@ -181,7 +133,20 @@ export async function GET(
       success: true,
       sideA: postData.sideA ?? "Side A",
       sideB: postData.sideB ?? "Side B",
-      voters: { agree, disagree },
+      totalVotes: voterUids.length,
+      totalVoters: voterUids.length,
+      agree,
+      disagree,
+      voters: {
+        agree,
+        disagree,
+        [postData.sideA ?? "Side A"]: agree,
+        [postData.sideB ?? "Side B"]: disagree,
+      },
+      options: [
+        { label: postData.sideA ?? "Side A", text: postData.sideA ?? "Side A", voteValue: "agree", count: agree.length, users: agree, voters: agree },
+        { label: postData.sideB ?? "Side B", text: postData.sideB ?? "Side B", voteValue: "disagree", count: disagree.length, users: disagree, voters: disagree },
+      ],
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";

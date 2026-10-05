@@ -3,7 +3,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Post } from "@/app/models/Post";
 
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
     if (!fetchedFromDynamo) {
       try {
         const query = db
-          .collection("roarPosts")
+          .collection(getFirestoreCollection("roarPosts"))
           .where("status", "==", "active")
           .orderBy("createdAt", "desc")
           .limit(500);
@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
         // Fallback: Check Firestore
         if (!fetchedVoteFromDynamo) {
           try {
-            const docRef = db.collection("roarPosts").doc(p.postId);
+            const docRef = db.collection(getFirestoreCollection("roarPosts")).doc(p.postId);
             const voteSnap = await docRef.collection("votes").doc(resolvedUserId).get();
             if (voteSnap.exists) {
               userVote = (voteSnap.data() as any).vote;

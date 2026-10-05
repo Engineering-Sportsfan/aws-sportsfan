@@ -4,6 +4,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 async function resolveUser(email: string, userId: string) {
   const info = await getUserInfo(userId, undefined, email);
   if (!info.exists) return null;
-  const snap = await db.collection("users").doc(info.actualUserId).get();
+  const snap = await db.collection(getFirestoreCollection("users")).doc(info.actualUserId).get();
   if (!snap.exists) return null;
   return { id: info.actualUserId, username: (snap.data() as any)?.username ?? "Fan" };
 }
@@ -24,7 +25,7 @@ async function sweepExpiredSessions(roomId: string, userId: string) {
   // Try sweep in DynamoDB first
   try {
     const res = await docClient.send(new QueryCommand({
-      TableName: "RealTimeChat",
+      TableName: TABLES.RealTimeChat,
       KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
       ExpressionAttributeValues: {
         ":r": `ROOM#${roomId}`,
@@ -39,7 +40,7 @@ async function sweepExpiredSessions(roomId: string, userId: string) {
 
       for (const item of staleItems) {
         await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${roomId}`, sk: item.sk },
           UpdateExpression: "SET softDeleted = :true, softDeletedAt = :now",
           ExpressionAttributeValues: { ":true": true, ":now": Date.now() }
@@ -53,7 +54,7 @@ async function sweepExpiredSessions(roomId: string, userId: string) {
   // Sync sweep to Firestore
   try {
     const staleSnap = await db
-      .collection("roarRooms").doc(roomId).collection("dollySessions")
+      .collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("dollySessions")
       .where("userId", "==", userId)
       .where("softDeleted", "==", false)
       .where("updatedAt", "<", cutoff)
@@ -96,7 +97,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
     // 1. Try reading sessions from DynamoDB first
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
         ExpressionAttributeValues: {
           ":r": `ROOM#${roomId}`,
@@ -196,7 +197,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
     // 1. Put to DynamoDB first
     try {
       await docClient.send(new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: {
           roomId: `ROOM#${roomId}`,
           sk: `DOLLY_SESSION#${resolved.id}#${sessionId}`,
@@ -209,7 +210,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
 
     // 2. Sync to Firestore
     try {
-      const ref = db.collection("roarRooms").doc(roomId).collection("dollySessions").doc(sessionId);
+      const ref = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("dollySessions").doc(sessionId);
       await ref.set(sessionDoc);
     } catch (fsErr) {
       console.warn("[Sessions POST] Firestore fallback sync failed:", fsErr);

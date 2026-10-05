@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -18,9 +18,9 @@ export async function POST(
     }
 
     let resolvedUserId = user.email;
-    let userSnap = await db.collection("users").doc(user.email).get();
+    let userSnap = await db.collection(getFirestoreCollection("users")).doc(user.email).get();
     if (!userSnap.exists) {
-      userSnap = await db.collection("users").doc(user.userId).get();
+      userSnap = await db.collection(getFirestoreCollection("users")).doc(user.userId).get();
       if (userSnap.exists) resolvedUserId = user.userId;
     }
 
@@ -43,7 +43,7 @@ export async function POST(
     // Fallback: Check Firestore
     let postExists = !!postItem;
     let currentLikeCount = postItem ? (postItem.likeCount ?? 0) : 0;
-    const postRef = db.collection("roarPosts").doc(postId);
+    const postRef = db.collection(getFirestoreCollection("roarPosts")).doc(postId);
 
     if (!postExists) {
       try {

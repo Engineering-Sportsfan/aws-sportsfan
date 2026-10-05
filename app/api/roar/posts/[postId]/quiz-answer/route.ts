@@ -1,10 +1,9 @@
-// api/roar/posts/[postId]/quiz-answer/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { awardRoarPoints } from "@/lib/roarPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +30,7 @@ export async function POST(
     let fetchedPostFromDynamo = false;
     try {
       const qRes = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
         Limit: 1
@@ -44,7 +43,7 @@ export async function POST(
       console.warn("[QuizAnswer POST] DynamoDB post fetch failed:", dynErr);
     }
 
-    const postRef = db.collection("roarPosts").doc(postId);
+    const postRef = db.collection(getFirestoreCollection("roarPosts")).doc(postId);
     let postExists = fetchedPostFromDynamo;
     let fallbackPostData: any = null;
 
@@ -70,10 +69,10 @@ export async function POST(
     }
 
     // Resolve userId
-    let userSnap = await db.collection("users").doc(user.email).get();
+    let userSnap = await db.collection(getFirestoreCollection("users")).doc(user.email).get();
     let resolvedUserId = user.email;
     if (!userSnap.exists) {
-      userSnap = await db.collection("users").doc(user.userId).get();
+      userSnap = await db.collection(getFirestoreCollection("users")).doc(user.userId).get();
       resolvedUserId = user.userId;
     }
 
@@ -83,7 +82,7 @@ export async function POST(
 
     try {
       const getRes = await docClient.send(new GetCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Key: { contentId: `POST#${postId}`, sk: `QUIZ_ANSWER#${resolvedUserId}` }
       }));
       if (getRes.Item) {
@@ -124,7 +123,7 @@ export async function POST(
     try {
       // A. Put answer record
       await docClient.send(new PutCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Item: {
           contentId: `POST#${postId}`,
           sk: `QUIZ_ANSWER#${resolvedUserId}`,
@@ -138,7 +137,7 @@ export async function POST(
       // B. Update Parent Post
       if (postItem) {
         await docClient.send(new UpdateCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: postItem.sk },
           UpdateExpression: "SET quizParticipants = :qp, updatedAt = :u",
           ExpressionAttributeValues: {

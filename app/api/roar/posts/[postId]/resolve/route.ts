@@ -1,5 +1,3 @@
-// api/roar/posts/[postId]/resolve/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "@/lib/firebaseAdmin";
@@ -7,6 +5,7 @@ import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +26,7 @@ type ResolvablePredictionPost = {
 type PredictionVote = { vote?: string };
 
 async function createNotification(userId: string, data: Record<string, unknown>) {
-  const baseRef = db.collection("notifications").doc(userId);
+  const baseRef = db.collection(getFirestoreCollection("notifications")).doc(userId);
   const itemRef = baseRef.collection("items").doc();
   const summaryRef = baseRef.collection("meta").doc("summary");
   const batch = db.batch();
@@ -64,7 +63,7 @@ export async function POST(
     let fetchedPostFromDynamo = false;
     try {
       const qRes = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "POST#" },
         Limit: 1
@@ -77,7 +76,7 @@ export async function POST(
       console.warn("[Resolve POST] DynamoDB post fetch failed:", dynErr);
     }
 
-    const postRef = db.collection("roarPosts").doc(postId);
+    const postRef = db.collection(getFirestoreCollection("roarPosts")).doc(postId);
     let postExists = fetchedPostFromDynamo;
     let fallbackPostData: any = null;
 
@@ -122,7 +121,7 @@ export async function POST(
     let fetchedVotesFromDynamo = false;
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: { ":c": `POST#${postId}`, ":p": "VOTE#" }
       }));
@@ -155,7 +154,7 @@ export async function POST(
       // A. Update parent post item
       if (postItem) {
         await docClient.send(new UpdateCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: postItem.sk },
           UpdateExpression: "SET closedAt = :c, resolvedAt = :r, correctVote = :cv, accuracyAwarded = :a, #s = :sVal, updatedAt = :u",
           ExpressionAttributeNames: { "#s": "status" },
@@ -182,7 +181,7 @@ export async function POST(
 
         // Update vote record
         await docClient.send(new UpdateCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `POST#${postId}`, sk: `VOTE#${voterId}` },
           UpdateExpression: "SET resolvedAt = :r, correctVote = :cv, isCorrect = :ic, accuracyPointsAwarded = :ap",
           ExpressionAttributeValues: {
@@ -197,7 +196,7 @@ export async function POST(
         let voterItem: any = null;
         try {
           const voterRes = await docClient.send(new GetCommand({
-            TableName: "IdentityAndAccess",
+            TableName: TABLES.IdentityAndAccess,
             Key: { entityId: `USER#${voterId}`, sk: "USER#META" }
           }));
           voterItem = voterRes.Item;
@@ -209,7 +208,7 @@ export async function POST(
         predictionStats.wrong = (predictionStats.wrong || 0) + (isCorrect ? 0 : 1);
 
         await docClient.send(new UpdateCommand({
-          TableName: "IdentityAndAccess",
+          TableName: TABLES.IdentityAndAccess,
           Key: { entityId: `USER#${voterId}`, sk: "USER#META" },
           UpdateExpression: "SET predictionStats = :ps, predictionAccuracyUpdatedAt = :u",
           ExpressionAttributeValues: { ":ps": predictionStats, ":u": now }
@@ -250,7 +249,7 @@ export async function POST(
           accuracyPointsAwarded: isCorrect ? ACCURACY_POINTS : 0,
         }, { merge: true });
 
-        batch.set(db.collection("users").doc(voterId), {
+        batch.set(db.collection(getFirestoreCollection("users")).doc(voterId), {
           predictionStats: {
             participated: FieldValue.increment(1),
             correct: FieldValue.increment(isCorrect ? 1 : 0),
@@ -276,7 +275,7 @@ export async function POST(
       let userData: any = {};
       let userSnapExists = false;
       try {
-        const userSnap = await db.collection("users").doc(voterId).get();
+        const userSnap = await db.collection(getFirestoreCollection("users")).doc(voterId).get();
         userSnapExists = userSnap.exists;
         if (userSnapExists) {
           userData = userSnap.data() || {};

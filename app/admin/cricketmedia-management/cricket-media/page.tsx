@@ -80,7 +80,7 @@ export default function CricketMediaAdmin() {
                 formData.append("file", file);
                 formData.append("fileName", file.name);
 
-                const res = await fetch("/api/cricket-media", {
+                const res = await fetch("/api/cloudinary/cricket-media", {
                     method: "POST",
                     body: formData,
                 });
@@ -108,7 +108,7 @@ export default function CricketMediaAdmin() {
         setError(null);
         try {
             const res = await fetch(
-                `/api/cricket-media?publicId=${encodeURIComponent(
+                `/api/cloudinary/cricket-media?publicId=${encodeURIComponent(
                     item.id
                 )}&resourceType=${item.resourceType}`,
                 { method: "DELETE" }
@@ -134,7 +134,7 @@ export default function CricketMediaAdmin() {
         setRenameSaving(true);
         setError(null);
         try {
-            const res = await fetch("/api/cricket-media", {
+            const res = await fetch("/api/cloudinary/cricket-media", {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

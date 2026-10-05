@@ -5,6 +5,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { createNotification } from "@/lib/notifications";
 
@@ -13,7 +14,7 @@ export const dynamic = "force-dynamic";
 async function resolveUser(email: string, userId: string) {
   const info = await getUserInfo(userId, undefined, email);
   if (!info.exists) return null;
-  const snap = await db.collection("users").doc(info.actualUserId).get();
+  const snap = await db.collection(getFirestoreCollection("users")).doc(info.actualUserId).get();
   if (!snap.exists) return null;
   return { id: info.actualUserId, username: (snap.data() as any)?.username ?? "Fan" };
 }
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
     let sessionExists = false;
     try {
       const getSession = await docClient.send(new GetCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `DOLLY_SESSION#${resolved.id}#${sessionId}` }
       }));
       if (getSession.Item) {
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
 
     if (!sessionExists) {
       try {
-        const sessionRef = db.collection("roarRooms").doc(roomId).collection("dollySessions").doc(sessionId);
+        const sessionRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("dollySessions").doc(sessionId);
         const sessionDoc = await sessionRef.get();
         if (sessionDoc.exists && sessionDoc.data()?.userId === resolved.id) {
           sessionExists = true;
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
     // 2. Fetch replies DynamoDB-first
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
         ExpressionAttributeValues: {
           ":r": `ROOM#${roomId}`,
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
     // Fallback: Check Firestore
     if (!fetchedRepliesFromDynamo) {
       try {
-        const sessionRef = db.collection("roarRooms").doc(roomId).collection("dollySessions").doc(sessionId);
+        const sessionRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("dollySessions").doc(sessionId);
         const snap = await sessionRef.collection("replies").orderBy("createdAt", "asc").limit(100).get();
         replies = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       } catch (fsErr) {
@@ -119,7 +120,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
     let sessionExists = false;
     try {
       const getSession = await docClient.send(new GetCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `DOLLY_SESSION#${resolved.id}#${sessionId}` }
       }));
       if (getSession.Item) {
@@ -129,7 +130,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
 
     if (!sessionExists) {
       try {
-        const sessionRef = db.collection("roarRooms").doc(roomId).collection("dollySessions").doc(sessionId);
+        const sessionRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("dollySessions").doc(sessionId);
         const sessionDoc = await sessionRef.get();
         if (sessionDoc.exists && sessionDoc.data()?.userId === resolved.id) {
           sessionExists = true;
@@ -149,7 +150,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
     let fetchedContextFromDynamo = false;
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND begins_with(sk, :p)",
         ExpressionAttributeValues: {
           ":r": `ROOM#${roomId}`,
@@ -173,7 +174,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
 
     if (!fetchedContextFromDynamo) {
       try {
-        const sessionRef = db.collection("roarRooms").doc(roomId).collection("dollySessions").doc(sessionId);
+        const sessionRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("dollySessions").doc(sessionId);
         const recentSnap = await sessionRef.collection("replies").orderBy("createdAt", "desc").limit(6).get();
         recentReplies = recentSnap.docs.map(d => d.data());
       } catch (fsErr) {
@@ -225,7 +226,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
     // 1. Put reply to DynamoDB
     try {
       await docClient.send(new PutCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Item: {
           roomId: `ROOM#${roomId}`,
           sk: `DOLLY_REPLY#${sessionId}#${replyId}`,
@@ -236,7 +237,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
       // Update session title (if first reply) and updatedAt
       const isFirstReply = recentReplies.length === 0;
       await docClient.send(new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `DOLLY_SESSION#${resolved.id}#${sessionId}` },
         UpdateExpression: isFirstReply ? "SET updatedAt = :now, title = :title" : "SET updatedAt = :now",
         ExpressionAttributeValues: isFirstReply ? { ":now": now, ":title": question.slice(0, 60) } : { ":now": now }
@@ -247,7 +248,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
 
     // 2. Sync to Firestore
     try {
-      const sessionRef = db.collection("roarRooms").doc(roomId).collection("dollySessions").doc(sessionId);
+      const sessionRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("dollySessions").doc(sessionId);
       await sessionRef.collection("replies").doc(replyId).set(doc);
 
       const isFirstReply = recentReplies.length === 0;
@@ -286,7 +287,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ro
     // 1. Update in DynamoDB first
     try {
       await docClient.send(new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `DOLLY_SESSION#${resolved.id}#${sessionId}` },
         UpdateExpression: "SET title = :t, customTitle = :t",
         ExpressionAttributeValues: { ":t": titleVal }
@@ -297,7 +298,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ro
 
     // 2. Sync to Firestore
     try {
-      await db.collection("roarRooms").doc(roomId)
+      await db.collection(getFirestoreCollection("roarRooms")).doc(roomId)
         .collection("dollySessions").doc(sessionId)
         .update({ customTitle: titleVal, title: titleVal });
     } catch (fsErr) {
@@ -326,7 +327,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ r
     // 1. Soft delete in DynamoDB first
     try {
       await docClient.send(new UpdateCommand({
-        TableName: "RealTimeChat",
+        TableName: TABLES.RealTimeChat,
         Key: { roomId: `ROOM#${roomId}`, sk: `DOLLY_SESSION#${resolved.id}#${sessionId}` },
         UpdateExpression: "SET softDeleted = :true, softDeletedAt = :now",
         ExpressionAttributeValues: { ":true": true, ":now": now }
@@ -337,7 +338,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ r
 
     // 2. Sync to Firestore
     try {
-      await db.collection("roarRooms").doc(roomId)
+      await db.collection(getFirestoreCollection("roarRooms")).doc(roomId)
         .collection("dollySessions").doc(sessionId)
         .update({ softDeleted: true, softDeletedAt: now });
     } catch (fsErr) {

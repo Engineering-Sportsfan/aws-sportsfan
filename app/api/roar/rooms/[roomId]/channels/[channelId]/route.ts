@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +47,7 @@ export async function PATCH(
         updateExpression = updateExpression.slice(0, -1);
 
         await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${roomId}`, sk: `CHANNEL#${channelId}` },
           UpdateExpression: updateExpression,
           ExpressionAttributeNames: expressionAttributeNames,
@@ -58,7 +59,7 @@ export async function PATCH(
 
       // 2. Sync to Firestore
       try {
-        await db.collection("roarRooms").doc(roomId).collection("channels").doc(channelId).update(updates);
+        await db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("channels").doc(channelId).update(updates);
       } catch (fsErr) {
         console.warn("[Channel PATCH] Firestore fallback update failed:", fsErr);
       }
@@ -82,18 +83,18 @@ export async function DELETE(
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const hard = req.nextUrl.searchParams.get("hard") === "true";
-    const channelRef = db.collection("roarRooms").doc(roomId).collection("channels").doc(channelId);
+    const channelRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId).collection("channels").doc(channelId);
 
     // 1. Delete / Update in DynamoDB first
     try {
       if (hard) {
         await docClient.send(new DeleteCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${roomId}`, sk: `CHANNEL#${channelId}` }
         }));
       } else {
         await docClient.send(new UpdateCommand({
-          TableName: "RealTimeChat",
+          TableName: TABLES.RealTimeChat,
           Key: { roomId: `ROOM#${roomId}`, sk: `CHANNEL#${channelId}` },
           UpdateExpression: "SET isActive = :false",
           ExpressionAttributeValues: { ":false": false }

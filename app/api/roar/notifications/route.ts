@@ -165,6 +165,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, PutCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 // ─── GET ──────────────────────────────────────────────────────────────────────
@@ -197,7 +198,7 @@ export async function GET(req: NextRequest) {
     // 1. Try fetching from DynamoDB first
     try {
       const res = await docClient.send(new QueryCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
         ExpressionAttributeValues: {
           ":c": `USER#${resolvedUserId}`,
@@ -224,10 +225,10 @@ export async function GET(req: NextRequest) {
       try {
         const [emailSnap, uidSnap] = await Promise.all([
           email
-            ? db.collection("notifications").where("recipientEmail", "==", email).orderBy("createdAt", "desc").limit(50).get()
+            ? db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", email).orderBy("createdAt", "desc").limit(50).get()
             : null,
           uid
-            ? db.collection("notifications").where("recipientUid", "==", uid).orderBy("createdAt", "desc").limit(50).get()
+            ? db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", uid).orderBy("createdAt", "desc").limit(50).get()
             : null,
         ]);
 
@@ -330,7 +331,7 @@ export async function POST(req: NextRequest) {
     // 1. Put to DynamoDB first
     try {
       await docClient.send(new PutCommand({
-        TableName: "SocialAndContent",
+        TableName: TABLES.SocialAndContent,
         Item: {
           contentId: `USER#${resolvedUserId}`,
           sk: `NOTIF#${notifId}`,
@@ -343,7 +344,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Sync to Firestore
     try {
-      await db.collection("notifications").doc(notifId).set(payload);
+      await db.collection(getFirestoreCollection("notifications")).doc(notifId).set(payload);
     } catch (fsErr) {
       console.warn("[Notifications POST] Firestore fallback sync failed:", fsErr);
     }
@@ -386,7 +387,7 @@ export async function PATCH(req: NextRequest) {
       // 1. Update in DynamoDB
       try {
         await docClient.send(new UpdateCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `USER#${resolvedUserId}`, sk: `NOTIF#${id}` },
           UpdateExpression: "SET isRead = :t, #r = :t, readAt = :now",
           ExpressionAttributeNames: { "#r": "read" },
@@ -398,8 +399,8 @@ export async function PATCH(req: NextRequest) {
 
       // 2. Sync to Firestore
       try {
-        await db.collection("notifications").doc(id).update({
-          isRead: true, read: true, readAt: Date.now(),
+        await db.collection(getFirestoreCollection("notifications")).doc(id).update({
+          isRead: true, readAt: Date.now(),
         });
       } catch (fsErr) {
         console.warn("[Notifications PATCH] Firestore fallback update failed:", fsErr);
@@ -414,7 +415,7 @@ export async function PATCH(req: NextRequest) {
       // Fetch unread notifications from DynamoDB
       try {
         const res = await docClient.send(new QueryCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
           ExpressionAttributeValues: {
             ":c": `USER#${resolvedUserId}`,
@@ -428,7 +429,7 @@ export async function PATCH(req: NextRequest) {
 
           for (const item of unread) {
             await docClient.send(new UpdateCommand({
-              TableName: "SocialAndContent",
+              TableName: TABLES.SocialAndContent,
               Key: { contentId: `USER#${resolvedUserId}`, sk: item.sk },
               UpdateExpression: "SET isRead = :t, #r = :t, readAt = :now",
               ExpressionAttributeNames: { "#r": "read" },
@@ -443,8 +444,8 @@ export async function PATCH(req: NextRequest) {
       // Sync mark all read to Firestore
       try {
         const [emailSnap, uidSnap] = await Promise.all([
-          email ? db.collection("notifications").where("recipientEmail", "==", email).where("isRead", "==", false).get() : null,
-          uid ? db.collection("notifications").where("recipientUid", "==", uid).where("isRead", "==", false).get() : null,
+          email ? db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", email).where("isRead", "==", false).get() : null,
+          uid ? db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", uid).where("isRead", "==", false).get() : null,
         ]);
 
         const seen = new Set<string>();
@@ -504,7 +505,7 @@ export async function DELETE(req: NextRequest) {
       // 1. Delete from DynamoDB
       try {
         await docClient.send(new DeleteCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           Key: { contentId: `USER#${resolvedUserId}`, sk: `NOTIF#${id}` }
         }));
       } catch (dynErr) {
@@ -513,7 +514,7 @@ export async function DELETE(req: NextRequest) {
 
       // 2. Sync to Firestore
       try {
-        await db.collection("notifications").doc(id).delete();
+        await db.collection(getFirestoreCollection("notifications")).doc(id).delete();
       } catch (fsErr) {
         console.warn("[Notifications DELETE] Firestore fallback delete failed:", fsErr);
       }
@@ -527,7 +528,7 @@ export async function DELETE(req: NextRequest) {
       // Query and delete all from DynamoDB
       try {
         const res = await docClient.send(new QueryCommand({
-          TableName: "SocialAndContent",
+          TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
           ExpressionAttributeValues: {
             ":c": `USER#${resolvedUserId}`,
@@ -539,7 +540,7 @@ export async function DELETE(req: NextRequest) {
           deletedCount = res.Items.length;
           for (const item of res.Items) {
             await docClient.send(new DeleteCommand({
-              TableName: "SocialAndContent",
+              TableName: TABLES.SocialAndContent,
               Key: { contentId: `USER#${resolvedUserId}`, sk: item.sk }
             })).catch(() => {});
           }
@@ -551,8 +552,8 @@ export async function DELETE(req: NextRequest) {
       // Sync to Firestore
       try {
         const [emailSnap, uidSnap] = await Promise.all([
-          email ? db.collection("notifications").where("recipientEmail", "==", email).get() : null,
-          uid ? db.collection("notifications").where("recipientUid", "==", uid).get() : null,
+          email ? db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", email).get() : null,
+          uid ? db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", uid).get() : null,
         ]);
 
         const seen = new Set<string>();
