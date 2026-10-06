@@ -987,6 +987,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       });
       if (awardRes.success) {
         responseData.pointsAwarded = awardRes.pointsAwarded;
+        responseData.participationPointsAwarded = awardRes.pointsAwarded;
       }
     } catch (ptsErr) {
       console.warn("[POST /api/engagements/[id]/vote] Failed to award participation points:", ptsErr);

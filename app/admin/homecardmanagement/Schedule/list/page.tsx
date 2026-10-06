@@ -42,6 +42,16 @@ interface AgendaEventItem {
   active: boolean;
   createdAt: number;
   updatedAt: number;
+  // Optional Dynamic Action CTAs
+  predictId?: string;
+  predictTitle?: string;
+  predictUrl?: string;
+  discussPostId?: string;
+  discussTitle?: string;
+  discussUrl?: string;
+  debateRoomId?: string;
+  debateTitle?: string;
+  debateUrl?: string;
 }
 
 function parseTimeToMinutes(timeStr?: string): number {
@@ -692,7 +702,7 @@ export default function ScheduleListPage() {
 
                       {/* Sub-Event & Match details */}
                       <td className="p-4 min-w-[240px]">
-                        <div className="space-y-0.5">
+                        <div className="space-y-1">
                           <p className="font-bold text-gray-200 text-xs">
                             {evt.subEvent}
                           </p>
@@ -704,6 +714,27 @@ export default function ScheduleListPage() {
                               <MapPin size={10} className="text-gray-400" />
                               <span className="truncate">{evt.venue}</span>
                             </p>
+                          )}
+
+                          {/* Configured CTAs badges */}
+                          {(Boolean(evt.predictId) || Boolean(evt.discussPostId) || Boolean(evt.debateRoomId)) && (
+                            <div className="flex items-center flex-wrap gap-1.5 pt-1">
+                              {Boolean(evt.predictId) && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-500/15 text-pink-300 border border-pink-500/30">
+                                  🎯 Predict
+                                </span>
+                              )}
+                              {Boolean(evt.discussPostId) && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                                  💬 Discuss
+                                </span>
+                              )}
+                              {Boolean(evt.debateRoomId) && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                  🔴 Debate
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       </td>
