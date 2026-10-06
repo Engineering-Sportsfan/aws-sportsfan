@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { IBM_Plex_Mono } from "next/font/google";
 
-const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500", "600"] });
+const plexMono = { className: "font-mono", style: { fontFamily: "var(--font-geist-mono), 'SF Mono', Monaco, 'Courier New', monospace" } };
 
 interface Bot {
   id: string;
