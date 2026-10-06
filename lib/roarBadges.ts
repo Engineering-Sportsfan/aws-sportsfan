@@ -83,7 +83,7 @@ export function getGlobalTierProgress(xp: number): number {
 
 export type FeatureKey =
   | "post" | "debate" | "prediction" | "trivia" | "fanBattle"
-  | "community" | "shares" | "comments" | "media";
+  | "community" | "shares" | "comments" | "media" | "referrals";
 
 export const FEATURE_LABELS: Record<FeatureKey, string[]> = {
   post:        ["Rookie Writer", "Story Teller", "Headliner", "Trend Maker", "News Breaker"],
@@ -95,6 +95,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string[]> = {
   shares:      ["Messenger", "Amplifier", "Influencer", "Viral Voice", "Global Fan"],
   comments:    ["Participant", "Conversationalist", "Voice", "Community Leader", "People's Champion"],
   media:       ["Photographer", "Story Creator", "Highlight Artist", "Content Pro", "Media Legend"],
+  referrals:   ["Recruiter", "Squad Builder", "Ambassador", "Community Pioneer", "Clan Master"],
 };
 
 // One icon per LEVEL (L1..L5) within each feature ladder. These are paths
@@ -115,6 +116,7 @@ export const FEATURE_ICONS: Record<FeatureKey, [string, string, string, string, 
   shares:     ["/images/badges/sharesl1.png", "/images/badges/sharesl2.png", "/images/badges/sharesl3.png", "/images/badges/sharesl4.png", "/images/badges/sharesl5.png"],
   comments:   ["/images/badges/commentsl1.png", "/images/badges/commentsl2.png", "/images/badges/commentsl3.png", "/images/badges/commentsl4.png", "/images/badges/commentsl5.png"],
   media:      ["/images/badges/medial1.png", "/images/badges/medial2.png", "/images/badges/medial3.png", "/images/badges/medial4.png", "/images/badges/medial5.png"],
+  referrals:  ["/images/badges/referrall1.png", "/images/badges/referrall2.png", "/images/badges/referrall3.png", "/images/badges/referrall4.png", "/images/badges/referrall5.png"],
 };
 
 // PLACEHOLDER THRESHOLDS — the doc names each level but doesn't give exact
@@ -132,6 +134,7 @@ const FEATURE_THRESHOLDS: Record<FeatureKey, [number, number, number, number, nu
   shares:     [5, 25, 75, 200, 500],
   comments:   [10, 50, 150, 400, 1000],
   media:      [3, 10, 30, 75, 150],
+  referrals:  [1, 5, 15, 50, 100],
 };
 
 export interface FeatureBadgeState {
