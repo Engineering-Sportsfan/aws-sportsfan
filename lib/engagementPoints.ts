@@ -3,7 +3,7 @@ import { awardUserPoints, getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { UpdateCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 
 export const ENGAGEMENT_CREATION_POINTS = 2;
@@ -49,10 +49,6 @@ export async function awardEngagementPoints({
   }
 
   const isAccuracyBonus = action === "accuracy_bonus" || metadata?.reason === "CORRECT_PREDICTION_BONUS";
-  const basePoints = action === "create" ? ENGAGEMENT_CREATION_POINTS : isAccuracyBonus ? 10 : ENGAGEMENT_PARTICIPATION_POINTS;
-  const totalPointsToAward = isAccuracyBonus ? (pointsBonus > 0 ? pointsBonus : 10) : basePoints + (quizPointsBonus > 0 ? quizPointsBonus : 0);
-  const now = Date.now();
-
   const cleanType = String(engagementType || "engagement").toLowerCase();
   const formattedType = cleanType.replace(/_/g, " ");
 
@@ -62,6 +58,33 @@ export async function awardEngagementPoints({
       : isAccuracyBonus
       ? `ENGAGEMENT_ACCURACY_BONUS_${cleanType.toUpperCase()}`
       : `ENGAGEMENT_PARTICIPATE_${cleanType.toUpperCase()}`;
+
+  // Fetch dynamic configured point weight from DynamoDB CONFIG#RULES if available
+  let dynamicBasePoints = action === "create" ? ENGAGEMENT_CREATION_POINTS : isAccuracyBonus ? 10 : ENGAGEMENT_PARTICIPATION_POINTS;
+  const candidateKeys = Array.from(new Set([
+    reason,
+    reason.replace("_FAN_BATTLE", "_BATTLE"),
+    reason.replace("_BATTLE", "_FAN_BATTLE"),
+    reason.replace("_WINNING_POLL_BONUS", "_ACCURACY_BONUS_POLL"),
+    reason.replace("_ACCURACY_BONUS_POLL", "_WINNING_POLL_BONUS"),
+  ]));
+
+  try {
+    for (const rKey of candidateKeys) {
+      const ruleRes = await docClient.send(new GetCommand({
+        TableName: TABLES.GamificationAndWallet,
+        Key: { userId: "CONFIG#RULES", sk: `RULE#${rKey}` }
+      }));
+      if (ruleRes.Item && typeof ruleRes.Item.points === "number") {
+        dynamicBasePoints = ruleRes.Item.points;
+        break;
+      }
+    }
+  } catch { }
+
+  const basePoints = dynamicBasePoints;
+  const totalPointsToAward = isAccuracyBonus ? (pointsBonus > 0 ? pointsBonus : basePoints) : basePoints + (quizPointsBonus > 0 ? quizPointsBonus : 0);
+  const now = Date.now();
 
   const cleanUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
   const transactionId =
