@@ -130,8 +130,39 @@ export interface MemeReactions {
   nuclear: number;
 }
 
+export interface MemeOptionChoice {
+  id: string; // "A" | "B"
+  text?: string;
+  label?: string;
+  imageUrl?: string;
+  votes: number;
+  percentage?: number;
+}
+
 export interface MemePayload {
-  imageUrl: string;
+  memeMode?: "single" | "dual";
+  memeType?: "single" | "dual" | string;
+  isDual?: boolean;
+  imageUrl?: string;
+  imageUrlA?: string;
+  imageUrlB?: string;
+  labelA?: string;
+  labelB?: string;
+  votesA?: number;
+  votesB?: number;
+  memeA?: {
+    imageUrl: string;
+    title?: string;
+    caption?: string;
+    votes?: number;
+  };
+  memeB?: {
+    imageUrl: string;
+    title?: string;
+    caption?: string;
+    votes?: number;
+  };
+  options?: MemeOptionChoice[] | any[];
   authorName?: string;
   authorHandle?: string;
   authorAvatar?: string;
@@ -146,7 +177,6 @@ export interface MemePayload {
     fire: number;
     nuclear: number;
   };
-  options?: any[];
   commentsCount?: number;
   sharesCount?: number;
   userReaction?: MemeReactionType | null;
@@ -181,6 +211,12 @@ export interface EngagementItem {
   pollData?: PollPayload;
   predictionData?: PredictionPayload;
   memeData?: MemePayload;
+  memeType?: "single" | "dual" | string;
+  options?: any[];
+  imageUrlA?: string;
+  imageUrlB?: string;
+  labelA?: string;
+  labelB?: string;
 
   // Social / Engagement counters
   likes: number;
