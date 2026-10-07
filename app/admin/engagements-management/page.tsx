@@ -33,12 +33,25 @@ export default function EngagementsManagementPage() {
   const [status, setStatus] = useState<"active" | "inactive">("active");
 
   // ── Meme Arena State ─────────────────────────────────────────────────────────
+  const [memeMode, setMemeMode] = useState<"single" | "dual">("single");
   const [memeTitle, setMemeTitle] = useState("");
   const [memeDescription, setMemeDescription] = useState("");
   const [memeFile, setMemeFile] = useState<File | null>(null);
   const [memePreviewUrl, setMemePreviewUrl] = useState<string | null>(null);
   const [memeFeedFilter, setMemeFeedFilter] = useState<"top" | "trending" | "my_votes">("top");
   const memeFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Dual Meme State (Meme A & Meme B)
+  const [dualMemeTitleA, setDualMemeTitleA] = useState("Meme A");
+  const [dualMemeFileA, setDualMemeFileA] = useState<File | null>(null);
+  const [dualMemePreviewUrlA, setDualMemePreviewUrlA] = useState<string | null>(null);
+
+  const [dualMemeTitleB, setDualMemeTitleB] = useState("Meme B");
+  const [dualMemeFileB, setDualMemeFileB] = useState<File | null>(null);
+  const [dualMemePreviewUrlB, setDualMemePreviewUrlB] = useState<string | null>(null);
+
+  const memeFileInputRefA = useRef<HTMLInputElement>(null);
+  const memeFileInputRefB = useRef<HTMLInputElement>(null);
 
   // Fan Battle state
   const [battleStartTime, setBattleStartTime] = useState<string>("");
@@ -89,11 +102,50 @@ export default function EngagementsManagementPage() {
   ]);
   const [predCoinStake, setPredCoinStake] = useState(10);
 
+  interface SportCategory {
+    id: string;
+    name: string;
+    icon?: string;
+  }
+  const [sportsList, setSportsList] = useState<SportCategory[]>([]);
+
   // ── Leaderboard Tab State ────────────────────────────────────────────────────
   const [leaderboardData, setLeaderboardData] = useState<QuizLeaderboardEntry[]>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
   const [selectedLeaderboardQuizId, setSelectedLeaderboardQuizId] = useState<string>("global");
   const [leaderboardSearch, setLeaderboardSearch] = useState<string>("");
+
+  useEffect(() => {
+    async function loadSportsCategories() {
+      try {
+        const res = await fetch("/api/admin/sports");
+        const data = await res.json();
+        const raw = Array.isArray(data.sports)
+          ? data.sports
+          : Array.isArray(data.channels)
+          ? data.channels
+          : Array.isArray(data.data)
+          ? data.data
+          : [];
+        if (raw.length > 0) {
+          const mapped = raw
+            .map((s: any) => ({
+              id: String(s.id || s.channelId || s.sport || s.slug || "").replace(/^CHANNEL#|^SPORT#/, ""),
+              name: s.name || s.title || s.id || "",
+              icon: s.icon || "",
+            }))
+            .filter((s: SportCategory) => Boolean(s.id));
+          setSportsList(mapped);
+          if (mapped[0] && !sport) {
+            setSport(mapped[0].id);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load sports from /api/admin/sports:", err);
+      }
+    }
+    loadSportsCategories();
+  }, []);
 
   useEffect(() => {
     fetchEngagements();
@@ -214,10 +266,17 @@ export default function EngagementsManagementPage() {
       setPredCoinStake(25);
     } else if (type === "meme") {
       setTitle("Meme Arena");
+      setMemeMode("single");
       setMemeTitle("");
       setMemeDescription("");
       setMemeFile(null);
       setMemePreviewUrl(null);
+      setDualMemeTitleA("Meme A");
+      setDualMemeFileA(null);
+      setDualMemePreviewUrlA(null);
+      setDualMemeTitleB("Meme B");
+      setDualMemeFileB(null);
+      setDualMemePreviewUrlB(null);
     }
   }
 
@@ -230,10 +289,22 @@ export default function EngagementsManagementPage() {
     setStatus(item.status === "active" ? "active" : "inactive");
 
     if (item.type === "meme") {
+      const mode = item.memeData?.memeMode || (item.memeData?.memeA && item.memeData?.memeB ? "dual" : "single");
+      setMemeMode(mode);
       setMemeTitle(item.memeData?.title || item.title || "");
       setMemeDescription(item.memeData?.description || item.subtitle || "");
       setMemePreviewUrl(item.memeData?.imageUrl || (item as any).imageUrl || "");
       setMemeFile(null);
+
+      if (mode === "dual") {
+        setDualMemeTitleA(item.memeData?.memeA?.title || item.memeData?.options?.[0]?.text || item.memeData?.options?.[0]?.label || "Meme A");
+        setDualMemePreviewUrlA(item.memeData?.memeA?.imageUrl || item.memeData?.options?.[0]?.imageUrl || "");
+        setDualMemeFileA(null);
+
+        setDualMemeTitleB(item.memeData?.memeB?.title || item.memeData?.options?.[1]?.text || item.memeData?.options?.[1]?.label || "Meme B");
+        setDualMemePreviewUrlB(item.memeData?.memeB?.imageUrl || item.memeData?.options?.[1]?.imageUrl || "");
+        setDualMemeFileB(null);
+      }
     } else if (item.type === "fan_battle" && item.fanBattleData) {
       setFbLeftCode(item.fanBattleData.leftCompetitor.code);
       setFbLeftName(item.fanBattleData.leftCompetitor.name);
@@ -523,44 +594,135 @@ export default function EngagementsManagementPage() {
           expiresAt,
         };
       } else if (activeTab === "meme") {
-        if (!memeFile && !memePreviewUrl) {
-          alert("Media upload is required for Meme Voting (file upload)");
-          setSubmitting(false);
-          return;
-        }
-
-        let resolvedUrl = memePreviewUrl || "";
-        if (memeFile) {
-          const formData = new FormData();
-          formData.append("file", memeFile);
-          const upRes = await fetch("/api/upload", {
-            method: "POST",
-            body: formData,
-          });
-          const upData = await upRes.json();
-          if (!upData.success || !upData.url) {
-            throw new Error(upData.message || "Failed to upload meme image to Cloudinary");
+        if (memeMode === "dual") {
+          if ((!dualMemeFileA && !dualMemePreviewUrlA) || (!dualMemeFileB && !dualMemePreviewUrlB)) {
+            alert("Both Meme A and Meme B image uploads are required for Dual Meme Posting");
+            setSubmitting(false);
+            return;
           }
-          resolvedUrl = upData.url;
-        }
 
-        payload.type = "meme";
-        payload.title = memeTitle.trim() || title.trim() || "Meme Arena";
-        payload.subtitle = memeDescription.trim();
-        payload.tags = ["🔥 MEME ARENA", "🌶️ HOT TAKES"];
-        payload.memeData = {
-          title: memeTitle.trim(),
-          description: memeDescription.trim(),
-          caption: memeDescription.trim(),
-          imageUrl: resolvedUrl,
-          mediaUrl: resolvedUrl,
-          mediaType: "image",
-          totalVotes: editingItem?.memeData?.totalVotes || 0,
-          heatPercentage: editingItem?.memeData?.heatPercentage || editingItem?.memeData?.heatIndex || 78,
-          heatIndex: editingItem?.memeData?.heatIndex || editingItem?.memeData?.heatPercentage || 78,
-          reactions: editingItem?.memeData?.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
-          ratings: editingItem?.memeData?.ratings || { mid: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
-        };
+          let resolvedUrlA = dualMemePreviewUrlA || "";
+          if (dualMemeFileA) {
+            const formDataA = new FormData();
+            formDataA.append("file", dualMemeFileA);
+            const upResA = await fetch("/api/upload", {
+              method: "POST",
+              body: formDataA,
+            });
+            const upDataA = await upResA.json();
+            if (!upDataA.success || !upDataA.url) {
+              throw new Error(upDataA.message || "Failed to upload Meme A image");
+            }
+            resolvedUrlA = upDataA.url;
+          }
+
+          let resolvedUrlB = dualMemePreviewUrlB || "";
+          if (dualMemeFileB) {
+            const formDataB = new FormData();
+            formDataB.append("file", dualMemeFileB);
+            const upResB = await fetch("/api/upload", {
+              method: "POST",
+              body: formDataB,
+            });
+            const upDataB = await upResB.json();
+            if (!upDataB.success || !upDataB.url) {
+              throw new Error(upDataB.message || "Failed to upload Meme B image");
+            }
+            resolvedUrlB = upDataB.url;
+          }
+
+          const votesA = editingItem?.memeData?.options?.[0]?.votes || editingItem?.memeData?.memeA?.votes || 0;
+          const votesB = editingItem?.memeData?.options?.[1]?.votes || editingItem?.memeData?.memeB?.votes || 0;
+          const totalVotes = votesA + votesB;
+          const pctA = totalVotes > 0 ? Math.round((votesA / totalVotes) * 100) : 50;
+          const pctB = 100 - pctA;
+
+          payload.type = "meme";
+          payload.title = memeTitle.trim() || title.trim() || "Meme Battle: Pick Your Favorite!";
+          payload.subtitle = memeDescription.trim();
+          payload.tags = ["🔥 MEME BATTLE", "🥊 MEME A vs B"];
+          payload.memeData = {
+            memeMode: "dual",
+            title: memeTitle.trim() || title.trim() || "Meme Battle",
+            description: memeDescription.trim(),
+            caption: memeDescription.trim(),
+            imageUrl: resolvedUrlA,
+            memeA: {
+              imageUrl: resolvedUrlA,
+              title: dualMemeTitleA.trim() || "Meme A",
+              votes: votesA,
+            },
+            memeB: {
+              imageUrl: resolvedUrlB,
+              title: dualMemeTitleB.trim() || "Meme B",
+              votes: votesB,
+            },
+            options: [
+              {
+                id: "A",
+                text: dualMemeTitleA.trim() || "Meme A",
+                label: dualMemeTitleA.trim() || "Meme A",
+                imageUrl: resolvedUrlA,
+                votes: votesA,
+                percentage: pctA,
+              },
+              {
+                id: "B",
+                text: dualMemeTitleB.trim() || "Meme B",
+                label: dualMemeTitleB.trim() || "Meme B",
+                imageUrl: resolvedUrlB,
+                votes: votesB,
+                percentage: pctB,
+              },
+            ],
+            totalVotes: totalVotes,
+            heatPercentage: 78,
+            heatIndex: 78,
+            reactions: editingItem?.memeData?.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+            ratings: editingItem?.memeData?.ratings || { mid: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+          };
+        } else {
+          // Single Meme
+          if (!memeFile && !memePreviewUrl) {
+            alert("Media upload is required for Meme Voting (file upload)");
+            setSubmitting(false);
+            return;
+          }
+
+          let resolvedUrl = memePreviewUrl || "";
+          if (memeFile) {
+            const formData = new FormData();
+            formData.append("file", memeFile);
+            const upRes = await fetch("/api/upload", {
+              method: "POST",
+              body: formData,
+            });
+            const upData = await upRes.json();
+            if (!upData.success || !upData.url) {
+              throw new Error(upData.message || "Failed to upload meme image to Cloudinary");
+            }
+            resolvedUrl = upData.url;
+          }
+
+          payload.type = "meme";
+          payload.title = memeTitle.trim() || title.trim() || "Meme Arena";
+          payload.subtitle = memeDescription.trim();
+          payload.tags = ["🔥 MEME ARENA", "🌶️ HOT TAKES"];
+          payload.memeData = {
+            memeMode: "single",
+            title: memeTitle.trim(),
+            description: memeDescription.trim(),
+            caption: memeDescription.trim(),
+            imageUrl: resolvedUrl,
+            mediaUrl: resolvedUrl,
+            mediaType: "image",
+            totalVotes: editingItem?.memeData?.totalVotes || 0,
+            heatPercentage: editingItem?.memeData?.heatPercentage || editingItem?.memeData?.heatIndex || 78,
+            heatIndex: editingItem?.memeData?.heatIndex || editingItem?.memeData?.heatPercentage || 78,
+            reactions: editingItem?.memeData?.reactions || { mild: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+            ratings: editingItem?.memeData?.ratings || { mid: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+          };
+        }
       }
 
       const url = editingItem ? `/api/engagements/${editingItem.id}` : "/api/engagements";
@@ -1269,6 +1431,56 @@ export default function EngagementsManagementPage() {
                   </button>
                 </div>
 
+                {/* 2 Meme Types Tabs: Single Meme vs Dual Meme */}
+                <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+                  <button
+                    type="button"
+                    onClick={() => setMemeMode("single")}
+                    style={{
+                      flex: 1,
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      background: memeMode === "single" ? "linear-gradient(135deg, #ff5e00 0%, #ff2a6d 100%)" : "#0d1117",
+                      border: memeMode === "single" ? "none" : "1px solid #30363d",
+                      color: "#ffffff",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      boxShadow: memeMode === "single" ? "0 2px 10px rgba(255,94,0,0.4)" : "none",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <span>🔥 1. Single Meme (Rating)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMemeMode("dual")}
+                    style={{
+                      flex: 1,
+                      padding: "10px 14px",
+                      borderRadius: 8,
+                      background: memeMode === "dual" ? "linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)" : "#0d1117",
+                      border: memeMode === "dual" ? "none" : "1px solid #30363d",
+                      color: "#ffffff",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      boxShadow: memeMode === "dual" ? "0 2px 10px rgba(236,72,153,0.4)" : "none",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <span>🥊 2. Dual Meme (Meme A & Meme B)</span>
+                  </button>
+                </div>
+
                 {/* Event Title / Headline (Optional) */}
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#c9d1d9", display: "block", marginBottom: 6, textTransform: "uppercase" }}>
@@ -1280,7 +1492,7 @@ export default function EngagementsManagementPage() {
                       setMemeTitle(e.target.value);
                       setTitle(e.target.value);
                     }}
-                    placeholder="e.g. When your team says trust the process"
+                    placeholder={memeMode === "dual" ? "e.g. Which meme describes match day best?" : "e.g. When your team says trust the process"}
                     style={{
                       width: "100%",
                       padding: "11px 14px",
@@ -1330,73 +1542,260 @@ export default function EngagementsManagementPage() {
                   </div>
                 </div>
 
-                {/* Upload Meme (Required File Upload, goes to Cloudinary) */}
-                <div style={{ marginBottom: 20 }}>
-                  <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#c9d1d9", display: "block", marginBottom: 6, textTransform: "uppercase" }}>
-                    UPLOAD MEME <span style={{ color: "#ff7b72" }}>* (FILE UPLOAD REQUIRED)</span>
-                  </label>
+                {/* ── MODE 1: SINGLE MEME UPLOAD ── */}
+                {memeMode === "single" && (
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.05em", color: "#c9d1d9", display: "block", marginBottom: 6, textTransform: "uppercase" }}>
+                      UPLOAD MEME <span style={{ color: "#ff7b72" }}>* (FILE UPLOAD REQUIRED)</span>
+                    </label>
 
-                  <input
-                    ref={memeFileInputRef}
-                    type="file"
-                    accept="image/*,video/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      if (file.size > 10 * 1024 * 1024) {
-                        alert("File exceeds maximum size of 10 MB");
-                        return;
-                      }
-                      setMemeFile(file);
-                      setMemePreviewUrl(URL.createObjectURL(file));
-                    }}
-                    style={{ display: "none" }}
-                  />
-
-                  {!memePreviewUrl ? (
-                    <div
-                      onClick={() => memeFileInputRef.current?.click()}
-                      style={{
-                        border: "2px dashed #30363d",
-                        borderRadius: 12,
-                        padding: "36px 20px",
-                        textAlign: "center",
-                        background: "rgba(13, 17, 23, 0.7)",
-                        cursor: "pointer",
-                        transition: "all 0.2s ease",
+                    <input
+                      ref={memeFileInputRef}
+                      type="file"
+                      accept="image/*,video/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 10 * 1024 * 1024) {
+                          alert("File exceeds maximum size of 10 MB");
+                          return;
+                        }
+                        setMemeFile(file);
+                        setMemePreviewUrl(URL.createObjectURL(file));
                       }}
-                    >
-                      <div style={{ width: 44, height: 44, margin: "0 auto 10px", borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b949e" }}>
-                        <ImageIcon size={24} />
+                      style={{ display: "none" }}
+                    />
+
+                    {!memePreviewUrl ? (
+                      <div
+                        onClick={() => memeFileInputRef.current?.click()}
+                        style={{
+                          border: "2px dashed #30363d",
+                          borderRadius: 12,
+                          padding: "36px 20px",
+                          textAlign: "center",
+                          background: "rgba(13, 17, 23, 0.7)",
+                          cursor: "pointer",
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        <div style={{ width: 44, height: 44, margin: "0 auto 10px", borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b949e" }}>
+                          <ImageIcon size={24} />
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f6fc" }}>Upload meme image</div>
+                        <div style={{ fontSize: 12, color: "#8b949e", marginTop: 4 }}>JPG, PNG • Max 10 MB</div>
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f6fc" }}>Upload meme image</div>
-                      <div style={{ fontSize: 12, color: "#8b949e", marginTop: 4 }}>JPG, PNG • Max 10 MB</div>
-                    </div>
-                  ) : (
-                    <div style={{ position: "relative", border: "1px solid #30363d", borderRadius: 12, overflow: "hidden", background: "#0d1117" }}>
-                      <img
-                        src={memePreviewUrl}
-                        alt="Meme preview"
-                        style={{ width: "100%", maxHeight: 280, objectFit: "contain", display: "block", background: "#05070a" }}
-                      />
-                      <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(22, 27, 34, 0.9)" }}>
-                        <span style={{ fontSize: 12, color: "#8b949e" }}>
-                          {memeFile ? `${memeFile.name} (${(memeFile.size / 1024 / 1024).toFixed(2)} MB)` : "Selected Meme Media"}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMemeFile(null);
-                            setMemePreviewUrl(null);
+                    ) : (
+                      <div style={{ position: "relative", border: "1px solid #30363d", borderRadius: 12, overflow: "hidden", background: "#0d1117" }}>
+                        <img
+                          src={memePreviewUrl}
+                          alt="Meme preview"
+                          style={{ width: "100%", maxHeight: 280, objectFit: "contain", display: "block", background: "#05070a" }}
+                        />
+                        <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(22, 27, 34, 0.9)" }}>
+                          <span style={{ fontSize: 12, color: "#8b949e" }}>
+                            {memeFile ? `${memeFile.name} (${(memeFile.size / 1024 / 1024).toFixed(2)} MB)` : "Selected Meme Media"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMemeFile(null);
+                              setMemePreviewUrl(null);
+                            }}
+                            style={{ background: "rgba(255, 123, 114, 0.15)", border: "1px solid #ff7b72", color: "#ff7b72", padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                          >
+                            ✕ Remove
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── MODE 2: DUAL MEME UPLOAD (MEME A & MEME B SIDE-BY-SIDE) ── */}
+                {memeMode === "dual" && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                      {/* MEME A SIDE */}
+                      <div style={{ background: "#0d1117", border: "1px solid #21262d", borderRadius: 10, padding: 14 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                          <span style={{ background: "rgba(255, 94, 0, 0.2)", border: "1px solid #ff5e00", color: "#ff8b3d", padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 800 }}>
+                            MEME A
+                          </span>
+                        </div>
+
+                        <label style={{ fontSize: 11, fontWeight: 700, color: "#8b949e", display: "block", marginBottom: 4 }}>
+                          Option Title / Label
+                        </label>
+                        <input
+                          value={dualMemeTitleA}
+                          onChange={(e) => setDualMemeTitleA(e.target.value)}
+                          placeholder="e.g. Meme A or Before Match"
+                          style={{
+                            width: "100%",
+                            padding: "8px 12px",
+                            background: "#161b22",
+                            border: "1px solid #30363d",
+                            borderRadius: 6,
+                            color: "#fff",
+                            fontSize: 12,
+                            marginBottom: 10,
+                            outline: "none",
                           }}
-                          style={{ background: "rgba(255, 123, 114, 0.15)", border: "1px solid #ff7b72", color: "#ff7b72", padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                        >
-                          ✕ Remove
-                        </button>
+                        />
+
+                        <input
+                          ref={memeFileInputRefA}
+                          type="file"
+                          accept="image/*,video/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            if (file.size > 10 * 1024 * 1024) {
+                              alert("File exceeds maximum size of 10 MB");
+                              return;
+                            }
+                            setDualMemeFileA(file);
+                            setDualMemePreviewUrlA(URL.createObjectURL(file));
+                          }}
+                          style={{ display: "none" }}
+                        />
+
+                        {!dualMemePreviewUrlA ? (
+                          <div
+                            onClick={() => memeFileInputRefA.current?.click()}
+                            style={{
+                              border: "2px dashed #30363d",
+                              borderRadius: 10,
+                              padding: "24px 12px",
+                              textAlign: "center",
+                              background: "rgba(22, 27, 34, 0.6)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <div style={{ width: 36, height: 36, margin: "0 auto 8px", borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b949e" }}>
+                              <ImageIcon size={20} />
+                            </div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#f0f6fc" }}>Upload Meme A</div>
+                            <div style={{ fontSize: 10, color: "#8b949e", marginTop: 2 }}>JPG, PNG • Max 10 MB</div>
+                          </div>
+                        ) : (
+                          <div style={{ position: "relative", border: "1px solid #30363d", borderRadius: 10, overflow: "hidden", background: "#05070a" }}>
+                            <img
+                              src={dualMemePreviewUrlA}
+                              alt="Meme A preview"
+                              style={{ width: "100%", maxHeight: 180, objectFit: "contain", display: "block" }}
+                            />
+                            <div style={{ padding: "6px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(22, 27, 34, 0.9)" }}>
+                              <span style={{ fontSize: 11, color: "#8b949e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>
+                                {dualMemeFileA ? dualMemeFileA.name : "Meme A"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDualMemeFileA(null);
+                                  setDualMemePreviewUrlA(null);
+                                }}
+                                style={{ background: "rgba(255, 123, 114, 0.15)", border: "1px solid #ff7b72", color: "#ff7b72", padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                              >
+                                ✕ Remove
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* MEME B SIDE */}
+                      <div style={{ background: "#0d1117", border: "1px solid #21262d", borderRadius: 10, padding: 14 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                          <span style={{ background: "rgba(236, 72, 153, 0.2)", border: "1px solid #ec4899", color: "#f472b6", padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 800 }}>
+                            MEME B
+                          </span>
+                        </div>
+
+                        <label style={{ fontSize: 11, fontWeight: 700, color: "#8b949e", display: "block", marginBottom: 4 }}>
+                          Option Title / Label
+                        </label>
+                        <input
+                          value={dualMemeTitleB}
+                          onChange={(e) => setDualMemeTitleB(e.target.value)}
+                          placeholder="e.g. Meme B or After Match"
+                          style={{
+                            width: "100%",
+                            padding: "8px 12px",
+                            background: "#161b22",
+                            border: "1px solid #30363d",
+                            borderRadius: 6,
+                            color: "#fff",
+                            fontSize: 12,
+                            marginBottom: 10,
+                            outline: "none",
+                          }}
+                        />
+
+                        <input
+                          ref={memeFileInputRefB}
+                          type="file"
+                          accept="image/*,video/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            if (file.size > 10 * 1024 * 1024) {
+                              alert("File exceeds maximum size of 10 MB");
+                              return;
+                            }
+                            setDualMemeFileB(file);
+                            setDualMemePreviewUrlB(URL.createObjectURL(file));
+                          }}
+                          style={{ display: "none" }}
+                        />
+
+                        {!dualMemePreviewUrlB ? (
+                          <div
+                            onClick={() => memeFileInputRefB.current?.click()}
+                            style={{
+                              border: "2px dashed #30363d",
+                              borderRadius: 10,
+                              padding: "24px 12px",
+                              textAlign: "center",
+                              background: "rgba(22, 27, 34, 0.6)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <div style={{ width: 36, height: 36, margin: "0 auto 8px", borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center", color: "#8b949e" }}>
+                              <ImageIcon size={20} />
+                            </div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "#f0f6fc" }}>Upload Meme B</div>
+                            <div style={{ fontSize: 10, color: "#8b949e", marginTop: 2 }}>JPG, PNG • Max 10 MB</div>
+                          </div>
+                        ) : (
+                          <div style={{ position: "relative", border: "1px solid #30363d", borderRadius: 10, overflow: "hidden", background: "#05070a" }}>
+                            <img
+                              src={dualMemePreviewUrlB}
+                              alt="Meme B preview"
+                              style={{ width: "100%", maxHeight: 180, objectFit: "contain", display: "block" }}
+                            />
+                            <div style={{ padding: "6px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(22, 27, 34, 0.9)" }}>
+                              <span style={{ fontSize: 11, color: "#8b949e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>
+                                {dualMemeFileB ? dualMemeFileB.name : "Meme B"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDualMemeFileB(null);
+                                  setDualMemePreviewUrlB(null);
+                                }}
+                                style={{ background: "rgba(255, 123, 114, 0.15)", border: "1px solid #ff7b72", color: "#ff7b72", padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                              >
+                                ✕ Remove
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Sport Category for Meme */}
                 <div style={{ marginBottom: 16 }}>
@@ -1406,10 +1805,21 @@ export default function EngagementsManagementPage() {
                     onChange={e => setSport(e.target.value)}
                     style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13 }}
                   >
-                    <option value="cricket">Cricket</option>
-                    <option value="football">Football</option>
-                    <option value="athletics">Athletics</option>
-                    <option value="general">General / Sports Banter</option>
+                    {sportsList.length > 0 ? (
+                      sportsList.map(s => (
+                        <option key={s.id} value={s.id}>
+                          {s.icon ? `${s.icon} ` : ""}{s.name}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="cricket">Cricket</option>
+                        <option value="football">Football</option>
+                        <option value="athletics">Athletics</option>
+                        <option value="multisports">MultiSports</option>
+                        <option value="others">Others</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>
@@ -1435,10 +1845,21 @@ export default function EngagementsManagementPage() {
                     onChange={e => setSport(e.target.value)}
                     style={{ width: "100%", padding: "7px 10px", background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, color: "#fff", fontSize: 13 }}
                   >
-                    <option value="cricket">Cricket</option>
-                    <option value="football">Football</option>
-                    <option value="athletics">Athletics</option>
-                    <option value="general">General</option>
+                    {sportsList.length > 0 ? (
+                      sportsList.map(s => (
+                        <option key={s.id} value={s.id}>
+                          {s.icon ? `${s.icon} ` : ""}{s.name}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="cricket">Cricket</option>
+                        <option value="football">Football</option>
+                        <option value="athletics">Athletics</option>
+                        <option value="multisports">MultiSports</option>
+                        <option value="others">Others</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>
@@ -2200,29 +2621,69 @@ export default function EngagementsManagementPage() {
             {activeTab === "meme" ? (
               <MemeCard
                 item={{
-                  id: "preview_meme",
+                  id: memeMode === "dual" ? "preview_meme_dual" : "preview_meme_single",
                   type: "meme",
-                  title: memeTitle || "ME ON MONDAY | ME ON MATCH DAY",
-                  subtitle: memeDescription || "SAME ENERGY. DIFFERENT PRIORITIES.",
+                  title: memeTitle || (memeMode === "dual" ? "WHICH MEME HITS HARDER?" : "ME ON MONDAY | ME ON MATCH DAY"),
+                  subtitle: memeDescription || (memeMode === "dual" ? "Vote for your favorite meme!" : "SAME ENERGY. DIFFERENT PRIORITIES."),
                   status: "active",
-                  likes: 42,
-                  shares: 18,
-                  totalEngaged: 1200,
-                  createdAt: Date.now() - 2 * 60 * 60 * 1000,
+                  likes: 0,
+                  shares: 0,
+                  totalEngaged: 0,
+                  createdAt: Date.now(),
                   updatedAt: Date.now(),
-                  memeData: {
-                    title: memeTitle || "ME ON MONDAY | ME ON MATCH DAY",
-                    description: memeDescription || "SAME ENERGY. DIFFERENT PRIORITIES.",
-                    imageUrl:
-                      memePreviewUrl ||
-                      "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800&auto=format&fit=crop&q=80",
-                    authorName: "AmitFan",
-                    authorHandle: "@AmitFan",
-                    authorAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=AmitFan",
-                    totalVotes: 1200,
-                    heatIndex: 78,
-                    ratings: { mid: 80, funny: 310, hot: 550, fire: 210, nuclear: 50 },
-                  },
+                  memeData: memeMode === "dual"
+                    ? {
+                        memeMode: "dual",
+                        title: memeTitle || "WHICH MEME HITS HARDER?",
+                        description: memeDescription || "Vote for your favorite meme!",
+                        imageUrl: dualMemePreviewUrlA || "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=800&auto=format&fit=crop&q=80",
+                        memeA: {
+                          imageUrl: dualMemePreviewUrlA || "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=800&auto=format&fit=crop&q=80",
+                          title: dualMemeTitleA || "Meme A",
+                          votes: 0,
+                        },
+                        memeB: {
+                          imageUrl: dualMemePreviewUrlB || "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800&auto=format&fit=crop&q=80",
+                          title: dualMemeTitleB || "Meme B",
+                          votes: 0,
+                        },
+                        options: [
+                          {
+                            id: "A",
+                            text: dualMemeTitleA || "Meme A",
+                            label: dualMemeTitleA || "Meme A",
+                            imageUrl: dualMemePreviewUrlA || "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=800&auto=format&fit=crop&q=80",
+                            votes: 0,
+                            percentage: 50,
+                          },
+                          {
+                            id: "B",
+                            text: dualMemeTitleB || "Meme B",
+                            label: dualMemeTitleB || "Meme B",
+                            imageUrl: dualMemePreviewUrlB || "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800&auto=format&fit=crop&q=80",
+                            votes: 0,
+                            percentage: 50,
+                          },
+                        ],
+                        authorName: "Admin",
+                        authorHandle: "@SportsFanAdmin",
+                        totalVotes: 0,
+                        commentsCount: 0,
+                      }
+                    : {
+                        memeMode: "single",
+                        title: memeTitle || "ME ON MONDAY | ME ON MATCH DAY",
+                        description: memeDescription || "SAME ENERGY. DIFFERENT PRIORITIES.",
+                        imageUrl:
+                          memePreviewUrl ||
+                          "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800&auto=format&fit=crop&q=80",
+                        authorName: "Admin",
+                        authorHandle: "@SportsFanAdmin",
+                        totalVotes: 0,
+                        commentsCount: 0,
+                        heatIndex: 78,
+                        ratings: { mid: 0, funny: 0, hot: 0, fire: 0, nuclear: 0 },
+                      },
                 }}
               />
             ) : (
