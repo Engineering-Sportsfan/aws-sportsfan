@@ -9,6 +9,8 @@ import {
   UpdateCommand,
   DeleteCommand,
   BatchWriteCommand,
+  GetCommand,
+  PutCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
@@ -348,15 +350,16 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, email, sk, action, pk, id } = body;
+    const { userId, email, sk, action, pk, id, actualUserId } = body;
 
     const resolvedUserId =
-      userId ?? (await resolveActualUserId(undefined, email)) ?? userId;
+      actualUserId ?? userId ?? (await resolveActualUserId(undefined, email)) ?? userId;
     const sanitizedFallback = sanitizeEmailFallback(email);
     const candidateSet = new Set<string>();
 
     if (pk) candidateSet.add(cleanId(pk));
     if (userId) candidateSet.add(cleanId(userId));
+    if (actualUserId) candidateSet.add(cleanId(actualUserId));
     if (email) candidateSet.add(cleanId(email));
     if (resolvedUserId) candidateSet.add(cleanId(resolvedUserId));
     if (sanitizedFallback) candidateSet.add(sanitizedFallback);
@@ -532,18 +535,20 @@ export async function DELETE(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const userId = body.userId || searchParams.get("userId") || searchParams.get("uid");
     const email = body.email || searchParams.get("email");
+    const actualUserIdParam = body.actualUserId || searchParams.get("actualUserId");
     const sk = body.sk || searchParams.get("sk");
     const all = body.all === true || searchParams.get("all") === "true";
     const pk = body.pk || searchParams.get("pk");
     const id = body.id || searchParams.get("id");
 
     const resolvedUserId =
-      userId ?? (await resolveActualUserId(undefined, email)) ?? userId;
+      actualUserIdParam ?? userId ?? (await resolveActualUserId(undefined, email)) ?? userId;
     const sanitizedFallback = sanitizeEmailFallback(email);
     const candidateSet = new Set<string>();
 
     if (pk) candidateSet.add(cleanId(pk));
     if (userId) candidateSet.add(cleanId(userId));
+    if (actualUserIdParam) candidateSet.add(cleanId(actualUserIdParam));
     if (email) candidateSet.add(cleanId(email));
     if (resolvedUserId) candidateSet.add(cleanId(resolvedUserId));
     if (sanitizedFallback) candidateSet.add(sanitizedFallback);

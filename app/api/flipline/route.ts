@@ -3,6 +3,11 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import cloudinary from "@/lib/cloudinary";
 import { PutCommand, QueryCommand, UpdateCommand, GetCommand, DeleteCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  dispatchFlipLineNotification,
+  extractMentions,
+  resolveUserIdsFromHandles,
+} from "@/lib/fliplineNotifications";
 
 export const dynamic = "force-dynamic";
 
@@ -667,6 +672,33 @@ export async function POST(req: NextRequest) {
         })
       );
 
+      // Extract and dispatch mentions from post content
+      if (typeof newCard.content === "string") {
+        const mentions = extractMentions(newCard.content);
+        if (mentions.length > 0) {
+          const actorId = newCard.userId || newCard.email || "fan";
+          const actorName = newCard.author || "A sports fan";
+          const actorAvatar = newCard.adminPhoto || newCard.authorPhoto;
+          resolveUserIdsFromHandles(mentions)
+            .then((handleMap) => {
+              handleMap.forEach((targetUserId) => {
+                if (targetUserId && String(targetUserId) !== String(actorId)) {
+                  dispatchFlipLineNotification({
+                    type: "flipline.user_mentioned",
+                    actorId,
+                    actorName,
+                    actorAvatar,
+                    recipientId: targetUserId,
+                    cardId: newCard.id,
+                    cardContent: newCard.content,
+                  }).catch((err) => console.warn("[FlipLine JSON post mention notif notice]:", err));
+                }
+              });
+            })
+            .catch(() => {});
+        }
+      }
+
       return NextResponse.json({
         success: true,
         env: process.env.APP_ENV || "prod",
@@ -842,6 +874,33 @@ export async function POST(req: NextRequest) {
       })
     );
 
+    // Extract and dispatch mentions from post content
+    if (typeof newCard.content === "string") {
+      const mentions = extractMentions(newCard.content);
+      if (mentions.length > 0) {
+        const actorId = newCard.userId || newCard.email || "fan";
+        const actorName = newCard.author || "A sports fan";
+        const actorAvatar = newCard.adminPhoto || newCard.authorPhoto;
+        resolveUserIdsFromHandles(mentions)
+          .then((handleMap) => {
+            handleMap.forEach((targetUserId) => {
+              if (targetUserId && String(targetUserId) !== String(actorId)) {
+                dispatchFlipLineNotification({
+                  type: "flipline.user_mentioned",
+                  actorId,
+                  actorName,
+                  actorAvatar,
+                  recipientId: targetUserId,
+                  cardId: newCard.id,
+                  cardContent: newCard.content,
+                }).catch((err) => console.warn("[FlipLine Form post mention notif notice]:", err));
+              }
+            });
+          })
+          .catch(() => {});
+      }
+    }
+
     return NextResponse.json({
       success: true,
       env: process.env.APP_ENV || "prod",
@@ -889,6 +948,8 @@ async function handleFlipLineAction(body: any) {
   if (action === "like") {
     const likedBy = Array.isArray(card.likedBy) ? [...card.likedBy] : [];
     let likes = typeof card.likes === "number" ? card.likes : 0;
+    const isNewLike = !userId || !likedBy.includes(userId);
+
     if (userId && !likedBy.includes(userId)) {
       likedBy.push(userId);
       likes += 1;
@@ -904,6 +965,48 @@ async function handleFlipLineAction(body: any) {
         ExpressionAttributeValues: { ":l": likes, ":lb": likedBy },
       })
     );
+
+    if (isNewLike) {
+      // Dispatch FlipLine Notification (Async / Non-blocking)
+      const recipientId = card.userId || card.email || card.author;
+      const actorName =
+        body.userName ||
+        body.actorName ||
+        (userId && userId.includes("@") ? userId.split("@")[0] : "A sports fan");
+      const actorAvatar =
+        body.userAvatar ||
+        body.actorAvatar ||
+        `https://api.dicebear.com/7.x/bottts/svg?seed=${userId || "fan"}`;
+
+      if (recipientId && String(recipientId) !== String(userId)) {
+        dispatchFlipLineNotification({
+          type: "flipline.post_liked",
+          actorId: userId || "fan",
+          actorName,
+          actorAvatar,
+          recipientId: String(recipientId),
+          cardId: card.id,
+          cardContent: card.content,
+        }).catch((err) => console.warn("[FlipLine like notif notice]:", err));
+      }
+
+      // Milestone notifications for high engagement
+      const milestones = [25, 50, 100, 250, 500, 1000];
+      if (recipientId && milestones.includes(likes)) {
+        dispatchFlipLineNotification({
+          type: "flipline.milestone",
+          actorId: "system",
+          actorName: "SportsFan360",
+          recipientId: String(recipientId),
+          cardId: card.id,
+          cardContent: card.content,
+          milestoneLikes: likes,
+          priority: "HIGH",
+          allowSelf: true,
+        }).catch((err) => console.warn("[FlipLine milestone notif notice]:", err));
+      }
+    }
+
     return NextResponse.json({ success: true, likes, likedBy });
   }
 
@@ -969,6 +1072,55 @@ async function handleFlipLineAction(body: any) {
       })
     );
 
+    // Dispatch FlipLine Notification to Post Author
+    const recipientId = card.userId || card.email || card.author;
+    const actorName = newComment.userName || "A sports fan";
+    const actorAvatar =
+      newComment.userAvatar ||
+      `https://api.dicebear.com/7.x/bottts/svg?seed=${newComment.userId || "fan"}`;
+
+    if (recipientId && String(recipientId) !== String(newComment.userId)) {
+      dispatchFlipLineNotification({
+        type: "flipline.comment_added",
+        actorId: newComment.userId || "fan",
+        actorName,
+        actorAvatar,
+        recipientId: String(recipientId),
+        cardId: card.id,
+        cardContent: card.content,
+        commentId: newComment.id,
+        commentSnippet: content,
+      }).catch((err) => console.warn("[FlipLine comment notif notice]:", err));
+    }
+
+    // Mention extraction in comment
+    const mentions = extractMentions(content);
+    if (mentions.length > 0) {
+      resolveUserIdsFromHandles(mentions)
+        .then((handleMap) => {
+          handleMap.forEach((targetUserId) => {
+            if (
+              targetUserId &&
+              String(targetUserId) !== String(newComment.userId) &&
+              String(targetUserId) !== String(recipientId)
+            ) {
+              dispatchFlipLineNotification({
+                type: "flipline.user_mentioned",
+                actorId: newComment.userId || "fan",
+                actorName,
+                actorAvatar,
+                recipientId: targetUserId,
+                cardId: card.id,
+                cardContent: card.content,
+                commentId: newComment.id,
+                commentSnippet: content,
+              }).catch((err) => console.warn("[FlipLine comment mention notif notice]:", err));
+            }
+          });
+        })
+        .catch(() => {});
+    }
+
     return NextResponse.json({
       success: true,
       message: "Comment added successfully",
@@ -1029,6 +1181,58 @@ async function handleFlipLineAction(body: any) {
       })
     );
 
+    // Dispatch FlipLine Notification to Comment Author
+    const commentRecipientId = targetComment.userId || targetComment.userName;
+    const actorName = newReply.userName || "A sports fan";
+    const actorAvatar =
+      newReply.userAvatar ||
+      `https://api.dicebear.com/7.x/bottts/svg?seed=${newReply.userId || "fan"}`;
+
+    if (commentRecipientId && String(commentRecipientId) !== String(newReply.userId)) {
+      dispatchFlipLineNotification({
+        type: "flipline.reply_added",
+        actorId: newReply.userId || "fan",
+        actorName,
+        actorAvatar,
+        recipientId: String(commentRecipientId),
+        cardId: card.id,
+        cardContent: card.content,
+        commentId: targetComment.id,
+        commentSnippet: targetComment.content,
+        replyId: newReply.id,
+        replySnippet: content,
+      }).catch((err) => console.warn("[FlipLine reply notif notice]:", err));
+    }
+
+    // Mention extraction in reply
+    const replyMentions = extractMentions(content);
+    if (replyMentions.length > 0) {
+      resolveUserIdsFromHandles(replyMentions)
+        .then((handleMap) => {
+          handleMap.forEach((targetUserId) => {
+            if (
+              targetUserId &&
+              String(targetUserId) !== String(newReply.userId) &&
+              String(targetUserId) !== String(commentRecipientId)
+            ) {
+              dispatchFlipLineNotification({
+                type: "flipline.user_mentioned",
+                actorId: newReply.userId || "fan",
+                actorName,
+                actorAvatar,
+                recipientId: targetUserId,
+                cardId: card.id,
+                cardContent: card.content,
+                commentId: targetComment.id,
+                replyId: newReply.id,
+                replySnippet: content,
+              }).catch((err) => console.warn("[FlipLine reply mention notif notice]:", err));
+            }
+          });
+        })
+        .catch(() => {});
+    }
+
     return NextResponse.json({
       success: true,
       message: "Reply added successfully",
@@ -1082,6 +1286,33 @@ async function handleFlipLineAction(body: any) {
         },
       })
     );
+
+    // Dispatch Notification on like
+    if (action !== "unlike_comment" && !isAlreadyLiked) {
+      const commentRecipientId = targetComment.userId || targetComment.userName;
+      const actorName =
+        body.userName ||
+        body.actorName ||
+        (userId && userId.includes("@") ? userId.split("@")[0] : "A sports fan");
+      const actorAvatar =
+        body.userAvatar ||
+        body.actorAvatar ||
+        `https://api.dicebear.com/7.x/bottts/svg?seed=${userId || "fan"}`;
+
+      if (commentRecipientId && String(commentRecipientId) !== String(userId)) {
+        dispatchFlipLineNotification({
+          type: "flipline.comment_liked",
+          actorId: userId || "fan",
+          actorName,
+          actorAvatar,
+          recipientId: String(commentRecipientId),
+          cardId: card.id,
+          cardContent: card.content,
+          commentId: targetComment.id,
+          commentSnippet: targetComment.content,
+        }).catch((err) => console.warn("[FlipLine comment_liked notif notice]:", err));
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -1144,6 +1375,34 @@ async function handleFlipLineAction(body: any) {
         },
       })
     );
+
+    // Dispatch Notification on reply like
+    if (action !== "unlike_reply" && !isAlreadyLiked) {
+      const replyRecipientId = targetReply.userId || targetReply.userName;
+      const actorName =
+        body.userName ||
+        body.actorName ||
+        (userId && userId.includes("@") ? userId.split("@")[0] : "A sports fan");
+      const actorAvatar =
+        body.userAvatar ||
+        body.actorAvatar ||
+        `https://api.dicebear.com/7.x/bottts/svg?seed=${userId || "fan"}`;
+
+      if (replyRecipientId && String(replyRecipientId) !== String(userId)) {
+        dispatchFlipLineNotification({
+          type: "flipline.reply_liked",
+          actorId: userId || "fan",
+          actorName,
+          actorAvatar,
+          recipientId: String(replyRecipientId),
+          cardId: card.id,
+          cardContent: card.content,
+          commentId: targetComment.id,
+          replyId: targetReply.id,
+          replySnippet: targetReply.content,
+        }).catch((err) => console.warn("[FlipLine reply_liked notif notice]:", err));
+      }
+    }
 
     return NextResponse.json({
       success: true,
