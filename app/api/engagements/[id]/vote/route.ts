@@ -910,53 +910,123 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
-    // 3.5 Meme Arena Reaction Vote Handling
+    // 3.5 Meme Arena Reaction & Dual Meme Vote Handling
     else if (item.type === "meme" && item.memeData) {
-      const reactions = {
-        mild: Number(item.memeData.reactions?.mild || 0),
-        funny: Number(item.memeData.reactions?.funny || 0),
-        hot: Number(item.memeData.reactions?.hot || 0),
-        fire: Number(item.memeData.reactions?.fire || 0),
-        nuclear: Number(item.memeData.reactions?.nuclear || 0),
-      };
+      if (item.memeData.memeMode === "dual" || (item.memeData.memeA && item.memeData.memeB) || (Array.isArray(item.memeData.options) && item.memeData.options.length >= 2)) {
+        // Dual Meme Battle Voting (Meme A vs Meme B)
+        const currentOptions = Array.isArray(item.memeData.options) && item.memeData.options.length >= 2
+          ? item.memeData.options
+          : [
+              {
+                id: "A",
+                text: item.memeData.memeA?.title || "Meme A",
+                label: item.memeData.memeA?.title || "Meme A",
+                imageUrl: item.memeData.memeA?.imageUrl || "",
+                votes: item.memeData.memeA?.votes || 0,
+              },
+              {
+                id: "B",
+                text: item.memeData.memeB?.title || "Meme B",
+                label: item.memeData.memeB?.title || "Meme B",
+                imageUrl: item.memeData.memeB?.imageUrl || "",
+                votes: item.memeData.memeB?.votes || 0,
+              },
+            ];
 
-      const reactionType = (selectedOptionId || "hot").toLowerCase() as keyof typeof reactions;
-      if (reactions[reactionType] !== undefined) {
-        reactions[reactionType] = (reactions[reactionType] || 0) + 1;
+        const optA = { ...currentOptions[0] };
+        const optB = { ...currentOptions[1] };
+
+        const isA =
+          selectedOptionId === "A" ||
+          selectedOptionId === "memeA" ||
+          selectedOptionId === "left" ||
+          selectedOptionId === "1" ||
+          selectedOptionId === optA.id ||
+          selectedOptionId === optA.text;
+
+        if (isA) {
+          optA.votes = (Number(optA.votes) || 0) + 1;
+        } else {
+          optB.votes = (Number(optB.votes) || 0) + 1;
+        }
+
+        const totalVotes = (Number(optA.votes) || 0) + (Number(optB.votes) || 0);
+        const pctA = totalVotes > 0 ? Math.round((optA.votes / totalVotes) * 100) : 50;
+        const pctB = 100 - pctA;
+
+        optA.percentage = pctA;
+        optB.percentage = pctB;
+
+        if (item.memeData.memeA) item.memeData.memeA.votes = optA.votes;
+        if (item.memeData.memeB) item.memeData.memeB.votes = optB.votes;
+
+        const updatedOptions = [optA, optB];
+        item.memeData.options = updatedOptions;
+        item.memeData.totalVotes = totalVotes;
+        if (isNewUserEngagement) {
+          item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+        }
+
+        responseData = {
+          success: true,
+          type: "meme",
+          memeMode: "dual",
+          selectedOptionId: isA ? "A" : "B",
+          options: updatedOptions,
+          totalVotes,
+          totalEngaged: Number(item.totalEngaged) || 0,
+          isFirstEngagement: isNewUserEngagement,
+          participationPointsAwarded: 2,
+          pointsAwarded: 2,
+        };
+      } else {
+        const reactions = {
+          mild: Number(item.memeData.reactions?.mild || 0),
+          funny: Number(item.memeData.reactions?.funny || 0),
+          hot: Number(item.memeData.reactions?.hot || 0),
+          fire: Number(item.memeData.reactions?.fire || 0),
+          nuclear: Number(item.memeData.reactions?.nuclear || 0),
+        };
+
+        const reactionType = (selectedOptionId || "hot").toLowerCase() as keyof typeof reactions;
+        if (reactions[reactionType] !== undefined) {
+          reactions[reactionType] = (reactions[reactionType] || 0) + 1;
+        }
+
+        const totalVotes =
+          reactions.mild + reactions.funny + reactions.hot + reactions.fire + reactions.nuclear;
+
+        // Calculate weighted heat percentage: mild (20%), funny (40%), hot (60%), fire (80%), nuclear (100%)
+        const weightedScore =
+          reactions.mild * 20 +
+          reactions.funny * 40 +
+          reactions.hot * 60 +
+          reactions.fire * 80 +
+          reactions.nuclear * 100;
+        const heatPercentage =
+          totalVotes > 0 ? Math.min(100, Math.max(10, Math.round(weightedScore / totalVotes))) : 78;
+
+        item.memeData.reactions = reactions;
+        item.memeData.totalVotes = totalVotes;
+        item.memeData.heatPercentage = heatPercentage;
+        if (isNewUserEngagement) {
+          item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+        }
+
+        responseData = {
+          success: true,
+          type: "meme",
+          memeMode: "single",
+          selectedOptionId: reactionType,
+          heatPercentage,
+          totalVotes,
+          totalEngaged: Number(item.totalEngaged) || 0,
+          isFirstEngagement: isNewUserEngagement,
+          reactions,
+          participationPointsAwarded: 2,
+          pointsAwarded: 2,
+        };
       }
-
-      const totalVotes =
-        reactions.mild + reactions.funny + reactions.hot + reactions.fire + reactions.nuclear;
-
-      // Calculate weighted heat percentage: mild (20%), funny (40%), hot (60%), fire (80%), nuclear (100%)
-      const weightedScore =
-        reactions.mild * 20 +
-        reactions.funny * 40 +
-        reactions.hot * 60 +
-        reactions.fire * 80 +
-        reactions.nuclear * 100;
-      const heatPercentage =
-        totalVotes > 0 ? Math.min(100, Math.max(10, Math.round(weightedScore / totalVotes))) : 78;
-
-      item.memeData.reactions = reactions;
-      item.memeData.totalVotes = totalVotes;
-      item.memeData.heatPercentage = heatPercentage;
-      if (isNewUserEngagement) {
-        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
-      }
-
-      responseData = {
-        success: true,
-        type: "meme",
-        selectedOptionId: reactionType,
-        heatPercentage,
-        totalVotes,
-        totalEngaged: Number(item.totalEngaged) || 0,
-        isFirstEngagement: isNewUserEngagement,
-        reactions,
-        participationPointsAwarded: 2,
-        pointsAwarded: 2,
-      };
     }
 
     // ─── Step 4: Update Parent Engagement Item ────────────────────────────────
