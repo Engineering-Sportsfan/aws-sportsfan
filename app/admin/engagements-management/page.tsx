@@ -289,7 +289,11 @@ export default function EngagementsManagementPage() {
     setStatus(item.status === "active" ? "active" : "inactive");
 
     if (item.type === "meme") {
-      const mode = item.memeData?.memeMode || (item.memeData?.memeA && item.memeData?.memeB ? "dual" : "single");
+      const mode =
+        item.memeData?.memeMode ||
+        (item.memeData?.memeA && item.memeData?.memeB ? "dual" : undefined) ||
+        (item.memeData?.options && item.memeData.options.length >= 2 ? "dual" : undefined) ||
+        ((item as any).memeType === "dual" ? "dual" : "single");
       setMemeMode(mode);
       setMemeTitle(item.memeData?.title || item.title || "");
       setMemeDescription(item.memeData?.description || item.subtitle || "");
@@ -297,12 +301,12 @@ export default function EngagementsManagementPage() {
       setMemeFile(null);
 
       if (mode === "dual") {
-        setDualMemeTitleA(item.memeData?.memeA?.title || item.memeData?.options?.[0]?.text || item.memeData?.options?.[0]?.label || "Meme A");
-        setDualMemePreviewUrlA(item.memeData?.memeA?.imageUrl || item.memeData?.options?.[0]?.imageUrl || "");
+        setDualMemeTitleA(item.memeData?.memeA?.title || item.memeData?.options?.[0]?.text || item.memeData?.options?.[0]?.label || (item as any).labelA || "Meme A");
+        setDualMemePreviewUrlA(item.memeData?.memeA?.imageUrl || item.memeData?.options?.[0]?.imageUrl || (item as any).imageUrlA || "");
         setDualMemeFileA(null);
 
-        setDualMemeTitleB(item.memeData?.memeB?.title || item.memeData?.options?.[1]?.text || item.memeData?.options?.[1]?.label || "Meme B");
-        setDualMemePreviewUrlB(item.memeData?.memeB?.imageUrl || item.memeData?.options?.[1]?.imageUrl || "");
+        setDualMemeTitleB(item.memeData?.memeB?.title || item.memeData?.options?.[1]?.text || item.memeData?.options?.[1]?.label || (item as any).labelB || "Meme B");
+        setDualMemePreviewUrlB(item.memeData?.memeB?.imageUrl || item.memeData?.options?.[1]?.imageUrl || (item as any).imageUrlB || "");
         setDualMemeFileB(null);
       }
     } else if (item.type === "fan_battle" && item.fanBattleData) {
@@ -981,32 +985,115 @@ export default function EngagementsManagementPage() {
 
                   const totalQuestions = item.quizData?.questions?.length || (item.quizData?.question ? 1 : 0);
 
+                  const isDualMeme =
+                    item.type === "meme" &&
+                    (item.memeData?.memeMode === "dual" ||
+                      Boolean(item.memeData?.memeA && item.memeData?.memeB) ||
+                      Boolean(item.memeData?.options && item.memeData.options.length >= 2) ||
+                      (item as any).memeType === "dual");
+
+                  const memeImgA =
+                    item.memeData?.imageUrlA ||
+                    (item as any).imageUrlA ||
+                    item.memeData?.memeA?.imageUrl ||
+                    item.memeData?.options?.[0]?.imageUrl ||
+                    item.memeData?.imageUrl ||
+                    (item as any).imageUrl ||
+                    "";
+                  const memeTitleA =
+                    item.memeData?.labelA ||
+                    (item as any).labelA ||
+                    item.memeData?.memeA?.title ||
+                    item.memeData?.options?.[0]?.label ||
+                    item.memeData?.options?.[0]?.text ||
+                    "Meme A";
+                  const memeVotesA =
+                    item.memeData?.memeA?.votes ||
+                    item.memeData?.options?.[0]?.votes ||
+                    0;
+
+                  const memeImgB =
+                    item.memeData?.imageUrlB ||
+                    (item as any).imageUrlB ||
+                    item.memeData?.memeB?.imageUrl ||
+                    item.memeData?.options?.[1]?.imageUrl ||
+                    "";
+                  const memeTitleB =
+                    item.memeData?.labelB ||
+                    (item as any).labelB ||
+                    item.memeData?.memeB?.title ||
+                    item.memeData?.options?.[1]?.label ||
+                    item.memeData?.options?.[1]?.text ||
+                    "Meme B";
+                  const memeVotesB =
+                    item.memeData?.memeB?.votes ||
+                    item.memeData?.options?.[1]?.votes ||
+                    0;
+
+                  const totalDualVotes = memeVotesA + memeVotesB;
+                  const dualPctA = totalDualVotes > 0 ? Math.round((memeVotesA / totalDualVotes) * 100) : 50;
+                  const dualPctB = 100 - dualPctA;
+
                   return (
                     <tr key={item.id} style={{ borderBottom: "1px solid #21262d" }}>
                       <td style={{ padding: "10px 14px" }}>
                         <span style={{
                           padding: "3px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700,
-                          background: typeBadgeBg, color: typeBadgeColor, textTransform: "uppercase",
+                          background: isDualMeme ? "linear-gradient(135deg, rgba(255, 94, 0, 0.25) 0%, rgba(255, 42, 109, 0.25) 100%)" : typeBadgeBg,
+                          color: isDualMeme ? "#ff7b72" : typeBadgeColor,
+                          border: isDualMeme ? "1px solid rgba(255, 94, 0, 0.4)" : "none",
+                          textTransform: "uppercase",
+                          whiteSpace: "nowrap",
                         }}>
-                          {item?.type === "meme" ? "🔥 MEME" : item?.type ? item.type.replace("_", " ") : "UNKNOWN"}
+                          {isDualMeme ? "🥊 DUAL MEME" : item?.type === "meme" ? "🔥 MEME" : item?.type ? item.type.replace("_", " ") : "UNKNOWN"}
                         </span>
                       </td>
 
                       <td style={{ padding: "10px 14px", fontWeight: 600, color: "#f0f6fc" }}>
                         {item.title || "Untitled Engagement"}
-                        {item.type === "meme" && item.memeData && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-                            {item.memeData.imageUrl && (
-                              <img
-                                src={item.memeData.imageUrl}
-                                alt="meme thumbnail"
-                                style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }}
-                              />
-                            )}
-                            <div style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic" }}>
-                              {item.memeData.description ? item.memeData.description.slice(0, 50) + (item.memeData.description.length > 50 ? "…" : "") : "Meme image upload"}
+                        {item.type === "meme" && (
+                          isDualMeme ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                              {/* Option A Thumb + Title */}
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0d1117", padding: "3px 8px", borderRadius: 6, border: "1px solid #30363d" }}>
+                                {memeImgA && (
+                                  <img
+                                    src={memeImgA}
+                                    alt={memeTitleA}
+                                    style={{ width: 26, height: 26, borderRadius: 4, objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }}
+                                  />
+                                )}
+                                <span style={{ fontSize: 11, color: "#e6edf3", fontWeight: 700 }}>{memeTitleA}</span>
+                              </div>
+
+                              <span style={{ fontSize: 9, fontWeight: 900, color: "#ff7b72", background: "rgba(255, 123, 114, 0.15)", padding: "2px 5px", borderRadius: 4, border: "1px solid rgba(255, 123, 114, 0.3)" }}>VS</span>
+
+                              {/* Option B Thumb + Title */}
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0d1117", padding: "3px 8px", borderRadius: 6, border: "1px solid #30363d" }}>
+                                {memeImgB && (
+                                  <img
+                                    src={memeImgB}
+                                    alt={memeTitleB}
+                                    style={{ width: 26, height: 26, borderRadius: 4, objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }}
+                                  />
+                                )}
+                                <span style={{ fontSize: 11, color: "#e6edf3", fontWeight: 700 }}>{memeTitleB}</span>
+                              </div>
                             </div>
-                          </div>
+                          ) : item.memeData && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                              {item.memeData.imageUrl && (
+                                <img
+                                  src={item.memeData.imageUrl}
+                                  alt="meme thumbnail"
+                                  style={{ width: 34, height: 34, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(255,255,255,0.15)" }}
+                                />
+                              )}
+                              <div style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic" }}>
+                                {item.memeData.description ? item.memeData.description.slice(0, 50) + (item.memeData.description.length > 50 ? "…" : "") : "Meme image upload"}
+                              </div>
+                            </div>
+                          )
                         )}
                         {item.quizData && (
                           <div style={{ fontSize: 11, color: "#8b949e" }}>
@@ -1019,24 +1106,44 @@ export default function EngagementsManagementPage() {
 
                       <td style={{ padding: "10px 14px", color: "#8b949e", fontSize: 11 }}>
                         {item.type === "meme" && (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", fontSize: 10 }}>
-                              {(["mid", "funny", "hot", "fire", "nuclear"] as const).map((k) => {
-                                const v = (item.memeData?.ratings as any)?.[k] || 0;
-                                const tot = item.memeData?.totalVotes || 0;
-                                const pct = tot > 0 ? Math.round((v / tot) * 100) : 0;
-                                const label = k === "mid" ? "Mild" : k.charAt(0).toUpperCase() + k.slice(1);
-                                return (
-                                  <span key={k} style={{ background: "rgba(255,255,255,0.06)", padding: "1px 6px", borderRadius: 4, color: "#c9d1d9" }}>
-                                    {label}: {v} ({pct}%)
-                                  </span>
-                                );
-                              })}
+                          isDualMeme ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 180 }}>
+                              {/* Poll-like bar */}
+                              <div style={{ width: "100%", height: 6, background: "rgba(255,255,255,0.1)", borderRadius: 3, overflow: "hidden", display: "flex" }}>
+                                <div style={{ width: `${dualPctA}%`, background: "#ff5e00", transition: "width 0.3s" }} />
+                                <div style={{ width: `${dualPctB}%`, background: "#ff2a6d", transition: "width 0.3s" }} />
+                              </div>
+
+                              {/* Breakdown */}
+                              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, fontWeight: 700 }}>
+                                <span style={{ color: "#ff8b3d" }}>{memeTitleA}: {memeVotesA} ({dualPctA}%)</span>
+                                <span style={{ color: "#ff7b72" }}>{memeTitleB}: {memeVotesB} ({dualPctB}%)</span>
+                              </div>
+
+                              <span style={{ color: "#8b949e", fontSize: 10 }}>
+                                🗳️ {totalDualVotes || item.totalEngaged || 0} total votes
+                              </span>
                             </div>
-                            <span style={{ color: "#ff8b3d", fontSize: 10, fontWeight: 700 }}>
-                              📊 {item.memeData?.heatIndex || 78}% Heat • {item.memeData?.totalVotes || item.totalEngaged || 0} votes
-                            </span>
-                          </div>
+                          ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", fontSize: 10 }}>
+                                {(["mid", "funny", "hot", "fire", "nuclear"] as const).map((k) => {
+                                  const v = (item.memeData?.ratings as any)?.[k] || 0;
+                                  const tot = item.memeData?.totalVotes || 0;
+                                  const pct = tot > 0 ? Math.round((v / tot) * 100) : 0;
+                                  const label = k === "mid" ? "Mild" : k.charAt(0).toUpperCase() + k.slice(1);
+                                  return (
+                                    <span key={k} style={{ background: "rgba(255,255,255,0.06)", padding: "1px 6px", borderRadius: 4, color: "#c9d1d9" }}>
+                                      {label}: {v} ({pct}%)
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <span style={{ color: "#ff8b3d", fontSize: 10, fontWeight: 700 }}>
+                                📊 {item.memeData?.heatIndex || 78}% Heat • {item.memeData?.totalVotes || item.totalEngaged || 0} votes
+                              </span>
+                            </div>
+                          )
                         )}
                         {item.type === "fan_battle" && (
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
