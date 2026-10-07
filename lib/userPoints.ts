@@ -633,6 +633,9 @@ export async function awardUserPoints({
         reason.replace("_ACCURACY_BONUS_POLL", "_WINNING_POLL_BONUS"),
         reason.replace("_ACCURACY_BONUS_PREDICTION", "_PREDICTION_ACCURATE"),
         reason.replace("_PREDICTION_ACCURATE", "_ACCURACY_BONUS_PREDICTION"),
+        reason.replace("_MEME_DUAL", "_MEME"),
+        ...(reason.startsWith("ENGAGEMENT_CREATE") ? ["ENGAGEMENT_CREATE_MEME", "ENGAGEMENT_CREATE_EVENT", "ENGAGEMENT_CREATE"] : []),
+        ...(reason.startsWith("ENGAGEMENT_PARTICIPATE") ? ["ENGAGEMENT_PARTICIPATE_MEME", "ENGAGEMENT_PARTICIPATE_EVENT", "ENGAGEMENT_PARTICIPATE"] : []),
       ]));
 
       for (const rKey of candidateKeys) {

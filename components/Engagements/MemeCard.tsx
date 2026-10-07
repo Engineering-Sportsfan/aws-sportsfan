@@ -13,6 +13,7 @@ import {
   Sparkles,
   BarChart3,
   Loader2,
+  Swords,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -70,6 +71,10 @@ const RATING_CONFIG: Record<
 
 export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
   const meme = item.memeData;
+  const isDualMeme =
+    meme?.memeMode === "dual" ||
+    Boolean(meme?.memeA && meme?.memeB) ||
+    (Array.isArray(meme?.options) && meme?.options.length >= 2);
 
   const [selectedRating, setSelectedRating] = useState<MemeRatingId>("hot");
   const [hasVoted, setHasVoted] = useState<boolean>(Boolean(item.userVoted));
@@ -77,7 +82,15 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
   const [loading, setLoading] = useState(false);
   const [pointsToast, setPointsToast] = useState(false);
 
-  // Ratings map with default zero-values
+  // Dual meme votes state
+  const initialVotesA =
+    Number(meme?.options?.[0]?.votes) || Number(meme?.memeA?.votes) || 0;
+  const initialVotesB =
+    Number(meme?.options?.[1]?.votes) || Number(meme?.memeB?.votes) || 0;
+  const [dualVotesA, setDualVotesA] = useState<number>(initialVotesA);
+  const [dualVotesB, setDualVotesB] = useState<number>(initialVotesB);
+
+  // Single meme ratings map with default zero-values
   const [ratings, setRatings] = useState<Record<string, number>>({
     mid: Number(meme?.ratings?.mid) || 0,
     funny: Number(meme?.ratings?.funny) || 0,
@@ -88,11 +101,13 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
 
   const [totalVotes, setTotalVotes] = useState<number>(
     Number(meme?.totalVotes) ||
-      (Number(meme?.ratings?.mid) || 0) +
-        (Number(meme?.ratings?.funny) || 0) +
-        (Number(meme?.ratings?.hot) || 0) +
-        (Number(meme?.ratings?.fire) || 0) +
-        (Number(meme?.ratings?.nuclear) || 0)
+      (isDualMeme
+        ? initialVotesA + initialVotesB
+        : (Number(meme?.ratings?.mid) || 0) +
+          (Number(meme?.ratings?.funny) || 0) +
+          (Number(meme?.ratings?.hot) || 0) +
+          (Number(meme?.ratings?.fire) || 0) +
+          (Number(meme?.ratings?.nuclear) || 0))
   );
 
   const [heatIndex, setHeatIndex] = useState<number>(meme?.heatIndex || 78);
@@ -114,7 +129,9 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
           const opt = voteData.selectedOptionId;
           if (opt) {
             setUserVoteOption(opt);
-            setSelectedRating(opt as MemeRatingId);
+            if (!isDualMeme) {
+              setSelectedRating(opt as MemeRatingId);
+            }
           }
         }
       } catch {}
@@ -127,7 +144,7 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
       } catch {}
     }
     checkStatus();
-  }, [item.id]);
+  }, [item.id, isDualMeme]);
 
   function getPercentage(ratingKey: MemeRatingId): number {
     if (totalVotes === 0) return 0;
@@ -141,6 +158,7 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
     return String(num);
   }
 
+  // Handle vote for single meme rating
   async function handleVote(ratingToCast?: MemeRatingId) {
     if (hasVoted || loading) return;
     const finalChoice = ratingToCast || selectedRating;
@@ -195,6 +213,54 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
     }
   }
 
+  // Handle vote for dual meme (Meme A vs Meme B)
+  async function handleDualVote(choice: "A" | "B") {
+    if (hasVoted || loading) return;
+    setUserVoteOption(choice);
+    setLoading(true);
+
+    try {
+      const res = await fetch(`/api/engagements/${item.id}/vote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedOptionId: choice }),
+      });
+
+      const data = await res.json();
+      if (data.success || data.alreadyVoted) {
+        setHasVoted(true);
+        setUserVoteOption(choice);
+        setPointsToast(true);
+        setTimeout(() => setPointsToast(false), 3500);
+
+        if (Array.isArray(data.options)) {
+          setDualVotesA(Number(data.options[0]?.votes) || 0);
+          setDualVotesB(Number(data.options[1]?.votes) || 0);
+        } else {
+          if (choice === "A") setDualVotesA((p) => p + 1);
+          else setDualVotesB((p) => p + 1);
+        }
+
+        if (data.totalVotes !== undefined) setTotalVotes(data.totalVotes);
+        else setTotalVotes((prev) => prev + 1);
+
+        if (onVoteSuccess) onVoteSuccess(data);
+      } else {
+        alert(data.error || "Unable to cast vote");
+      }
+    } catch {
+      setHasVoted(true);
+      setUserVoteOption(choice);
+      if (choice === "A") setDualVotesA((p) => p + 1);
+      else setDualVotesB((p) => p + 1);
+      setTotalVotes((prev) => prev + 1);
+      setPointsToast(true);
+      setTimeout(() => setPointsToast(false), 3500);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleLike() {
     const nextLiked = !liked;
     const nextCount = Math.max(0, likesCount + (nextLiked ? 1 : -1));
@@ -231,6 +297,16 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
     meme?.mediaUrl ||
     (item as any).imageUrl ||
     "/placeholder-meme.png";
+
+  const labelA = meme?.memeA?.title || meme?.options?.[0]?.text || meme?.options?.[0]?.label || "Meme A";
+  const imageA = meme?.memeA?.imageUrl || meme?.options?.[0]?.imageUrl || mediaSource;
+
+  const labelB = meme?.memeB?.title || meme?.options?.[1]?.text || meme?.options?.[1]?.label || "Meme B";
+  const imageB = meme?.memeB?.imageUrl || meme?.options?.[1]?.imageUrl || "/placeholder-meme.png";
+
+  const totalDual = dualVotesA + dualVotesB;
+  const pctA = totalDual > 0 ? Math.round((dualVotesA / totalDual) * 100) : 50;
+  const pctB = 100 - pctA;
 
   const authorName = meme?.authorName || item.creatorName || "SportsFan";
   const authorHandle = meme?.authorHandle || `@${authorName.replace(/\s+/g, "").toLowerCase()}`;
@@ -321,6 +397,11 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#f0f6fc", display: "flex", alignItems: "center", gap: 6 }}>
               <span>Meme by <span style={{ color: "#ff8b3d" }}>{authorHandle}</span></span>
+              {isDualMeme && (
+                <span style={{ fontSize: 10, background: "rgba(255, 42, 109, 0.15)", border: "1px solid rgba(255, 42, 109, 0.35)", color: "#ff2a6d", padding: "1px 6px", borderRadius: 10, fontWeight: 800 }}>
+                  DUAL BATTLE
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 11, color: "#8b949e" }}>{timeAgo}</div>
           </div>
@@ -376,243 +457,470 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
         </div>
       )}
 
-      {/* Media Image (Required) */}
-      <div
-        style={{
-          width: "100%",
-          maxHeight: 520,
-          background: "#05070a",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          overflow: "hidden",
-          position: "relative",
-          borderTop: "1px solid rgba(255, 255, 255, 0.05)",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
-        }}
-      >
-        <img
-          src={mediaSource}
-          alt={meme?.title || item.title || "Sports Meme"}
-          style={{
-            width: "100%",
-            height: "auto",
-            maxHeight: 520,
-            objectFit: "contain",
-            display: "block",
-          }}
-          onError={(e) => {
-            // Fallback stylish placeholder if broken
-            (e.target as HTMLImageElement).src =
-              "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=800&auto=format&fit=crop&q=80";
-          }}
-        />
-      </div>
-
-      {/* Question / Prompt Header */}
-      <div
-        style={{
-          padding: "16px 16px 8px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: 800,
-            color: "#ffffff",
-            letterSpacing: "0.01em",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          How Hot Is This Meme?
-        </span>
-        <button
-          onClick={() => setShowInfo(!showInfo)}
-          style={{
-            background: "none",
-            border: "none",
-            color: "#8b949e",
-            cursor: "pointer",
-            padding: 4,
-          }}
-        >
-          <Info size={16} />
-        </button>
-      </div>
-
-      {/* Info Popover Note */}
-      {showInfo && (
-        <div
-          style={{
-            margin: "0 16px 12px",
-            padding: "8px 12px",
-            background: "rgba(33, 38, 45, 0.8)",
-            borderRadius: 8,
-            border: "1px solid rgba(255, 255, 255, 0.1)",
-            fontSize: 11,
-            color: "#8b949e",
-          }}
-        >
-          Vote for how funny or spicy this meme is! You earn <strong>+2 points</strong> on your first vote for this meme arena event.
-        </div>
-      )}
-
-      {/* 5 Rating Buttons Grid */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(5, 1fr)",
-          gap: 6,
-          padding: "0 16px 14px",
-        }}
-      >
-        {ratingKeys.map((key) => {
-          const cfg = RATING_CONFIG[key];
-          const isSelected = selectedRating === key;
-          const isUserVote = userVoteOption === key;
-          const pct = getPercentage(key);
-          const voteCount = ratings[key] || 0;
-
-          return (
-            <button
-              key={key}
-              onClick={() => {
-                setSelectedRating(key);
-                if (!hasVoted) {
-                  // Direct tap to vote or select
-                  handleVote(key);
-                }
-              }}
+      {/* ────────────────── 1. DUAL MEME DISPLAY & VOTING ────────────────── */}
+      {isDualMeme ? (
+        <div>
+          {/* Dual Meme Images Side-by-Side */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              padding: "0 16px 14px",
+            }}
+          >
+            {/* Meme A Card */}
+            <div
+              onClick={() => !hasVoted && handleDualVote("A")}
               style={{
+                background: "#05070a",
+                border: `1.5px solid ${userVoteOption === "A" ? "#ff5e00" : "rgba(255, 255, 255, 0.08)"}`,
+                borderRadius: 12,
+                overflow: "hidden",
                 position: "relative",
-                background: isSelected
-                  ? cfg.bg
-                  : "rgba(22, 27, 34, 0.7)",
-                border: isSelected
-                  ? `2px solid ${cfg.textColor}`
-                  : `1px solid ${cfg.border}`,
-                borderRadius: 10,
-                padding: "8px 4px",
                 display: "flex",
                 flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 4,
                 cursor: hasVoted ? "default" : "pointer",
-                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                outline: "none",
-                overflow: "hidden",
-                boxShadow: isSelected ? `0 0 14px ${cfg.activeGlow}` : "none",
+                transition: "all 0.2s ease",
+                boxShadow: userVoteOption === "A" ? "0 0 16px rgba(255, 94, 0, 0.4)" : "none",
               }}
             >
-              {/* Background percentage fill bar */}
               <div
                 style={{
                   position: "absolute",
-                  bottom: 0,
-                  left: 0,
-                  width: "100%",
-                  height: `${pct}%`,
-                  background: cfg.bg,
-                  opacity: 0.6,
-                  transition: "height 0.6s ease-out",
-                  pointerEvents: "none",
-                  zIndex: 0,
-                }}
-              />
-
-              {/* Flame Silhouette or Emoji */}
-              <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {key === "mid" && (
-                  <Flame size={20} color="#6e7681" fill="#6e7681" />
-                )}
-                {key === "funny" && (
-                  <Flame size={20} color="#ec4899" fill="#ec4899" />
-                )}
-                {key === "hot" && (
-                  <Flame size={20} color="#f97316" fill="#f97316" />
-                )}
-                {key === "fire" && (
-                  <div style={{ display: "flex", alignItems: "center" }}>
-                    <Flame size={18} color="#ef4444" fill="#ef4444" />
-                    <Flame size={14} color="#f87171" fill="#f87171" style={{ marginLeft: -6 }} />
-                  </div>
-                )}
-                {key === "nuclear" && (
-                  <div style={{ display: "flex", alignItems: "center", position: "relative" }}>
-                    <Flame size={22} color="#d946ef" fill="#d946ef" />
-                    <Sparkles size={11} color="#fbcfe8" style={{ position: "absolute", top: -4, right: -4 }} />
-                  </div>
-                )}
-              </div>
-
-              {/* Label */}
-              <span
-                style={{
-                  position: "relative",
-                  zIndex: 1,
-                  fontSize: 11,
-                  fontWeight: isSelected ? 800 : 600,
-                  color: isSelected ? cfg.textColor : "#c9d1d9",
-                  lineHeight: 1,
+                  top: 8,
+                  left: 8,
+                  zIndex: 2,
+                  background: "rgba(0,0,0,0.75)",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  backdropFilter: "blur(6px)",
+                  color: "#ff8b3d",
+                  fontSize: 10,
+                  fontWeight: 800,
+                  padding: "3px 8px",
+                  borderRadius: 20,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
                 }}
               >
-                {cfg.label}
-              </span>
-
-              {/* Percentage & Vote Count Display */}
+                <span>🅰️</span>
+                <span>{labelA}</span>
+              </div>
               <div
                 style={{
-                  position: "relative",
-                  zIndex: 1,
+                  width: "100%",
+                  height: 220,
                   display: "flex",
-                  flexDirection: "column",
                   alignItems: "center",
-                  gap: 1,
-                  marginTop: 2,
+                  justifyContent: "center",
+                  background: "#080b11",
+                  overflow: "hidden",
                 }}
               >
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 800,
-                    color: isSelected ? "#ffffff" : "#8b949e",
+                <img
+                  src={imageA}
+                  alt={labelA}
+                  style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src =
+                      "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=800&auto=format&fit=crop&q=80";
                   }}
-                >
-                  {pct}%
-                </span>
-                <span
-                  style={{
-                    fontSize: 9,
-                    color: "#6e7681",
-                  }}
-                >
-                  {formatCount(voteCount)}
-                </span>
+                />
               </div>
+            </div>
 
-              {/* Checkmark badge if user voted this option */}
-              {isUserVote && (
-                <div
+            {/* Meme B Card */}
+            <div
+              onClick={() => !hasVoted && handleDualVote("B")}
+              style={{
+                background: "#05070a",
+                border: `1.5px solid ${userVoteOption === "B" ? "#ff2a6d" : "rgba(255, 255, 255, 0.08)"}`,
+                borderRadius: 12,
+                overflow: "hidden",
+                position: "relative",
+                display: "flex",
+                flexDirection: "column",
+                cursor: hasVoted ? "default" : "pointer",
+                transition: "all 0.2s ease",
+                boxShadow: userVoteOption === "B" ? "0 0 16px rgba(255, 42, 109, 0.4)" : "none",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: 8,
+                  left: 8,
+                  zIndex: 2,
+                  background: "rgba(0,0,0,0.75)",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  backdropFilter: "blur(6px)",
+                  color: "#f472b6",
+                  fontSize: 10,
+                  fontWeight: 800,
+                  padding: "3px 8px",
+                  borderRadius: 20,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <span>🅱️</span>
+                <span>{labelB}</span>
+              </div>
+              <div
+                style={{
+                  width: "100%",
+                  height: 220,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "#080b11",
+                  overflow: "hidden",
+                }}
+              >
+                <img
+                  src={imageB}
+                  alt={labelB}
+                  style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src =
+                      "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800&auto=format&fit=crop&q=80";
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Dual Meme Poll Options */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "0 16px 14px" }}>
+            {[
+              { id: "A", label: labelA, votes: dualVotesA, percentage: pctA, color: "#ff8b3d", border: "rgba(255, 139, 61, 0.5)", bg: "rgba(255, 139, 61, 0.15)" },
+              { id: "B", label: labelB, votes: dualVotesB, percentage: pctB, color: "#f472b6", border: "rgba(244, 114, 182, 0.5)", bg: "rgba(244, 114, 182, 0.15)" },
+            ].map((choice) => {
+              const isChosen = userVoteOption === choice.id;
+              return (
+                <button
+                  key={choice.id}
+                  onClick={() => handleDualVote(choice.id as "A" | "B")}
+                  disabled={hasVoted || loading}
                   style={{
-                    position: "absolute",
-                    top: 2,
-                    right: 2,
-                    zIndex: 2,
+                    position: "relative",
+                    background: isChosen ? choice.bg : "rgba(22, 27, 34, 0.7)",
+                    border: isChosen ? `2px solid ${choice.color}` : "1px solid rgba(255, 255, 255, 0.1)",
+                    borderRadius: 12,
+                    padding: "12px 14px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    cursor: hasVoted ? "default" : "pointer",
+                    overflow: "hidden",
+                    outline: "none",
+                    transition: "all 0.2s ease",
+                    textAlign: "left",
                   }}
                 >
-                  <CheckCircle2 size={11} color="#3fb950" />
-                </div>
-              )}
+                  {/* Progress bar fill when voted */}
+                  {hasVoted && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        bottom: 0,
+                        width: `${choice.percentage}%`,
+                        background: choice.bg,
+                        opacity: 0.85,
+                        transition: "width 0.6s ease-out",
+                        zIndex: 0,
+                      }}
+                    />
+                  )}
+
+                  {/* Choice Label */}
+                  <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: "50%",
+                        background: isChosen ? choice.color : "rgba(255,255,255,0.08)",
+                        color: isChosen ? "#000" : "#fff",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {choice.id}
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+                      {choice.label}
+                    </span>
+                    {isChosen && <CheckCircle2 size={16} color="#3fb950" />}
+                  </div>
+
+                  {/* Percentage & Vote Count */}
+                  <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                    {hasVoted ? (
+                      <>
+                        <span style={{ fontSize: 14, fontWeight: 800, color: choice.color }}>
+                          {choice.percentage}%
+                        </span>
+                        <span style={{ fontSize: 11, color: "#8b949e" }}>
+                          ({formatCount(choice.votes)})
+                        </span>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#8b949e" }}>
+                        Tap to Vote
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        /* ────────────────── 2. SINGLE MEME DISPLAY & VOTING ────────────────── */
+        <div>
+          {/* Single Media Image */}
+          <div
+            style={{
+              width: "100%",
+              maxHeight: 520,
+              background: "#05070a",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+              position: "relative",
+              borderTop: "1px solid rgba(255, 255, 255, 0.05)",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+            }}
+          >
+            <img
+              src={mediaSource}
+              alt={meme?.title || item.title || "Sports Meme"}
+              style={{
+                width: "100%",
+                height: "auto",
+                maxHeight: 520,
+                objectFit: "contain",
+                display: "block",
+              }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).src =
+                  "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=800&auto=format&fit=crop&q=80";
+              }}
+            />
+          </div>
+
+          {/* Question / Prompt Header */}
+          <div
+            style={{
+              padding: "16px 16px 8px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 14,
+                fontWeight: 800,
+                color: "#ffffff",
+                letterSpacing: "0.01em",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              How Hot Is This Meme?
+            </span>
+            <button
+              onClick={() => setShowInfo(!showInfo)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#8b949e",
+                cursor: "pointer",
+                padding: 4,
+              }}
+            >
+              <Info size={16} />
             </button>
-          );
-        })}
-      </div>
+          </div>
+
+          {/* Info Popover Note */}
+          {showInfo && (
+            <div
+              style={{
+                margin: "0 16px 12px",
+                padding: "8px 12px",
+                background: "rgba(33, 38, 45, 0.8)",
+                borderRadius: 8,
+                border: "1px solid rgba(255, 255, 255, 0.1)",
+                fontSize: 11,
+                color: "#8b949e",
+              }}
+            >
+              Vote for how funny or spicy this meme is! You earn <strong>+2 points</strong> on your first vote for this meme arena event.
+            </div>
+          )}
+
+          {/* 5 Rating Buttons Grid */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(5, 1fr)",
+              gap: 6,
+              padding: "0 16px 14px",
+            }}
+          >
+            {ratingKeys.map((key) => {
+              const cfg = RATING_CONFIG[key];
+              const isSelected = selectedRating === key;
+              const isUserVote = userVoteOption === key;
+              const pct = getPercentage(key);
+              const voteCount = ratings[key] || 0;
+
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setSelectedRating(key);
+                    if (!hasVoted) {
+                      handleVote(key);
+                    }
+                  }}
+                  style={{
+                    position: "relative",
+                    background: isSelected ? cfg.bg : "rgba(22, 27, 34, 0.7)",
+                    border: isSelected
+                      ? `2px solid ${cfg.textColor}`
+                      : `1px solid ${cfg.border}`,
+                    borderRadius: 10,
+                    padding: "8px 4px",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 4,
+                    cursor: hasVoted ? "default" : "pointer",
+                    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                    outline: "none",
+                    overflow: "hidden",
+                    boxShadow: isSelected ? `0 0 14px ${cfg.activeGlow}` : "none",
+                  }}
+                >
+                  {/* Background percentage fill bar */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: 0,
+                      left: 0,
+                      width: "100%",
+                      height: `${pct}%`,
+                      background: cfg.bg,
+                      opacity: 0.6,
+                      transition: "height 0.6s ease-out",
+                      pointerEvents: "none",
+                      zIndex: 0,
+                    }}
+                  />
+
+                  {/* Flame Silhouette or Emoji */}
+                  <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {key === "mid" && (
+                      <Flame size={20} color="#6e7681" fill="#6e7681" />
+                    )}
+                    {key === "funny" && (
+                      <Flame size={20} color="#ec4899" fill="#ec4899" />
+                    )}
+                    {key === "hot" && (
+                      <Flame size={20} color="#f97316" fill="#f97316" />
+                    )}
+                    {key === "fire" && (
+                      <div style={{ display: "flex", alignItems: "center" }}>
+                        <Flame size={18} color="#ef4444" fill="#ef4444" />
+                        <Flame size={14} color="#f87171" fill="#f87171" style={{ marginLeft: -6 }} />
+                      </div>
+                    )}
+                    {key === "nuclear" && (
+                      <div style={{ display: "flex", alignItems: "center", position: "relative" }}>
+                        <Flame size={22} color="#d946ef" fill="#d946ef" />
+                        <Sparkles size={11} color="#fbcfe8" style={{ position: "absolute", top: -4, right: -4 }} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Label */}
+                  <span
+                    style={{
+                      position: "relative",
+                      zIndex: 1,
+                      fontSize: 11,
+                      fontWeight: isSelected ? 800 : 600,
+                      color: isSelected ? cfg.textColor : "#c9d1d9",
+                      lineHeight: 1,
+                    }}
+                  >
+                    {cfg.label}
+                  </span>
+
+                  {/* Percentage & Vote Count Display */}
+                  <div
+                    style={{
+                      position: "relative",
+                      zIndex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 1,
+                      marginTop: 2,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 800,
+                        color: isSelected ? "#ffffff" : "#8b949e",
+                      }}
+                    >
+                      {pct}%
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        color: "#6e7681",
+                      }}
+                    >
+                      {formatCount(voteCount)}
+                    </span>
+                  </div>
+
+                  {/* Checkmark badge if user voted this option */}
+                  {isUserVote && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 2,
+                        right: 2,
+                        zIndex: 2,
+                      }}
+                    >
+                      <CheckCircle2 size={11} color="#3fb950" />
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Heat Bar & Social Counters */}
       <div
@@ -638,10 +946,14 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
             }}
           >
             <BarChart3 size={15} />
-            <span>{heatIndex}% Heat</span>
+            <span>{isDualMeme ? `${formatCount(totalDual > 0 ? totalDual : totalVotes)} Total Votes` : `${heatIndex}% Heat`}</span>
           </div>
-          <span>•</span>
-          <span>{formatCount(totalVotes)} votes</span>
+          {!isDualMeme && (
+            <>
+              <span>•</span>
+              <span>{formatCount(totalVotes)} votes</span>
+            </>
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -668,7 +980,7 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
           {/* Comments count */}
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <MessageCircle size={15} />
-            <span>43</span>
+            <span>{Number(meme?.commentsCount) || 0}</span>
           </div>
 
           {/* Share */}
@@ -688,81 +1000,83 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
             }}
           >
             <Share2 size={15} />
-            <span>Share</span>
+            <span>{sharesCount > 0 ? sharesCount : "Share"}</span>
           </button>
         </div>
       </div>
 
-      {/* Bottom CTA Row: Vote Button + Skip Button */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "4px 16px 16px",
-        }}
-      >
-        <button
-          onClick={() => handleVote(selectedRating)}
-          disabled={hasVoted || loading}
+      {/* Bottom CTA Row: Only for Single Meme rating */}
+      {!isDualMeme && (
+        <div
           style={{
-            flex: 1,
-            background: hasVoted
-              ? "linear-gradient(135deg, rgba(46, 160, 67, 0.25) 0%, rgba(35, 134, 54, 0.4) 100%)"
-              : "linear-gradient(135deg, #ff5e00 0%, #ff2a6d 100%)",
-            border: hasVoted ? "1px solid #3fb950" : "none",
-            color: "#ffffff",
-            padding: "12px 18px",
-            borderRadius: 12,
-            fontSize: 14,
-            fontWeight: 800,
-            cursor: hasVoted ? "default" : "pointer",
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            boxShadow: hasVoted ? "none" : "0 6px 20px rgba(255, 94, 0, 0.35)",
-            transition: "all 0.2s ease",
-            opacity: loading ? 0.8 : 1,
+            gap: 10,
+            padding: "4px 16px 16px",
           }}
         >
-          {loading ? (
-            <>
-              <Loader2 size={16} className="animate-spin" />
-              <span>Voting...</span>
-            </>
-          ) : hasVoted ? (
-            <>
-              <CheckCircle2 size={16} color="#3fb950" />
-              <span>Voted {currentConfig.label} (+2 pts)</span>
-            </>
-          ) : (
-            <>
-              <Flame size={16} fill="#fff" />
-              <span>Vote {currentConfig.label}</span>
-            </>
-          )}
-        </button>
+          <button
+            onClick={() => handleVote(selectedRating)}
+            disabled={hasVoted || loading}
+            style={{
+              flex: 1,
+              background: hasVoted
+                ? "linear-gradient(135deg, rgba(46, 160, 67, 0.25) 0%, rgba(35, 134, 54, 0.4) 100%)"
+                : "linear-gradient(135deg, #ff5e00 0%, #ff2a6d 100%)",
+              border: hasVoted ? "1px solid #3fb950" : "none",
+              color: "#ffffff",
+              padding: "12px 18px",
+              borderRadius: 12,
+              fontSize: 14,
+              fontWeight: 800,
+              cursor: hasVoted ? "default" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              boxShadow: hasVoted ? "none" : "0 6px 20px rgba(255, 94, 0, 0.35)",
+              transition: "all 0.2s ease",
+              opacity: loading ? 0.8 : 1,
+            }}
+          >
+            {loading ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                <span>Voting...</span>
+              </>
+            ) : hasVoted ? (
+              <>
+                <CheckCircle2 size={16} color="#3fb950" />
+                <span>Voted {currentConfig.label} (+2 pts)</span>
+              </>
+            ) : (
+              <>
+                <Flame size={16} fill="#fff" />
+                <span>Vote {currentConfig.label}</span>
+              </>
+            )}
+          </button>
 
-        <button
-          onClick={() => {
-            if (onSkip) onSkip();
-          }}
-          style={{
-            background: "rgba(255, 255, 255, 0.06)",
-            border: "1px solid rgba(255, 255, 255, 0.1)",
-            color: "#8b949e",
-            padding: "12px 20px",
-            borderRadius: 12,
-            fontSize: 14,
-            fontWeight: 700,
-            cursor: "pointer",
-            transition: "all 0.2s ease",
-          }}
-        >
-          Skip
-        </button>
-      </div>
+          <button
+            onClick={() => {
+              if (onSkip) onSkip();
+            }}
+            style={{
+              background: "rgba(255, 255, 255, 0.06)",
+              border: "1px solid rgba(255, 255, 255, 0.1)",
+              color: "#8b949e",
+              padding: "12px 20px",
+              borderRadius: 12,
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Skip
+          </button>
+        </div>
+      )}
     </div>
   );
 }
