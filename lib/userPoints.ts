@@ -624,40 +624,57 @@ export async function awardUserPoints({
       let isRuleActive = true;
       let ruleFound = false;
 
-      // Try DynamoDB first
-      try {
-        const ruleRes = await docClient.send(new GetCommand({
-          TableName: TABLES.GamificationAndWallet,
-          Key: { userId: "CONFIG#RULES", sk: `RULE#${reason}` }
-        }));
-        if (ruleRes.Item) {
-          const rData = ruleRes.Item;
-          basePoints = rData.points ?? basePoints;
-          dailyLimit = rData.dailyLimit ?? dailyLimit;
-          if (rData.status === "inactive" || rData.status === "suspended") {
-            isRuleActive = false;
-          }
-          ruleFound = true;
-        }
-      } catch (dynErr) {
-        console.warn("[PointsEngine] DynamoDB rule lookup failed, trying fallback:", dynErr);
-      }
+      // Try DynamoDB first with all potential action aliases
+      const candidateKeys = Array.from(new Set([
+        reason,
+        reason.replace("_FAN_BATTLE", "_BATTLE"),
+        reason.replace("_BATTLE", "_FAN_BATTLE"),
+        reason.replace("_WINNING_POLL_BONUS", "_ACCURACY_BONUS_POLL"),
+        reason.replace("_ACCURACY_BONUS_POLL", "_WINNING_POLL_BONUS"),
+        reason.replace("_ACCURACY_BONUS_PREDICTION", "_PREDICTION_ACCURATE"),
+        reason.replace("_PREDICTION_ACCURATE", "_ACCURACY_BONUS_PREDICTION"),
+      ]));
 
-      // Fallback to Firestore
-      if (!ruleFound) {
+      for (const rKey of candidateKeys) {
+        if (ruleFound) break;
         try {
-          const ruleRef = db.collection("pointRules").doc(reason);
-          const ruleSnap = await transaction.get(ruleRef);
-          if (ruleSnap.exists) {
-            const rData = ruleSnap.data()!;
+          const ruleRes = await docClient.send(new GetCommand({
+            TableName: TABLES.GamificationAndWallet,
+            Key: { userId: "CONFIG#RULES", sk: `RULE#${rKey}` }
+          }));
+          if (ruleRes.Item) {
+            const rData = ruleRes.Item;
             basePoints = rData.points ?? basePoints;
             dailyLimit = rData.dailyLimit ?? dailyLimit;
             if (rData.status === "inactive" || rData.status === "suspended") {
               isRuleActive = false;
             }
+            ruleFound = true;
           }
-        } catch (fsErr) {
-          console.warn("[PointsEngine] Firestore rule lookup failed:", fsErr);
+        } catch (dynErr) {
+          console.warn("[PointsEngine] DynamoDB rule lookup failed, trying fallback:", dynErr);
+        }
+      }
+
+      // Fallback to Firestore
+      if (!ruleFound) {
+        for (const rKey of candidateKeys) {
+          if (ruleFound) break;
+          try {
+            const ruleRef = db.collection("pointRules").doc(rKey);
+            const ruleSnap = await transaction.get(ruleRef);
+            if (ruleSnap.exists) {
+              const rData = ruleSnap.data()!;
+              basePoints = rData.points ?? basePoints;
+              dailyLimit = rData.dailyLimit ?? dailyLimit;
+              if (rData.status === "inactive" || rData.status === "suspended") {
+                isRuleActive = false;
+              }
+              ruleFound = true;
+            }
+          } catch (fsErr) {
+            console.warn("[PointsEngine] Firestore rule lookup failed:", fsErr);
+          }
         }
       }
 

@@ -547,11 +547,10 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { useSession, signOut } from "next-auth/react";
 
-const plexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["300", "400", "500", "600"] });
-const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"] });
+const plexSans = { className: "font-sans", style: { fontFamily: "var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" } };
+const plexMono = { className: "font-mono", style: { fontFamily: "var(--font-geist-mono), 'SF Mono', Monaco, 'Courier New', monospace" } };
 
 interface NavChildItem {
   href?: string;
@@ -706,6 +705,12 @@ const FULL_NAV: NavGroup[] = [
         label: "Channels & Sports", icon: "🌐", badge: "UNIVERSAL", badgeBg: "#3b82f6",
         children: [
           { href: "/admin/channels-sports-management", label: "Channels & Sports Hub" },
+        ],
+      },
+      {
+        label: "Gamification & SXP", icon: "🏆", badge: "SXP ENGINE", badgeBg: "#f59e0b",
+        children: [
+          { href: "/admin/gamification-management", label: "🏆 Gamification & SXP Rules" },
         ],
       },
       {
