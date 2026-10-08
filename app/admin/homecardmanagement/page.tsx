@@ -19,11 +19,11 @@ import {
   Loader2
 } from "lucide-react";
 
-// Format date into standard agenda label format: e.g. "Tuesday · 23 September"
+// Format date into standard agenda label format: e.g. "Tuesday · 23 September" (India Std Time)
 function formatAgendaDate(date: Date): string {
-  const dayName = date.toLocaleDateString("en-US", { weekday: "long" });
-  const dayNum = date.getDate();
-  const monthName = date.toLocaleDateString("en-US", { month: "long" });
+  const dayName = date.toLocaleDateString("en-US", { weekday: "long", timeZone: "Asia/Kolkata" });
+  const dayNum = date.toLocaleDateString("en-US", { day: "numeric", timeZone: "Asia/Kolkata" });
+  const monthName = date.toLocaleDateString("en-US", { month: "long", timeZone: "Asia/Kolkata" });
   return `${dayName} · ${dayNum} ${monthName}`;
 }
 

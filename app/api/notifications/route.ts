@@ -346,6 +346,90 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// ─── POST — create / schedule a notification ─────────────────────────────────
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    let targetEmail = body.recipientEmail || body.email || null;
+    let targetUid = body.recipientUid || body.userId || body.actualUserId || null;
+
+    if (!targetEmail && !targetUid) {
+      const user = await getUser(req);
+      if (user) {
+        if (user.email) targetEmail = user.email;
+        if (user.userId) targetUid = user.userId;
+      }
+    }
+
+    const resolvedUserId =
+      targetUid ||
+      (await resolveActualUserId(undefined, targetEmail)) ||
+      sanitizeEmailFallback(targetEmail) ||
+      "all_users";
+
+    const notifId =
+      body.id ||
+      body.notification_id ||
+      `ntf_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const now = Date.now();
+
+    const payload: Record<string, any> = {
+      id: notifId,
+      notification_id: notifId,
+      title: body.title || "Notification",
+      body: body.body || body.message || "",
+      message: body.body || body.message || "",
+      notification_type: body.notification_type || body.type || "general",
+      category: body.category || "general",
+      priority: body.priority || "NORMAL",
+      isRead: false,
+      read: false,
+      sent_at: body.sent_at || new Date(now).toISOString(),
+      createdAt: body.createdAt || now,
+      recipientEmail: targetEmail,
+      recipientUid: targetUid,
+      ...(body.eventId && { eventId: body.eventId }),
+      ...(body.cta_label && { cta_label: body.cta_label }),
+      ...(body.cta_target && { cta_target: body.cta_target }),
+    };
+
+    const candidateTables = getCandidateTableNames(TABLES.Notifications);
+    for (const table of candidateTables) {
+      try {
+        await docClient.send(
+          new PutCommand({
+            TableName: table,
+            Item: {
+              PK: `USER#${cleanId(resolvedUserId)}`,
+              SK: `NOTIF#${notifId}`,
+              ...payload,
+            },
+          })
+        );
+      } catch (err) {
+        console.warn("[notifications POST] DynamoDB write notice:", err);
+      }
+    }
+
+    if (db) {
+      try {
+        await db
+          .collection(getFirestoreCollection("notifications"))
+          .doc(`${notifId}_${cleanId(resolvedUserId)}`)
+          .set(payload, { merge: true });
+      } catch (fsErr) {
+        console.warn("[notifications POST] Firestore write notice:", fsErr);
+      }
+    }
+
+    return NextResponse.json({ success: true, id: notifId, notification: payload });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unexpected error";
+    console.error("POST /api/notifications error:", error);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
 // ─── PATCH — mark one or all notifications as read ─────────────────────────
 export async function PATCH(req: NextRequest) {
   try {
