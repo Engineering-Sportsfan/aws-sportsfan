@@ -274,14 +274,57 @@ export async function GET(req: NextRequest) {
     }
 
     // Sort entries by points (descending), then correct count (descending)
-    let allEntries = Array.from(entriesMap.values());
-    allEntries.sort((a, b) => {
+    let rawEntries = Array.from(entriesMap.values());
+    rawEntries.sort((a, b) => {
       if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
       if (b.correctCount !== a.correctCount) return b.correctCount - a.correctCount;
       return a.totalAnswered - b.totalAnswered;
     });
 
-    allEntries = allEntries.map((e, idx) => {
+    // Deduplicate entries by normalized email / identity, keeping only the highest scoring record
+    const seenEmails = new Set<string>();
+    const seenNames = new Set<string>();
+    const dedupedEntries: QuizLeaderboardEntry[] = [];
+
+    for (const entry of rawEntries) {
+      // 1. Resolve normalized email
+      let cleanEmail = (entry.userEmail || "").trim().toLowerCase();
+      if (!cleanEmail) {
+        // Fallback email resolution from userId if formatted like email or OTP#email or user_domain_com
+        const rawUid = entry.userId || "";
+        if (rawUid.includes("@")) {
+          cleanEmail = rawUid.replace(/^USER#|^OTP#/, "").trim().toLowerCase();
+        } else if (rawUid.includes("_") && (rawUid.endsWith("_com") || rawUid.endsWith("_in") || rawUid.endsWith("_edu"))) {
+          cleanEmail = rawUid.replace(/_([a-zA-Z0-9]+)$/, ".$1").replace(/_/g, "@");
+        }
+      }
+
+      // 2. Resolve normalized name
+      const cleanName = (entry.userName || "").trim().toLowerCase();
+      const isGenericName =
+        !cleanName ||
+        cleanName === "fan quizzer" ||
+        cleanName.startsWith("sf360 user") ||
+        cleanName.startsWith("anon_") ||
+        cleanName.startsWith("user ");
+
+      // Check for duplicate by email
+      if (cleanEmail && seenEmails.has(cleanEmail)) {
+        continue; // Skip lower-score duplicate
+      }
+
+      // Check for duplicate by exact real name (if email wasn't found or as extra safeguard for identical users)
+      if (!cleanEmail && !isGenericName && seenNames.has(cleanName)) {
+        continue; // Skip lower-score duplicate
+      }
+
+      if (cleanEmail) seenEmails.add(cleanEmail);
+      if (!isGenericName) seenNames.add(cleanName);
+
+      dedupedEntries.push(entry);
+    }
+
+    let allEntries = dedupedEntries.map((e, idx) => {
       const accuracy =
         e.totalAnswered > 0 ? `${Math.round((e.correctCount / e.totalAnswered) * 100)}%` : "0%";
       return {

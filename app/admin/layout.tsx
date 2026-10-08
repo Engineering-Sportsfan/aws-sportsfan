@@ -546,7 +546,7 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSession, signOut } from "next-auth/react";
 
 const plexSans = { className: "font-sans", style: { fontFamily: "var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" } };
@@ -799,6 +799,7 @@ const FULL_NAV: NavGroup[] = [
         label: "Onboarding", icon: "◉",
         children: [
           { href: "/admin/onboarding-management/add-onboarding", label: "Add Onboarding" },
+          { href: "/admin/onboarding-management/add-onboarding?tab=completed", label: "Onboarding Completed" },
         ],
       },
       { href: "/admin/orders", icon: "◫", label: "Orders & Payments", badge: "8" },
@@ -972,17 +973,105 @@ const RESTRICTED_USERS = [
   ""
 ];
 
+function isNavItemActive(item: any, pathname: string): boolean {
+  if (item.href) {
+    if (pathname === item.href) return true;
+    if (item.href !== "/admin" && item.href !== "/admin/dashboard" && pathname.startsWith(item.href + "/")) return true;
+    if (item.href.includes("?")) {
+      const [baseHref] = item.href.split("?");
+      if (pathname === baseHref) return true;
+    }
+  }
+  if (item.children && Array.isArray(item.children)) {
+    return item.children.some((child: any) => isNavItemActive(child, pathname));
+  }
+  return false;
+}
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { data: session, status } = useSession();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [isRestrictedUser, setIsRestrictedUser] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingAuthCount, setPendingAuthCount] = useState<number>(0);
 
-  const toggleMenu = (label: string) =>
-    setOpenMenus(p => ({ ...p, [label]: !p[label] }));
+  const desktopSidebarScrollRef = useRef<HTMLDivElement>(null);
+  const sidebarScrollPosRef = useRef<number>(0);
+
+  // Select NAV based on user type & inject dynamic pending issues badges
+  const baseNav = isRestrictedUser ? LIMITED_NAV : FULL_NAV;
+  const NAV = useMemo(() => {
+    return baseNav.map(group => ({
+      ...group,
+      items: group.items.map(item => {
+        const updatedItem = { ...item };
+
+        // Direct Auth Issues Tracker item (e.g. in Auth section)
+        if (item.href === "/admin/users/auth-issues") {
+          if (pendingAuthCount > 0) {
+            updatedItem.badge = `${pendingAuthCount} Pending`;
+            updatedItem.badgeBg = "#da3633";
+            updatedItem.badgePulse = true;
+          } else {
+            updatedItem.badge = undefined;
+          }
+        }
+
+        // If item has nested children
+        if (item.children) {
+          updatedItem.children = item.children.map(sub => {
+            if (sub.href === "/admin/users/auth-issues") {
+              return {
+                ...sub,
+                badge: pendingAuthCount > 0 ? `${pendingAuthCount} Pending` : undefined,
+                badgeBg: "#da3633",
+                badgePulse: pendingAuthCount > 0,
+              };
+            }
+            return sub;
+          });
+
+          // If parent item is Users and has pending issues
+          if (item.label === "Users" && pendingAuthCount > 0) {
+            updatedItem.badge = `${pendingAuthCount} New`;
+            updatedItem.badgeBg = "#da3633";
+          }
+        }
+
+        return updatedItem;
+      }),
+    }));
+  }, [baseNav, pendingAuthCount]);
+
+  // Find parent module that contains the active route
+  const activeParentLabel = useMemo(() => {
+    for (const group of NAV) {
+      for (const item of group.items) {
+        if (item.children && isNavItemActive(item, pathname)) {
+          return item.label;
+        }
+      }
+    }
+    return null;
+  }, [NAV, pathname]);
+
+  // Single-open accordion: opening any module closes all others
+  const toggleMenu = (label: string) => {
+    setOpenMenu(prev => {
+      const current = prev !== null ? prev : activeParentLabel;
+      return current === label ? "" : label;
+    });
+  };
+
+  const handleSidebarScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const top = e.currentTarget.scrollTop;
+    sidebarScrollPosRef.current = top;
+    try {
+      sessionStorage.setItem("admin_sidebar_scroll_top", String(top));
+    } catch {}
+  };
 
   const handleLogout = async () => {
     try {
@@ -1044,48 +1133,41 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setIsLoading(false);
   }, [session, status]);
 
-  // Select NAV based on user type & inject dynamic pending issues badges
-  const baseNav = isRestrictedUser ? LIMITED_NAV : FULL_NAV;
-  const NAV = baseNav.map(group => ({
-    ...group,
-    items: group.items.map(item => {
-      const updatedItem = { ...item };
+  // Preserve sidebar scroll position & align active parent on route change
+  useEffect(() => {
+    setOpenMenu(null); // Align open menu with the newly active route's parent
 
-      // Direct Auth Issues Tracker item (e.g. in Auth section)
-      if (item.href === "/admin/users/auth-issues") {
-        if (pendingAuthCount > 0) {
-          updatedItem.badge = `${pendingAuthCount} Pending`;
-          updatedItem.badgeBg = "#da3633";
-          updatedItem.badgePulse = true;
-        } else {
-          updatedItem.badge = undefined;
-        }
+    const container = desktopSidebarScrollRef.current;
+    if (!container) return;
+
+    const saved = sessionStorage.getItem("admin_sidebar_scroll_top");
+    const savedTop = saved && !isNaN(Number(saved)) ? Number(saved) : sidebarScrollPosRef.current;
+
+    // Immediately restore saved scroll if it reset to 0
+    if (savedTop > 0 && Math.abs(container.scrollTop - savedTop) > 5) {
+      container.scrollTop = savedTop;
+    }
+
+    // Check if active element is outside the visible viewport
+    const activeEl = container.querySelector('[data-active="true"]') as HTMLElement | null;
+    if (activeEl) {
+      const containerRect = container.getBoundingClientRect();
+      const elRect = activeEl.getBoundingClientRect();
+      const isVisible = (
+        elRect.top >= containerRect.top + 30 &&
+        elRect.bottom <= containerRect.bottom - 30
+      );
+
+      // Only scroll into view if it was completely out of view (e.g., direct URL navigation)
+      if (!isVisible) {
+        activeEl.scrollIntoView({ block: "nearest", behavior: "auto" });
+        sidebarScrollPosRef.current = container.scrollTop;
+        try {
+          sessionStorage.setItem("admin_sidebar_scroll_top", String(container.scrollTop));
+        } catch {}
       }
-
-      // If item has nested children
-      if (item.children) {
-        updatedItem.children = item.children.map(sub => {
-          if (sub.href === "/admin/users/auth-issues") {
-            return {
-              ...sub,
-              badge: pendingAuthCount > 0 ? `${pendingAuthCount} Pending` : undefined,
-              badgeBg: "#da3633",
-              badgePulse: pendingAuthCount > 0,
-            };
-          }
-          return sub;
-        });
-
-        // If parent item is Users and has pending issues
-        if (item.label === "Users" && pendingAuthCount > 0) {
-          updatedItem.badge = `${pendingAuthCount} New`;
-          updatedItem.badgeBg = "#da3633";
-        }
-      }
-
-      return updatedItem;
-    }),
-  }));
+    }
+  }, [pathname]);
 
   // CHECK: If user is on login page (/admin), show NO sidebar
   const isLoginPage = pathname === "/admin";
@@ -1118,7 +1200,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return seg.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
   })();
 
-  const SidebarContent = () => (
+  const renderSidebar = (isMobile = false) => (
     <>
       {/* Logo */}
       <div style={{
@@ -1157,14 +1239,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         >✕</button>
       </div>
 
-      {/* Nav groups - with hidden scrollbar */}
-      <div style={{
-        overflowY: "auto",
-        flex: 1,
-        scrollbarWidth: "none",
-        msOverflowStyle: "none",
-      }}
-        className="hide-scrollbar">
+      {/* Nav groups - with scroll preservation */}
+      <div
+        ref={!isMobile ? desktopSidebarScrollRef : undefined}
+        onScroll={!isMobile ? handleSidebarScroll : undefined}
+        style={{
+          overflowY: "auto",
+          flex: 1,
+          minHeight: 0,
+          scrollbarWidth: "none",
+          msOverflowStyle: "none",
+        }}
+        className="hide-scrollbar"
+      >
         {NAV.map((group) => (
           <div key={group.label} style={{ padding: "12px 0", borderBottom: "1px solid #21282f" }}>
             <div style={{
@@ -1174,7 +1261,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
             {group.items.map((item) => {
               if (item.children) {
-                const isOpen = openMenus[item.label] ?? (pathname.startsWith("/admin/watchalong") || pathname.startsWith("/admin/roar"));
+                const hasActiveChild = isNavItemActive(item, pathname);
+                const currentOpen = openMenu !== null ? openMenu : activeParentLabel;
+                const isOpen = currentOpen === item.label;
                 return (
                   <div key={item.label}>
                     <div
@@ -1182,7 +1271,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                       style={{
                         display: "flex", alignItems: "center", gap: 9,
                         padding: "7px 16px", cursor: "pointer",
-                        color: "#7d8590", fontSize: 13,
+                        color: hasActiveChild ? "#e6edf3" : "#7d8590",
+                        fontWeight: hasActiveChild ? 600 : 400,
+                        fontSize: 13,
                       }}
                     >
                       <span style={{ width: 15 }}>{item.icon}</span>
@@ -1202,7 +1293,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     {isOpen &&
                       item.children?.map((sub: any) => {
                         if (sub.children) {
-                          const isSubOpen = openMenus[sub.label] ?? false;
+                          const subHasActiveChild = isNavItemActive(sub, pathname);
+                          const isSubOpen = (openMenu !== null ? openMenu : activeParentLabel) === sub.label;
                           return (
                             <div key={sub.label}>
                               <div
@@ -1213,7 +1305,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                   gap: 6,
                                   padding: "6px 16px 6px 36px",
                                   cursor: "pointer",
-                                  color: "#7d8590",
+                                  color: subHasActiveChild ? "#e6edf3" : "#7d8590",
+                                  fontWeight: subHasActiveChild ? 600 : 400,
                                   fontSize: 12,
                                 }}
                               >
@@ -1230,17 +1323,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                               </div>
                               {isSubOpen &&
                                 sub.children.map((child: any) => {
-                                  const active =
-                                    pathname === child.href ||
-                                    pathname.startsWith(child.href + "/");
+                                  const active = isNavItemActive(child, pathname);
                                   return (
                                     <Link
                                       key={child.href}
                                       href={child.href}
+                                      scroll={false}
                                       style={{ textDecoration: "none" }}
                                       onClick={() => setSidebarOpen(false)}
                                     >
                                       <div
+                                        data-active={active ? "true" : undefined}
                                         style={{
                                           display: "flex",
                                           alignItems: "center",
@@ -1249,8 +1342,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                           fontSize: 11,
                                           cursor: "pointer",
                                           color: active ? "#e6edf3" : "#7d8590",
+                                          fontWeight: active ? 600 : 400,
                                           background: active
-                                            ? "rgba(31,111,235,.1)"
+                                            ? "rgba(31,111,235,.15)"
                                             : "transparent",
                                           borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
                                         }}
@@ -1271,17 +1365,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           );
                         }
 
-                        const active =
-                          pathname === sub.href ||
-                          (sub.href && pathname.startsWith(sub.href + "/"));
+                        const active = isNavItemActive(sub, pathname);
                         return (
                           <Link
                             key={sub.href}
                             href={sub.href || "#"}
+                            scroll={false}
                             style={{ textDecoration: "none" }}
                             onClick={() => setSidebarOpen(false)}
                           >
                             <div
+                              data-active={active ? "true" : undefined}
                               style={{
                                 display: "flex",
                                 alignItems: "center",
@@ -1290,8 +1384,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                 fontSize: 12,
                                 cursor: "pointer",
                                 color: active ? "#e6edf3" : "#7d8590",
+                                fontWeight: active ? 600 : 400,
                                 background: active
-                                  ? "rgba(31,111,235,.1)"
+                                  ? "rgba(31,111,235,.15)"
                                   : "transparent",
                                 borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
                               }}
@@ -1313,17 +1408,26 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 );
               }
 
-              const active = pathname === item.href || (item.href && pathname.startsWith(item.href + "/"));
+              const active = isNavItemActive(item, pathname);
               return (
-                <Link key={item.href} href={item.href || "#"} style={{ textDecoration: "none" }}
-                  onClick={() => setSidebarOpen(false)}>
-                  <div style={{
-                    display: "flex", alignItems: "center", gap: 9,
-                    padding: "7px 16px", cursor: "pointer",
-                    color: active ? "#e6edf3" : "#7d8590", fontSize: 13,
-                    borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
-                    background: active ? "rgba(31,111,235,.1)" : "transparent",
-                  }}>
+                <Link
+                  key={item.href}
+                  href={item.href || "#"}
+                  scroll={false}
+                  style={{ textDecoration: "none" }}
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <div
+                    data-active={active ? "true" : undefined}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 9,
+                      padding: "7px 16px", cursor: "pointer",
+                      color: active ? "#e6edf3" : "#7d8590", fontSize: 13,
+                      fontWeight: active ? 600 : 400,
+                      borderLeft: `2px solid ${active ? "#388bfd" : "transparent"}`,
+                      background: active ? "rgba(31,111,235,.15)" : "transparent",
+                    }}
+                  >
                     <span style={{ width: 15 }}>{item.icon}</span>
                     {item.label}
                     {item.badge && (
@@ -1431,7 +1535,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             border-right: 1px solid #21282f;
             display: flex;
             flex-direction: column;
-            overflow-y: auto;
+            overflow: hidden;
+            height: 100vh;
           }
 
           /* Mobile overlay sidebar */
@@ -1528,7 +1633,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Desktop Sidebar */}
         <nav className="sidebar-desktop">
-          <SidebarContent />
+          {renderSidebar(false)}
         </nav>
 
         {/* Mobile Sidebar Overlay */}
@@ -1536,7 +1641,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="sidebar-overlay">
             <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
             <div className="sidebar-drawer">
-              <SidebarContent />
+              {renderSidebar(true)}
             </div>
           </div>
         )}

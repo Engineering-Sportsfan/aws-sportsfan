@@ -196,6 +196,16 @@ export async function GET() {
         if (!existing.createdAt && fsUser.createdAt) existing.createdAt = fsUser.createdAt;
         if (!existing.lastLoginAt && fsUser.lastLoginAt) existing.lastLoginAt = fsUser.lastLoginAt;
         if (!existing.updatedAt && fsUser.updatedAt) existing.updatedAt = fsUser.updatedAt;
+        if (existing.onboardingCompleted === undefined && fsUser.onboardingCompleted !== undefined) existing.onboardingCompleted = fsUser.onboardingCompleted;
+        if (existing.isOnboarded === undefined && fsUser.isOnboarded !== undefined) existing.isOnboarded = fsUser.isOnboarded;
+        if (!existing.onboardingCompletedAt && fsUser.onboardingCompletedAt) existing.onboardingCompletedAt = fsUser.onboardingCompletedAt;
+        if ((!existing.sports || existing.sports.length === 0) && fsUser.sports) existing.sports = fsUser.sports;
+        if ((!existing.followEntities || existing.followEntities.length === 0) && fsUser.followEntities) existing.followEntities = fsUser.followEntities;
+        if ((!existing.engagementPrefs || existing.engagementPrefs.length === 0) && fsUser.engagementPrefs) existing.engagementPrefs = fsUser.engagementPrefs;
+        if (!existing.requestedSport && fsUser.requestedSport) existing.requestedSport = fsUser.requestedSport;
+        if (!existing.username && fsUser.username) existing.username = fsUser.username;
+        if (!existing.userName && fsUser.userName) existing.userName = fsUser.userName;
+        if (!existing.handle && fsUser.handle) existing.handle = fsUser.handle;
       }
     }
 
@@ -217,12 +227,24 @@ export async function GET() {
       const resolvedCreatedAt = resolveUserCreatedAt(u);
       const resolvedLastLoginAt = resolveUserLastLoginAt(u, resolvedCreatedAt);
 
+      const isOnboarded = !!(
+        u.onboardingCompleted === true ||
+        u.isOnboarded === true ||
+        u.hasCompletedOnboarding === true ||
+        (Array.isArray(u.sports) && u.sports.length > 0)
+      );
+
+      const resolvedOnboardedAt = parseTimestamp(u.onboardingCompletedAt) || (isOnboarded ? resolvedCreatedAt : null);
+
       return {
         email: u.email,
-        userId: u.userId || u.email.replace(/[^a-zA-Z0-9]/g, "_"),
+        userId: u.userId || u.uid || u.email.replace(/[^a-zA-Z0-9]/g, "_"),
+        username: u.username || u.userName || u.handle || "",
+        userName: u.userName || u.username || u.handle || "",
+        handle: u.handle || u.username || "",
         firstName: u.firstName || "",
         lastName: u.lastName || "",
-        name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.name || u.email.split("@")[0],
+        name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.name || u.userName || u.username || u.email.split("@")[0],
         avatar: resolvedAvatar,
         avatarUrl: resolvedAvatar,
         photoURL: resolvedAvatar,
@@ -235,6 +257,12 @@ export async function GET() {
         totalPoints: u.totalPoints || 0,
         createdAt: resolvedCreatedAt,
         lastLoginAt: resolvedLastLoginAt,
+        onboardingCompleted: isOnboarded,
+        onboardingCompletedAt: resolvedOnboardedAt,
+        sports: Array.isArray(u.sports) ? u.sports : [],
+        followEntities: Array.isArray(u.followEntities) ? u.followEntities : [],
+        engagementPrefs: Array.isArray(u.engagementPrefs) ? u.engagementPrefs : [],
+        requestedSport: u.requestedSport || null,
       };
     });
 
