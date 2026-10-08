@@ -28,6 +28,7 @@ interface AgendaEventItem {
   id: string;
   type: string;
   order: number;
+  date?: string;
   time: string;
   sport: string;
   subEvent: string;
@@ -437,6 +438,7 @@ export default function ScheduleListPage() {
       event.subEvent?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       event.detail?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       event.venue?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      event.date?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       currentEventTime.toLowerCase().includes(searchQuery.toLowerCase());
 
     const normalizedStatus = (event.statusType || "").toLowerCase();
@@ -625,9 +627,15 @@ export default function ScheduleListPage() {
                       key={evt.id || idx}
                       className="hover:bg-white/[0.02] transition-colors group"
                     >
-                      {/* Direct Inline Time Edit Column */}
+                      {/* Direct Inline Time & Date Edit Column */}
                       <td className="p-4 font-bold text-gray-300">
-                        <div className="flex flex-col gap-1">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 font-mono">
+                              <Calendar size={10} className="text-purple-400" />
+                              <span>{evt.date || "Today (IST)"}</span>
+                            </span>
+                          </div>
                           <div className="flex items-center gap-1.5">
                             <div className="relative flex items-center">
                               <input
