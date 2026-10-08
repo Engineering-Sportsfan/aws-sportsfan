@@ -67,6 +67,8 @@ export async function awardEngagementPoints({
     reason.replace("_BATTLE", "_FAN_BATTLE"),
     reason.replace("_WINNING_POLL_BONUS", "_ACCURACY_BONUS_POLL"),
     reason.replace("_ACCURACY_BONUS_POLL", "_WINNING_POLL_BONUS"),
+    reason.replace("_MEME_DUAL", "_MEME"),
+    ...(action === "create" ? ["ENGAGEMENT_CREATE_MEME", "ENGAGEMENT_CREATE_EVENT", "ENGAGEMENT_CREATE_QUIZ", "ENGAGEMENT_CREATE_POLL"] : ["ENGAGEMENT_PARTICIPATE_MEME", "ENGAGEMENT_PARTICIPATE_EVENT"]),
   ]));
 
   try {

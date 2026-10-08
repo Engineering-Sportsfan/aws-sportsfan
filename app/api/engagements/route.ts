@@ -62,6 +62,12 @@ export async function GET(req: NextRequest) {
                 pollData: it.pollData,
                 predictionData: it.predictionData,
                 memeData: it.memeData,
+                memeType: it.memeType || it.memeData?.memeType,
+                options: it.options || it.memeData?.options,
+                imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
+                imageUrlB: it.imageUrlB || it.memeData?.imageUrlB,
+                labelA: it.labelA || it.memeData?.labelA,
+                labelB: it.labelB || it.memeData?.labelB,
                 likes: Number(it.likes) || 0,
                 shares: Number(it.shares) || 0,
                 totalEngaged: Number(it.totalEngaged) || 0,
@@ -111,6 +117,12 @@ export async function GET(req: NextRequest) {
               pollData: it.pollData,
               predictionData: it.predictionData,
               memeData: it.memeData,
+              memeType: it.memeType || it.memeData?.memeType,
+              options: it.options || it.memeData?.options,
+              imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
+              imageUrlB: it.imageUrlB || it.memeData?.imageUrlB,
+              labelA: it.labelA || it.memeData?.labelA,
+              labelB: it.labelB || it.memeData?.labelB,
               likes: Number(it.likes) || 0,
               shares: Number(it.shares) || 0,
               totalEngaged: Number(it.totalEngaged) || 0,
@@ -331,17 +343,44 @@ export async function POST(req: NextRequest) {
       body = await req.json();
     }
 
-    // Support base64 upload in JSON body if provided
-    if (!uploadedMediaUrl && body.file && typeof body.file === "string" && body.file.startsWith("data:")) {
+    // Helper to upload any base64 string to Cloudinary
+    const uploadBase64ToCloudinary = async (val?: string): Promise<string> => {
+      if (!val || typeof val !== "string" || !val.startsWith("data:")) return val || "";
       try {
-        const uploadRes = await cloudinary.uploader.upload(body.file, {
+        const uploadRes = await cloudinary.uploader.upload(val, {
           folder: "engagements/memes",
           resource_type: "auto",
         });
-        uploadedMediaUrl = uploadRes.secure_url;
+        return uploadRes.secure_url;
       } catch (err) {
         console.error("Cloudinary base64 upload error in POST /api/engagements:", err);
+        return val;
       }
+    };
+
+    // Support base64 upload in JSON body if provided
+    if (!uploadedMediaUrl && body.file && typeof body.file === "string" && body.file.startsWith("data:")) {
+      uploadedMediaUrl = await uploadBase64ToCloudinary(body.file);
+    }
+
+    // Also auto-upload base64 meme images if provided in body or memeData
+    if (body.memeData?.imageUrl && typeof body.memeData.imageUrl === "string" && body.memeData.imageUrl.startsWith("data:")) {
+      body.memeData.imageUrl = await uploadBase64ToCloudinary(body.memeData.imageUrl);
+    }
+    if (body.memeData?.imageUrlA && typeof body.memeData.imageUrlA === "string" && body.memeData.imageUrlA.startsWith("data:")) {
+      body.memeData.imageUrlA = await uploadBase64ToCloudinary(body.memeData.imageUrlA);
+    }
+    if (body.memeData?.imageUrlB && typeof body.memeData.imageUrlB === "string" && body.memeData.imageUrlB.startsWith("data:")) {
+      body.memeData.imageUrlB = await uploadBase64ToCloudinary(body.memeData.imageUrlB);
+    }
+    if (body.imageUrl && typeof body.imageUrl === "string" && body.imageUrl.startsWith("data:")) {
+      body.imageUrl = await uploadBase64ToCloudinary(body.imageUrl);
+    }
+    if (body.imageUrlA && typeof body.imageUrlA === "string" && body.imageUrlA.startsWith("data:")) {
+      body.imageUrlA = await uploadBase64ToCloudinary(body.imageUrlA);
+    }
+    if (body.imageUrlB && typeof body.imageUrlB === "string" && body.imageUrlB.startsWith("data:")) {
+      body.imageUrlB = await uploadBase64ToCloudinary(body.imageUrlB);
     }
 
     const {
@@ -470,11 +509,83 @@ export async function POST(req: NextRequest) {
         }
         : undefined;
 
-    const formattedMemeData: MemePayload | undefined =
-      type === "meme"
+    const isDualMemeDetected = Boolean(
+      memeData?.memeType === "dual" ||
+      body.memeType === "dual" ||
+      type === "meme_dual" ||
+      memeData?.isDual ||
+      body.isDual ||
+      memeData?.imageUrlB ||
+      body.imageUrlB ||
+      memeData?.imageB ||
+      body.imageB ||
+      (Array.isArray(memeData?.options) && memeData.options.length >= 2) ||
+      (Array.isArray(body.options) && body.options.length >= 2)
+    );
+
+    const resolvedMemeImgA =
+      memeData?.imageUrlA ||
+      memeData?.imageA ||
+      body.imageUrlA ||
+      body.imageA ||
+      (Array.isArray(memeData?.options) && (memeData.options[0]?.imageUrl || memeData.options[0]?.image)) ||
+      (Array.isArray(body.options) && (body.options[0]?.imageUrl || body.options[0]?.image)) ||
+      memeData?.imageUrl ||
+      resolvedImageUrl ||
+      "";
+
+    const resolvedMemeImgB =
+      memeData?.imageUrlB ||
+      memeData?.imageB ||
+      body.imageUrlB ||
+      body.imageB ||
+      (Array.isArray(memeData?.options) && (memeData.options[1]?.imageUrl || memeData.options[1]?.image)) ||
+      (Array.isArray(body.options) && (body.options[1]?.imageUrl || body.options[1]?.image)) ||
+      "";
+
+    const resolvedMemeLabelA =
+      memeData?.labelA ||
+      body.labelA ||
+      (Array.isArray(memeData?.options) && (memeData.options[0]?.label || memeData.options[0]?.text)) ||
+      (Array.isArray(body.options) && (body.options[0]?.label || body.options[0]?.text)) ||
+      "Meme A";
+
+    const resolvedMemeLabelB =
+      memeData?.labelB ||
+      body.labelB ||
+      (Array.isArray(memeData?.options) && (memeData.options[1]?.label || memeData.options[1]?.text)) ||
+      (Array.isArray(body.options) && (body.options[1]?.label || body.options[1]?.text)) ||
+      "Meme B";
+
+    const formattedMemeData: any =
+      type === "meme" || type === "meme_dual"
         ? {
-            imageUrl: memeData?.imageUrl || resolvedImageUrl || "",
-            mediaUrl: memeData?.mediaUrl || resolvedImageUrl || "",
+            imageUrl: resolvedMemeImgA || resolvedImageUrl || "",
+            mediaUrl: resolvedMemeImgA || resolvedImageUrl || "",
+            imageUrlA: resolvedMemeImgA,
+            imageUrlB: resolvedMemeImgB,
+            labelA: resolvedMemeLabelA,
+            labelB: resolvedMemeLabelB,
+            memeType: isDualMemeDetected ? "dual" : "single",
+            isDual: isDualMemeDetected,
+            options: isDualMemeDetected
+              ? [
+                  {
+                    id: "meme_a",
+                    label: resolvedMemeLabelA,
+                    text: resolvedMemeLabelA,
+                    imageUrl: resolvedMemeImgA,
+                    votes: Number(memeData?.votesA || body.votesA) || 0,
+                  },
+                  {
+                    id: "meme_b",
+                    label: resolvedMemeLabelB,
+                    text: resolvedMemeLabelB,
+                    imageUrl: resolvedMemeImgB,
+                    votes: Number(memeData?.votesB || body.votesB) || 0,
+                  },
+                ]
+              : undefined,
             authorName: memeData?.authorName || creatorName || "SportsFan",
             authorHandle: memeData?.authorHandle || (creatorName ? `@${creatorName.toLowerCase().replace(/\s+/g, "")}` : "@sportsfan"),
             authorAvatar: memeData?.authorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
