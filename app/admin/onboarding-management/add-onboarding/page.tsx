@@ -1,10 +1,30 @@
 // app/admin/onboarding-management/add-onboarding/page.tsx
 'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import axios from "axios";
+import {
+  Search,
+  Users,
+  CheckCircle2,
+  RefreshCw,
+  Download,
+  Filter,
+  Eye,
+  X,
+  Calendar,
+  ShieldCheck,
+  Mail,
+  Flame,
+  UserCheck,
+  ChevronDown,
+  Sparkles,
+  Trophy,
+  ExternalLink,
+} from "lucide-react";
 
 type ConfigType = "sports" | "followEntities" | "engagement" | "requestedSports";
+type TabType = ConfigType | "completed";
 
 type ConfigItem = {
   id: string;
@@ -20,6 +40,35 @@ type ConfigItem = {
   sportId?: string; // followEntities section's sport
 };
 
+export interface OnboardedUser {
+  email: string;
+  userId: string;
+  username?: string;
+  userName?: string;
+  handle?: string;
+  firstName?: string;
+  lastName?: string;
+  name: string;
+  avatar?: string;
+  avatarUrl?: string;
+  photoURL?: string;
+  picture?: string;
+  image?: string;
+  role?: string;
+  status?: string;
+  authMethod?: string;
+  isVerified?: boolean;
+  totalPoints?: number;
+  createdAt?: number | null;
+  lastLoginAt?: number | null;
+  onboardingCompleted?: boolean;
+  onboardingCompletedAt?: number | null;
+  sports?: string[];
+  followEntities?: string[];
+  engagementPrefs?: string[];
+  requestedSport?: string | null;
+}
+
 const CONFIG_API = "/api/roar/onboarding-config";
 
 const inputClass =
@@ -27,7 +76,6 @@ const inputClass =
 const labelClass = "block text-xs font-medium text-gray-400 mb-1";
 
 // Reads a File into a data URL. Swap this out for a real upload endpoint
-// (e.g. Firebase Storage) once one exists — this keeps the panel usable now.
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -74,7 +122,7 @@ const SPREADSHEET_SPORTS_OPTIONS = [
 ];
 
 export default function OnboardingConfigAdmin() {
-  const [tab, setTab] = useState<ConfigType>("sports");
+  const [tab, setTab] = useState<TabType>("sports");
   const [items, setItems] = useState<ConfigItem[]>([]);
   const [sportsList, setSportsList] = useState<ConfigItem[]>([]); // for followEntities section sport dropdown
   const [loading, setLoading] = useState(true);
@@ -126,6 +174,16 @@ export default function OnboardingConfigAdmin() {
   const [newRequestedSportInput, setNewRequestedSportInput] = useState("");
   const [isAddingRequestedSport, setIsAddingRequestedSport] = useState(false);
 
+  // ── ONBOARDING COMPLETED TAB STATES ──
+  const [completedUsers, setCompletedUsers] = useState<OnboardedUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [completedUsersError, setCompletedUsersError] = useState<string | null>(null);
+  const [userSearchQuery, setUserSearchQuery] = useState("");
+  const [userSportFilter, setUserSportFilter] = useState<string>("ALL");
+  const [userSortOrder, setUserSortOrder] = useState<"newest" | "oldest" | "name" | "points">("newest");
+  const [selectedDetailUser, setSelectedDetailUser] = useState<OnboardedUser | null>(null);
+  const [showRawJson, setShowRawJson] = useState(false);
+
   const load = async (type: ConfigType) => {
     setLoading(true);
     setLoadError(null);
@@ -170,6 +228,27 @@ export default function OnboardingConfigAdmin() {
       }
     } catch (e) {
       console.warn("loadRequestedSports failed:", e);
+    }
+  };
+
+  const loadCompletedUsers = async () => {
+    setLoadingUsers(true);
+    setCompletedUsersError(null);
+    try {
+      const res = await axios.get("/api/users");
+      const list: OnboardedUser[] = res.data?.users ?? [];
+      const completed = list.filter(
+        (u) =>
+          u.onboardingCompleted === true ||
+          (Array.isArray(u.sports) && u.sports.length > 0) ||
+          !!u.onboardingCompletedAt
+      );
+      setCompletedUsers(completed);
+    } catch (err: any) {
+      console.error("Failed to load completed users:", err);
+      setCompletedUsersError("Failed to fetch completed users. Please check connection.");
+    } finally {
+      setLoadingUsers(false);
     }
   };
 
@@ -254,6 +333,7 @@ export default function OnboardingConfigAdmin() {
   };
 
   const handleSaveQuestion = async () => {
+    if (tab === "completed") return;
     if (!questionData.question.trim()) {
       alert("Question title cannot be blank.");
       return;
@@ -278,13 +358,32 @@ export default function OnboardingConfigAdmin() {
   };
 
   const handleResetQuestion = () => {
-    const def = DEFAULT_QUESTIONS[tab];
+    if (tab === "completed") return;
+    const def = DEFAULT_QUESTIONS[tab as ConfigType];
     if (def) {
       setQuestionData({ question: def.question, subtitle: def.subtitle });
     }
   };
 
+  // On initial mount, load completed users in background for badge count + URL check
   useEffect(() => {
+    loadCompletedUsers();
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlTab = params.get("tab");
+      if (urlTab === "completed" || urlTab === "onboarding-completed") {
+        setTab("completed");
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "completed") {
+      loadCompletedUsers();
+      setLoading(false);
+      return;
+    }
+
     load(tab);
     setEditing(null);
     setEditingEntity(null);
@@ -317,7 +416,7 @@ export default function OnboardingConfigAdmin() {
   // ---------- sports / engagement (flat list) ----------
 
   const saveFlat = async () => {
-    if (!editing) return;
+    if (!editing || tab === "completed") return;
     const payload = { ...editing };
     try {
       if (payload.id) {
@@ -331,7 +430,7 @@ export default function OnboardingConfigAdmin() {
             : { label: "", icon: "", subtitle: "", active: true, order: items.length + 1 }
         );
       }
-      await load(tab);
+      await load(tab as ConfigType);
     } catch (err) {
       console.error(err);
       alert("Save failed — check the console for details.");
@@ -533,42 +632,805 @@ export default function OnboardingConfigAdmin() {
     }
   };
 
-  return (
-    <div className="max-w-6xl mx-auto py-8 px-4 text-gray-100 min-h-screen bg-gray-950">
-      <h1 className="text-2xl font-bold mb-4 text-gray-50">ROAR Onboarding Config</h1>
+  // ── ONBOARDED USERS FILTER & SEARCH COMPUTATIONS ──
+  const availableUserSports = useMemo(() => {
+    const set = new Set<string>();
+    completedUsers.forEach((u) => {
+      (u.sports || []).forEach((s) => set.add(s));
+    });
+    return Array.from(set).sort();
+  }, [completedUsers]);
 
-      <div className="flex gap-2 mb-6">
+  const filteredCompletedUsers = useMemo(() => {
+    return completedUsers
+      .filter((u) => {
+        // Sport filter
+        if (userSportFilter !== "ALL") {
+          const sportsLower = (u.sports || []).map((s) => s.toLowerCase());
+          if (!sportsLower.includes(userSportFilter.toLowerCase())) {
+            return false;
+          }
+        }
+
+        // Search Query filter
+        if (!userSearchQuery.trim()) return true;
+        const q = userSearchQuery.toLowerCase().trim();
+
+        const nameMatch = (u.name || "").toLowerCase().includes(q);
+        const emailMatch = (u.email || "").toLowerCase().includes(q);
+        const usernameMatch = (u.userName || u.username || u.handle || u.userId || "").toLowerCase().includes(q);
+        const sportsMatch = (u.sports || []).some((s) => s.toLowerCase().includes(q));
+        const entitiesMatch = (u.followEntities || []).some((e) => e.toLowerCase().includes(q));
+        const engagementMatch = (u.engagementPrefs || []).some((p) => p.toLowerCase().includes(q));
+        const requestedMatch = (u.requestedSport || "").toLowerCase().includes(q);
+
+        return nameMatch || emailMatch || usernameMatch || sportsMatch || entitiesMatch || engagementMatch || requestedMatch;
+      })
+      .sort((a, b) => {
+        if (userSortOrder === "newest") {
+          const timeB = b.onboardingCompletedAt || b.createdAt || 0;
+          const timeA = a.onboardingCompletedAt || a.createdAt || 0;
+          return timeB - timeA;
+        }
+        if (userSortOrder === "oldest") {
+          const timeB = b.onboardingCompletedAt || b.createdAt || 0;
+          const timeA = a.onboardingCompletedAt || a.createdAt || 0;
+          return timeA - timeB;
+        }
+        if (userSortOrder === "name") {
+          return (a.name || "").localeCompare(b.name || "");
+        }
+        if (userSortOrder === "points") {
+          return (b.totalPoints || 0) - (a.totalPoints || 0);
+        }
+        return 0;
+      });
+  }, [completedUsers, userSearchQuery, userSportFilter, userSortOrder]);
+
+  const handleExportCsv = () => {
+    if (filteredCompletedUsers.length === 0) {
+      alert("No users to export with current filters.");
+      return;
+    }
+    const headers = [
+      "Full Name",
+      "Email",
+      "Username / Handle",
+      "Onboarding Completed Date",
+      "Selected Sports",
+      "Followed Entities",
+      "Engagement Preferences",
+      "Requested Sport",
+      "Auth Method",
+      "Total Points",
+      "Status",
+    ];
+    const rows = filteredCompletedUsers.map((u) => [
+      `"${(u.name || "").replace(/"/g, '""')}"`,
+      `"${(u.email || "").replace(/"/g, '""')}"`,
+      `"${(u.userName || u.username || u.handle || "").replace(/"/g, '""')}"`,
+      `"${u.onboardingCompletedAt ? new Date(u.onboardingCompletedAt).toLocaleString() : (u.createdAt ? new Date(u.createdAt).toLocaleString() : "N/A")}"`,
+      `"${(u.sports || []).join(", ").replace(/"/g, '""')}"`,
+      `"${(u.followEntities || []).join(", ").replace(/"/g, '""')}"`,
+      `"${(u.engagementPrefs || []).join(", ").replace(/"/g, '""')}"`,
+      `"${(u.requestedSport || "").replace(/"/g, '""')}"`,
+      `"${(u.authMethod || "").replace(/"/g, '""')}"`,
+      `"${u.totalPoints || 0}"`,
+      `"${(u.status || "active").replace(/"/g, '""')}"`,
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `onboarding_completed_users_${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const getInitials = (name: string, email: string) => {
+    if (name && name.trim()) {
+      const parts = name.trim().split(/\s+/);
+      if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    return (email || "U").slice(0, 2).toUpperCase();
+  };
+
+  const formatTimestamp = (ts?: number | null) => {
+    if (!ts) return "N/A";
+    try {
+      const d = new Date(ts);
+      return d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch {
+      return "N/A";
+    }
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 text-gray-100 min-h-screen bg-gray-950 font-sans">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-gray-800">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-lg bg-orange-500/20 text-orange-400 border border-orange-500/30">
+              <Sparkles className="w-5 h-5" />
+            </span>
+            <h1 className="text-2xl font-black text-gray-50 tracking-tight">ROAR Onboarding Management</h1>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            Configure fan onboarding screens, track selections, and view fans who completed onboarding.
+          </p>
+        </div>
+
+        {tab === "completed" && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={loadCompletedUsers}
+              disabled={loadingUsers}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-900 hover:bg-gray-800 text-gray-300 hover:text-white border border-gray-700 text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? "animate-spin text-orange-400" : ""}`} />
+              <span>Refresh</span>
+            </button>
+            <button
+              onClick={handleExportCsv}
+              disabled={filteredCompletedUsers.length === 0}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-white text-xs font-semibold border border-emerald-500/40 shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export CSV</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex flex-wrap gap-2 mb-6">
         {(
           [
             { key: "sports", label: "Sports (Step 1)" },
             { key: "followEntities", label: "What do you follow? (Step 2)" },
             { key: "engagement", label: "How do you like your sports? (Step 3)" },
-          ] as { key: ConfigType; label: string }[]
-        ).map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium border ${
-              tab === t.key
-                ? "bg-orange-500 text-white border-orange-500"
-                : "bg-gray-900 text-gray-300 border-gray-700"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+            { key: "completed", label: "Onboarding Completed", count: completedUsers.length },
+          ] as { key: TabType; label: string; count?: number }[]
+        ).map((t) => {
+          const isSelected = tab === t.key;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-4 py-2.5 rounded-xl text-sm font-semibold border flex items-center gap-2.5 transition-all cursor-pointer ${
+                isSelected
+                  ? "bg-orange-500 text-white border-orange-500 shadow-md shadow-orange-500/20"
+                  : "bg-gray-900 text-gray-300 border-gray-700 hover:bg-gray-800 hover:border-gray-600"
+              }`}
+            >
+              <span>{t.label}</span>
+              {t.key === "completed" && (
+                <span
+                  className={`px-2 py-0.5 rounded-full text-xs font-bold transition-colors ${
+                    isSelected
+                      ? "bg-black/30 text-white"
+                      : "bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                  }`}
+                >
+                  {completedUsers.length}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {loading && <p className="text-gray-400">Loading…</p>}
+      {loading && tab !== "completed" && <p className="text-gray-400">Loading…</p>}
 
-      {!loading && loadError && (
+      {!loading && loadError && tab !== "completed" && (
         <div className="border border-red-800 bg-red-950/40 text-red-300 text-sm rounded-lg p-4 mb-6">
           {loadError}
         </div>
       )}
 
-      {/* ── STEP QUESTION & PROMPT CONFIGURATION (LEVEL 1: QUESTION) ── */}
-      {!loading && (
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* ── TAB: ONBOARDING COMPLETED (USERS TABLE & SEARCH) ── */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {tab === "completed" && (
+        <div className="space-y-6">
+          {/* Summary Metric Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="border border-gray-800 bg-gray-900/90 rounded-2xl p-4 shadow-md flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-orange-500/20 border border-orange-500/30 flex items-center justify-center text-orange-400">
+                <UserCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Completed Onboarding</p>
+                <p className="text-2xl font-black text-white mt-0.5">{completedUsers.length}</p>
+                <p className="text-[10px] text-gray-500">Total verified onboarding records</p>
+              </div>
+            </div>
+
+            <div className="border border-gray-800 bg-gray-900/90 rounded-2xl p-4 shadow-md flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Filtered Results</p>
+                <p className="text-2xl font-black text-emerald-400 mt-0.5">{filteredCompletedUsers.length}</p>
+                <p className="text-[10px] text-gray-500">Matching current search & filters</p>
+              </div>
+            </div>
+
+            <div className="border border-gray-800 bg-gray-900/90 rounded-2xl p-4 shadow-md flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                <Trophy className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Sports Covered</p>
+                <p className="text-2xl font-black text-blue-400 mt-0.5">{availableUserSports.length}</p>
+                <p className="text-[10px] text-gray-500">Distinct sports fans follow</p>
+              </div>
+            </div>
+
+            <div className="border border-gray-800 bg-gray-900/90 rounded-2xl p-4 shadow-md flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <Flame className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Custom Sport Requests</p>
+                <p className="text-2xl font-black text-amber-400 mt-0.5">
+                  {completedUsers.filter((u) => !!u.requestedSport).length}
+                </p>
+                <p className="text-[10px] text-gray-500">Fans requesting additional sports</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Search & Filter Bar */}
+          <div className="border border-gray-800 bg-gray-900/90 rounded-2xl p-4 shadow-md space-y-3">
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              {/* Search Bar Input */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={userSearchQuery}
+                  onChange={(e) => setUserSearchQuery(e.target.value)}
+                  placeholder="Search completed users by name, email, @handle, sports, teams, or requested sport..."
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-gray-950 border border-gray-700 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors shadow-inner"
+                />
+                {userSearchQuery && (
+                  <button
+                    onClick={() => setUserSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white p-0.5 rounded-full hover:bg-gray-800 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Sort Dropdown */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400 whitespace-nowrap font-medium">Sort:</span>
+                <select
+                  value={userSortOrder}
+                  onChange={(e) => setUserSortOrder(e.target.value as any)}
+                  className="px-3 py-2 rounded-xl bg-gray-950 border border-gray-700 text-xs font-semibold text-gray-200 focus:outline-none focus:border-orange-500 cursor-pointer"
+                >
+                  <option value="newest">Newest Onboarded</option>
+                  <option value="oldest">Oldest Onboarded</option>
+                  <option value="name">Name (A-Z)</option>
+                  <option value="points">Highest Points</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Sport Quick Filter Pills */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-xs text-gray-400 font-medium mr-1 flex items-center gap-1">
+                <Filter className="w-3 h-3 text-orange-400" /> Sport Filter:
+              </span>
+              <button
+                onClick={() => setUserSportFilter("ALL")}
+                className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
+                  userSportFilter === "ALL"
+                    ? "bg-orange-500 text-white border-orange-500 shadow-sm shadow-orange-500/30"
+                    : "bg-gray-950 text-gray-400 border-gray-800 hover:border-gray-700 hover:text-gray-200"
+                }`}
+              >
+                All Sports ({completedUsers.length})
+              </button>
+              {availableUserSports.map((sportName) => {
+                const count = completedUsers.filter((u) =>
+                  (u.sports || []).some((s) => s.toLowerCase() === sportName.toLowerCase())
+                ).length;
+                const isSelected = userSportFilter.toLowerCase() === sportName.toLowerCase();
+                return (
+                  <button
+                    key={sportName}
+                    onClick={() => setUserSportFilter(isSelected ? "ALL" : sportName)}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                      isSelected
+                        ? "bg-orange-500 text-white border-orange-500 shadow-sm shadow-orange-500/30"
+                        : "bg-gray-950 text-gray-300 border-gray-800 hover:border-gray-700 hover:text-white"
+                    }`}
+                  >
+                    <span>{sportName}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                        isSelected ? "bg-black/30 text-white" : "bg-gray-800 text-gray-400"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Loading Error Notice */}
+          {completedUsersError && (
+            <div className="border border-red-800 bg-red-950/40 text-red-300 text-sm rounded-xl p-4 flex items-center justify-between">
+              <span>{completedUsersError}</span>
+              <button
+                onClick={loadCompletedUsers}
+                className="px-3 py-1 bg-red-900/60 hover:bg-red-800 text-white text-xs font-semibold rounded-lg border border-red-700"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Users Table */}
+          <div className="border border-gray-800 bg-gray-900/80 rounded-2xl shadow-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-800 bg-gray-950/90 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                    <th className="py-3.5 px-4">Fan / Profile</th>
+                    <th className="py-3.5 px-4">Email & Auth</th>
+                    <th className="py-3.5 px-4">Onboarded At</th>
+                    <th className="py-3.5 px-4">Sports Selected</th>
+                    <th className="py-3.5 px-4">What They Follow</th>
+                    <th className="py-3.5 px-4">Engagement</th>
+                    <th className="py-3.5 px-4">Custom Request</th>
+                    <th className="py-3.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800/60 text-xs">
+                  {filteredCompletedUsers.map((user) => {
+                    const avatarUrl = user.avatar || user.avatarUrl || user.photoURL || user.image;
+                    const initials = getInitials(user.name, user.email);
+                    const handleOrName = user.handle || user.username || user.userName || user.email.split("@")[0];
+
+                    return (
+                      <tr
+                        key={user.email || user.userId}
+                        className="hover:bg-gray-800/40 transition-colors group"
+                      >
+                        {/* Fan / Profile */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-3">
+                            {avatarUrl ? (
+                              <img
+                                src={avatarUrl}
+                                alt={user.name}
+                                className="w-9 h-9 rounded-full object-cover border border-orange-500/40 shadow-sm"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = "none";
+                                }}
+                              />
+                            ) : (
+                              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center font-bold text-white shadow-sm text-xs border border-orange-400/40">
+                                {initials}
+                              </div>
+                            )}
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-gray-100 group-hover:text-orange-400 transition-colors text-sm">
+                                  {user.name || "Sports Fan"}
+                                </span>
+                                {user.role === "admin" && (
+                                  <span className="px-1.5 py-0.2 rounded bg-red-500/20 text-red-400 font-bold text-[9px] border border-red-500/30">
+                                    ADMIN
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-gray-400 font-mono">@{handleOrName}</p>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Email & Auth */}
+                        <td className="py-3.5 px-4">
+                          <div>
+                            <div className="flex items-center gap-1 text-gray-200">
+                              <Mail className="w-3 h-3 text-gray-500" />
+                              <span className="font-mono text-[11px]">{user.email}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700">
+                                {user.authMethod || "Email & Password"}
+                              </span>
+                              {user.isVerified !== false && (
+                                <span className="text-[10px] text-emerald-400 flex items-center gap-0.5" title="Verified Account">
+                                  <ShieldCheck className="w-3 h-3" />
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Onboarded At */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-1.5 text-gray-300">
+                            <Calendar className="w-3.5 h-3.5 text-orange-400/70" />
+                            <span className="whitespace-nowrap font-medium text-[11px]">
+                              {formatTimestamp(user.onboardingCompletedAt || user.createdAt)}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Sports Selected */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap gap-1 max-w-xs">
+                            {user.sports && user.sports.length > 0 ? (
+                              user.sports.map((sp, idx) => (
+                                <span
+                                  key={idx}
+                                  className="px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-300 border border-orange-500/30 text-[11px] font-semibold"
+                                >
+                                  {sp}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-gray-500 italic text-[11px]">None</span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* What They Follow */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap gap-1 max-w-xs">
+                            {user.followEntities && user.followEntities.length > 0 ? (
+                              <>
+                                {user.followEntities.slice(0, 3).map((ent, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 text-[10px] font-medium"
+                                  >
+                                    {ent}
+                                  </span>
+                                ))}
+                                {user.followEntities.length > 3 && (
+                                  <span className="px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 text-[10px] font-semibold border border-gray-700">
+                                    +{user.followEntities.length - 3}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-gray-500 italic text-[11px]">None</span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Engagement */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap gap-1 max-w-xs">
+                            {user.engagementPrefs && user.engagementPrefs.length > 0 ? (
+                              user.engagementPrefs.slice(0, 2).map((pref, idx) => (
+                                <span
+                                  key={idx}
+                                  className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[10px] font-medium truncate max-w-[120px]"
+                                  title={pref}
+                                >
+                                  {pref}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-gray-500 italic text-[11px]">None</span>
+                            )}
+                            {user.engagementPrefs && user.engagementPrefs.length > 2 && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 text-[10px] font-semibold border border-gray-700">
+                                +{user.engagementPrefs.length - 2}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Custom Request */}
+                        <td className="py-3.5 px-4">
+                          {user.requestedSport ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold">
+                              <Flame className="w-3 h-3 text-amber-400" />
+                              {user.requestedSport}
+                            </span>
+                          ) : (
+                            <span className="text-gray-600">—</span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={() => {
+                              setSelectedDetailUser(user);
+                              setShowRawJson(false);
+                            }}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-orange-500 text-gray-200 hover:text-white border border-gray-700 hover:border-orange-500 text-xs font-semibold transition-all cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Details</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Empty States */}
+            {filteredCompletedUsers.length === 0 && !loadingUsers && (
+              <div className="py-16 px-4 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-gray-800/80 border border-gray-700 flex items-center justify-center mx-auto mb-3 text-gray-500">
+                  <Search className="w-8 h-8" />
+                </div>
+                <h4 className="text-base font-bold text-gray-200">
+                  {userSearchQuery ? `No fans matching "${userSearchQuery}"` : "No completed onboarding records found"}
+                </h4>
+                <p className="text-xs text-gray-400 max-w-md mx-auto mt-1 mb-4">
+                  {userSearchQuery
+                    ? "Try searching by a different name, email, @handle, sport, or clear the search input."
+                    : "Fans will automatically appear here once they complete the ROAR 3-step onboarding flow."}
+                </p>
+                {userSearchQuery && (
+                  <button
+                    onClick={() => {
+                      setUserSearchQuery("");
+                      setUserSportFilter("ALL");
+                    }}
+                    className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold shadow-md transition-colors"
+                  >
+                    Clear Search Filters
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Table Footer Count Info */}
+            <div className="px-4 py-3 border-t border-gray-800 bg-gray-950/80 flex items-center justify-between text-xs text-gray-400">
+              <span>
+                Showing <strong className="text-white">{filteredCompletedUsers.length}</strong> of{" "}
+                <strong className="text-white">{completedUsers.length}</strong> completed fan profiles
+              </span>
+              <button
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                className="text-orange-400 hover:text-orange-300 font-medium cursor-pointer"
+              >
+                Back to Top ↑
+              </button>
+            </div>
+          </div>
+
+          {/* ── MODAL: USER ONBOARDING DETAILS INSPECTOR ── */}
+          {selectedDetailUser && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+              <div className="bg-gray-900 border border-gray-700 rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-150">
+                {/* Modal Header */}
+                <div className="p-5 border-b border-gray-800 bg-gray-950 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {selectedDetailUser.avatar || selectedDetailUser.avatarUrl ? (
+                      <img
+                        src={selectedDetailUser.avatar || selectedDetailUser.avatarUrl}
+                        alt={selectedDetailUser.name}
+                        className="w-12 h-12 rounded-full object-cover border-2 border-orange-500/60"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center font-bold text-white text-base border-2 border-orange-400/40">
+                        {getInitials(selectedDetailUser.name, selectedDetailUser.email)}
+                      </div>
+                    )}
+                    <div>
+                      <h3 className="text-lg font-black text-white flex items-center gap-2">
+                        {selectedDetailUser.name || "Sports Fan"}
+                        {selectedDetailUser.role === "admin" && (
+                          <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 text-[10px] font-bold border border-red-500/30">
+                            ADMIN
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-xs text-gray-400 font-mono">
+                        @{selectedDetailUser.handle || selectedDetailUser.username || selectedDetailUser.userName || selectedDetailUser.email.split("@")[0]} • {selectedDetailUser.email}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setSelectedDetailUser(null)}
+                    className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Modal Body */}
+                <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
+                  {/* Step 1: Sports Chosen */}
+                  <div className="border border-gray-800 bg-gray-950 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-orange-400 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                        Step 1 • Selected Sports
+                      </span>
+                      <span className="text-[11px] text-gray-500 font-semibold">
+                        {selectedDetailUser.sports?.length || 0} selected
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {selectedDetailUser.sports && selectedDetailUser.sports.length > 0 ? (
+                        selectedDetailUser.sports.map((sport, i) => (
+                          <span
+                            key={i}
+                            className="px-3 py-1 rounded-lg bg-orange-500/20 text-orange-300 font-semibold text-xs border border-orange-500/40"
+                          >
+                            {sport}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-gray-500 italic">No sports recorded</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Step 2: What They Follow (Entities, Teams, Athletes) */}
+                  <div className="border border-gray-800 bg-gray-950 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                        Step 2 • What Do You Follow? (Teams, Athletes, Competitions)
+                      </span>
+                      <span className="text-[11px] text-gray-500 font-semibold">
+                        {selectedDetailUser.followEntities?.length || 0} selected
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {selectedDetailUser.followEntities && selectedDetailUser.followEntities.length > 0 ? (
+                        selectedDetailUser.followEntities.map((ent, i) => (
+                          <span
+                            key={i}
+                            className="px-3 py-1 rounded-lg bg-blue-500/20 text-blue-300 font-semibold text-xs border border-blue-500/40"
+                          >
+                            {ent}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-gray-500 italic">No followed entities recorded</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Step 3: How they like sports (Engagement Modes) */}
+                  <div className="border border-gray-800 bg-gray-950 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                        Step 3 • Engagement Preferences (How do you like your sports?)
+                      </span>
+                      <span className="text-[11px] text-gray-500 font-semibold">
+                        {selectedDetailUser.engagementPrefs?.length || 0} selected
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {selectedDetailUser.engagementPrefs && selectedDetailUser.engagementPrefs.length > 0 ? (
+                        selectedDetailUser.engagementPrefs.map((pref, i) => (
+                          <span
+                            key={i}
+                            className="px-3 py-1 rounded-lg bg-purple-500/20 text-purple-300 font-semibold text-xs border border-purple-500/40"
+                          >
+                            {pref}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-gray-500 italic">No engagement preferences recorded</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Custom Requested Sport */}
+                  {selectedDetailUser.requestedSport && (
+                    <div className="border border-amber-500/40 bg-amber-950/20 rounded-xl p-4 space-y-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                        <Flame className="w-3.5 h-3.5 text-amber-400" />
+                        Custom Sport Requested
+                      </span>
+                      <p className="text-sm font-bold text-amber-200">
+                        {selectedDetailUser.requestedSport}
+                      </p>
+                      <p className="text-[11px] text-amber-400/80">
+                        This fan requested access to "{selectedDetailUser.requestedSport}" from the dropdown feedback prompt.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Account Metadata Summary */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs bg-gray-950 p-4 rounded-xl border border-gray-800">
+                    <div>
+                      <p className="text-gray-500 text-[10px] uppercase font-semibold">Onboarded At</p>
+                      <p className="text-gray-200 font-medium mt-0.5">
+                        {formatTimestamp(selectedDetailUser.onboardingCompletedAt || selectedDetailUser.createdAt)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 text-[10px] uppercase font-semibold">Auth Method</p>
+                      <p className="text-gray-200 font-medium mt-0.5">
+                        {selectedDetailUser.authMethod || "Email & Password"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 text-[10px] uppercase font-semibold">Total Points</p>
+                      <p className="text-orange-400 font-bold mt-0.5">
+                        {selectedDetailUser.totalPoints || 0} SXP
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 text-[10px] uppercase font-semibold">User ID</p>
+                      <p className="text-gray-300 font-mono text-[11px] mt-0.5 truncate" title={selectedDetailUser.userId}>
+                        {selectedDetailUser.userId}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 text-[10px] uppercase font-semibold">Status</p>
+                      <p className="text-emerald-400 font-semibold mt-0.5 capitalize">
+                        {selectedDetailUser.status || "active"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Raw JSON Toggle */}
+                  <div>
+                    <button
+                      onClick={() => setShowRawJson(!showRawJson)}
+                      className="text-xs text-gray-400 hover:text-gray-200 font-medium flex items-center gap-1 cursor-pointer"
+                    >
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showRawJson ? "rotate-180" : ""}`} />
+                      {showRawJson ? "Hide Raw User Data" : "View Raw JSON Data"}
+                    </button>
+                    {showRawJson && (
+                      <pre className="mt-2 p-3 rounded-xl bg-black border border-gray-800 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-48">
+                        {JSON.stringify(selectedDetailUser, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                </div>
+
+                {/* Modal Footer */}
+                <div className="p-4 border-t border-gray-800 bg-gray-950 flex items-center justify-end">
+                  <button
+                    onClick={() => setSelectedDetailUser(null)}
+                    className="px-5 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* ── STEP QUESTION & PROMPT CONFIGURATION (FOR CONFIG TABS) ── */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {!loading && tab !== "completed" && (
         <div className="border border-gray-700 bg-gray-900 rounded-2xl p-5 mb-8 shadow-xl">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
             {/* Left Column: Editor Inputs */}
@@ -576,7 +1438,7 @@ export default function OnboardingConfigAdmin() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-md bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                    Step {DEFAULT_QUESTIONS[tab].stepNumber} of 3
+                    Step {DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1} of 3
                   </span>
                   <h2 className="text-lg font-bold text-gray-100 flex items-center gap-2">
                     Step Question & Prompt
@@ -584,9 +1446,7 @@ export default function OnboardingConfigAdmin() {
                 </div>
                 {questionSavedToast && (
                   <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-700/50 px-3 py-1 rounded-full">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                    </svg>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
                     Question Saved!
                   </span>
                 )}
@@ -632,21 +1492,16 @@ export default function OnboardingConfigAdmin() {
                   type="button"
                   onClick={handleSaveQuestion}
                   disabled={isSavingQuestion}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-sm font-semibold shadow-md transition-colors"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-sm font-semibold shadow-md transition-colors cursor-pointer"
                 >
                   {isSavingQuestion ? (
                     <>
-                      <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                      </svg>
+                      <RefreshCw className="animate-spin h-4 w-4 text-white" />
                       <span>Saving Question…</span>
                     </>
                   ) : (
                     <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                      </svg>
+                      <CheckCircle2 className="w-4 h-4" />
                       <span>Save Question</span>
                     </>
                   )}
@@ -655,7 +1510,7 @@ export default function OnboardingConfigAdmin() {
                 <button
                   type="button"
                   onClick={handleResetQuestion}
-                  className="px-3.5 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium border border-gray-700 transition-colors"
+                  className="px-3.5 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium border border-gray-700 transition-colors cursor-pointer"
                 >
                   Reset to Default
                 </button>
@@ -674,11 +1529,11 @@ export default function OnboardingConfigAdmin() {
 
               <div className="bg-gradient-to-b from-gray-900 to-gray-950 rounded-lg p-3.5 border border-gray-800 space-y-2.5">
                 <div className="flex items-center justify-between text-[11px] text-gray-400 font-semibold tracking-wider uppercase">
-                  <span>Step {DEFAULT_QUESTIONS[tab].stepNumber} of 3</span>
+                  <span>Step {DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1} of 3</span>
                   <div className="flex gap-1">
-                    <span className={`w-3 h-1 rounded-full ${DEFAULT_QUESTIONS[tab].stepNumber >= 1 ? "bg-orange-500" : "bg-gray-700"}`}></span>
-                    <span className={`w-3 h-1 rounded-full ${DEFAULT_QUESTIONS[tab].stepNumber >= 2 ? "bg-orange-500" : "bg-gray-700"}`}></span>
-                    <span className={`w-3 h-1 rounded-full ${DEFAULT_QUESTIONS[tab].stepNumber >= 3 ? "bg-orange-500" : "bg-gray-700"}`}></span>
+                    <span className={`w-3 h-1 rounded-full ${(DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1) >= 1 ? "bg-orange-500" : "bg-gray-700"}`}></span>
+                    <span className={`w-3 h-1 rounded-full ${(DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1) >= 2 ? "bg-orange-500" : "bg-gray-700"}`}></span>
+                    <span className={`w-3 h-1 rounded-full ${(DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1) >= 3 ? "bg-orange-500" : "bg-gray-700"}`}></span>
                   </div>
                 </div>
 
@@ -741,7 +1596,7 @@ export default function OnboardingConfigAdmin() {
       )}
 
       {/* ── OPTIONS MANAGEMENT SECTION DIVIDER ── */}
-      {!loading && (
+      {!loading && tab !== "completed" && (
         <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-800">
           <div>
             <h3 className="text-base font-semibold text-gray-200">
@@ -763,7 +1618,7 @@ export default function OnboardingConfigAdmin() {
         <>
           <button
             onClick={() => setEditing({ label: "", image: "", active: true, order: items.length })}
-            className="mb-4 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium"
+            className="mb-4 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium cursor-pointer"
           >
             + Add sport
           </button>
@@ -798,13 +1653,13 @@ export default function OnboardingConfigAdmin() {
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={saveFlat}
-                  className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium"
+                  className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium cursor-pointer"
                 >
                   Save
                 </button>
                 <button
                   onClick={() => setEditing(null)}
-                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-100 text-sm font-medium"
+                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-100 text-sm font-medium cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -829,19 +1684,19 @@ export default function OnboardingConfigAdmin() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => toggleActive("sports", item)}
-                    className="text-xs px-3 py-1.5 rounded bg-gray-800 text-gray-200 border border-gray-600"
+                    className="text-xs px-3 py-1.5 rounded bg-gray-800 text-gray-200 border border-gray-600 hover:bg-gray-700 cursor-pointer"
                   >
                     {item.active ? "Deactivate" : "Activate"}
                   </button>
                   <button
                     onClick={() => setEditing(item)}
-                    className="text-xs px-3 py-1.5 rounded bg-blue-900 text-blue-200 border border-blue-700"
+                    className="text-xs px-3 py-1.5 rounded bg-blue-900 text-blue-200 border border-blue-700 hover:bg-blue-800 cursor-pointer"
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => remove("sports", item.id)}
-                    className="text-xs px-3 py-1.5 rounded bg-red-900 text-red-200 border border-red-700"
+                    className="text-xs px-3 py-1.5 rounded bg-red-900 text-red-200 border border-red-700 hover:bg-red-800 cursor-pointer"
                   >
                     Delete
                   </button>
@@ -853,7 +1708,7 @@ export default function OnboardingConfigAdmin() {
         </>
       )}
 
-      {/* ---------------- FOLLOW ENTITIES (QUESTION 2: QUESTION -> TITLE -> MULTIPLE OPTIONS) ---------------- */}
+      {/* ---------------- FOLLOW ENTITIES ---------------- */}
       {!loading && tab === "followEntities" && (
         <div className="space-y-6">
           {/* LEVEL 2: TITLE (CATEGORY) SELECTOR & MANAGEMENT */}
@@ -875,7 +1730,7 @@ export default function OnboardingConfigAdmin() {
                 {!isAddingTitle && (
                   <button
                     onClick={() => setIsAddingTitle(true)}
-                    className="px-3.5 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold border border-gray-700 flex items-center gap-1.5 transition-colors"
+                    className="px-3.5 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold border border-gray-700 flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <span>+ Add Title</span>
                   </button>
@@ -896,7 +1751,7 @@ export default function OnboardingConfigAdmin() {
                 />
                 <button
                   onClick={handleAddTitle}
-                  className="px-3 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold whitespace-nowrap"
+                  className="px-3 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
                 >
                   Add Title
                 </button>
@@ -905,7 +1760,7 @@ export default function OnboardingConfigAdmin() {
                     setIsAddingTitle(false);
                     setNewTitleName("");
                   }}
-                  className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-semibold whitespace-nowrap"
+                  className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-semibold whitespace-nowrap cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -956,14 +1811,14 @@ export default function OnboardingConfigAdmin() {
                             setRenamingTitle(titleName);
                             setRenameValue(titleName);
                           }}
-                          className="hover:text-amber-200 text-white/80 p-0.5 text-[11px]"
+                          className="hover:text-amber-200 text-white/80 p-0.5 text-[11px] cursor-pointer"
                         >
                           ✎
                         </button>
                         <button
                           title="Delete Title"
                           onClick={() => handleDeleteTitle(titleName)}
-                          className="hover:text-red-200 text-white/80 p-0.5 text-[11px]"
+                          className="hover:text-red-200 text-white/80 p-0.5 text-[11px] cursor-pointer"
                         >
                           ✕
                         </button>
@@ -987,13 +1842,13 @@ export default function OnboardingConfigAdmin() {
                 />
                 <button
                   onClick={() => handleRenameTitle(renamingTitle, renameValue)}
-                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold whitespace-nowrap"
+                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
                 >
                   Save
                 </button>
                 <button
                   onClick={() => setRenamingTitle(null)}
-                  className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-semibold whitespace-nowrap"
+                  className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-semibold whitespace-nowrap cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -1027,7 +1882,7 @@ export default function OnboardingConfigAdmin() {
                   <button
                     onClick={handlePreloadSpreadsheetOptions}
                     disabled={isBulkSubmitting}
-                    className="px-3.5 py-2 rounded-lg bg-amber-600/30 hover:bg-amber-600/40 text-amber-300 text-xs font-semibold border border-amber-500/40 flex items-center gap-1.5 transition-colors"
+                    className="px-3.5 py-2 rounded-lg bg-amber-600/30 hover:bg-amber-600/40 text-amber-300 text-xs font-semibold border border-amber-500/40 flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <span>⚡ Preload Spreadsheet Options</span>
                   </button>
@@ -1038,7 +1893,7 @@ export default function OnboardingConfigAdmin() {
                     setShowBulkAdd(!showBulkAdd);
                     setShowSingleAdd(false);
                   }}
-                  className={`px-3.5 py-2 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors ${
+                  className={`px-3.5 py-2 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer ${
                     showBulkAdd
                       ? "bg-emerald-600 text-white border-emerald-500"
                       : "bg-gray-800 hover:bg-gray-700 text-emerald-400 border-gray-700"
@@ -1052,7 +1907,7 @@ export default function OnboardingConfigAdmin() {
                     setShowSingleAdd(!showSingleAdd);
                     setShowBulkAdd(false);
                   }}
-                  className={`px-3.5 py-2 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors ${
+                  className={`px-3.5 py-2 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer ${
                     showSingleAdd
                       ? "bg-orange-500 text-white border-orange-500"
                       : "bg-gray-800 hover:bg-gray-700 text-orange-400 border-gray-700"
@@ -1087,7 +1942,7 @@ export default function OnboardingConfigAdmin() {
                   <button
                     onClick={handleBulkAddOptions}
                     disabled={isBulkSubmitting || !bulkOptionsInput.trim()}
-                    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                   >
                     {isBulkSubmitting ? "Adding…" : "Add All Options"}
                   </button>
@@ -1096,7 +1951,7 @@ export default function OnboardingConfigAdmin() {
                       setShowBulkAdd(false);
                       setBulkOptionsInput("");
                     }}
-                    className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-medium"
+                    className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-medium cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -1177,13 +2032,13 @@ export default function OnboardingConfigAdmin() {
                 <div className="flex items-center gap-2 pt-2">
                   <button
                     onClick={handleCreateSingleOption}
-                    className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold"
+                    className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold cursor-pointer"
                   >
                     Save Option
                   </button>
                   <button
                     onClick={() => setShowSingleAdd(false)}
-                    className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-medium"
+                    className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-medium cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -1231,13 +2086,13 @@ export default function OnboardingConfigAdmin() {
                 <div className="flex items-center gap-2 pt-2">
                   <button
                     onClick={saveEntity}
-                    className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold"
+                    className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold cursor-pointer"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={() => setEditingEntity(null)}
-                    className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-medium"
+                    className="px-3 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs font-medium cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -1280,19 +2135,19 @@ export default function OnboardingConfigAdmin() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => toggleActive("followEntities", opt)}
-                        className="text-xs px-2.5 py-1 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700"
+                        className="text-xs px-2.5 py-1 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 cursor-pointer"
                       >
                         {opt.active ? "Hide" : "Show"}
                       </button>
                       <button
                         onClick={() => setEditingEntity(opt)}
-                        className="text-xs px-2.5 py-1 rounded bg-blue-900/60 text-blue-300 border border-blue-700/60 hover:bg-blue-900"
+                        className="text-xs px-2.5 py-1 rounded bg-blue-900/60 text-blue-300 border border-blue-700/60 hover:bg-blue-900 cursor-pointer"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => remove("followEntities", opt.id)}
-                        className="text-xs px-2.5 py-1 rounded bg-red-900/60 text-red-300 border border-red-700/60 hover:bg-red-900"
+                        className="text-xs px-2.5 py-1 rounded bg-red-900/60 text-red-300 border border-red-700/60 hover:bg-red-900 cursor-pointer"
                       >
                         Delete
                       </button>
@@ -1312,7 +2167,7 @@ export default function OnboardingConfigAdmin() {
                   {activeTitle === "Sports" && (
                     <button
                       onClick={handlePreloadSpreadsheetOptions}
-                      className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold"
+                      className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold cursor-pointer"
                     >
                       Preload Spreadsheet Options (Cricket, Football, Athletics, Olympics)
                     </button>
@@ -1321,7 +2176,7 @@ export default function OnboardingConfigAdmin() {
               )}
             </div>
 
-            {/* SPREADSHEET FOOTER ROW (Rows 7-9: "Don't see your favorite sports?") */}
+            {/* SPREADSHEET FOOTER ROW ("Don't see your favorite sports?") */}
             {activeTitle === "Sports" && (
               <div className="p-5 rounded-2xl border border-gray-700 bg-gray-900/60 mt-6 space-y-4 shadow-xl">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-800 pb-3">
@@ -1387,7 +2242,7 @@ export default function OnboardingConfigAdmin() {
                       <button
                         type="button"
                         onClick={() => setIsEditingRequestedPrompt(false)}
-                        className="text-xs px-3 py-1.5 rounded bg-gray-800 text-gray-400 hover:text-white"
+                        className="text-xs px-3 py-1.5 rounded bg-gray-800 text-gray-400 hover:text-white cursor-pointer"
                       >
                         Cancel
                       </button>
@@ -1395,7 +2250,7 @@ export default function OnboardingConfigAdmin() {
                         type="button"
                         disabled={isSavingRequestedQuestion}
                         onClick={handleSaveRequestedPrompt}
-                        className="text-xs px-4 py-1.5 rounded bg-orange-500 hover:bg-orange-600 text-white font-semibold"
+                        className="text-xs px-4 py-1.5 rounded bg-orange-500 hover:bg-orange-600 text-white font-semibold cursor-pointer"
                       >
                         {isSavingRequestedQuestion ? "Saving..." : "Save Prompt"}
                       </button>
@@ -1505,7 +2360,7 @@ export default function OnboardingConfigAdmin() {
             onClick={() =>
               setEditing({ label: "", icon: "", description: "", active: true, order: items.length })
             }
-            className="mb-4 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium"
+            className="mb-4 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium cursor-pointer"
           >
             + Add option
           </button>
@@ -1542,13 +2397,13 @@ export default function OnboardingConfigAdmin() {
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={saveFlat}
-                  className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium"
+                  className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium cursor-pointer"
                 >
                   Save
                 </button>
                 <button
                   onClick={() => setEditing(null)}
-                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-100 text-sm font-medium"
+                  className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-100 text-sm font-medium cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -1576,19 +2431,19 @@ export default function OnboardingConfigAdmin() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => toggleActive("engagement", item)}
-                    className="text-xs px-3 py-1.5 rounded bg-gray-800 text-gray-200 border border-gray-600"
+                    className="text-xs px-3 py-1.5 rounded bg-gray-800 text-gray-200 border border-gray-600 hover:bg-gray-700 cursor-pointer"
                   >
                     {item.active ? "Deactivate" : "Activate"}
                   </button>
                   <button
                     onClick={() => setEditing(item)}
-                    className="text-xs px-3 py-1.5 rounded bg-blue-900 text-blue-200 border border-blue-700"
+                    className="text-xs px-3 py-1.5 rounded bg-blue-900 text-blue-200 border border-blue-700 hover:bg-blue-800 cursor-pointer"
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => remove("engagement", item.id)}
-                    className="text-xs px-3 py-1.5 rounded bg-red-900 text-red-200 border border-red-700"
+                    className="text-xs px-3 py-1.5 rounded bg-red-900 text-red-200 border border-red-700 hover:bg-red-800 cursor-pointer"
                   >
                     Delete
                   </button>
@@ -1601,4 +2456,4 @@ export default function OnboardingConfigAdmin() {
       )}
     </div>
   );
-}
+}

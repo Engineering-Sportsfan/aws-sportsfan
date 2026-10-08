@@ -19,7 +19,9 @@ import {
   ArrowUp,
   ArrowDown,
   Sparkles,
-  Check
+  Check,
+  Calendar,
+  Clock
 } from "lucide-react";
 
 interface MorningBriefItem {
@@ -31,6 +33,8 @@ interface MorningBriefItem {
   description: string;
   sport: string;
   icon: string;
+  date?: string;
+  time?: string;
   active: boolean;
   predictId?: string;
   predictTitle?: string;
@@ -245,7 +249,9 @@ export default function MorningBriefListPage() {
     return (
       story.title?.toLowerCase().includes(q) ||
       story.description?.toLowerCase().includes(q) ||
-      story.sport?.toLowerCase().includes(q)
+      story.sport?.toLowerCase().includes(q) ||
+      story.date?.toLowerCase().includes(q) ||
+      story.time?.toLowerCase().includes(q)
     );
   });
 
@@ -482,9 +488,23 @@ export default function MorningBriefListPage() {
                         </div>
                       </td>
 
-                      {/* Title & Description & CTAs */}
+                      {/* Title & Description & CTAs & Date/Time */}
                       <td className="p-4 min-w-[280px]">
                         <div className="space-y-1.5">
+                          {/* Date & Time badges */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono">
+                              <Calendar size={10} className="text-amber-400" />
+                              <span>{story.date || "Today (IST)"}</span>
+                            </span>
+                            {story.time && (
+                              <span className="text-[10px] font-bold text-gray-300 bg-white/5 border border-white/10 px-2 py-0.5 rounded flex items-center gap-1 font-mono">
+                                <Clock size={10} className="text-gray-400" />
+                                <span>{story.time}</span>
+                              </span>
+                            )}
+                          </div>
+
                           <h4 className="font-black text-white text-sm leading-snug">
                             {story.title}
                           </h4>

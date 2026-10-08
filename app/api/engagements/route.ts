@@ -688,7 +688,7 @@ export async function POST(req: NextRequest) {
     // Dual Write to DynamoDB + Firestore
     await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
 
-    // Award +2 points to creator for creating an engagement (quiz, poll, prediction, fan battle)
+    // Award +2 points to creator for creating an engagement (quiz, poll, prediction, fan battle, meme)
     let pointsAwarded = 0;
     if (creatorId || creatorEmail) {
       try {
@@ -700,7 +700,7 @@ export async function POST(req: NextRequest) {
           engagementId: id,
           engagementType: type,
           engagementTitle: finalTitle,
-          syncQuizLeaderboard: type === "quiz",
+          syncQuizLeaderboard: true,
         });
         if (ptsResult.success) {
           pointsAwarded = ptsResult.pointsAwarded;

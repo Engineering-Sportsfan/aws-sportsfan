@@ -23,6 +23,16 @@ import {
   Check
 } from "lucide-react";
 
+// India Standard Time (IST, UTC+5:30) helper
+function getIndiaDateString(date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 const EMOJI_SUGGESTIONS = [
   "🏸", "🎯", "🏓", "🏏", "🏊", "🤸", "🏹", "🥊", "🏃", "🏑", "⚽", "🏀", "🎾", "🏐", "🔥"
 ];
@@ -54,6 +64,7 @@ function ScheduleForm() {
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Form fields
+  const [date, setDate] = useState<string>(() => getIndiaDateString());
   const [time, setTime] = useState("08:00 AM");
   const [sport, setSport] = useState("Badminton");
   const [icon, setIcon] = useState("🏸");
@@ -158,6 +169,7 @@ function ScheduleForm() {
         const res = await axios.get(`/api/welcomemessage/${editId}`);
         if (res.data.success && res.data.item) {
           const item = res.data.item;
+          setDate(item.date || getIndiaDateString());
           setTime(item.time || "08:00 AM");
           setSport(item.sport || "Badminton");
           setIcon(item.icon || "🏸");
@@ -221,6 +233,7 @@ function ScheduleForm() {
       const payload = {
         id: editId || `agenda_${Date.now()}`,
         type: "todays_agenda",
+        date: date ? date.trim() : getIndiaDateString(),
         time: time.trim(),
         sport: sport.trim(),
         icon,
@@ -520,11 +533,33 @@ function ScheduleForm() {
           {/* Left 2 Cols: Form */}
           <div className="lg:col-span-2">
             <form onSubmit={handleSubmit} className="p-6 rounded-2xl bg-[#111625] border border-white/10 space-y-6">
-              {/* Row 1: Time & Status Type */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Row 1: Date, Time & Status Type */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-gray-300 mb-1.5">
-                    Start Time *
+                  <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar size={13} className="text-purple-400" />
+                      <span>Event Date *</span>
+                    </span>
+                    <span className="text-[9.5px] text-purple-300 bg-purple-500/10 px-1 py-0.5 rounded border border-purple-500/20">
+                      IST
+                    </span>
+                  </label>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    required
+                    className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Clock size={13} className="text-purple-400" />
+                      <span>Start Time *</span>
+                    </span>
                   </label>
                   <div className="relative">
                     <Clock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -978,10 +1013,16 @@ function ScheduleForm() {
                 </div>
 
                 <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-gray-400 font-medium">
-                  <span className="flex items-center gap-1 text-gray-300">
-                    <Clock size={11} className="text-purple-400" />
-                    <strong>{time || "08:00 AM"}</strong>
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-1 text-purple-300 font-bold bg-purple-500/15 border border-purple-500/30 px-2 py-0.5 rounded font-mono">
+                      <Calendar size={10} className="text-purple-400" />
+                      <span>{date || getIndiaDateString()}</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-gray-300 font-mono">
+                      <Clock size={11} className="text-purple-400" />
+                      <strong>{time || "08:00 AM"}</strong>
+                    </span>
+                  </div>
                   {venue && (
                     <span className="flex items-center gap-1">
                       <MapPin size={11} className="text-gray-400" />

@@ -22,8 +22,20 @@ import {
   ExternalLink,
   ChevronRight,
   Info,
-  Check
+  Check,
+  Calendar,
+  Clock
 } from "lucide-react";
+
+// India Standard Time (IST, UTC+5:30) helper
+function getIndiaDateString(date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
 
 const EMOJI_SUGGESTIONS = [
   "🏏", "🎯", "🏸", "🏑", "🥊", "🏃", "🏊", "🏓", "🤸", "🏹", "⚽", "🏀", "🎾", "🏐", "🥇", "🏆", "🔥"
@@ -57,6 +69,8 @@ function MorningBriefForm() {
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Form fields
+  const [date, setDate] = useState<string>(() => getIndiaDateString());
+  const [time, setTime] = useState<string>("");
   const [storyNumber, setStoryNumber] = useState<number>(1);
   const [sport, setSport] = useState("Cricket");
   const [icon, setIcon] = useState("🏏");
@@ -133,6 +147,8 @@ function MorningBriefForm() {
         const res = await axios.get(`/api/welcomemessage/${editId}`);
         if (res.data.success && res.data.item) {
           const item = res.data.item;
+          setDate(item.date || getIndiaDateString());
+          setTime(item.time || "");
           setStoryNumber(item.storyNumber || 1);
           setSport(item.sport || "Cricket");
           setIcon(item.icon || "🏏");
@@ -183,6 +199,8 @@ function MorningBriefForm() {
         order: Number(order || storyNumber),
         sport,
         icon,
+        date: date ? date.trim() : getIndiaDateString(),
+        time: time ? time.trim() : undefined,
         title: title.trim(),
         description: description.trim(),
         active,
@@ -469,6 +487,45 @@ function MorningBriefForm() {
           {/* Left 2 Cols: Form */}
           <div className="lg:col-span-2">
               <form onSubmit={handleSubmit} className="p-6 rounded-2xl bg-[#111625] border border-white/10 space-y-6">
+                {/* Row 0: Date (India Std Time) & Time */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Calendar size={13} className="text-amber-400" />
+                        <span>Story Date *</span>
+                      </span>
+                      <span className="text-[10px] font-semibold text-amber-400/90 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                        IST (India Std Time)
+                      </span>
+                    </label>
+                    <input
+                      type="date"
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      required
+                      className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 transition-colors font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Clock size={13} className="text-amber-400" />
+                        <span>Time (Optional)</span>
+                      </span>
+                      <span className="text-[10px] text-gray-400 font-mono">e.g. 08:00 AM</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={time}
+                      onChange={(e) => setTime(e.target.value)}
+                      placeholder="e.g. 08:00 AM (optional)"
+                      className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 transition-colors font-mono"
+                    />
+                  </div>
+                </div>
+
                 {/* Row 1: Display Order & Status */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -872,6 +929,18 @@ function MorningBriefForm() {
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                          <Calendar size={10} />
+                          <span>{date || getIndiaDateString()}</span>
+                        </span>
+                        {time && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white/5 text-gray-300 border border-white/10 flex items-center gap-1">
+                            <Clock size={10} />
+                            <span>{time}</span>
+                          </span>
+                        )}
+                      </div>
                       <h4 className="text-sm font-extrabold text-white leading-snug">
                         {title || "Story Headline Preview"}
                       </h4>
