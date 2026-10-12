@@ -198,6 +198,7 @@ import jwt from "jsonwebtoken";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { logAuthIssue } from "@/lib/logAuthIssue";
 import { logUserActivity } from "@/lib/logUserActivity";
+import { awardDailyLoginPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -419,6 +420,11 @@ export async function POST(req: NextRequest) {
     } catch (logErr) {
       console.warn("User activity logging notice:", logErr);
     }
+
+    // ── 7.6. Award Daily Active Login SXP (+15 SXP, 1/day with streak multiplier) ──
+    awardDailyLoginPoints(userId, name, cleanEmail).catch((err) =>
+      console.warn("[Gamification] Daily login award notice:", err)
+    );
 
     // ── 8. Create JWT token ──────────────────────────────────────────────────
 
