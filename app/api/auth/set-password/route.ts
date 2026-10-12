@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import { GetCommand, QueryCommand, UpdateCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { logAuthIssue } from "@/lib/logAuthIssue";
 import { logUserActivity } from "@/lib/logUserActivity";
+import { awardSignupBonusPoints, awardDailyLoginPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -170,6 +171,20 @@ export async function POST(req: NextRequest) {
     } catch (logErr) {
       console.warn("User signup activity logging notice:", logErr);
     }
+
+    // ── 6. Gamification SXP Awards (Non-blocking & Idempotent) ───────────────
+    const finalUserId = (existingUser?.userId as string) || userId;
+    const finalUserName = `${firstName} ${lastName}`.trim() || cleanEmail.split("@")[0];
+
+    // Award New User Welcome Bonus (+50 SXP)
+    awardSignupBonusPoints(finalUserId, finalUserName, cleanEmail).catch((err) =>
+      console.warn("[Gamification] Set-password signup bonus award notice:", err)
+    );
+
+    // Award Daily Active Login SXP (+15 SXP, 1/day)
+    awardDailyLoginPoints(finalUserId, finalUserName, cleanEmail).catch((err) =>
+      console.warn("[Gamification] Set-password daily login award notice:", err)
+    );
 
     return NextResponse.json({ success: true, message: "Password set and account created successfully" });
   } catch (error: unknown) {

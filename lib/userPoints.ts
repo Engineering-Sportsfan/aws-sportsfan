@@ -245,6 +245,8 @@ const DEFAULT_RULES_FALLBACKS: Record<string, { points: number; dailyLimit: numb
   SAVE_POST: { points: 3, dailyLimit: 10 },
   FOLLOW_USER: { points: 3, dailyLimit: 10 },
   DAILY_LOGIN: { points: 15, dailyLimit: 1 },
+  SIGNUP_BONUS: { points: 50, dailyLimit: 1 },
+  WELCOME_BONUS: { points: 50, dailyLimit: 1 },
   WATCH_ALONG_JOIN: { points: 10, dailyLimit: 3 },
   WATCH_ALONG_REACT: { points: 2, dailyLimit: 20 },
   WATCH_ALONG_CHAT: { points: 3, dailyLimit: 30 },
@@ -465,8 +467,14 @@ async function loadConfigTables() {
 
 // ─── HELPER FUNCTIONS FOR CALCULATIONS ──────────────────────────────────────
 function getDayString(timestamp: number): string {
+  // Use Indian Standard Time (IST - UTC+05:30) for midnight 00:00 rollover
   const d = new Date(timestamp);
-  return d.toISOString().split("T")[0];
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
 }
 
 function matchStreakMultiplier(day: number, curve: { minDay: number; multiplier: number }[]): number {
@@ -634,6 +642,8 @@ export async function awardUserPoints({
         reason.replace("_ACCURACY_BONUS_PREDICTION", "_PREDICTION_ACCURATE"),
         reason.replace("_PREDICTION_ACCURATE", "_ACCURACY_BONUS_PREDICTION"),
         reason.replace("_MEME_DUAL", "_MEME"),
+        ...(reason === "SIGNUP_BONUS" ? ["WELCOME_BONUS", "SIGNUP_BONUS"] : []),
+        ...(reason === "WELCOME_BONUS" ? ["SIGNUP_BONUS", "WELCOME_BONUS"] : []),
         ...(reason.startsWith("ENGAGEMENT_CREATE") ? ["ENGAGEMENT_CREATE_MEME", "ENGAGEMENT_CREATE_EVENT", "ENGAGEMENT_CREATE"] : []),
         ...(reason.startsWith("ENGAGEMENT_PARTICIPATE") ? ["ENGAGEMENT_PARTICIPATE_MEME", "ENGAGEMENT_PARTICIPATE_EVENT", "ENGAGEMENT_PARTICIPATE"] : []),
       ]));
@@ -722,10 +732,11 @@ export async function awardUserPoints({
 
       // 5. Duolingo Consecutive Streaks Logic & Active Login Session Duration Check (Spec review #4)
       if (reason === "DAILY_LOGIN") {
+        const isLoginEvent = metadata?.isLoginEvent === true || metadata?.bypassSessionCheck === true;
         const minSessionSeconds = config.multipliers.streakSettings?.minSessionSeconds ?? 60;
         const sessionSeconds = metadata?.sessionDurationSeconds ?? 0;
 
-        if (sessionSeconds < minSessionSeconds) {
+        if (!isLoginEvent && sessionSeconds > 0 && sessionSeconds < minSessionSeconds) {
           console.log(`[PointsEngine] Login session duration (${sessionSeconds}s) is below required minimum (${minSessionSeconds}s). Streak/Login points skipped.`);
           return false; // Skip awarding points and updating streak if not active long enough
         }
@@ -859,9 +870,9 @@ export async function awardUserPoints({
         }
       }
 
-      // Total XP gained from this transaction
-      const finalTotalXPGained = pointsAwarded + comboBonusXP + milestoneBonusXP + welcomeBackXP + viralCascadeXP;
-      totalXP += finalTotalXPGained;
+      // Total XP gained from this transaction (Strict whole integer, zero floating decimals)
+      const finalTotalXPGained = Math.round(pointsAwarded + comboBonusXP + milestoneBonusXP + welcomeBackXP + viralCascadeXP);
+      totalXP = Math.round(totalXP + finalTotalXPGained);
 
       // 10. Auto-calculate Global Ranks & Sub-Ranks (§1)
       const rankState = calculateGlobalRank(totalXP, config.globalLevels);
@@ -1086,6 +1097,63 @@ export async function awardUserPoints({
     return success;
   } catch (error) {
     console.error("[PointsEngine] Transaction failed gracefully:", error);
+    return false;
+  }
+}
+
+/**
+ * Helper to award Daily Active Login points (15 SXP default, with streak multiplier)
+ * Wrapped in try/catch and completely non-blocking for login flows.
+ */
+export async function awardDailyLoginPoints(
+  userId: string,
+  userName?: string,
+  userEmail?: string
+): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const todayStr = getDayString(Date.now());
+    const cleanUserId = userId.replace(/^USER#/, "");
+    return await awardUserPoints({
+      actualUserId: cleanUserId,
+      userName: userName || cleanUserId,
+      userEmail: userEmail || "",
+      userExists: true,
+      points: 15,
+      reason: "DAILY_LOGIN",
+      transactionId: `DAILY_LOGIN_${cleanUserId}_${todayStr}`,
+      metadata: { isLoginEvent: true },
+    });
+  } catch (err) {
+    console.warn(`[PointsEngine] Daily login points award notice for ${userId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Helper to award New User Signup Welcome Bonus (50 SXP default)
+ * Idempotent with transactionId: SIGNUP_BONUS_{userId}
+ */
+export async function awardSignupBonusPoints(
+  userId: string,
+  userName?: string,
+  userEmail?: string
+): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const cleanUserId = userId.replace(/^USER#/, "");
+    return await awardUserPoints({
+      actualUserId: cleanUserId,
+      userName: userName || cleanUserId,
+      userEmail: userEmail || "",
+      userExists: true,
+      points: 50,
+      reason: "SIGNUP_BONUS",
+      transactionId: `SIGNUP_BONUS_${cleanUserId}`,
+      metadata: { isSignupBonus: true },
+    });
+  } catch (err) {
+    console.warn(`[PointsEngine] Signup bonus points award notice for ${userId}:`, err);
     return false;
   }
 }

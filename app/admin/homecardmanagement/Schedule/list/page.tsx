@@ -86,25 +86,90 @@ function parseTimeToMinutes(timeStr?: string): number {
   return hours * 60 + minutes;
 }
 
+function getIndiaDateString(date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function parseEventDateTimeToTimestamp(
+  dateStr?: string,
+  timeStr?: string,
+  now: Date = new Date()
+): number {
+  const nowISTString = getIndiaDateString(now);
+  let cleanDate = (dateStr || "").trim();
+  if (!cleanDate) {
+    cleanDate = nowISTString;
+  }
+
+  if (cleanDate.includes("T")) {
+    const parsedIso = new Date(cleanDate).getTime();
+    if (!isNaN(parsedIso) && parsedIso > 0) {
+      return parsedIso;
+    }
+  }
+
+  let year = 0;
+  let month = 0;
+  let day = 0;
+
+  const ymdMatch = cleanDate.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymdMatch) {
+    year = parseInt(ymdMatch[1], 10);
+    month = parseInt(ymdMatch[2], 10);
+    day = parseInt(ymdMatch[3], 10);
+  } else {
+    const dmyMatch = cleanDate.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dmyMatch) {
+      day = parseInt(dmyMatch[1], 10);
+      month = parseInt(dmyMatch[2], 10);
+      year = parseInt(dmyMatch[3], 10);
+    } else {
+      const todayParts = nowISTString.split("-");
+      year = parseInt(todayParts[0], 10);
+      month = parseInt(todayParts[1], 10);
+      day = parseInt(todayParts[2], 10);
+    }
+  }
+
+  const timeMinutes = parseTimeToMinutes(timeStr);
+  let hours = 0;
+  let minutes = 0;
+  if (timeMinutes >= 0) {
+    hours = Math.floor(timeMinutes / 60);
+    minutes = timeMinutes % 60;
+  }
+
+  const utcOffsetMs = (5 * 60 + 30) * 60 * 1000;
+  return Date.UTC(year, month - 1, day, hours, minutes, 0, 0) - utcOffsetMs;
+}
+
 function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date()): AgendaEventItem[] {
   if (!events || events.length === 0) return [];
 
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const nowMs = now.getTime();
+  const MATCH_DURATION_MS = 2.5 * 60 * 60 * 1000;
 
   const parsedEvents = events.map((evt, idx) => {
     const rawStatus = (evt.statusType || "").toLowerCase().trim();
     const rawLabel = (evt.statusLabel || "").toUpperCase().trim();
     const isAutoMode = rawStatus === "auto" || evt.statusMode === "auto" || rawLabel === "AUTO";
-    const isExplicitCompleted = rawStatus === "completed" || rawLabel === "COMPLETED";
+    const isExplicitCompleted = rawStatus === "completed" || rawStatus === "finished" || rawLabel === "COMPLETED" || rawLabel === "FINISHED";
     const isExplicitLive = rawStatus === "live" || rawLabel === "LIVE";
     const isExplicitUpNext = rawStatus === "up_next" || rawLabel === "UP NEXT";
     const isExplicitScheduled = rawStatus === "scheduled" || rawLabel === "SCHEDULED";
     const isManual = evt.isManual === true || evt.statusMode === "manual" || (!isAutoMode && (isExplicitCompleted || isExplicitLive || isExplicitUpNext));
 
+    const timestamp = parseEventDateTimeToTimestamp(evt.date, evt.time, now);
+
     return {
       evt,
       idx,
-      minutes: parseTimeToMinutes(evt.time),
+      timestamp,
       order: evt.order ?? idx,
       isAutoMode,
       isExplicitCompleted,
@@ -116,11 +181,11 @@ function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date())
   });
 
   parsedEvents.sort((a, b) => {
+    if (a.timestamp !== b.timestamp) {
+      return a.timestamp - b.timestamp;
+    }
     if (a.order !== undefined && b.order !== undefined && a.order !== b.order) {
       return a.order - b.order;
-    }
-    if (a.minutes >= 0 && b.minutes >= 0 && a.minutes !== b.minutes) {
-      return a.minutes - b.minutes;
     }
     return a.idx - b.idx;
   });
@@ -134,34 +199,42 @@ function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date())
     }
   }
 
-  // Step 2: Find the latest chronological event whose scheduled start time has arrived
-  let lastPastIndex = -1;
+  // Step 2: Identify the latest past/started event and the first upcoming future event
+  let lastStartedIndex = -1;
+  let firstFutureIndex = -1;
+
   for (let i = 0; i < parsedEvents.length; i++) {
-    const item = parsedEvents[i];
-    if (item.minutes >= 0 && item.minutes <= currentMinutes) {
-      lastPastIndex = i;
+    if (parsedEvents[i].timestamp <= nowMs) {
+      lastStartedIndex = i;
+    } else if (firstFutureIndex === -1) {
+      firstFutureIndex = i;
     }
   }
 
-  // Step 3: Determine the active live index and upcoming index
+  // Step 3: Determine which index (if any) is actively LIVE and UP NEXT
   let activeLiveIndex = -1;
   let activeUpcomingIndex = -1;
 
   if (manualLiveIndex !== -1) {
     activeLiveIndex = manualLiveIndex;
-    activeUpcomingIndex = manualLiveIndex + 1 < parsedEvents.length ? manualLiveIndex + 1 : -1;
-  } else if (lastPastIndex !== -1) {
-    const latestPastItem = parsedEvents[lastPastIndex];
-    if (latestPastItem.isExplicitCompleted && latestPastItem.isManual) {
+    activeUpcomingIndex = firstFutureIndex;
+  } else if (lastStartedIndex !== -1) {
+    const latestStartedItem = parsedEvents[lastStartedIndex];
+    const elapsedMs = nowMs - latestStartedItem.timestamp;
+
+    if (latestStartedItem.isExplicitCompleted && latestStartedItem.isManual) {
       activeLiveIndex = -1;
-      activeUpcomingIndex = lastPastIndex + 1 < parsedEvents.length ? lastPastIndex + 1 : -1;
+      activeUpcomingIndex = firstFutureIndex;
+    } else if (elapsedMs <= MATCH_DURATION_MS) {
+      activeLiveIndex = lastStartedIndex;
+      activeUpcomingIndex = firstFutureIndex;
     } else {
-      activeLiveIndex = lastPastIndex;
-      activeUpcomingIndex = lastPastIndex + 1 < parsedEvents.length ? lastPastIndex + 1 : -1;
+      activeLiveIndex = -1;
+      activeUpcomingIndex = firstFutureIndex;
     }
   } else {
     activeLiveIndex = -1;
-    activeUpcomingIndex = parsedEvents.length > 0 ? 0 : -1;
+    activeUpcomingIndex = 0;
   }
 
   // Step 4: Map final dynamic status
@@ -187,34 +260,22 @@ function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date())
     let computedLabel = orig.time || "SCHEDULED";
     let computedNodeColor: AgendaEventItem["nodeColor"] = "blue";
 
-    if (activeLiveIndex !== -1) {
-      if (sortedIdx < activeLiveIndex) {
-        computedStatusType = "completed";
-        computedLabel = "COMPLETED";
-        computedNodeColor = "gray";
-      } else if (sortedIdx === activeLiveIndex) {
-        computedStatusType = "live";
-        computedLabel = "LIVE";
-        computedNodeColor = "emerald";
-      } else if (sortedIdx === activeUpcomingIndex) {
-        computedStatusType = "up_next";
-        computedLabel = "UP NEXT";
-        computedNodeColor = "amber";
-      } else {
-        computedStatusType = "scheduled";
-        computedLabel = orig.time || "SCHEDULED";
-        computedNodeColor = "blue";
-      }
+    if (activeLiveIndex !== -1 && sortedIdx === activeLiveIndex) {
+      computedStatusType = "live";
+      computedLabel = "LIVE";
+      computedNodeColor = "emerald";
+    } else if (item.timestamp <= nowMs) {
+      computedStatusType = "completed";
+      computedLabel = "COMPLETED";
+      computedNodeColor = "gray";
+    } else if (sortedIdx === activeUpcomingIndex) {
+      computedStatusType = "up_next";
+      computedLabel = "UP NEXT";
+      computedNodeColor = "amber";
     } else {
-      if (sortedIdx === activeUpcomingIndex) {
-        computedStatusType = "up_next";
-        computedLabel = "UP NEXT";
-        computedNodeColor = "amber";
-      } else {
-        computedStatusType = "scheduled";
-        computedLabel = orig.time || "SCHEDULED";
-        computedNodeColor = "blue";
-      }
+      computedStatusType = "scheduled";
+      computedLabel = orig.time || "SCHEDULED";
+      computedNodeColor = "blue";
     }
 
     return {
