@@ -4,6 +4,7 @@ import { docClient } from "@/lib/dynamodb";
 import { db } from "@/lib/firebaseAdmin";
 import { TABLES } from "@/lib/tableNames";
 import { dualWrite } from "@/lib/dualWrite";
+import { awardDailyLoginPoints } from "@/lib/userPoints";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -155,12 +156,20 @@ export async function GET(req: NextRequest) {
     }
 
     // Valid existing user
+    const resolvedUid = dbUser?.userId || user.userId || cleanUid;
+    const resolvedName = dbUser?.name || `${dbUser?.firstName || ""} ${dbUser?.lastName || ""}`.trim() || user.name;
+
+    // ── Gamification: Award Daily Active Login SXP for returning session (1/day) ──
+    awardDailyLoginPoints(resolvedUid, resolvedName, cleanEmail).catch((err) =>
+      console.warn("[/api/auth/me] Daily login SXP award notice:", err)
+    );
+
     return NextResponse.json({
       success: true,
       user: {
-        userId: dbUser?.userId || user.userId,
+        userId: resolvedUid,
         email: dbUser?.email || user.email,
-        name: dbUser?.name || `${dbUser?.firstName || ""} ${dbUser?.lastName || ""}`.trim() || user.name,
+        name: resolvedName,
         role: dbUser?.role || user.role,
         status: dbUser?.status || "active",
       },

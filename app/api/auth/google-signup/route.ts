@@ -5,6 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { dualWrite } from "@/lib/dualWrite";
 import { logUserActivity } from "@/lib/logUserActivity";
+import { awardSignupBonusPoints, awardDailyLoginPoints } from "@/lib/userPoints";
 import jwt from "jsonwebtoken";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -204,6 +205,19 @@ export async function POST(req: NextRequest) {
     } catch (logErr) {
       console.warn("Google auth activity logging notice:", logErr);
     }
+
+    // ── Gamification SXP Awards (Non-blocking & Idempotent) ───────────────────
+    if (!existingUser) {
+      // 1. Award New User Welcome Bonus (+50 SXP)
+      awardSignupBonusPoints(consistentUserId, username, cleanEmail).catch((err) =>
+        console.warn("[Gamification] Google signup bonus award notice:", err)
+      );
+    }
+
+    // 2. Award Daily Active Login SXP (+15 SXP, 1/day with streak multiplier)
+    awardDailyLoginPoints(userId, username, cleanEmail).catch((err) =>
+      console.warn("[Gamification] Google daily login award notice:", err)
+    );
 
     // ── Issue standard JWT cookie ────────────────────────────────────────────
     const token = jwt.sign(

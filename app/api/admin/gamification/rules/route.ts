@@ -57,7 +57,7 @@ const DEFAULT_POINT_RULES: PointRuleItem[] = [
 
   // System, Global Streaks & Onboarding
   { id: "DAILY_LOGIN", name: "Daily Active Login", category: "System", points: 15, dailyLimit: 1, status: "active", description: "Global daily active login (multiplied by user login streak)" },
-  { id: "WELCOME_BONUS", name: "New User Welcome Bonus", category: "System", points: 50, dailyLimit: 1, status: "active", description: "Granted upon signup & OTP verification" },
+  { id: "WELCOME_BONUS", name: "New User Welcome Bonus", category: "System", points: 50, dailyLimit: 1, status: "active", description: "Granted upon signup & account creation" },
   { id: "REFERRAL_SIGNUP", name: "Invite Friend (Signup)", category: "Referrals", points: 50, dailyLimit: 50, status: "active", description: "Awarded when referred friend completes OTP signup" },
   { id: "REFERRAL_CHANT_REACHED", name: "Friend Reaches Chant Tier", category: "Referrals", points: 100, dailyLimit: 50, status: "active", description: "1-time payout when referred friend hits Chant rank" },
 ];
