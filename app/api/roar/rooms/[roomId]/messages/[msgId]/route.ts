@@ -6,7 +6,7 @@ import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { findRoomMessage } from "@/lib/roarRoomHelpers";
-import { DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { RoomMessage } from "@/app/models/RoomMessage";
 
 export const dynamic = "force-dynamic";
@@ -47,55 +47,80 @@ export async function DELETE(
       if (!isAdmin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // 1. Delete from DynamoDB
-    if (fromDynamo && msgSk) {
+    // 1. Delete from DynamoDB across candidates
+    const roomCandidates = Array.from(new Set([roomIdKey, `ROOM#${cleanRoomId}`, cleanRoomId]));
+    for (const rCand of roomCandidates) {
       try {
-        await docClient.send(new DeleteCommand({
-          TableName: TABLES.RealTimeChat,
-          Key: {
-            roomId: roomIdKey,
-            sk: msgSk,
-          }
-        }));
+        if (msgSk) {
+          await docClient.send(new DeleteCommand({
+            TableName: TABLES.RealTimeChat,
+            Key: {
+              roomId: rCand,
+              sk: msgSk,
+            }
+          }));
+        }
       } catch (dynErr) {
-        console.warn("[RoomMessage DELETE] DynamoDB delete failed:", dynErr);
+        console.warn("[RoomMessage DELETE] DynamoDB delete notice:", dynErr);
       }
     }
 
     // 2. Best-effort Firestore cleanup
-    const roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId);
-    const msgRef = roomRef.collection("messages").doc(targetMsgId);
-    const countField = COUNT_FIELD_BY_TYPE[msgItem.type];
-    const channelRef = msgItem.channelId ? roomRef.collection("channels").doc(msgItem.channelId) : null;
-
-    try {
-      await db.runTransaction(async (tx) => {
-        const roomSnapTx = await tx.get(roomRef);
-        const msgSnapTx = await tx.get(msgRef);
-        if (!msgSnapTx.exists) return;
-
-        const channelSnapTx = channelRef ? await tx.get(channelRef) : null;
-
-        tx.delete(msgRef);
-
-        const currentFanCount = (roomSnapTx.data() as any)?.fanCount ?? 0;
-        tx.update(roomRef, { fanCount: Math.max(0, currentFanCount - 1) });
-
-        if (countField) {
-          const currentRoomCount = (roomSnapTx.data() as any)?.[countField] ?? 0;
-          tx.update(roomRef, { [countField]: Math.max(0, currentRoomCount - 1) });
+    const countField = COUNT_FIELD_BY_TYPE[msgItem.type] || "postCount";
+    for (const collName of ["roarRooms", "watchAlongRooms"]) {
+      try {
+        const roomRef = db.collection(getFirestoreCollection(collName)).doc(cleanRoomId);
+        const msgRef = roomRef.collection("messages").doc(targetMsgId);
+        const msgSnap = await msgRef.get();
+        if (msgSnap.exists) {
+          await msgRef.delete();
+          const roomSnap = await roomRef.get();
+          if (roomSnap.exists) {
+            const data = roomSnap.data() || {};
+            const curFan = data.fanCount ?? 0;
+            const curCount = data[countField] ?? 0;
+            await roomRef.update({
+              fanCount: Math.max(0, curFan - 1),
+              ...(countField && { [countField]: Math.max(0, curCount - 1) }),
+            });
+          }
         }
-
-        if (channelRef && channelSnapTx && countField) {
-          const currentChannelCount = (channelSnapTx.data() as any)?.counts?.[countField] ?? 0;
-          tx.update(channelRef, { [`counts.${countField}`]: Math.max(0, currentChannelCount - 1) });
-        }
-      });
-    } catch (fsErr) {
-      console.warn("[RoomMessage DELETE] Firestore delete failed:", fsErr);
+      } catch (fsErr) {
+        console.warn(`[RoomMessage DELETE] Firestore ${collName} delete notice:`, fsErr);
+      }
     }
 
-    return NextResponse.json({ success: true });
+    // 3. Decrement typeCounts in ROOM#META
+    const rawType = (msgItem?.type || "post").toLowerCase();
+    const countKey =
+      rawType === "debate" ? "debate" :
+      rawType === "prediction" || rawType === "predictions_live" ? "prediction" :
+      rawType === "trivia" || rawType === "quiz" ? "trivia" :
+      rawType === "battle" ? "battle" : "post";
+
+    try {
+      const metaRes = await docClient.send(new GetCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId: `ROOM#${cleanRoomId}`, sk: "ROOM#META" },
+      }));
+      if (metaRes.Item?.typeCounts) {
+        const curCounts = metaRes.Item.typeCounts;
+        const newCounts = {
+          ...curCounts,
+          [countKey]: Math.max(0, (curCounts[countKey] || 0) - 1),
+        };
+        await docClient.send(new UpdateCommand({
+          TableName: TABLES.RealTimeChat,
+          Key: { roomId: `ROOM#${cleanRoomId}`, sk: "ROOM#META" },
+          UpdateExpression: "SET typeCounts = :c",
+          ExpressionAttributeValues: { ":c": newCounts },
+        }));
+      }
+    } catch (metaErr) {
+      console.warn("[RoomMessage DELETE] ROOM#META count update notice:", metaErr);
+    }
+
+    return NextResponse.json({ success: true, deletedMsgId: targetMsgId });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
     return NextResponse.json({ error: msg }, { status: 500 });
