@@ -246,9 +246,9 @@ export async function GET(
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
+    const cleanRoomId = (roomId || "").replace(/^ROOM#/, "");
     const { searchParams } = new URL(req.url);
-    const limit = Math.min(parseInt(searchParams.get("limit") || "30"), 100);
+    const limit = Math.min(parseInt(searchParams.get("limit") || "60"), 100);
     const lastCreatedAt = searchParams.get("lastCreatedAt");
     const lastDocId = searchParams.get("lastDocId");
     const channelId = searchParams.get("channelId");
@@ -260,11 +260,29 @@ export async function GET(
     }
     const resolvedUserId = resolved.id;
 
-    let messages: any[] = [];
+    function extractMsgId(item: any, cRoomId: string): string {
+      if (item.msgId && typeof item.msgId === "string" && item.msgId.trim()) return item.msgId.trim();
+      if (item.id && typeof item.id === "string" && item.id.trim()) return item.id.trim();
+      if (item.chatId && typeof item.chatId === "string" && item.chatId.trim()) return item.chatId.trim();
+      if (typeof item.sk === "string") {
+        const raw = item.sk.replace(/^MSG#/, "");
+        const parts = raw.split("#");
+        const cRoom = cRoomId.replace(/^ROOM#/, "");
+        const meaningful = parts.filter((p: string) => p && p !== cRoom && p !== `ROOM#${cRoom}` && !/^\d{10,}$/.test(p));
+        if (meaningful.length > 0) return meaningful[meaningful.length - 1];
+        const nonTs = parts.filter((p: string) => !/^\d{10,}$/.test(p));
+        if (nonTs.length > 0) return nonTs[nonTs.length - 1];
+        return parts[parts.length - 1] || item.sk;
+      }
+      return item.createdAt ? `msg_${item.createdAt}` : `msg_${Math.random().toString(36).substring(2, 9)}`;
+    }
 
-    // 1. Query DynamoDB RealTimeChat table
+    let messages: any[] = [];
+    const seenMsgIds = new Set<string>();
+
+    // 1. Query DynamoDB RealTimeChat table across both candidates
     try {
-      const candidates = [`ROOM#${roomId}`, roomId];
+      const candidates = [`ROOM#${cleanRoomId}`, cleanRoomId];
       for (const cand of candidates) {
         const qRes = await docClient.send(
           new QueryCommand({
@@ -279,157 +297,192 @@ export async function GET(
           })
         );
         if (qRes.Items && qRes.Items.length > 0) {
-          messages = qRes.Items.map((item) => ({
-            ...item,
-            msgId: item.msgId || (item.sk as string)?.split("#")[3] || item.id || item.chatId,
-            agreeCount: item.agreeCount ?? 0,
-            disagreeCount: item.disagreeCount ?? 0,
-            heartCount: item.likeCount ?? item.heartCount ?? 0,
-            replyCount: item.replyCount ?? 0,
-          }));
-
-          if (messages.length > 0) {
-            try {
-              const likeChecks = await Promise.all(
-                messages.map((m) =>
-                  docClient.send(new QueryCommand({
-                    TableName: TABLES.RealTimeChat,
-                    KeyConditionExpression: "roomId = :r AND sk = :s",
-                    ExpressionAttributeValues: {
-                      ":r": `ROOM#${roomId}`,
-                      ":s": `LIKE#${m.msgId}#${resolvedUserId}`,
-                    },
-                    Limit: 1,
-                  }))
-                )
-              );
-              messages = messages.map((m, i) => ({
-                ...m,
-                userReaction: likeChecks[i].Items?.[0]?.reaction ?? null,
-              }));
-            } catch (likeErr) {
-              console.warn("Failed to hydrate userReaction:", likeErr);
-            }
-
-            if (messages.length > 0) {
-              try {
-                const voteChecks = await Promise.all(
-                  messages.map((m) =>
-                    docClient.send(new GetCommand({
-                      TableName: TABLES.RealTimeChat,
-                      Key: { roomId: `ROOM#${roomId}`, sk: `VOTE#${m.msgId}#${resolvedUserId}` },
-                    }))
-                  )
-                );
-                messages = messages.map((m, i) => ({
-                  ...m,
-                  userVote: voteChecks[i].Item?.vote ?? null,
-                }));
-              } catch (voteErr) {
-                console.warn("Failed to hydrate userVote:", voteErr);
-              }
+          for (const item of qRes.Items) {
+            const mId = extractMsgId(item, cleanRoomId);
+            if (!seenMsgIds.has(mId)) {
+              seenMsgIds.add(mId);
+              messages.push({
+                ...item,
+                msgId: mId,
+                agreeCount: item.agreeCount ?? 0,
+                disagreeCount: item.disagreeCount ?? 0,
+                heartCount: item.likeCount ?? item.heartCount ?? 0,
+                replyCount: item.replyCount ?? 0,
+              });
             }
           }
-          break;
         }
       }
     } catch (dynErr) {
       console.warn("DynamoDB query room messages notice:", dynErr);
     }
 
-    // 2. Fallback to Firebase
-    if (messages.length === 0) {
-      let roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(roomId);
-      let roomSnap = await roomRef.get();
-      if (!roomSnap.exists) {
-        roomRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(roomId);
-        roomSnap = await roomRef.get();
-      }
-
-      if (roomSnap.exists) {
-        const messagesRef = roomRef.collection("messages");
-        let query = messagesRef.orderBy("createdAt", "desc").limit(limit);
-
-        if (channelId) {
-          query = messagesRef.where("channelId", "==", channelId).orderBy("createdAt", "desc").limit(limit);
-        } else if (channelSlug) {
-          query = messagesRef.where("channelSlug", "==", channelSlug).orderBy("createdAt", "desc").limit(limit);
+    // 2. Fallback & Merge from Firebase if DynamoDB has fewer than limit
+    if (messages.length < limit) {
+      try {
+        let roomRef = db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId);
+        let roomSnap = await roomRef.get();
+        if (!roomSnap.exists) {
+          roomRef = db.collection(getFirestoreCollection("watchAlongRooms")).doc(cleanRoomId);
+          roomSnap = await roomRef.get();
         }
 
-        const snapshot = await query.get();
-        messages = snapshot.docs.map((doc) => ({
-          ...doc.data(),
-          msgId: doc.id,
-          agreeCount: doc.data().agreeCount ?? 0,
-          disagreeCount: doc.data().disagreeCount ?? 0,
-          heartCount: doc.data().likeCount ?? 0,
-          replyCount: doc.data().replyCount ?? 0,
-        }));
+        if (roomSnap.exists) {
+          const messagesRef = roomRef.collection("messages");
+          let query = messagesRef.orderBy("createdAt", "desc").limit(limit);
+
+          if (channelId && channelId !== "all") {
+            query = messagesRef.where("channelId", "==", channelId).orderBy("createdAt", "desc").limit(limit);
+          } else if (channelSlug && channelSlug !== "all") {
+            query = messagesRef.where("channelSlug", "==", channelSlug).orderBy("createdAt", "desc").limit(limit);
+          }
+
+          const snapshot = await query.get();
+          for (const doc of snapshot.docs) {
+            if (!seenMsgIds.has(doc.id)) {
+              seenMsgIds.add(doc.id);
+              const data = doc.data();
+              messages.push({
+                ...data,
+                msgId: doc.id,
+                agreeCount: data.agreeCount ?? 0,
+                disagreeCount: data.disagreeCount ?? 0,
+                heartCount: data.likeCount ?? data.heartCount ?? 0,
+                replyCount: data.replyCount ?? 0,
+              });
+            }
+          }
+        }
+      } catch (fsErr) {
+        console.warn("Firestore fallback messages notice:", fsErr);
       }
     }
 
-    // 3. Room-wide type counts — accurately count all messages (including bot posts, predictions, debates, trivia, battles)
-    let counts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
+    // Sort by createdAt descending and slice to limit
+    messages.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+    if (messages.length > limit) {
+      messages = messages.slice(0, limit);
+    }
+
+    if (messages.length > 0) {
+      try {
+        const likeChecks = await Promise.all(
+          messages.map((m) =>
+            docClient.send(new QueryCommand({
+              TableName: TABLES.RealTimeChat,
+              KeyConditionExpression: "roomId = :r AND sk = :s",
+              ExpressionAttributeValues: {
+                ":r": `ROOM#${cleanRoomId}`,
+                ":s": `LIKE#${m.msgId}#${resolvedUserId}`,
+              },
+              Limit: 1,
+            }))
+          )
+        );
+        messages = messages.map((m, i) => ({
+          ...m,
+          userReaction: likeChecks[i].Items?.[0]?.reaction ?? null,
+        }));
+      } catch (likeErr) {
+        console.warn("Failed to hydrate userReaction:", likeErr);
+      }
+
+      try {
+        const voteChecks = await Promise.all(
+          messages.map((m) =>
+            docClient.send(new GetCommand({
+              TableName: TABLES.RealTimeChat,
+              Key: { roomId: `ROOM#${cleanRoomId}`, sk: `VOTE#${m.msgId}#${resolvedUserId}` },
+            }))
+          )
+        );
+        messages = messages.map((m, i) => ({
+          ...m,
+          userVote: voteChecks[i].Item?.vote ?? null,
+        }));
+      } catch (voteErr) {
+        console.warn("Failed to hydrate userVote:", voteErr);
+      }
+    }
+
+    // 3. Room-wide type counts — accurately count all active messages (including bot posts, predictions, debates, trivia, battles)
+    const countedMsgIds = new Set<string>();
+    const trueCounts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
+
+    function classifyAndCount(mId: string, rawType?: string, rawPostType?: string) {
+      if (!mId || countedMsgIds.has(mId)) return;
+      countedMsgIds.add(mId);
+      const t = (rawType || rawPostType || "post").toLowerCase().trim();
+      if (t === "debate") trueCounts.debate++;
+      else if (t === "prediction" || t === "predictions_live") trueCounts.prediction++;
+      else if (t === "trivia" || t === "quiz") trueCounts.trivia++;
+      else if (t === "battle") trueCounts.battle++;
+      else trueCounts.post++;
+    }
+
+    // A. Count from all active DynamoDB messages in this room (paginated to ensure complete accuracy)
+    const countCandidates = Array.from(new Set([`ROOM#${cleanRoomId}`, cleanRoomId]));
+    for (const cand of countCandidates) {
+      try {
+        let lastKey: Record<string, any> | undefined = undefined;
+        do {
+          const typeQueryRes: any = await docClient.send(new QueryCommand({
+            TableName: TABLES.RealTimeChat,
+            KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
+            ExpressionAttributeValues: {
+              ":r": cand,
+              ":mPrefix": "MSG#",
+            },
+            ProjectionExpression: "sk, msgId, id, chatId, #t, postType",
+            ExpressionAttributeNames: { "#t": "type" },
+            ExclusiveStartKey: lastKey,
+          }));
+
+          if (typeQueryRes.Items && typeQueryRes.Items.length > 0) {
+            for (const item of typeQueryRes.Items) {
+              const mId = extractMsgId(item, cleanRoomId);
+              classifyAndCount(mId, item.type, item.postType);
+            }
+          }
+          lastKey = typeQueryRes.LastEvaluatedKey;
+        } while (lastKey);
+      } catch (dynCountErr) {
+        console.warn("[Messages GET] Fast type counting notice:", dynCountErr);
+      }
+    }
+
+    // B. Count from Firestore fallback rooms if any active messages exist there
+    for (const collName of ["roarRooms", "watchAlongRooms"]) {
+      try {
+        const roomRef = db.collection(getFirestoreCollection(collName)).doc(cleanRoomId);
+        const roomSnap = await roomRef.get();
+        if (roomSnap.exists) {
+          const fsMsgsSnap = await roomRef.collection("messages").select("type", "postType").get();
+          for (const doc of fsMsgsSnap.docs) {
+            classifyAndCount(doc.id, doc.data().type, doc.data().postType);
+          }
+        }
+      } catch {
+        // Firestore count best-effort
+      }
+    }
+
+    // C. Also factor in loaded messages array to ensure 100% parity with feed
+    for (const m of messages) {
+      classifyAndCount(m.msgId, m.type, m.postType);
+    }
+
+    // D. Self-heal ROOM#META in DynamoDB with the accurate true counts
     try {
-      const metaRes = await docClient.send(new GetCommand({
+      await docClient.send(new UpdateCommand({
         TableName: TABLES.RealTimeChat,
-        Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+        Key: { roomId: `ROOM#${cleanRoomId}`, sk: "ROOM#META" },
+        UpdateExpression: "SET typeCounts = :counts",
+        ExpressionAttributeValues: { ":counts": trueCounts },
       }));
-      if (metaRes.Item?.typeCounts) {
-        counts = { ...counts, ...metaRes.Item.typeCounts };
-      }
-    } catch (metaErr) {
-      console.warn("Failed to fetch room type counts:", metaErr);
+    } catch {
+      // Best-effort cache update
     }
-
-    const dynCounts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
-    try {
-      const candidates = [`ROOM#${roomId}`, roomId];
-      for (const cand of candidates) {
-        const typeQueryRes = await docClient.send(new QueryCommand({
-          TableName: TABLES.RealTimeChat,
-          KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
-          ExpressionAttributeValues: {
-            ":r": cand,
-            ":mPrefix": "MSG#",
-          },
-          ProjectionExpression: "#t, postType",
-          ExpressionAttributeNames: { "#t": "type" },
-        }));
-        if (typeQueryRes.Items && typeQueryRes.Items.length > 0) {
-          typeQueryRes.Items.forEach((item) => {
-            const t = (item.type || item.postType || "post").toLowerCase();
-            if (t === "debate") dynCounts.debate++;
-            else if (t === "prediction" || t === "predictions_live") dynCounts.prediction++;
-            else if (t === "trivia" || t === "quiz") dynCounts.trivia++;
-            else if (t === "battle") dynCounts.battle++;
-            else dynCounts.post++;
-          });
-          break;
-        }
-      }
-    } catch (dynCountErr) {
-      console.warn("Fast type counting notice:", dynCountErr);
-    }
-
-    // Also factor in the loaded messages array in case of Firestore fallbacks
-    const localLoadedCounts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
-    messages.forEach((m) => {
-      const t = (m.type || "post").toLowerCase();
-      if (t === "debate") localLoadedCounts.debate++;
-      else if (t === "prediction" || t === "predictions_live") localLoadedCounts.prediction++;
-      else if (t === "trivia" || t === "quiz") localLoadedCounts.trivia++;
-      else if (t === "battle") localLoadedCounts.battle++;
-      else localLoadedCounts.post++;
-    });
-
-    counts = {
-      post: Math.max(counts.post || 0, dynCounts.post, localLoadedCounts.post),
-      debate: Math.max(counts.debate || 0, dynCounts.debate, localLoadedCounts.debate),
-      prediction: Math.max(counts.prediction || 0, dynCounts.prediction, localLoadedCounts.prediction),
-      trivia: Math.max(counts.trivia || 0, dynCounts.trivia, localLoadedCounts.trivia),
-      battle: Math.max(counts.battle || 0, dynCounts.battle, localLoadedCounts.battle),
-    };
 
     return NextResponse.json({
       success: true,
@@ -439,7 +492,7 @@ export async function GET(
         hasMore: messages.length === limit,
         nextCursor: null,
       },
-      counts,
+      counts: trueCounts,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Unexpected error";
@@ -599,14 +652,15 @@ export async function POST(
 
     if (!text?.trim()) return NextResponse.json({ error: "text is required" }, { status: 400 });
 
+    const cleanRoomId = (roomId || "").replace(/^ROOM#/, "");
     const resolved = await resolveUser(user.email, user.userId);
     const resolvedUserId = resolved?.id || user.userId;
     const now = Date.now();
     const msgId = clientMsgId || `msg_${now}_${Math.random().toString(36).substring(2, 9)}`;
 
     const dynamoMessage = {
-      roomId: `ROOM#${roomId}`,
-      sk: `MSG#${roomId}#${now}#${msgId}`,
+      roomId: `ROOM#${cleanRoomId}`,
+      sk: `MSG#${cleanRoomId}#${now}#${msgId}`,
       msgId, chatId: msgId,
       authorUid: resolvedUserId,
       authorUsername: resolved?.username || user.email?.split("@")[0] || "User",
@@ -644,13 +698,13 @@ export async function POST(
     try {
       await docClient.send(new UpdateCommand({
         TableName: TABLES.RealTimeChat,
-        Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+        Key: { roomId: `ROOM#${cleanRoomId}`, sk: "ROOM#META" },
         UpdateExpression: "SET typeCounts = if_not_exists(typeCounts, :emptyMap)",
         ExpressionAttributeValues: { ":emptyMap": { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 } },
       }));
       await docClient.send(new UpdateCommand({
         TableName: TABLES.RealTimeChat,
-        Key: { roomId: `ROOM#${roomId}`, sk: "ROOM#META" },
+        Key: { roomId: `ROOM#${cleanRoomId}`, sk: "ROOM#META" },
         UpdateExpression: "ADD typeCounts.#k :one",
         ExpressionAttributeNames: { "#k": countKey },
         ExpressionAttributeValues: { ":one": 1 },
