@@ -467,6 +467,9 @@ export async function DELETE(req: NextRequest) {
     let id = searchParams.get("id") || searchParams.get("videoId");
     let urlParam = searchParams.get("url") || searchParams.get("videoUrl") || searchParams.get("mediaUrl");
     let publicIdParam = searchParams.get("publicId");
+    let isMasterPublished =
+      searchParams.get("publishedMaster") === "true" ||
+      searchParams.get("isMasterPublished") === "true";
 
     if (!id && !urlParam && !publicIdParam) {
       try {
@@ -474,6 +477,11 @@ export async function DELETE(req: NextRequest) {
         id = body.id || body.videoId;
         urlParam = body.url || body.videoUrl || body.mediaUrl;
         publicIdParam = body.publicId;
+        if (body.publishedMaster !== undefined) {
+          isMasterPublished = Boolean(body.publishedMaster);
+        } else if (body.isMasterPublished !== undefined) {
+          isMasterPublished = Boolean(body.isMasterPublished);
+        }
       } catch {
         // Body was empty or non-JSON
       }
@@ -496,51 +504,71 @@ export async function DELETE(req: NextRequest) {
 
     const cleanId = (id || "").replace(/^(VIDEO|FLIPLONG)#/, "").trim();
 
-    // 1. Delete from DynamoDB RealTimeChat table
-    try {
-      const qRes = await docClient.send(
-        new QueryCommand({
-          TableName: TABLES.RealTimeChat,
-          KeyConditionExpression: "roomId = :r AND begins_with(sk, :skPrefix)",
-          ExpressionAttributeValues: {
-            ":r": ROOM_ID,
-            ":skPrefix": "VIDEO#",
-          },
-        })
-      );
-
-      if (qRes.Items && qRes.Items.length > 0) {
-        for (const item of qRes.Items) {
-          const itemCleanId = (item.id || item.videoId || (item.sk as string)?.replace(/^VIDEO#\d+#/, "") || "").trim();
-          const itemUrl = item.url || item.videoUrl || item.mediaUrl || "";
-          const isMatch =
-            (cleanId && (itemCleanId === cleanId || item.id === cleanId || item.videoId === cleanId || (item.sk as string)?.includes(cleanId))) ||
-            (urlParam && itemUrl === urlParam) ||
-            (cleanId && itemUrl && itemUrl.includes(cleanId));
-
-          if (isMatch) {
-            if (item.publicId) publicIdsToDestroy.add(item.publicId);
-            const pId = extractCloudinaryPublicId(itemUrl);
-            if (pId) publicIdsToDestroy.add(pId);
-
-            await docClient.send(
-              new DeleteCommand({
-                TableName: TABLES.RealTimeChat,
-                Key: {
-                  roomId: ROOM_ID,
-                  sk: item.sk,
-                },
-              })
-            );
-          }
+    // 0. Delete from Flipline_Videos AI pipeline DynamoDB tables (removes unposted processed video, reels & highlights)
+    if (cleanId) {
+      const pipelineTables = ["Flipline_Videos", "Flipline_Videos_dev", "Flipline_Videos_release"];
+      for (const pTable of pipelineTables) {
+        try {
+          await docClient.send(
+            new DeleteCommand({
+              TableName: pTable,
+              Key: { video_id: cleanId },
+            })
+          );
+        } catch (dynErr) {
+          // Soft warn to prevent breaking if table does not exist in environment
+          console.warn(`DynamoDB ${pTable} pipeline delete notice:`, dynErr);
         }
       }
-    } catch (dynErr) {
-      console.warn("DynamoDB flipLong delete notice:", dynErr);
     }
 
-    // 2. Delete from Firestore flipLongVideos
-    if (db) {
+    // 1. Delete from DynamoDB RealTimeChat table (only if master video was NOT published)
+    if (!isMasterPublished) {
+      try {
+        const qRes = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.RealTimeChat,
+            KeyConditionExpression: "roomId = :r AND begins_with(sk, :skPrefix)",
+            ExpressionAttributeValues: {
+              ":r": ROOM_ID,
+              ":skPrefix": "VIDEO#",
+            },
+          })
+        );
+
+        if (qRes.Items && qRes.Items.length > 0) {
+          for (const item of qRes.Items) {
+            const itemCleanId = (item.id || item.videoId || (item.sk as string)?.replace(/^VIDEO#\d+#/, "") || "").trim();
+            const itemUrl = item.url || item.videoUrl || item.mediaUrl || "";
+            const isMatch =
+              (cleanId && (itemCleanId === cleanId || item.id === cleanId || item.videoId === cleanId || (item.sk as string)?.includes(cleanId))) ||
+              (urlParam && itemUrl === urlParam) ||
+              (cleanId && itemUrl && itemUrl.includes(cleanId));
+
+            if (isMatch) {
+              if (item.publicId) publicIdsToDestroy.add(item.publicId);
+              const pId = extractCloudinaryPublicId(itemUrl);
+              if (pId) publicIdsToDestroy.add(pId);
+
+              await docClient.send(
+                new DeleteCommand({
+                  TableName: TABLES.RealTimeChat,
+                  Key: {
+                    roomId: ROOM_ID,
+                    sk: item.sk,
+                  },
+                })
+              );
+            }
+          }
+        }
+      } catch (dynErr) {
+        console.warn("DynamoDB flipLong delete notice:", dynErr);
+      }
+    }
+
+    // 2. Delete from Firestore flipLongVideos (only if master video was NOT published)
+    if (db && !isMasterPublished) {
       try {
         if (cleanId) {
           const docRef = db.collection(getFirestoreCollection("flipLongVideos")).doc(cleanId);
@@ -569,21 +597,25 @@ export async function DELETE(req: NextRequest) {
     }
 
     // 3. Delete from Cloudinary (both video and image formats to clean up thumbnails/clips)
-    for (const pId of publicIdsToDestroy) {
-      try {
-        await cloudinary.uploader.destroy(pId, { resource_type: "video" });
-        if (!pId.startsWith("IndvsSl/")) {
-          await cloudinary.uploader.destroy(`IndvsSl/${pId}`, { resource_type: "video" });
+    if (!isMasterPublished) {
+      for (const pId of publicIdsToDestroy) {
+        try {
+          await cloudinary.uploader.destroy(pId, { resource_type: "video" });
+          if (!pId.startsWith("IndvsSl/")) {
+            await cloudinary.uploader.destroy(`IndvsSl/${pId}`, { resource_type: "video" });
+          }
+          await cloudinary.uploader.destroy(pId, { resource_type: "image" });
+        } catch (cErr) {
+          console.warn("Cloudinary delete notice for publicId:", pId, cErr);
         }
-        await cloudinary.uploader.destroy(pId, { resource_type: "image" });
-      } catch (cErr) {
-        console.warn("Cloudinary delete notice for publicId:", pId, cErr);
       }
     }
 
     return NextResponse.json({
       success: true,
-      message: "Video deleted successfully from all stores",
+      message: isMasterPublished
+        ? "Unposted pipeline video & reels cleared while preserving published master video"
+        : "Video and unposted reels deleted successfully from all database stores",
       id: cleanId || urlParam,
     });
   } catch (error: unknown) {
