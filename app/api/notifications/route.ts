@@ -389,8 +389,22 @@ export async function POST(req: NextRequest) {
       recipientEmail: targetEmail,
       recipientUid: targetUid,
       ...(body.eventId && { eventId: body.eventId }),
-      ...(body.cta_label && { cta_label: body.cta_label }),
-      ...(body.cta_target && { cta_target: body.cta_target }),
+      ...((body.cta_label || body.ctaLabel || body.cta) && {
+        cta_label: body.cta_label || body.ctaLabel || body.cta,
+        ctaLabel: body.cta_label || body.ctaLabel || body.cta,
+      }),
+      ...((body.cta_target || body.ctaTarget) && {
+        cta_target: body.cta_target || body.ctaTarget,
+        ctaTarget: body.cta_target || body.ctaTarget,
+      }),
+      ...(body.cta && { cta: body.cta }),
+      ...(body.subtitle && { subtitle: body.subtitle }),
+      ...(body.fan && { fan: body.fan }),
+      ...(body.actor_name && { actor_name: body.actor_name }),
+      ...(body.actor_photoURL && { actor_photoURL: body.actor_photoURL }),
+      ...(body.actorPhoto && { actorPhoto: body.actorPhoto }),
+      ...(body.postId && { postId: body.postId }),
+      ...(body.roomId && { roomId: body.roomId }),
     };
 
     const candidateTables = getCandidateTableNames(TABLES.Notifications);

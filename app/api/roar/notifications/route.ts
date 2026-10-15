@@ -281,6 +281,19 @@ export async function POST(req: NextRequest) {
       recipientUid,
       type,
       message,
+      title,
+      subtitle,
+      cta,
+      cta_label,
+      ctaTarget,
+      cta_target,
+      category,
+      fan,
+      actor_name,
+      actor_photoURL,
+      actorPhoto,
+      postId,
+      roomId,
       battleId, battleName, battleType, senderId, senderName,
       audioPublicId, audioTitle, audioUrl, audioDuration,
       audioDurationSeconds, audioFormat,
@@ -294,9 +307,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if ((!recipientEmail && !recipientUid) || !type || !message) {
+    const finalMessage = message || title || "ROAR Notification";
+    const finalTitle = title || message || "ROAR Notification";
+
+    if ((!recipientEmail && !recipientUid) || !type || (!message && !title)) {
       return NextResponse.json(
-        { error: "recipientEmail or recipientUid, type, and message are required" },
+        { error: "recipientEmail or recipientUid, type, and message/title are required" },
         { status: 400 }
       );
     }
@@ -312,10 +328,26 @@ export async function POST(req: NextRequest) {
       recipientEmail: recipientEmail || null,
       recipientUid: recipientUid ?? null,
       type,
-      message,
+      notification_type: type,
+      category: category || "roar",
+      title: finalTitle,
+      message: finalMessage,
+      subtitle: subtitle || body.body || "",
+      body: subtitle || body.body || finalMessage,
+      cta: cta || cta_label || null,
+      cta_label: cta_label || cta || null,
+      cta_target: cta_target || ctaTarget || "/MainModules/ROAR",
+      ctaTarget: ctaTarget || cta_target || "/MainModules/ROAR",
+      fan: fan || (actor_name ? { username: actor_name, badge: "ROOKIE_FAN", avatarUrl: actor_photoURL || actorPhoto } : null),
+      actor_name: actor_name || fan?.username || null,
+      actor_photoURL: actor_photoURL || actorPhoto || fan?.avatarUrl || null,
+      actorPhoto: actorPhoto || actor_photoURL || fan?.avatarUrl || null,
+      postId: postId || null,
+      roomId: roomId || null,
       isRead: false,
       read: false,
       createdAt: now,
+      sent_at: new Date(now).toISOString(),
     };
 
     if (battleId)

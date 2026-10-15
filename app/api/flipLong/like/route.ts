@@ -192,6 +192,62 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Notify video creator (User 2) if client didn't already send notification
+    if (action === "like" && isLiked && !body.notificationSentFromClient) {
+      const creatorEmail = videoItem?.email || videoItem?.userEmail;
+      const creatorUid = videoItem?.userId || videoItem?.recipientUid;
+      const likerEmail = body.likerEmail || (userId.includes("@") ? userId : null);
+      const likerUid = body.likerUserId || body.userId;
+      const likerName = body.likerName || "Someone";
+      const likerPhoto = body.likerPhoto || "";
+      const videoTitle = videoItem?.title || "your video";
+
+      const isSelfLike =
+        (creatorEmail && likerEmail && creatorEmail.toLowerCase() === likerEmail.toLowerCase()) ||
+        (creatorUid && likerUid && creatorUid === likerUid);
+
+      if (!isSelfLike && (creatorEmail || creatorUid)) {
+        try {
+          const appUrl =
+            process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+          const notifId = `ntf_like_${cleanId}_${Date.now()}`;
+          const messageText = `${likerName} liked your video "${videoTitle}"`;
+          const notifPayload = {
+            id: notifId,
+            notification_id: notifId,
+            recipientEmail: creatorEmail || null,
+            recipientUid: creatorUid || null,
+            userId: creatorUid || null,
+            email: creatorEmail || null,
+            title: "New Video Like",
+            body: messageText,
+            message: messageText,
+            notification_type: "fliplong",
+            type: "fliplong",
+            category: "fliplong",
+            priority: "NORMAL",
+            isRead: false,
+            read: false,
+            cta_label: "Watch Video",
+            cta_target: "/MainModules/FlipLong",
+            sent_at: new Date(now).toISOString(),
+            createdAt: now,
+            actor_name: likerName,
+            actor_photoURL: likerPhoto,
+            actorPhoto: likerPhoto,
+          };
+
+          fetch(`${appUrl}/api/notifications`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(notifPayload),
+          }).catch(() => {});
+        } catch (notifErr) {
+          console.warn("Notice sending FlipLong like notification from backend:", notifErr);
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       id: cleanId,
