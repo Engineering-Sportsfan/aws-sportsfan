@@ -3,6 +3,7 @@ import { Firestore, FieldValue } from 'firebase-admin/firestore';
 import { randomUUID } from 'crypto';
 import { docClient } from '@/lib/dynamodb';
 import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { dispatchStoreNotification } from '@/lib/notifications';
 
 export class StoreService {
   constructor(
@@ -220,18 +221,14 @@ export class StoreService {
         const appUrl = process.env.NEXTAUTH_URL || "http://localhost:3001";
         
         if (winnerId) {
-          fetch(`${appUrl}/api/notifications/store`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: winnerId,
-              notificationType: "store.auction_won",
-              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
-              variables: {
-                product_name: freshProduct.title || freshProduct.name || "Auction Item"
-              }
-            })
-          }).catch(err => console.warn("[checkAndCloseAuctionInline] Failed to trigger won notification:", err));
+          dispatchStoreNotification({
+            userId: winnerId,
+            notificationType: "store.auction_won",
+            ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+            variables: {
+              product_name: freshProduct.title || freshProduct.name || "Auction Item",
+            },
+          }).catch((err) => console.warn("[checkAndCloseAuctionInline] Failed to trigger won notification:", err));
         }
 
         // Fetch unique bidders to send lost notifications
@@ -271,18 +268,14 @@ export class StoreService {
         }
 
         for (const loserId of bidderIds) {
-          fetch(`${appUrl}/api/notifications/store`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: loserId,
-              notificationType: "store.auction_lost",
-              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
-              variables: {
-                product_name: freshProduct.title || freshProduct.name || "Auction Item"
-              }
-            })
-          }).catch(err => console.warn("[checkAndCloseAuctionInline] Failed to trigger lost notification for:", loserId, err));
+          dispatchStoreNotification({
+            userId: loserId,
+            notificationType: "store.auction_lost",
+            ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+            variables: {
+              product_name: freshProduct.title || freshProduct.name || "Auction Item",
+            },
+          }).catch((err) => console.warn("[checkAndCloseAuctionInline] Failed to trigger lost notification for:", loserId, err));
         }
       } catch (notifErr) {
         console.warn("[checkAndCloseAuctionInline] Notification dispatch failed:", notifErr);
@@ -1314,25 +1307,15 @@ export class StoreService {
           break;
       }
 
-      // Call store notification API directly using fetch on the backend (port 3001)
-      const host = process.env.NEXTAUTH_URL || 'http://localhost:3001';
-      const targetUrl = `${host.replace(/\/$/, '')}/api/notifications/store`;
-
-      fetch(targetUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: userId,
-          notificationType: notifType,
-          category: mappedCategory,
-          title: notifTitle,
-          variables: variables,
-          rewardCoinsEarned: product.rewardCoins || 0,
-          ctaTarget: "/MainModules/AtheleteStore/StoreMyBookings"
-        })
-      }).catch(err => console.warn('[Checkout] Background store notification fetch failed:', err));
+      dispatchStoreNotification({
+        userId: userId,
+        notificationType: notifType,
+        category: mappedCategory,
+        title: notifTitle,
+        variables: variables,
+        rewardCoinsEarned: product.rewardCoins || 0,
+        ctaTarget: "/MainModules/AtheleteStore/StoreMyBookings",
+      }).catch((err) => console.warn('[Checkout] Store notification error:', err));
 
     } catch (notifErr) {
       console.warn('[Checkout] Failed to trigger store notification:', notifErr);

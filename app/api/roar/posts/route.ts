@@ -14,6 +14,7 @@ import { getUserInfo } from "@/lib/userPoints";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, UpdateCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
+import { notifyMentions } from "@/lib/notifications";
 import type { Post, PostType, SportType } from "@/app/models/Post";
 
 export const dynamic = "force-dynamic";
@@ -627,6 +628,12 @@ export async function POST(req: NextRequest) {
       transactionId: `roar_post_${postId}`,
       metadata: { postId, sport },
     }).catch((err) => console.error("Failed to award points for post:", err));
+
+    if (newPost.text && newPost.text.includes("@")) {
+      notifyMentions(newPost.text, "", postId, resolvedUserId, resolvedUsername).catch((mErr) => {
+        console.warn("[Posts POST] Mention notice:", mErr);
+      });
+    }
 
     return NextResponse.json({ success: true, postId, post: newPost });
   } catch (error: unknown) {

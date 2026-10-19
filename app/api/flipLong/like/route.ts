@@ -5,6 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, ScanCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { notifyFlipLongVideoLiked } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -202,50 +203,17 @@ export async function POST(req: NextRequest) {
       const likerPhoto = body.likerPhoto || "";
       const videoTitle = videoItem?.title || "your video";
 
-      const isSelfLike =
-        (creatorEmail && likerEmail && creatorEmail.toLowerCase() === likerEmail.toLowerCase()) ||
-        (creatorUid && likerUid && creatorUid === likerUid);
-
-      if (!isSelfLike && (creatorEmail || creatorUid)) {
-        try {
-          const appUrl =
-            process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
-          const notifId = `ntf_like_${cleanId}_${Date.now()}`;
-          const messageText = `${likerName} liked your video "${videoTitle}"`;
-          const notifPayload = {
-            id: notifId,
-            notification_id: notifId,
-            recipientEmail: creatorEmail || null,
-            recipientUid: creatorUid || null,
-            userId: creatorUid || null,
-            email: creatorEmail || null,
-            title: "New Video Like",
-            body: messageText,
-            message: messageText,
-            notification_type: "fliplong",
-            type: "fliplong",
-            category: "fliplong",
-            priority: "NORMAL",
-            isRead: false,
-            read: false,
-            cta_label: "Watch Video",
-            cta_target: "/MainModules/FlipLong",
-            sent_at: new Date(now).toISOString(),
-            createdAt: now,
-            actor_name: likerName,
-            actor_photoURL: likerPhoto,
-            actorPhoto: likerPhoto,
-          };
-
-          fetch(`${appUrl}/api/notifications`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(notifPayload),
-          }).catch(() => {});
-        } catch (notifErr) {
-          console.warn("Notice sending FlipLong like notification from backend:", notifErr);
-        }
-      }
+      notifyFlipLongVideoLiked({
+        videoId: cleanId,
+        videoTitle,
+        creatorId: creatorUid,
+        creatorEmail: creatorEmail,
+        likerId: likerUid,
+        likerName,
+        likerAvatar: likerPhoto,
+      }).catch((notifErr) => {
+        console.warn("Notice sending FlipLong like notification:", notifErr);
+      });
     }
 
     return NextResponse.json({

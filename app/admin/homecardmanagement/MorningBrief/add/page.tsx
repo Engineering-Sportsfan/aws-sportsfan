@@ -204,16 +204,16 @@ function MorningBriefForm() {
         title: title.trim(),
         description: description.trim(),
         active,
-        // CTA configuration (saved to DynamoDB)
-        predictId: predictId || undefined,
-        predictTitle: predictTitle || undefined,
-        predictUrl: predictUrl || (predictId ? `/MainModules/FlipArena?engagementId=${predictId}&type=prediction` : undefined),
-        discussPostId: discussPostId || undefined,
-        discussTitle: discussTitle || undefined,
-        discussUrl: discussUrl || (discussPostId ? `/MainModules/FlipLine?postId=${discussPostId}` : undefined),
-        debateRoomId: debateRoomId || undefined,
-        debateTitle: debateTitle || undefined,
-        debateUrl: debateUrl || (debateRoomId ? `/MainModules/WatchAlong?roomId=${debateRoomId}` : undefined),
+        // CTA configuration (saved to DynamoDB; explicit empty strings ensure deleted CTAs are removed)
+        predictId: predictId.trim() ? predictId.trim() : "",
+        predictTitle: predictId.trim() && predictTitle.trim() ? predictTitle.trim() : "",
+        predictUrl: predictId.trim() ? (predictUrl || `/MainModules/FlipArena?engagementId=${predictId}&type=prediction`) : "",
+        discussPostId: discussPostId.trim() ? discussPostId.trim() : "",
+        discussTitle: discussPostId.trim() && discussTitle.trim() ? discussTitle.trim() : "",
+        discussUrl: discussPostId.trim() ? (discussUrl || `/MainModules/FlipLine?postId=${discussPostId}`) : "",
+        debateRoomId: debateRoomId.trim() ? debateRoomId.trim() : "",
+        debateTitle: debateRoomId.trim() && debateTitle.trim() ? debateTitle.trim() : "",
+        debateUrl: debateRoomId.trim() ? (debateUrl || `/MainModules/WatchAlong?roomId=${debateRoomId}`) : "",
       };
 
       if (editId) {

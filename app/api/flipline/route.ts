@@ -7,7 +7,7 @@ import {
   dispatchFlipLineNotification,
   extractMentions,
   resolveUserIdsFromHandles,
-} from "@/lib/fliplineNotifications";
+} from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 

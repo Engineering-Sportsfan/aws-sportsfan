@@ -8,7 +8,7 @@ import { ScanCommand, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-
 import { EngagementItem, EngagementType, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
-import { dispatchFlipArenaContentDropNotification } from "@/lib/fliparenaNotifications";
+import { dispatchFlipArenaContentDropNotification } from "@/lib/notifications";
 import cloudinary from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
@@ -45,14 +45,15 @@ export async function GET(req: NextRequest) {
           for (const it of scanRes.Items) {
             // Ignore vote, like, or share records that share the same contentId prefix
             if (it.sk && it.sk !== "ENGAGEMENT#META") continue;
-            if (!it.title || !it.type) continue;
+            const resolvedTitle = it.title || it.subtitle || it.headline || it.caption || it.memeData?.caption || (it.type === "meme" ? "Meme" : "");
+            if (!resolvedTitle || !it.type) continue;
 
             const id = it.id || String(it.contentId || "").replace(/^ENGAGEMENT#/, "");
             if (!itemsMap.has(id)) {
               itemsMap.set(id, {
                 id,
                 type: it.type,
-                title: it.title,
+                title: resolvedTitle,
                 subtitle: it.subtitle || "",
                 tags: it.tags || [],
                 sport: (it.sport || "cricket").toLowerCase(),
@@ -101,13 +102,14 @@ export async function GET(req: NextRequest) {
         for (const doc of snap.docs) {
           const it = doc.data();
           const id = doc.id;
-          if (!it.type || !it.title) continue;
+          const resolvedTitle = it.title || it.subtitle || it.headline || it.caption || it.memeData?.caption || (it.type === "meme" ? "Meme" : "");
+          if (!it.type || !resolvedTitle) continue;
 
           if (!itemsMap.has(id)) {
             itemsMap.set(id, {
               id,
               type: it.type,
-              title: it.title,
+              title: resolvedTitle,
               subtitle: it.subtitle,
               tags: it.tags || [],
               sport: (it.sport || "cricket").toLowerCase(),
@@ -158,6 +160,7 @@ export async function GET(req: NextRequest) {
         it.predictionData?.scheduledStartTime ||
         it.fanBattleData?.startTime ||
         it.fanBattleData?.scheduledStartTime ||
+        (it.memeData as any)?.createdAt ||
         0;
       if (typeof raw === "number") return raw;
       const parsed = new Date(raw).getTime();
@@ -168,11 +171,24 @@ export async function GET(req: NextRequest) {
     items.sort((a, b) => getItemTimestamp(b) - getItemTimestamp(a));
 
     // Apply Filters
+    const nowMs = Date.now();
     if (type && type !== ("all" as any)) {
       items = items.filter(i => (i.type || "").toLowerCase() === type.toLowerCase());
     }
     if (status && status !== "all") {
-      items = items.filter(i => (i.status || "active").toLowerCase() === status.toLowerCase());
+      items = items.filter(i => {
+        const itemStatus = (i.status || "active").toLowerCase();
+        if (status.toLowerCase() === "active") {
+          if (itemStatus !== "active") return false;
+          if ((i as any).isClosed || (i as any).closed || (i as any).isEnded) return false;
+          if (i.expiresAt && Number(i.expiresAt) > 0 && nowMs >= Number(i.expiresAt)) return false;
+          return true;
+        }
+        return itemStatus === status.toLowerCase();
+      });
+    }
+    if (sport && sport !== "all") {
+      items = items.filter(i => (i.sport || "cricket").toLowerCase() === sport.toLowerCase());
     }
     if (sport && sport !== "all") {
       items = items.filter(i => (i.sport || "cricket").toLowerCase() === sport.toLowerCase());
@@ -255,7 +271,6 @@ export async function GET(req: NextRequest) {
     }
 
     // Check if any scheduled engagement has just become live and needs notification
-    const nowMs = Date.now();
     for (const it of items) {
       const itStartMs =
         Number((it as any).scheduledStartTime) ||

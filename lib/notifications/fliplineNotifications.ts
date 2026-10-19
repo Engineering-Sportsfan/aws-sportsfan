@@ -1,9 +1,9 @@
-// backend/lib/fliplineNotifications.ts — 100% AWS DynamoDB FlipLINE Notification Dispatcher
+// backend/lib/notifications/fliplineNotifications.ts — 100% AWS DynamoDB FlipLINE Notification Dispatcher
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { getCandidateTableNames } from "@/lib/dualWrite";
 import { db } from "@/lib/firebaseAdmin";
-import { PutCommand, QueryCommand, UpdateCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const DEFAULT_TTL_DAYS = 30; // 30 days retention
 
@@ -79,7 +79,6 @@ export async function resolveUserIdsFromHandles(handles: string[]): Promise<Map<
           continue;
         }
 
-        // Also check by lowercase username
         const byNameSnap = await db
           .collection("users")
           .where("username", "==", handle)
@@ -314,7 +313,6 @@ export async function dispatchFlipLineNotification(
           })
         );
 
-        // Sync update to Firestore
         if (db) {
           const docKey = `${(existing.SK as string)?.split("#").pop() || notifId}_${cleanRecipientId}`;
           await db
@@ -386,7 +384,6 @@ export async function dispatchFlipLineNotification(
     GSI2SK: `SENTAT#${sentAt}#${notifId}`,
   };
 
-  // 3. Write to candidate DynamoDB tables
   let writtenDynamo = false;
   const candidateTables = getCandidateTableNames(TABLES.Notifications);
 
@@ -411,7 +408,6 @@ export async function dispatchFlipLineNotification(
     }
   }
 
-  // 4. Sync to Firestore for cross-subsystem fallback
   if (db) {
     try {
       const firestoreDocId = `${notifId}_${cleanRecipientId}`;

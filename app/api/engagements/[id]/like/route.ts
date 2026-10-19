@@ -7,7 +7,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { getUser } from "@/lib/getUser";
-import { dispatchFlipArenaNotification } from "@/lib/fliparenaNotifications";
+import { dispatchFlipArenaNotification } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 

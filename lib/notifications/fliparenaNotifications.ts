@@ -1,4 +1,4 @@
-// backend/lib/fliparenaNotifications.ts — 100% AWS DynamoDB FlipArena Notification Dispatcher
+// backend/lib/notifications/fliparenaNotifications.ts — 100% AWS DynamoDB FlipArena Notification Dispatcher
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { getCandidateTableNames } from "@/lib/dualWrite";
@@ -276,6 +276,8 @@ export async function dispatchFlipArenaNotification(
     sent_at: sentAt,
     createdAt: Date.now(),
     expires_at: expiresAt,
+    category: "fliparena",
+    feature_area: "fliparena",
     GSI1PK: `TYPE#${payload.type}`,
     GSI1SK: `SENTAT#${sentAt}#${notifId}`,
     GSI2PK: `USER#${cleanRecipientId}#UNREAD`,
@@ -417,7 +419,6 @@ export function formatContentDropMessage(types: string[]): { title: string; body
       actionPhrase = "Play now to earn bonus SXPs.";
     }
   } else {
-    // 3 or more types (e.g. Quiz, Poll & Memes)
     const last = typeNames[typeNames.length - 1];
     const rest = typeNames.slice(0, -1).join(", ");
     typePhrase = `New ${rest} & ${last}`;
@@ -441,13 +442,12 @@ export function formatContentDropMessage(types: string[]): { title: string; body
 export async function dispatchFlipArenaContentDropNotification(
   payload: ContentDropPayload
 ): Promise<string[]> {
-  const windowMs = 60 * 60 * 1000; // 60-Minute Aggregation Window
+  const windowMs = 60 * 60 * 1000;
   const aggregationKey = "AGGR#fliparena.content_dropped";
   const now = new Date();
   const sentAt = now.toISOString();
   const expiresAt = Math.floor(now.getTime() / 1000) + DEFAULT_TTL_DAYS * 86400;
 
-  // Resolve target recipients
   let targetRecipients: string[] = [];
   if (payload.recipientIds && payload.recipientIds.length > 0) {
     targetRecipients = payload.recipientIds;
@@ -530,7 +530,6 @@ export async function dispatchFlipArenaContentDropNotification(
       }
     }
 
-    // Fresh Notification creation within the 60-min window
     const notifId = `ntf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const formatted = formatContentDropMessage([payload.engagementType]);
     const ctaTarget = "/MainModules/FlipArena";
@@ -632,5 +631,3 @@ export async function dispatchFlipArenaContentDropNotification(
 
   return dispatchedIds;
 }
-
-

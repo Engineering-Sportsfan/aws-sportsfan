@@ -11,7 +11,7 @@ import { getUserInfo } from "@/lib/userPoints";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { RoomMessage, MessageType } from "@/app/models/RoomMessage";
 import type { PostType } from "@/app/models/Post";
-import { notifyMentions, notifyFollowedRoomNewPost, notifyRoomContentAnnounced } from "@/lib/roarNotifyHelpers";
+import { notifyMentions, notifyFollowedRoomNewPost, notifyRoomContentAnnounced } from "@/lib/notifications";
 import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";

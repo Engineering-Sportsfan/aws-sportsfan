@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
-import { notifyRoomMessageComment, notifyMentions } from "@/lib/roarNotifyHelpers";
+import { notifyRoomMessageComment, notifyMentions } from "@/lib/notifications";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
@@ -195,7 +195,13 @@ export async function POST(
     }).catch(() => { });
 
     // Notify post author on reply
-    notifyRoomMessageComment(cleanRoomId, targetMsgId, resolvedAuthorId, user.email, username, text.slice(0, 80)).catch(() => { });
+    notifyRoomMessageComment(cleanRoomId, targetMsgId, resolvedAuthorId, user.email, username, text.slice(0, 80), {
+      authorUid: msgItem.authorUid || msgItem.userId,
+      authorEmail: msgItem.authorEmail || msgItem.email,
+      text: msgItem.text || msgItem.content,
+    }).catch((notifErr) => {
+      console.warn("[RoomComments POST] Notification notice:", notifErr);
+    });
     notifyMentions(text, cleanRoomId, targetMsgId, resolvedAuthorId, username).catch(() => { });
 
     return NextResponse.json({

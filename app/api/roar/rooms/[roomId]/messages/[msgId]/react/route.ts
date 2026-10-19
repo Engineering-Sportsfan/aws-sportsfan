@@ -4,7 +4,7 @@ import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { notifyRoomMessageReaction } from "@/lib/roarNotifyHelpers";
+import { notifyRoomMessageReaction } from "@/lib/notifications";
 import { getUserInfo } from "@/lib/userPoints";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -149,7 +149,13 @@ export async function POST(
 
     // Notify author if a new reaction was added
     if (reaction) {
-      notifyRoomMessageReaction(roomId, targetMsgId, resolvedUserId, reaction).catch(() => {});
+      notifyRoomMessageReaction(roomId, targetMsgId, resolvedUserId, reaction, user.email, {
+        authorUid: msgItem.authorUid || msgItem.userId,
+        authorEmail: msgItem.authorEmail || msgItem.email,
+        text: msgItem.text || msgItem.content,
+      }).catch((notifErr) => {
+        console.warn("[MessageReact POST] Notification notice:", notifErr);
+      });
     }
 
     return NextResponse.json({

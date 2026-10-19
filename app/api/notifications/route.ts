@@ -84,6 +84,7 @@ export async function GET(req: NextRequest) {
     let uid = searchParams.get("uid");
     let actualUserIdParam = searchParams.get("actualUserId") || searchParams.get("userId");
     const countOnly = searchParams.get("countOnly") === "true";
+    const category = searchParams.get("category");
 
     if (!email && !uid && !actualUserIdParam) {
       const user = await getUser(req);
@@ -319,6 +320,18 @@ export async function GET(req: NextRequest) {
     }
 
     notifications = Array.from(finalDedupeMap.values());
+
+    if (category) {
+      const targetCategory = category.toLowerCase();
+      notifications = notifications.filter((n) => {
+        const cat = (n.category || "").toLowerCase();
+        const type = (n.notification_type || n.type || "").toLowerCase();
+        if (targetCategory === "roar") {
+          return cat === "roar" || type.startsWith("roar") || type.includes("match_live") || type.includes("heating_up");
+        }
+        return cat === targetCategory || type.startsWith(targetCategory);
+      });
+    }
 
     notifications.sort(
       (a, b) =>

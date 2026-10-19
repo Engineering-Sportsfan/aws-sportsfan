@@ -8,7 +8,7 @@ import { GetCommand, UpdateCommand, PutCommand, QueryCommand } from "@aws-sdk/li
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
-import { dispatchFlipArenaNotification } from "@/lib/fliparenaNotifications";
+import { dispatchFlipArenaNotification } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
