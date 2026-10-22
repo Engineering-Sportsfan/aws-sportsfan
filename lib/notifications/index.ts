@@ -51,3 +51,13 @@ export {
   STORE_NOTIFICATION_CONFIG,
   DEFAULT_STORE_TITLES,
 } from "./storeNotifications";
+
+// Domain Modules: Gamification
+export * as gamificationNotifications from "./gamificationNotifications";
+export {
+  notifyPointsEarned,
+  notifyBadgeUnlocked,
+  notifyLevelUp,
+  notifyStreakMilestone,
+  dispatchGamificationNotification,
+} from "./gamificationNotifications";

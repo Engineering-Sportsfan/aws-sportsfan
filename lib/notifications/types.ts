@@ -8,7 +8,9 @@ export type NotificationCategory =
   | "fliparena"
   | "flipline"
   | "fliplong"
+  | "gamification"
   | (string & {});
+
 
 export type NotificationPriority = "HIGH" | "NORMAL" | "LOW";
 
