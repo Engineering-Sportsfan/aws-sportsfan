@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
+import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
 import { ScanCommand, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem, EngagementType, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
@@ -63,8 +63,18 @@ export async function GET(req: NextRequest) {
                 pollData: it.pollData,
                 predictionData: it.predictionData,
                 memeData: it.memeData,
+                debateData: it.debateData,
+                expressData: it.expressData,
+                questionData: it.questionData,
+                winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+                outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+                outcomeNotes: it.outcomeNotes || null,
+                resolvedAt: it.resolvedAt || null,
+                resolvedBy: it.resolvedBy || null,
+                timerMinutes: it.timerMinutes || it.durationMinutes || 4,
+                durationMinutes: it.durationMinutes || it.timerMinutes || 4,
                 memeType: it.memeType || it.memeData?.memeType,
-                options: it.options || it.memeData?.options,
+                options: it.options || it.memeData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options || it.pollData?.options || it.predictionData?.options,
                 imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
                 imageUrlB: it.imageUrlB || it.memeData?.imageUrlB,
                 labelA: it.labelA || it.memeData?.labelA,
@@ -75,6 +85,17 @@ export async function GET(req: NextRequest) {
                 createdAt: it.createdAt || Date.now(),
                 updatedAt: it.updatedAt || Date.now(),
                 expiresAt: it.expiresAt || null,
+                category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
+                source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
+                isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+                momentId: it.momentId || it.loopId || undefined,
+                loopId: it.loopId || it.momentId || undefined,
+                matchPhase: it.matchPhase || undefined,
+                anchorTrigger: it.anchorTrigger || undefined,
+                scoreState: it.scoreState || undefined,
+                sportsMoment: it.sportsMoment || undefined,
+                overNumber: it.overNumber !== undefined ? it.overNumber : undefined,
+                innings: it.innings !== undefined ? Number(it.innings) : undefined,
                 creatorId: it.creatorId || undefined,
                 creatorEmail: it.creatorEmail || undefined,
                 creatorName: it.creatorName || undefined,
@@ -119,8 +140,18 @@ export async function GET(req: NextRequest) {
               pollData: it.pollData,
               predictionData: it.predictionData,
               memeData: it.memeData,
+              debateData: it.debateData,
+              expressData: it.expressData,
+              questionData: it.questionData,
+              winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+              outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+              outcomeNotes: it.outcomeNotes || null,
+              resolvedAt: it.resolvedAt || null,
+              resolvedBy: it.resolvedBy || null,
+              timerMinutes: it.timerMinutes || it.durationMinutes || 4,
+              durationMinutes: it.durationMinutes || it.timerMinutes || 4,
               memeType: it.memeType || it.memeData?.memeType,
-              options: it.options || it.memeData?.options,
+              options: it.options || it.memeData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options || it.pollData?.options || it.predictionData?.options,
               imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
               imageUrlB: it.imageUrlB || it.memeData?.imageUrlB,
               labelA: it.labelA || it.memeData?.labelA,
@@ -131,6 +162,17 @@ export async function GET(req: NextRequest) {
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
               expiresAt: it.expiresAt || null,
+              category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
+              source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
+              isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+              momentId: it.momentId || it.loopId || undefined,
+              loopId: it.loopId || it.momentId || undefined,
+              matchPhase: it.matchPhase || undefined,
+              anchorTrigger: it.anchorTrigger || undefined,
+              scoreState: it.scoreState || undefined,
+              sportsMoment: it.sportsMoment || undefined,
+              overNumber: it.overNumber !== undefined ? it.overNumber : undefined,
+              innings: it.innings !== undefined ? Number(it.innings) : undefined,
               creatorId: it.creatorId || undefined,
               creatorEmail: it.creatorEmail || undefined,
               creatorName: it.creatorName || undefined,
@@ -190,8 +232,38 @@ export async function GET(req: NextRequest) {
     if (sport && sport !== "all") {
       items = items.filter(i => (i.sport || "cricket").toLowerCase() === sport.toLowerCase());
     }
-    if (sport && sport !== "all") {
-      items = items.filter(i => (i.sport || "cricket").toLowerCase() === sport.toLowerCase());
+
+    // Support excludeFlipArena or source=match_moment filter
+    const sourceParam = searchParams.get("source");
+    const categoryParam = searchParams.get("category");
+    const shouldExcludeFlipArena =
+      searchParams.get("excludeFlipArena") === "true" ||
+      sourceParam === "match_moment" ||
+      categoryParam === "match_moment";
+
+    if (shouldExcludeFlipArena) {
+      items = items.filter(i => {
+        if (i.type === "meme" || i.type === "fan_battle" || (i as any).memeData || (i as any).fanBattleData) return false;
+        if (i.type === "quiz" && i.quizData?.questions && i.quizData.questions.length > 1) return false;
+        if ((i as any).source === "fliparena" || (i as any).category === "fliparena") return false;
+        return true;
+      });
+    }
+
+    // Support excludeMatchMoments (for FlipArena feed / manager)
+    const shouldExcludeMatchMoments =
+      searchParams.get("excludeMatchMoments") === "true" ||
+      sourceParam === "fliparena" ||
+      categoryParam === "fliparena";
+
+    if (shouldExcludeMatchMoments) {
+      items = items.filter(i => {
+        if (i.isMatchMoment === true || (i as any).category === "match_moment" || (i as any).source === "match_moment") return false;
+        if (i.type === "debate" || i.type === "express" || i.type === "question") return false;
+        if (Boolean(i.debateData || i.expressData || i.questionData)) return false;
+        if (Array.isArray(i.tags) && i.tags.some(t => t.toUpperCase().includes("MATCH MOMENT") || t.toUpperCase().includes("4-MIN"))) return false;
+        return true;
+      });
     }
 
     if (limit > 0) {
@@ -438,7 +510,7 @@ export async function POST(req: NextRequest) {
     }
 
     const now = Date.now();
-    const id = `eng_${now}_${Math.random().toString(36).slice(2, 8)}`;
+    const id = body.id || body.engagementId || `eng_${now}_${Math.random().toString(36).slice(2, 8)}`;
 
     // Resolve creator identity
     const authUser = await getUser(req);
@@ -466,24 +538,51 @@ export async function POST(req: NextRequest) {
     if (!computedTags || computedTags.length === 0) {
       if (type === "fan_battle") computedTags = ["⚔️ FAN BATTLE", "🔥 TRENDING"];
       else if (type === "quiz") computedTags = ["🧠 QUIZ", `⭐ ${quizData?.pointsReward || 50} PTS`];
-      else if (type === "poll") computedTags = ["📊 POLL"];
-      else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 POINTS"];
+      else if (type === "question") computedTags = ["❓ QUESTION", "⚡ MATCH MOMENT"];
+      else if (type === "poll") computedTags = ["📊 POLL", "⚡ 4-MIN LIVE"];
+      else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 +10 SXP", "⚡ 4-MIN LIVE"];
+      else if (type === "debate") computedTags = ["⚖️ DEBATE", "🔥 LIVE VERDICT"];
+      else if (type === "express") computedTags = ["⚡ EXPRESS", "🚀 PULSE"];
       else if (type === "meme") computedTags = ["🔥 MEME ARENA", "😂 VIRAL"];
+      else computedTags = ["⚡ MATCH MOMENT", "🔥 LIVE"];
     }
 
-    // Resolve expiry for polls, predictions, and quizzes
-    const pollDurationMins = Number(pollData?.durationMinutes || pollData?.timerMinutes || 10);
-    const predDurationMins = Number(predictionData?.durationMinutes || predictionData?.timerMinutes || 30);
+    // Default timer: standard 4 minutes for all live match moments
+    const matchMomentDurationMins = Number(
+      body.durationMinutes ||
+      body.timerMinutes ||
+      pollData?.durationMinutes ||
+      pollData?.timerMinutes ||
+      predictionData?.durationMinutes ||
+      predictionData?.timerMinutes ||
+      body.debateData?.durationMinutes ||
+      body.debateData?.timerMinutes ||
+      body.expressData?.durationMinutes ||
+      body.expressData?.timerMinutes ||
+      body.questionData?.durationMinutes ||
+      body.questionData?.timerMinutes ||
+      (type === "quiz" ? 600 : 4)
+    );
+
+    const pollDurationMins = Number(pollData?.durationMinutes || pollData?.timerMinutes || matchMomentDurationMins || 4);
+    const predDurationMins = Number(predictionData?.durationMinutes || predictionData?.timerMinutes || matchMomentDurationMins || 4);
     const quizDurationMins = Number(quizData?.durationMinutes || quizData?.timerMinutes || 600);
+
     const computedExpiresAt =
       expiresAt ||
       (type === "poll"
         ? pollData?.expiresAt || now + pollDurationMins * 60 * 1000
         : type === "prediction"
           ? predictionData?.expiresAt || now + predDurationMins * 60 * 1000
-          : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
-            ? quizData?.expiresAt || now + quizDurationMins * 60 * 1000
-            : null);
+          : type === "debate"
+            ? (body.debateData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
+            : type === "express"
+              ? (body.expressData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
+              : type === "question"
+                ? (body.questionData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
+                : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
+                  ? quizData?.expiresAt || now + quizDurationMins * 60 * 1000
+                  : now + matchMomentDurationMins * 60 * 1000);
 
     const formattedQuizData =
       type === "quiz" && quizData
@@ -496,32 +595,124 @@ export async function POST(req: NextRequest) {
         : undefined;
 
     const formattedPollData =
-      type === "poll" && pollData
+      type === "poll" && (pollData || body.options)
         ? {
-          ...pollData,
+          ...(pollData || {}),
+          question: pollData?.question || body.title || body.question || "",
+          options: Array.isArray(pollData?.options) && pollData.options.length > 0
+            ? pollData.options
+            : Array.isArray(body.options)
+            ? body.options.map((opt: any, idx: number) => ({
+                id: opt.id || String(idx + 1),
+                text: typeof opt === "string" ? opt : opt.text,
+                votes: Number(opt.votes) || 0,
+              }))
+            : [],
+          totalVotes: Number(pollData?.totalVotes) || 0,
           durationMinutes: pollDurationMins,
           timerMinutes: pollDurationMins,
           expiresAt: computedExpiresAt,
-          correctAnswer: pollData.correctAnswer || pollData.answer || "",
-          answer: pollData.correctAnswer || pollData.answer || "",
+          correctAnswer: pollData?.correctAnswer || pollData?.answer || "",
+          answer: pollData?.correctAnswer || pollData?.answer || "",
         }
         : undefined;
 
     const formattedPredData =
-      type === "prediction" && predictionData
+      type === "prediction" && (predictionData || body.options)
         ? {
-          ...predictionData,
+          ...(predictionData || {}),
+          question: predictionData?.question || body.title || body.question || "",
+          options: Array.isArray(predictionData?.options) && predictionData.options.length > 0
+            ? predictionData.options
+            : Array.isArray(body.options)
+            ? body.options.map((opt: any, idx: number) => ({
+                id: opt.id || (idx === 0 ? "left" : idx === 1 ? "right" : String(idx + 1)),
+                text: typeof opt === "string" ? opt : opt.text,
+                votes: Number(opt.votes) || 0,
+              }))
+            : [],
+          coinStake: Number(predictionData?.coinStake || body.coinStake || 10),
           durationMinutes: predDurationMins,
           timerMinutes: predDurationMins,
           expiresAt: computedExpiresAt,
-          correctAnswer: predictionData.correctAnswer || predictionData.answer || "",
-          answer: predictionData.correctAnswer || predictionData.answer || "",
+          correctAnswer: predictionData?.correctAnswer || predictionData?.answer || "",
+          answer: predictionData?.correctAnswer || predictionData?.answer || "",
           winningChoiceId:
-            predictionData.winningChoiceId ||
-            predictionData.correctAnswer ||
-            predictionData.answer ||
+            predictionData?.winningChoiceId ||
+            body.winningChoiceId ||
+            predictionData?.correctAnswer ||
+            predictionData?.answer ||
             null,
+          status: predictionData?.status || body.status || "open",
         }
+        : undefined;
+
+    const formattedDebateData =
+      type === "debate" && (body.debateData || body.options || body.title)
+        ? {
+            question: body.debateData?.question || body.title || body.question || "",
+            topic: body.debateData?.topic || body.title || "",
+            options: Array.isArray(body.debateData?.options) && body.debateData.options.length > 0
+              ? body.debateData.options
+              : Array.isArray(body.options)
+              ? body.options.map((opt: any, idx: number) => ({
+                  id: opt.id || String(idx + 1),
+                  text: typeof opt === "string" ? opt : opt.text,
+                  votes: Number(opt.votes) || 0,
+                }))
+              : [],
+            totalVotes: Number(body.debateData?.totalVotes) || 0,
+            status: body.debateData?.status || body.status || "open",
+            winningChoiceId: body.debateData?.winningChoiceId || body.winningChoiceId || null,
+            verdict: body.debateData?.verdict || body.verdict || null,
+            durationMinutes: matchMomentDurationMins,
+            timerMinutes: matchMomentDurationMins,
+            expiresAt: computedExpiresAt,
+          }
+        : undefined;
+
+    const formattedExpressData =
+      type === "express" && (body.expressData || body.options || body.title)
+        ? {
+            question: body.expressData?.question || body.prompt || body.title || "",
+            prompt: body.expressData?.prompt || body.title || "",
+            options: Array.isArray(body.expressData?.options) && body.expressData.options.length > 0
+              ? body.expressData.options
+              : Array.isArray(body.options)
+              ? body.options.map((opt: any, idx: number) => ({
+                  id: opt.id || String(idx + 1),
+                  text: typeof opt === "string" ? opt : opt.text,
+                  emoji: opt.emoji || "",
+                  votes: Number(opt.votes) || 0,
+                }))
+              : [],
+            totalVotes: Number(body.expressData?.totalVotes) || 0,
+            durationMinutes: matchMomentDurationMins,
+            timerMinutes: matchMomentDurationMins,
+            expiresAt: computedExpiresAt,
+          }
+        : undefined;
+
+    const formattedQuestionData =
+      type === "question" && (body.questionData || body.options || body.title)
+        ? {
+            question: body.questionData?.question || body.question || body.title || "",
+            options: Array.isArray(body.questionData?.options) && body.questionData.options.length > 0
+              ? body.questionData.options
+              : Array.isArray(body.options)
+              ? body.options.map((opt: any, idx: number) => ({
+                  id: opt.id || String.fromCharCode(65 + idx),
+                  text: typeof opt === "string" ? opt : opt.text,
+                  votes: Number(opt.votes) || 0,
+                }))
+              : [],
+            correctOptionId: body.questionData?.correctOptionId || body.correctOptionId || body.correctAnswer || "",
+            explanation: body.questionData?.explanation || body.explanation || "",
+            pointsReward: Number(body.questionData?.pointsReward || body.pointsReward || 10),
+            durationMinutes: matchMomentDurationMins,
+            timerMinutes: matchMomentDurationMins,
+            expiresAt: computedExpiresAt,
+          }
         : undefined;
 
     const isDualMemeDetected = Boolean(
@@ -679,6 +870,16 @@ export async function POST(req: NextRequest) {
       pollData: formattedPollData,
       predictionData: formattedPredData,
       memeData: formattedMemeData,
+      debateData: formattedDebateData,
+      expressData: formattedExpressData,
+      questionData: formattedQuestionData,
+      options: body.options || formattedDebateData?.options || formattedExpressData?.options || formattedQuestionData?.options || formattedPollData?.options || formattedPredData?.options,
+      winningChoiceId: body.winningChoiceId || formattedPredData?.winningChoiceId || formattedDebateData?.winningChoiceId || null,
+      outcomeNotes: body.outcomeNotes || null,
+      resolvedAt: body.resolvedAt || null,
+      resolvedBy: body.resolvedBy || null,
+      timerMinutes: matchMomentDurationMins,
+      durationMinutes: matchMomentDurationMins,
       likes: Number(likes) || 0,
       shares: Number(shares) || 0,
       totalEngaged: Number(totalEngaged) || 0,
@@ -690,6 +891,17 @@ export async function POST(req: NextRequest) {
       createdAt: now,
       updatedAt: now,
       expiresAt: computedExpiresAt,
+      category: body.category || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : (type === "fan_battle" || type === "meme" ? "fliparena" : undefined)),
+      source: body.source || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : "fliparena"),
+      isMatchMoment: body.isMatchMoment !== undefined ? Boolean(body.isMatchMoment) : Boolean(formattedDebateData || formattedExpressData || formattedQuestionData || (type !== "meme" && type !== "fan_battle" && matchMomentDurationMins === 4)),
+      momentId: body.momentId || body.loopId || undefined,
+      loopId: body.loopId || body.momentId || undefined,
+      matchPhase: body.matchPhase || undefined,
+      anchorTrigger: body.anchorTrigger || undefined,
+      scoreState: body.scoreState || undefined,
+      sportsMoment: body.sportsMoment || undefined,
+      overNumber: body.overNumber !== undefined ? body.overNumber : undefined,
+      innings: body.innings !== undefined ? Number(body.innings) : undefined,
     };
 
     // DynamoDB Item for SocialAndContent table
@@ -749,5 +961,33 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to create engagement";
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+// ─── DELETE /api/engagements?id=... ─────────────────────────────────────────
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+
+    if (!id) {
+      return NextResponse.json({ success: false, error: "Missing engagement id" }, { status: 400 });
+    }
+
+    await dualDelete(
+      "engagements",
+      id,
+      TABLES.SocialAndContent,
+      {
+        contentId: `ENGAGEMENT#${id}`,
+        sk: "ENGAGEMENT#META",
+      }
+    );
+
+    return NextResponse.json({ success: true, message: `Engagement ${id} deleted successfully` });
+  } catch (error: unknown) {
+    console.error("DELETE /api/engagements error:", error);
+    const msg = error instanceof Error ? error.message : "Failed to delete engagement";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

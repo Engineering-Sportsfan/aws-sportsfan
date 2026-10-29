@@ -18,7 +18,7 @@ interface AdminQuizQuestion {
 }
 
 export default function EngagementsManagementPage() {
-  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "meme_arena">("list");
+  const [activeTab, setActiveTab] = useState<"list" | "leaderboard" | "meme_arena" | EngagementType>("list");
   const [engagements, setEngagements] = useState<EngagementItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -154,7 +154,7 @@ export default function EngagementsManagementPage() {
   async function fetchEngagements() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/engagements?type=${typeFilter}`);
+      const res = await fetch(`/api/engagements?type=${typeFilter}&excludeMatchMoments=true`);
       const data = await res.json();
       const getItemTimestamp = (it: any) => {
         const raw =
@@ -176,9 +176,19 @@ export default function EngagementsManagementPage() {
         return isNaN(parsed) ? 0 : parsed;
       };
 
+      const isMatchMomentItem = (it: any) =>
+        it.isMatchMoment === true ||
+        it.category === "match_moment" ||
+        it.source === "match_moment" ||
+        it.type === "debate" ||
+        it.type === "express" ||
+        it.type === "question" ||
+        Boolean(it.debateData || it.expressData || it.questionData) ||
+        Boolean(it.tags && it.tags.some((t: string) => t.toUpperCase().includes("MATCH MOMENT") || t.toUpperCase().includes("4-MIN")));
+
       const list: EngagementItem[] = Array.isArray(data.engagements)
         ? (data.engagements
-            .filter((it: any) => Boolean(it && (it.title || it.type))) as EngagementItem[])
+            .filter((it: any) => Boolean(it && (it.title || it.type)) && !isMatchMomentItem(it)) as EngagementItem[])
             .sort((a: EngagementItem, b: EngagementItem) => getItemTimestamp(b) - getItemTimestamp(a))
         : [];
       setEngagements(list);
@@ -419,6 +429,12 @@ export default function EngagementsManagementPage() {
       } else {
         setPredStartTime("");
       }
+    } else if (item.type === "debate" || item.type === "express" || item.type === "question") {
+      setPollQuestion(item.title || "");
+      const loadedOpts = (item.options || []).map((o: any) => typeof o === "string" ? o : o.text || o.label || "");
+      setPollOptions(loadedOpts.length >= 2 ? loadedOpts : ["Option 1", "Option 2"]);
+      setPollTimerMinutes(item.durationMinutes || item.timerMinutes || 4);
+      setActiveTab("poll");
     }
   }
 
@@ -779,11 +795,22 @@ export default function EngagementsManagementPage() {
     }
   }
 
+  const isMatchMomentItem = (it: any) =>
+    it?.isMatchMoment === true ||
+    it?.category === "match_moment" ||
+    it?.source === "match_moment" ||
+    it?.type === "debate" ||
+    it?.type === "express" ||
+    it?.type === "question" ||
+    Boolean(it?.debateData || it?.expressData || it?.questionData) ||
+    Boolean(it?.tags && it?.tags.some((t: string) => t.toUpperCase().includes("MATCH MOMENT") || t.toUpperCase().includes("4-MIN")));
+
   const filtered = engagements.filter(
     i =>
-      (i?.title || "").toLowerCase().includes(search.toLowerCase()) ||
+      !isMatchMomentItem(i) &&
+      ((i?.title || "").toLowerCase().includes(search.toLowerCase()) ||
       (i?.subtitle || "").toLowerCase().includes(search.toLowerCase()) ||
-      (i?.type || "").toLowerCase().includes(search.toLowerCase())
+      (i?.type || "").toLowerCase().includes(search.toLowerCase()))
   );
 
   const quizEngagements = engagements.filter(i => i?.type === "quiz");
@@ -815,6 +842,24 @@ export default function EngagementsManagementPage() {
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <a
+            href="/admin/matchmoment-management"
+            style={{
+              background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+              color: "#000",
+              padding: "8px 14px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 800,
+              textDecoration: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              boxShadow: "0 4px 12px rgba(245, 158, 11, 0.35)",
+            }}
+          >
+            🔥 Match Moments (Live Room)
+          </a>
           <button
             onClick={() => setActiveTab("leaderboard")}
             style={{

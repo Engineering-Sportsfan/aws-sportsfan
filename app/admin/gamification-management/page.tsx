@@ -22,7 +22,9 @@ import {
   Shield,
   Star,
   Users,
+  Upload,
 } from "lucide-react";
+import { FEATURE_ICONS, GLOBAL_TIER_ICONS, FeatureKey } from "@/lib/roarBadges";
 
 // ─── Interfaces ─────────────────────────────────────────────────────────────
 interface PointRuleItem {
@@ -43,6 +45,7 @@ interface GlobalTierItem {
   maxSXP: number | null;
   subLevels: number;
   badgeColor: string;
+  badgeIconUrl?: string; // Cloudinary secure_url for tier badge
   description?: string;
 }
 
@@ -52,7 +55,14 @@ interface FeatureLadderItem {
   category: string;
   thresholds: number[];
   names: string[];
+  icons?: string[]; // Cloudinary secure_urls for each ladder level
   unit: string;
+}
+
+interface EditableLevelItem {
+  threshold: number;
+  name: string;
+  icon: string;
 }
 
 interface StreakBracket {
@@ -66,6 +76,92 @@ interface MultipliersConfig {
   squadBoost: number;
   dailyCapConsumption: number;
   streakBrackets: StreakBracket[];
+}
+
+const LADDER_META: Record<string, { icon: string; bg: string; border: string; text: string }> = {
+  prediction: { icon: "🎯", bg: "bg-cyan-950/60", border: "border-cyan-500/40", text: "text-cyan-300" },
+  trivia:     { icon: "🧠", bg: "bg-amber-950/60", border: "border-amber-500/40", text: "text-amber-300" },
+  fanBattle:  { icon: "⚔️", bg: "bg-rose-950/60", border: "border-rose-500/40", text: "text-rose-300" },
+  post:       { icon: "✍️", bg: "bg-emerald-950/60", border: "border-emerald-500/40", text: "text-emerald-300" },
+  debate:     { icon: "🗣️", bg: "bg-purple-950/60", border: "border-purple-500/40", text: "text-purple-300" },
+  community:  { icon: "🤝", bg: "bg-pink-950/60", border: "border-pink-500/40", text: "text-pink-300" },
+  shares:     { icon: "📢", bg: "bg-sky-950/60", border: "border-sky-500/40", text: "text-sky-300" },
+  comments:   { icon: "💬", bg: "bg-indigo-950/60", border: "border-indigo-500/40", text: "text-indigo-300" },
+  media:      { icon: "📸", bg: "bg-fuchsia-950/60", border: "border-fuchsia-500/40", text: "text-fuchsia-300" },
+  referrals:  { icon: "👥", bg: "bg-yellow-950/60", border: "border-yellow-500/40", text: "text-yellow-300" },
+};
+
+function BadgeThumbnail({
+  src,
+  alt,
+  category,
+  level,
+  size = "md",
+  className = "",
+  badgeColor,
+  isTier = false,
+}: {
+  src?: string;
+  alt: string;
+  category?: string;
+  level?: number;
+  size?: "sm" | "md" | "lg";
+  className?: string;
+  badgeColor?: string;
+  isTier?: boolean;
+}) {
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    setLoadError(false);
+  }, [src]);
+
+  const shouldRenderImage = !loadError && Boolean(src);
+
+  const sizeClasses = {
+    sm: "w-8 h-8 text-[11px]",
+    md: "w-9 h-9 text-xs",
+    lg: "w-11 h-11 text-sm",
+  }[size];
+
+  const meta = category ? LADDER_META[category] : undefined;
+
+  return (
+    <div
+      className={`relative ${sizeClasses} flex-shrink-0 flex items-center justify-center rounded-lg overflow-hidden border shadow-sm transition-all ${
+        meta ? `${meta.bg} ${meta.border}` : "bg-black/50 border-white/10"
+      } ${className}`}
+      style={
+        badgeColor && isTier
+          ? { borderColor: `${badgeColor}60`, backgroundColor: `${badgeColor}18` }
+          : undefined
+      }
+    >
+      {shouldRenderImage ? (
+        <img
+          src={src}
+          alt={alt}
+          className="w-full h-full object-contain p-0.5"
+          onError={() => setLoadError(true)}
+        />
+      ) : isTier ? (
+        <div className="flex flex-col items-center justify-center">
+          <Award size={size === "lg" ? 22 : 16} style={{ color: badgeColor || "#FF9800" }} />
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center select-none">
+          <span className="leading-none text-base sm:text-lg">{meta?.icon || "⭐"}</span>
+        </div>
+      )}
+
+      {/* Level Tag Pill */}
+      {typeof level === "number" && (
+        <span className="absolute -bottom-0.5 -right-0.5 px-1 rounded bg-black/90 border border-purple-500/50 text-[9px] font-mono font-black text-purple-300 leading-tight shadow">
+          L{level}
+        </span>
+      )}
+    </div>
+  );
 }
 
 export default function GamificationManagementPage() {
@@ -159,6 +255,24 @@ export default function GamificationManagementPage() {
     }
   };
 
+  const handleDeleteRule = async (rule: PointRuleItem) => {
+    if (!window.confirm(`Are you sure you want to delete rule "${rule.name}" (${rule.id})?`)) {
+      return;
+    }
+    try {
+      const res = await axios.delete(`/api/admin/gamification/rules?id=${encodeURIComponent(rule.id)}`);
+      if (res.data?.success) {
+        showToast(`Rule "${rule.name}" deleted successfully`);
+        if (editingRuleId === rule.id) setEditingRuleId(null);
+        fetchRules();
+      } else {
+        showToast(res.data?.error || "Failed to delete rule", "error");
+      }
+    } catch (err: any) {
+      showToast(err.response?.data?.error || "Failed to delete rule", "error");
+    }
+  };
+
   // ─── 2. Global Tiers State ─────────────────────────────────────────────────
   const [tiers, setTiers] = useState<GlobalTierItem[]>([]);
   const [loadingTiers, setLoadingTiers] = useState(true);
@@ -167,6 +281,8 @@ export default function GamificationManagementPage() {
   const [editTierMax, setEditTierMax] = useState<number | string>("");
   const [editTierSubLevels, setEditTierSubLevels] = useState<number>(3);
   const [editTierColor, setEditTierColor] = useState<string>("#FF9800");
+  const [editTierIconUrl, setEditTierIconUrl] = useState<string>("");
+  const [uploadingTierIcon, setUploadingTierIcon] = useState(false);
 
   // New Tier Modal
   const [showAddTierModal, setShowAddTierModal] = useState(false);
@@ -176,7 +292,28 @@ export default function GamificationManagementPage() {
   const [newTierMax, setNewTierMax] = useState<string>("");
   const [newTierSubLevels, setNewTierSubLevels] = useState(3);
   const [newTierColor, setNewTierColor] = useState("#7C4DFF");
+  const [newTierIconUrl, setNewTierIconUrl] = useState("");
   const [newTierDescription, setNewTierDescription] = useState("");
+
+  const handleUploadCloudinary = async (file: File): Promise<string | null> => {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await axios.post("/api/upload", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      if (res.data?.success && res.data.url) {
+        showToast("Image uploaded to Cloudinary successfully!");
+        return res.data.url;
+      }
+      showToast("Upload failed to return URL", "error");
+      return null;
+    } catch (err) {
+      console.error("Cloudinary upload failed:", err);
+      showToast("Failed to upload image to Cloudinary", "error");
+      return null;
+    }
+  };
 
   const fetchTiers = useCallback(async () => {
     setLoadingTiers(true);
@@ -201,6 +338,7 @@ export default function GamificationManagementPage() {
         maxSXP: editTierMax === "" ? null : Number(editTierMax),
         subLevels: editTierSubLevels,
         badgeColor: editTierColor,
+        badgeIconUrl: editTierIconUrl,
       });
       if (res.data?.success) {
         showToast(`Tier "${tier.name}" updated successfully`);
@@ -209,6 +347,24 @@ export default function GamificationManagementPage() {
       }
     } catch (err) {
       showToast("Failed to update tier", "error");
+    }
+  };
+
+  const handleDeleteTier = async (tier: GlobalTierItem) => {
+    if (!window.confirm(`Are you sure you want to delete tier "${tier.name}" (Tier #${tier.tierLevel})?`)) {
+      return;
+    }
+    try {
+      const res = await axios.delete(`/api/admin/gamification/tiers?id=${encodeURIComponent(tier.id)}`);
+      if (res.data?.success) {
+        showToast(`Tier "${tier.name}" deleted successfully`);
+        if (editingTierId === tier.id) setEditingTierId(null);
+        fetchTiers();
+      } else {
+        showToast(res.data?.error || "Failed to delete tier", "error");
+      }
+    } catch (err: any) {
+      showToast(err.response?.data?.error || "Failed to delete tier", "error");
     }
   };
 
@@ -226,12 +382,14 @@ export default function GamificationManagementPage() {
         maxSXP: newTierMax === "" ? null : Number(newTierMax),
         subLevels: newTierSubLevels,
         badgeColor: newTierColor,
+        badgeIconUrl: newTierIconUrl || undefined,
         description: newTierDescription.trim(),
       });
       if (res.data?.success) {
-        showToast(`Tier "${newTierName}" created successfully!`);
+        showToast(`Tier "${newTierName}" created with badge!`);
         setShowAddTierModal(false);
         setNewTierName("");
+        setNewTierIconUrl("");
         setNewTierDescription("");
         fetchTiers();
       }
@@ -244,8 +402,8 @@ export default function GamificationManagementPage() {
   const [ladders, setLadders] = useState<FeatureLadderItem[]>([]);
   const [loadingLadders, setLoadingLadders] = useState(true);
   const [editingLadderId, setEditingLadderId] = useState<string | null>(null);
-  const [editLadderThresholds, setEditLadderThresholds] = useState<string>("");
-  const [editLadderNames, setEditLadderNames] = useState<string>("");
+  const [editLadderLevels, setEditLadderLevels] = useState<EditableLevelItem[]>([]);
+  const [uploadingLevelIdx, setUploadingLevelIdx] = useState<number | null>(null);
 
   const fetchLadders = useCallback(async () => {
     setLoadingLadders(true);
@@ -262,24 +420,51 @@ export default function GamificationManagementPage() {
     }
   }, []);
 
+  const handleUploadLevelBadge = async (idx: number, file: File) => {
+    setUploadingLevelIdx(idx);
+    const url = await handleUploadCloudinary(file);
+    if (url) {
+      const updated = [...editLadderLevels];
+      updated[idx] = { ...updated[idx], icon: url };
+      setEditLadderLevels(updated);
+      showToast(`Level ${idx + 1} badge image uploaded to Cloudinary!`);
+    }
+    setUploadingLevelIdx(null);
+  };
+
+  const handleAddLevel = () => {
+    const nextNum = editLadderLevels.length + 1;
+    const lastThreshold = editLadderLevels[editLadderLevels.length - 1]?.threshold || 100;
+    setEditLadderLevels([
+      ...editLadderLevels,
+      {
+        name: `Level ${nextNum}`,
+        threshold: Math.round(lastThreshold * 1.5),
+        icon: "",
+      },
+    ]);
+  };
+
   const handleSaveLadderEdit = async (ladder: FeatureLadderItem) => {
     try {
-      const parsedThresholds = editLadderThresholds.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
-      const parsedNames = editLadderNames.split(",").map((s) => s.trim()).filter(Boolean);
+      const thresholds = editLadderLevels.map((l) => Math.max(1, parseInt(String(l.threshold), 10) || 1));
+      const names = editLadderLevels.map((l) => l.name.trim() || `Level`);
+      const icons = editLadderLevels.map((l) => l.icon.trim());
 
-      if (parsedThresholds.length !== parsedNames.length) {
-        showToast("Threshold count must match Badge Name count exactly", "error");
+      if (names.some((n) => !n)) {
+        showToast("All levels must have a title", "error");
         return;
       }
 
       const res = await axios.post("/api/admin/gamification/thresholds", {
         ...ladder,
-        thresholds: parsedThresholds,
-        names: parsedNames,
+        thresholds,
+        names,
+        icons,
       });
 
       if (res.data?.success) {
-        showToast(`Ladder "${ladder.name}" updated to ${parsedNames.length} levels!`);
+        showToast(`Ladder "${ladder.name}" updated with custom badge images!`);
         setEditingLadderId(null);
         fetchLadders();
       }
@@ -589,18 +774,27 @@ export default function GamificationManagementPage() {
                               </button>
                             </div>
                           ) : (
-                            <button
-                              onClick={() => {
-                                setEditingRuleId(rule.id);
-                                setEditRulePoints(rule.points);
-                                setEditRuleDailyLimit(rule.dailyLimit);
-                                setEditRuleStatus(rule.status);
-                              }}
-                              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer text-xs font-semibold inline-flex items-center gap-1.5"
-                            >
-                              <Pencil size={12} />
-                              <span>Edit</span>
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => {
+                                  setEditingRuleId(rule.id);
+                                  setEditRulePoints(rule.points);
+                                  setEditRuleDailyLimit(rule.dailyLimit);
+                                  setEditRuleStatus(rule.status);
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer text-xs font-semibold inline-flex items-center gap-1.5"
+                              >
+                                <Pencil size={12} />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                onClick={() => handleDeleteRule(rule)}
+                                className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-colors cursor-pointer"
+                                title="Delete Rule"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -649,9 +843,18 @@ export default function GamificationManagementPage() {
                 >
                   <div>
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono font-bold text-gray-500">Tier #{tier.tierLevel}</span>
+                      <div className="flex items-center gap-2">
+                        <BadgeThumbnail
+                          src={tier.badgeIconUrl || GLOBAL_TIER_ICONS[tier.name] || `/images/badges/global${tier.name.toLowerCase()}.png`}
+                          alt={tier.name}
+                          badgeColor={tier.badgeColor}
+                          isTier={true}
+                          size="sm"
+                        />
+                        <span className="text-[10px] font-mono font-bold text-gray-500">Tier #{tier.tierLevel}</span>
+                      </div>
                       <span
-                        className="w-3 h-3 rounded-full shadow-sm"
+                        className="w-2.5 h-2.5 rounded-full shadow-sm"
                         style={{ backgroundColor: tier.badgeColor }}
                       />
                     </div>
@@ -705,6 +908,65 @@ export default function GamificationManagementPage() {
                               className="w-full px-2 py-1 bg-[#161b22] border border-blue-500 rounded text-xs text-white"
                             />
                           </div>
+                          <div>
+                            <label className="text-[10px] text-gray-500 block mb-1">Badge Icon (Cloudinary):</label>
+                            <div className="flex items-center gap-2">
+                              {editTierIconUrl ? (
+                                <div className="relative group flex-shrink-0">
+                                  <BadgeThumbnail
+                                    src={editTierIconUrl}
+                                    alt="Preview"
+                                    badgeColor={editTierColor}
+                                    isTier={true}
+                                    size="sm"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditTierIconUrl("");
+                                      showToast("Tier badge image removed");
+                                    }}
+                                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center text-[9px] shadow cursor-pointer"
+                                    title="Delete image"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </div>
+                              ) : null}
+                              <label className="flex-1 cursor-pointer flex items-center justify-center gap-1.5 px-2 py-1.5 bg-[#161b22] hover:bg-white/5 border border-dashed border-[#30363d] rounded-lg text-[11px] text-gray-300">
+                                <Upload size={12} className="text-blue-400" />
+                                <span>{uploadingTierIcon ? "Uploading..." : editTierIconUrl ? "Replace Badge" : "Upload Badge"}</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  disabled={uploadingTierIcon}
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    setUploadingTierIcon(true);
+                                    const url = await handleUploadCloudinary(file);
+                                    if (url) setEditTierIconUrl(url);
+                                    setUploadingTierIcon(false);
+                                  }}
+                                />
+                              </label>
+                              {editTierIconUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditTierIconUrl("");
+                                    showToast("Tier badge image removed");
+                                  }}
+                                  className="px-2 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                  title="Delete Badge Image"
+                                >
+                                  <Trash2 size={12} />
+                                  <span>Delete</span>
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
                       ) : (
                         <>
@@ -725,7 +987,19 @@ export default function GamificationManagementPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-end">
+                  <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-between">
+                    <div>
+                      {tier.tierLevel > 7 && !isEditing && (
+                        <button
+                          onClick={() => handleDeleteTier(tier)}
+                          className="px-2.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors cursor-pointer text-xs font-semibold inline-flex items-center gap-1"
+                          title="Delete Custom Tier"
+                        >
+                          <Trash2 size={12} />
+                          <span>Delete Tier</span>
+                        </button>
+                      )}
+                    </div>
                     {isEditing ? (
                       <div className="flex items-center gap-2">
                         <button
@@ -749,6 +1023,7 @@ export default function GamificationManagementPage() {
                           setEditTierMax(tier.maxSXP !== null ? String(tier.maxSXP) : "");
                           setEditTierSubLevels(tier.subLevels);
                           setEditTierColor(tier.badgeColor);
+                          setEditTierIconUrl(tier.badgeIconUrl || GLOBAL_TIER_ICONS[tier.name] || "");
                         }}
                         className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
                       >
@@ -803,49 +1078,188 @@ export default function GamificationManagementPage() {
                     </h4>
 
                     {isEditing ? (
-                      <div className="mt-3 space-y-3 p-3 bg-[#0d1117] rounded-xl border border-purple-500/40">
-                        <div>
-                          <label className="text-[11px] font-bold text-gray-300 block mb-1">
-                            Thresholds ({ladder.unit}, comma-separated):
-                          </label>
-                          <input
-                            type="text"
-                            value={editLadderThresholds}
-                            onChange={(e) => setEditLadderThresholds(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-[#161b22] border border-[#30363d] rounded-lg text-xs font-mono text-purple-300 focus:outline-none focus:border-purple-500"
-                          />
+                      <div className="mt-4 space-y-3 p-3 bg-[#0d1117] rounded-xl border border-purple-500/40">
+                        <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
+                          <span className="text-xs font-bold text-gray-200">Levels & Upload Badge Images</span>
+                          <span className="text-[11px] text-gray-500 font-mono">Unit: {ladder.unit}</span>
                         </div>
 
-                        <div>
-                          <label className="text-[11px] font-bold text-gray-300 block mb-1">
-                            Badge Titles (L1 to LN, comma-separated):
-                          </label>
-                          <input
-                            type="text"
-                            value={editLadderNames}
-                            onChange={(e) => setEditLadderNames(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-[#161b22] border border-[#30363d] rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
+                        <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1">
+                          {editLadderLevels.map((level, idx) => (
+                            <div
+                              key={idx}
+                              className="p-2.5 rounded-xl bg-[#161b22] border border-[#30363d] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
+                            >
+                              <div className="flex items-center gap-3">
+                                {/* Badge Image Thumbnail + Direct Upload + Delete X */}
+                                <div className="relative group flex-shrink-0">
+                                  <BadgeThumbnail
+                                    src={level.icon}
+                                    alt={level.name}
+                                    category={ladder.id}
+                                    level={idx + 1}
+                                    size="lg"
+                                  />
+
+                                  {level.icon ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const updated = [...editLadderLevels];
+                                        updated[idx] = { ...updated[idx], icon: "" };
+                                        setEditLadderLevels(updated);
+                                        showToast(`Badge image removed for Level ${idx + 1}`);
+                                      }}
+                                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center text-[9px] shadow z-10 cursor-pointer"
+                                      title="Delete image"
+                                    >
+                                      <X size={10} />
+                                    </button>
+                                  ) : null}
+
+                                  <label className="cursor-pointer absolute inset-0 bg-black/75 rounded-lg opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center text-[9px] text-white transition-opacity">
+                                    <Upload size={12} className="text-purple-300 mb-0.5" />
+                                    <span>{uploadingLevelIdx === idx ? "..." : "Change"}</span>
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      disabled={uploadingLevelIdx === idx}
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) handleUploadLevelBadge(idx, file);
+                                      }}
+                                    />
+                                  </label>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-mono font-bold">
+                                      Level {idx + 1}
+                                    </span>
+                                    <label className="cursor-pointer text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 font-semibold">
+                                      <Upload size={10} />
+                                      <span>{uploadingLevelIdx === idx ? "Uploading..." : "Upload Badge"}</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        disabled={uploadingLevelIdx === idx}
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) handleUploadLevelBadge(idx, file);
+                                        }}
+                                      />
+                                    </label>
+                                    {level.icon ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = [...editLadderLevels];
+                                          updated[idx] = { ...updated[idx], icon: "" };
+                                          setEditLadderLevels(updated);
+                                          showToast(`Badge image removed for Level ${idx + 1}`);
+                                        }}
+                                        className="cursor-pointer text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1 font-semibold transition-colors"
+                                        title="Delete custom badge image"
+                                      >
+                                        <Trash2 size={10} />
+                                        <span>Delete Image</span>
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                  <input
+                                    type="text"
+                                    value={level.name}
+                                    placeholder="Badge Title (e.g. Master)"
+                                    onChange={(e) => {
+                                      const updated = [...editLadderLevels];
+                                      updated[idx].name = e.target.value;
+                                      setEditLadderLevels(updated);
+                                    }}
+                                    className="px-2 py-1 bg-[#0d1117] border border-[#30363d] rounded-lg text-xs text-white font-bold focus:outline-none focus:border-purple-500 w-36 sm:w-44"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 self-end sm:self-center">
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={level.threshold}
+                                    onChange={(e) => {
+                                      const updated = [...editLadderLevels];
+                                      updated[idx].threshold = parseInt(e.target.value, 10) || 1;
+                                      setEditLadderLevels(updated);
+                                    }}
+                                    className="w-16 px-2 py-1 bg-[#0d1117] border border-[#30363d] rounded-lg text-xs font-mono text-purple-300 text-right focus:outline-none focus:border-purple-500 font-bold"
+                                  />
+                                  <span className="text-[10px] text-gray-500 font-mono">{ladder.unit}</span>
+                                </div>
+
+                                {idx >= 5 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const updated = editLadderLevels.filter((_, i) => i !== idx);
+                                      setEditLadderLevels(updated);
+                                    }}
+                                    className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 cursor-pointer"
+                                    title="Remove Level"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={handleAddLevel}
+                          className="w-full py-2 rounded-xl bg-purple-600/15 hover:bg-purple-600/25 border border-purple-500/30 text-purple-300 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                        >
+                          <Plus size={13} />
+                          <span>Add Level {editLadderLevels.length + 1}</span>
+                        </button>
                       </div>
                     ) : (
-                      <div className="mt-3 space-y-1.5">
-                        {ladder.names.map((badgeName, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-[#0d1117] border border-[#21262d] text-xs"
-                          >
-                            <span className="flex items-center gap-2 font-bold text-gray-200">
-                              <span className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center text-[10px] font-mono">
-                                {idx + 1}
+                      <div className="mt-4 space-y-2">
+                        {ladder.names.map((badgeName, idx) => {
+                          const defaultIcon =
+                            FEATURE_ICONS[ladder.id as FeatureKey]?.[idx] ||
+                            `/images/badges/${ladder.id}l${idx + 1}.png`;
+                          const iconUrl = ladder.icons?.[idx] || defaultIcon;
+
+                          return (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#0d1117] border border-[#21262d] text-xs hover:border-purple-500/30 transition-all"
+                            >
+                              <div className="flex items-center gap-3">
+                                <BadgeThumbnail
+                                  src={iconUrl}
+                                  alt={badgeName}
+                                  category={ladder.id}
+                                  level={idx + 1}
+                                  size="md"
+                                />
+                                <div>
+                                  <span className="font-bold text-gray-200 block text-xs">{badgeName}</span>
+                                  <span className="text-[10px] text-gray-500 font-mono">Level {idx + 1}</span>
+                                </div>
+                              </div>
+
+                              <span className="font-mono text-purple-300 font-bold text-xs bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
+                                {ladder.thresholds[idx] || "?"} {ladder.unit}
                               </span>
-                              <span>{badgeName}</span>
-                            </span>
-                            <span className="font-mono text-gray-400 text-[11px]">
-                              {ladder.thresholds[idx] || "?"} {ladder.unit}
-                            </span>
-                          </div>
-                        ))}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -855,13 +1269,13 @@ export default function GamificationManagementPage() {
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handleSaveLadderEdit(ladder)}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white cursor-pointer"
+                          className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white cursor-pointer shadow-md"
                         >
                           Save Changes
                         </button>
                         <button
                           onClick={() => setEditingLadderId(null)}
-                          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-400 cursor-pointer"
+                          className="px-3.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-400 cursor-pointer"
                         >
                           Cancel
                         </button>
@@ -870,8 +1284,17 @@ export default function GamificationManagementPage() {
                       <button
                         onClick={() => {
                           setEditingLadderId(ladder.id);
-                          setEditLadderThresholds(ladder.thresholds.join(", "));
-                          setEditLadderNames(ladder.names.join(", "));
+                          const levels: EditableLevelItem[] = ladder.names.map((name, idx) => {
+                            const defaultIcon =
+                              FEATURE_ICONS[ladder.id as FeatureKey]?.[idx] ||
+                              `/images/badges/${ladder.id}l${idx + 1}.png`;
+                            return {
+                              name,
+                              threshold: ladder.thresholds[idx] || (idx + 1) * 10,
+                              icon: ladder.icons?.[idx] || defaultIcon,
+                            };
+                          });
+                          setEditLadderLevels(levels);
                         }}
                         className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
                       >
@@ -1205,6 +1628,47 @@ export default function GamificationManagementPage() {
                     onChange={(e) => setNewTierColor(e.target.value)}
                     className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-xl text-xs font-mono text-white focus:outline-none"
                   />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-200 block mb-1">Badge Image (Upload to Cloudinary)</label>
+                <div className="flex items-center gap-3">
+                  {newTierIconUrl ? (
+                    <div className="relative">
+                      <img
+                        src={newTierIconUrl}
+                        alt="Tier Badge Preview"
+                        className="w-12 h-12 object-contain rounded-xl bg-black/50 p-1.5 border border-blue-500/50 shadow-md"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setNewTierIconUrl("")}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center text-[10px] cursor-pointer"
+                        title="Remove"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : null}
+                  <label className="flex-1 cursor-pointer flex items-center justify-center gap-2 px-3 py-2 bg-[#0d1117] hover:bg-white/5 border border-dashed border-[#30363d] hover:border-blue-500 rounded-xl text-xs text-gray-300 transition-colors">
+                    <Upload size={14} className="text-blue-400" />
+                    <span>{uploadingTierIcon ? "Uploading to Cloudinary..." : newTierIconUrl ? "Replace Badge Icon" : "Upload Badge Image (PNG/SVG)"}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={uploadingTierIcon}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setUploadingTierIcon(true);
+                        const url = await handleUploadCloudinary(file);
+                        if (url) setNewTierIconUrl(url);
+                        setUploadingTierIcon(false);
+                      }}
+                    />
+                  </label>
                 </div>
               </div>
 
