@@ -26,7 +26,7 @@ export default function QuizCard({
     if (item.quizData?.questions && item.quizData.questions.length > 0) {
       return item.quizData.questions;
     }
-    const defaultQuiz = item.quizData || {
+    const defaultQuiz = item.quizData || (item.questionData as any) || {
       question: item.title || "How many Test centuries has Virat Kohli scored?",
       options: [
         { id: "A", text: "27" },
@@ -43,7 +43,7 @@ export default function QuizCard({
       {
         id: "q_1",
         question: defaultQuiz.question || item.title,
-        options: defaultQuiz.options || [
+        options: defaultQuiz.options || (Array.isArray(item.options) && item.options.length > 0 ? item.options : undefined) || [
           { id: "A", text: "Option A" },
           { id: "B", text: "Option B" },
           { id: "C", text: "Option C" },

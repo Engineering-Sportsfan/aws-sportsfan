@@ -13,7 +13,10 @@ export default function PollCard({ item, onVoteSuccess }: Props) {
   const [voted, setVoted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [options, setOptions] = useState(
-    item.pollData?.options || [
+    item.pollData?.options ||
+    item.debateData?.options ||
+    item.expressData?.options ||
+    (Array.isArray(item.options) && item.options.length > 0 ? item.options : undefined) || [
       { id: "1", text: "Jasprit Bumrah 🏏", votes: 47 },
       { id: "2", text: "Maheesh Theekshana 🌀", votes: 31 },
       { id: "3", text: "Ravindra Jadeja 🍌", votes: 22 },

@@ -17,10 +17,10 @@ export default function EngagementCard({ item, onInteraction }: Props) {
   if (item.type === "fan_battle") {
     return <FanBattleCard item={item} onVoteSuccess={onInteraction} />;
   }
-  if (item.type === "quiz") {
+  if (item.type === "quiz" || item.type === "question") {
     return <QuizCard item={item} onAnswerSuccess={onInteraction} />;
   }
-  if (item.type === "poll") {
+  if (item.type === "poll" || item.type === "debate" || item.type === "express") {
     return <PollCard item={item} onVoteSuccess={onInteraction} />;
   }
   if (item.type === "prediction") {
