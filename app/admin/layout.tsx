@@ -718,6 +718,7 @@ const FULL_NAV: NavGroup[] = [
         children: [
           { href: "/admin/core-engine/matches", label: "🏏 Match Setup & Directory" },
           { href: "/admin/core-engine/match-moments", label: "⚡ Match Moments & Loops" },
+          { href: "/admin/core-engine/visible-recognition", label: "📸 Visual Recognition" },
         ],
       },
       {

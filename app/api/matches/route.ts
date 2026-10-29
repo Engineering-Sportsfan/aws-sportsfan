@@ -10,7 +10,7 @@ import { ScanCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
-// ─── GET /api/matches  
+// ─── GET /api/matches
 // Query params: tournament, gender, format, season, limit (default 50), after (cursor)
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -23,72 +23,82 @@ export async function GET(req: NextRequest) {
 
   try {
     let matches: any[] = [];
+    const seenIds = new Set<string>();
 
-    // 1. Query DynamoDB SportsData
-    try {
-      let filterExpr = "begins_with(entityId, :mPrefix) AND sk = :metaSk";
-      const exprVals: Record<string, any> = {
-        ":mPrefix": "MATCH#",
-        ":metaSk": "MATCH#META",
-      };
-      const exprNames: Record<string, string> = {};
+    // 1. Scan ALL candidate tables for MATCH#META records (covers accidental writes to wrong table)
+    const candidateTables = [
+      "SportsData", "SportsData-dev",
+      "MatchMoments", "MatchMoments-dev", "MatchMoments-release",
+    ];
 
-      if (tournament) {
-        filterExpr += " AND tournament = :t";
-        exprVals[":t"] = tournament;
-      }
-      if (gender) {
-        filterExpr += " AND gender = :g";
-        exprVals[":g"] = gender;
-      }
-      if (format) {
-        filterExpr += " AND #fmt = :f";
-        exprNames["#fmt"] = "format";
-        exprVals[":f"] = format;
-      }
-      if (season) {
-        filterExpr += " AND season = :s";
-        exprVals[":s"] = parseInt(season, 10);
-      }
+    for (const tbl of candidateTables) {
+      try {
+        const exprVals: Record<string, any> = {
+          ":mPrefix": "MATCH#",
+          ":metaSk": "MATCH#META",
+        };
+        const exprNames: Record<string, string> = {};
+        let filterExpr = "begins_with(entityId, :mPrefix) AND sk = :metaSk";
 
-      const scanRes = await docClient.send(
-        new ScanCommand({
-          TableName: "SportsData",
-          FilterExpression: filterExpr,
-          ExpressionAttributeNames: Object.keys(exprNames).length > 0 ? exprNames : undefined,
-          ExpressionAttributeValues: exprVals,
-          Limit: 200,
-        })
-      );
+        if (tournament) { filterExpr += " AND tournament = :t"; exprVals[":t"] = tournament; }
+        if (gender) { filterExpr += " AND gender = :g"; exprVals[":g"] = gender; }
+        if (format) { filterExpr += " AND #fmt = :f"; exprNames["#fmt"] = "format"; exprVals[":f"] = format; }
+        if (season) { filterExpr += " AND season = :s"; exprVals[":s"] = parseInt(season, 10); }
 
-      if (scanRes.Items && scanRes.Items.length > 0) {
-        matches = (scanRes.Items as any[]).map((item) => ({
-          id: item.match_id || (item.entityId as string)?.replace(/^MATCH#/, ""),
-          ...item,
-        }));
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: tbl,
+            FilterExpression: filterExpr,
+            ExpressionAttributeNames: Object.keys(exprNames).length > 0 ? exprNames : undefined,
+            ExpressionAttributeValues: exprVals,
+            Limit: 200,
+          })
+        );
+
+        if (scanRes.Items && scanRes.Items.length > 0) {
+          for (const item of scanRes.Items as any[]) {
+            const matchId: string = item.match_id || (item.entityId as string)?.replace(/^MATCH#/, "");
+            // Only include real match records: must have team1 or team2, and not duplicated
+            if (matchId && !seenIds.has(matchId) && (item.team1 || item.team2)) {
+              seenIds.add(matchId);
+              matches.push({ id: matchId, match_id: matchId, ...item });
+            }
+          }
+        }
+      } catch {
+        // Table doesn't exist — skip silently
       }
-    } catch (e) {
-      console.warn("[matches GET] DynamoDB notice:", e);
     }
 
-    // 2. Fallback to Firestore
-    if (matches.length === 0) {
-      let query: FirebaseFirestore.Query = db.collection("matches").orderBy("date", "desc");
+    // 2. Also fetch from Firestore for any matches not in DynamoDB
+    if (db) {
+      try {
+        let query: FirebaseFirestore.Query = db.collection("matches").orderBy("date", "desc");
 
-      if (tournament) query = query.where("tournament", "==", tournament);
-      if (gender) query = query.where("gender", "==", gender);
-      if (format) query = query.where("format", "==", format);
-      if (season) query = query.where("season", "==", parseInt(season, 10));
+        if (tournament) query = query.where("tournament", "==", tournament);
+        if (gender) query = query.where("gender", "==", gender);
+        if (format) query = query.where("format", "==", format);
+        if (season) query = query.where("season", "==", parseInt(season, 10));
 
-      if (after) {
-        const cursorDoc = await db.collection("matches").doc(after).get();
-        if (cursorDoc.exists) query = query.startAfter(cursorDoc);
+        if (after) {
+          const cursorDoc = await db.collection("matches").doc(after).get();
+          if (cursorDoc.exists) query = query.startAfter(cursorDoc);
+        }
+
+        query = query.limit(limit);
+        const snap = await query.get();
+
+        for (const d of snap.docs) {
+          const data = d.data() as any;
+          const matchId: string = data.match_id || d.id;
+          if (!seenIds.has(matchId)) {
+            seenIds.add(matchId);
+            matches.push({ id: matchId, match_id: matchId, ...data });
+          }
+        }
+      } catch (fbErr) {
+        console.warn("[matches GET] Firestore fallback notice:", fbErr);
       }
-
-      query = query.limit(limit);
-      const snap = await query.get();
-
-      matches = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     }
 
     matches.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
