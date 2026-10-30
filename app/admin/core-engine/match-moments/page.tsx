@@ -2909,22 +2909,30 @@ function CoreEngineMatchMomentsContent() {
     }
 
     setIsSettling(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     try {
       const selectedOption = settleModalItem.options?.find((o) => o.id === selectedWinningId);
-      const res = await fetch(`/api/engagements/${settleModalItem.id}/resolve`, {
+      const res = await fetch(`/api/engagements/${encodeURIComponent(settleModalItem.id)}/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           winningChoiceId: selectedWinningId,
-          winningChoiceText: selectedOption?.text || "",
+          winningChoiceText: selectedOption?.text || selectedOption?.label || selectedWinningId,
           outcomeNotes: settleNotes.trim(),
           matchId: selectedMatchId || settleModalItem.matchId,
+          roomId: settleModalItem.roomId || "NMryj1w7t8mJpGzEvF9q",
+          engagement: settleModalItem,
         }),
       });
-      const data = await res.json();
+      clearTimeout(timeoutId);
 
-          if (res.ok && data.success) {
-        showToast("success", `Outcome resolved!`);
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.success) {
+        showToast("success", `Outcome resolved successfully!`);
 
         // Remember the result so later refetches can't overwrite it with stale data
         const ov = { winningChoiceId: selectedWinningId, outcomeNotes: settleNotes.trim() };
@@ -2953,7 +2961,12 @@ function CoreEngineMatchMomentsContent() {
         showToast("error", data.error || "Failed to settle outcome");
       }
     } catch (err: any) {
-      showToast("error", err.message || "Network error settling outcome");
+      clearTimeout(timeoutId);
+      if (err.name === "AbortError") {
+        showToast("error", "Resolution timed out. Please check your connection and try again.");
+      } else {
+        showToast("error", err.message || "Network error settling outcome");
+      }
     } finally {
       setIsSettling(false);
     }
@@ -4402,7 +4415,7 @@ function CoreEngineMatchMomentsContent() {
                 disabled={isSettling}
                 onClick={handleSettleOutcome}
                 style={{
-                  background: "#238636",
+                  background: isSettling ? "#195026" : "#238636",
                   color: "#fff",
                   border: "none",
                   borderRadius: 6,
@@ -4416,7 +4429,7 @@ function CoreEngineMatchMomentsContent() {
                 }}
               >
                 {isSettling ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
-                Publish Outcome 
+                {isSettling ? "Publishing Outcome..." : "Publish Outcome"}
               </button>
             </div>
           </div>

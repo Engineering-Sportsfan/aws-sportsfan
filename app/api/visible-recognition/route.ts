@@ -5,7 +5,8 @@ import { docClient } from "@/lib/dynamodb";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
 import { cacheService } from "@/lib/cacheService";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
-import { QueryCommand, ScanCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand, ScanCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { createNotification } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -267,7 +268,7 @@ export async function POST(req: NextRequest) {
     }
 
     const now = Date.now();
-    const cleanMatchId = String(matchId).trim().replace(/^MATCH#/, "");
+    const cleanMatchId = String(matchId).trim().replace(/^MATCH[#-]/i, "");
     const cleanMomentId = String(momentId).trim().replace(/^MOMENT#/, "");
     const targetKey = targetType === "user" ? `USER#${String(targetUserId).trim()}` : "GLOBAL";
     const recognitionId = body.recognitionId || `VR_${cleanMomentId}_${Date.now()}_${targetType === "user" ? String(targetUserId).trim() : "ALL"}`;
@@ -348,51 +349,151 @@ export async function POST(req: NextRequest) {
       console.warn("[visible-recognition] Cache notice:", cacheErr);
     }
 
-    // 3. Optional: Write to sf360-notifications table if targeting a specific user
+    // 3. Dispatch In-App Notifications via central notifications engine
+    const targetRoomId = String((body as any).roomId || "NMryj1w7t8mJpGzEvF9q").replace(/^ROOM#/, "").trim();
+    const targetUserEmail = (body as any).targetUserEmail || null;
+
     if (targetType === "user" && targetUserId) {
       try {
-        const notifId = `ntf_${recognitionId}`;
-        const notifPayload = {
-          notificationId: notifId,
-          userId: targetUserId,
-          type: "MATCH_MOMENT_RECOGNITION",
-          title: headline,
-          message: message,
-          data: {
+        const cleanUid = String(targetUserId).trim().replace(/^USER#/, "");
+        await createNotification({
+          userId: cleanUid,
+          recipientEmail: targetUserEmail || (cleanUid.includes("@") ? cleanUid : null),
+          category: "roar",
+          notification_type: "roar.visual_recognition",
+          title: `🏆 Visual Recognition: ${headline}`,
+          body: message,
+          subtitle: `+${payload.rewards.totalSxp} SXPs bonus awarded!`,
+          cta_label: "Open ROAR Pulse",
+          cta_target: "/MainModules/ROAR",
+          priority: "HIGH",
+          roomId: targetRoomId,
+          metadata: {
             recognitionId,
             matchId: cleanMatchId,
             momentId: cleanMomentId,
             archetype,
-            sxpReward: payload.rewards.totalSxp,
+            rewards: payload.rewards,
           },
-          read: false,
-          createdAt: now,
-        };
-
-        await dualWrite({
-          tableName: "sf360-notifications",
-          dynamoItem: {
-            entityId: `USER#${targetUserId}`,
-            sk: `NOTIF#${now}#${notifId}`,
-            ...notifPayload,
-          },
-          collectionName: getFirestoreCollection("notifications"),
-          docId: notifId,
-          firestoreData: notifPayload,
         });
       } catch (notifErr) {
         console.warn("[visible-recognition] User notification notice:", notifErr);
       }
+    } else if (targetType === "all") {
+      // Broadcast to participants of this moment / match
+      try {
+        const participantSet = new Set<string>();
+        // Query recent voters for this moment from SocialAndContent
+        try {
+          const voteRes = await docClient.send(
+            new ScanCommand({
+              TableName: TABLES.SocialAndContent,
+              FilterExpression: "begins_with(contentId, :eng) AND begins_with(sk, :vsk)",
+              ExpressionAttributeValues: {
+                ":eng": "ENGAGEMENT#",
+                ":vsk": "VOTE#",
+              },
+              Limit: 50,
+            })
+          );
+          if (voteRes.Items) {
+            for (const v of voteRes.Items) {
+              const uid = v.userId || String(v.sk || "").replace(/^VOTE#/, "");
+              if (uid && !uid.toLowerCase().startsWith("anon")) participantSet.add(uid);
+            }
+          }
+        } catch {}
+
+        for (const pUid of participantSet) {
+          await createNotification({
+            userId: pUid,
+            recipientEmail: pUid.includes("@") ? pUid : null,
+            category: "roar",
+            notification_type: "roar.visual_recognition",
+            title: `📢 Stadium Recognition: ${headline}`,
+            body: message,
+            subtitle: payload.communityImpact?.stadiumRoars || "+120 Roars",
+            cta_label: "Open ROAR Pulse",
+            cta_target: "/MainModules/ROAR",
+            priority: "NORMAL",
+            roomId: targetRoomId,
+            metadata: {
+              recognitionId,
+              matchId: cleanMatchId,
+              momentId: cleanMomentId,
+              archetype,
+            },
+          }).catch(() => {});
+        }
+      } catch (allNotifErr) {
+        console.warn("[visible-recognition] Broadcast notification notice:", allNotifErr);
+      }
     }
 
-    // 4. Record inline room broadcast for ROAR Pulse stream
+    // 4. Post announcement message directly into ROAR Chat (RealTimeChat Table)
+    try {
+      const chatMsgId = `msg_rec_${now}_${Math.random().toString(36).substring(2, 7)}`;
+      const chatMsgText =
+        targetType === "user"
+          ? `🏆 [VIP SPOTLIGHT] @${payload.targetUserName} earned "${headline}"! ${message} (+ ${payload.rewards.totalSxp} SXPs)`
+          : `📢 [STADIUM RECOGNITION] "${headline}" — ${message} | ${payload.communityImpact?.stadiumRoars || "+120 Roars"}`;
+
+      const chatMsgItem: Record<string, any> = {
+        roomId: `ROOM#${targetRoomId}`,
+        sk: `MSG#${targetRoomId}#${now}#${chatMsgId}`,
+        msgId: chatMsgId,
+        chatId: chatMsgId,
+        authorUid: "sportsfan360_system",
+        authorUsername: "SportsFan360 Core Engine",
+        authorBadge: "Stadium Engine",
+        authorAvatarUrl: "/images/sportsfan360logo.png",
+        authorEmail: "admin@sportsfan.com",
+        text: chatMsgText,
+        type: "post",
+        fireCount: 0,
+        heartCount: 0,
+        agreeCount: 0,
+        disagreeCount: 0,
+        replyCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.RealTimeChat,
+          Item: chatMsgItem,
+        })
+      );
+
+      if (db) {
+        await db
+          .collection(getFirestoreCollection("roarRooms"))
+          .doc(targetRoomId)
+          .collection("messages")
+          .doc(chatMsgId)
+          .set(chatMsgItem, { merge: true });
+      }
+    } catch (chatErr) {
+      console.warn("[visible-recognition] RealTimeChat write notice:", chatErr);
+    }
+
+    // 5. Record inline room broadcast for ROAR Pulse celebrations stream
     if (db) {
       try {
+        const firestoreMatchIds = [
+          cleanMatchId,
+          `MATCH#${cleanMatchId}`,
+          targetRoomId,
+          "NMryj1w7t8mJpGzEvF9q",
+        ].filter(Boolean);
+
         const roomBroadcastData = {
           id: `rec_inline_${recognitionId}`,
           recognitionId,
           matchId: cleanMatchId,
-          momentId: cleanMomentId,
+          matchIds: firestoreMatchIds,
+          roomId: targetRoomId,
           type: "VISUAL_RECOGNITION",
           targetType,
           targetUserId: targetUserId ? String(targetUserId).trim() : null,

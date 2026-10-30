@@ -50,11 +50,28 @@ export async function findEngagementById(rawId: string, rawMatchId?: string): Pr
     }
   }
 
-  // 2. Check MatchMoments candidate tables
+  // If found in SocialAndContent, return immediately without slow table scans
+  if (foundItem) {
+    const mId = cleanMatchId || foundItem.matchId || "";
+    const lId = foundItem.loopId || cleanId;
+    return {
+      item: foundItem,
+      table: foundTable,
+      isMatchMoment: Boolean(foundItem.isMatchMoment || foundItem.source === "match_moment" || mId),
+      matchMomentsRecord: mId
+        ? {
+            table: TABLES.MatchMoments,
+            entityId: `MATCH#${String(mId).replace(/^MATCH#/, "")}`,
+            sk: `LOOP#${String(lId).replace(/^LOOP#/, "")}`,
+          }
+        : undefined,
+    };
+  }
+
+  // 2. Fallback: Check MatchMoments candidate tables only if NOT found in SocialAndContent
   const mmTables = getCandidateTableNames(TABLES.MatchMoments);
   for (const table of mmTables) {
     try {
-      // If matchId known, check direct key
       if (cleanMatchId) {
         try {
           const directRes = await docClient.send(
@@ -65,42 +82,39 @@ export async function findEngagementById(rawId: string, rawMatchId?: string): Pr
           );
           if (directRes.Item) {
             matchMomentsRecord = { table, entityId: `MATCH#${cleanMatchId}`, sk: `LOOP#${cleanId}` };
-            if (!foundItem) {
-              foundItem = { ...directRes.Item, id: cleanId };
-              foundTable = table;
-            }
+            foundItem = { ...directRes.Item, id: cleanId };
+            foundTable = table;
             break;
           }
         } catch {}
       }
 
-      // Query or Scan by loopId/cleanId
-      const scanRes = await docClient.send(
-        new ScanCommand({
-          TableName: table,
-          FilterExpression: "sk = :loopSk OR begins_with(sk, :loopPfx) OR id = :cid OR loopId = :cid OR contentId = :engCid",
-          ExpressionAttributeValues: {
-            ":loopSk": `LOOP#${cleanId}`,
-            ":loopPfx": `LOOP#${cleanId}`,
-            ":cid": cleanId,
-            ":engCid": `ENGAGEMENT#${cleanId}`,
-          },
-          Limit: 10,
-        })
-      );
+      if (!foundItem) {
+        const scanRes = await docClient.send(
+          new ScanCommand({
+            TableName: table,
+            FilterExpression: "sk = :loopSk OR begins_with(sk, :loopPfx) OR id = :cid OR loopId = :cid OR contentId = :engCid",
+            ExpressionAttributeValues: {
+              ":loopSk": `LOOP#${cleanId}`,
+              ":loopPfx": `LOOP#${cleanId}`,
+              ":cid": cleanId,
+              ":engCid": `ENGAGEMENT#${cleanId}`,
+            },
+            Limit: 10,
+          })
+        );
 
-      if (scanRes.Items && scanRes.Items.length > 0) {
-        const mmItem = scanRes.Items[0];
-        matchMomentsRecord = {
-          table,
-          entityId: mmItem.entityId,
-          sk: mmItem.sk,
-        };
-        if (!foundItem) {
+        if (scanRes.Items && scanRes.Items.length > 0) {
+          const mmItem = scanRes.Items[0];
+          matchMomentsRecord = {
+            table,
+            entityId: mmItem.entityId,
+            sk: mmItem.sk,
+          };
           foundItem = { ...mmItem, id: cleanId };
           foundTable = table;
+          break;
         }
-        break;
       }
     } catch {}
   }
