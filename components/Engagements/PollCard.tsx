@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { EngagementItem } from "@/types/engagements";
+import EngagementCommentsThread from "./EngagementCommentsThread";
 
 interface Props {
   item: EngagementItem;
@@ -26,6 +27,8 @@ export default function PollCard({ item, onVoteSuccess }: Props) {
   const [likesCount, setLikesCount] = useState<number>(Number(item.likes) || 0);
   const [sharesCount, setSharesCount] = useState<number>(Number(item.shares) || 0);
   const [totalEngaged, setTotalEngaged] = useState<number>(Number(item.totalEngaged) || 0);
+  const [commentsCount, setCommentsCount] = useState<number>(Number(item.commentsCount) || 0);
+  const [showComments, setShowComments] = useState(false);
 
   const totalVotes = options.reduce((sum, o) => sum + (o.votes || 0), 0) || 100;
 
@@ -129,6 +132,11 @@ export default function PollCard({ item, onVoteSuccess }: Props) {
           <span style={{ color: "#58a6ff", display: "flex", alignItems: "center", gap: 4 }}>
             📊 POLL
           </span>
+          {item.matchId && (
+            <span style={{ color: "#388bfd", background: "rgba(56,139,253,0.12)", border: "1px solid rgba(56,139,253,0.3)", borderRadius: 4, padding: "1px 6px", fontSize: 10 }}>
+              MATCH #{item.matchId.replace(/^MATCH#/, "")}
+            </span>
+          )}
         </div>
         <span style={{ fontSize: 11, color: "#6e7681" }}>{formattedTime}</span>
       </div>
@@ -177,7 +185,7 @@ export default function PollCard({ item, onVoteSuccess }: Props) {
                     top: 0,
                     bottom: 0,
                     width: `${percentage}%`,
-                    background: isSelected ? "rgba(56, 139, 253, 0.15)" : "rgba(110, 118, 129, 0.08)",
+                    background: isSelected ? "rgba(56, 139, 253, 0.18)" : "rgba(110, 118, 129, 0.08)",
                     zIndex: 0,
                     transition: "width .5s ease",
                   }}
@@ -204,11 +212,11 @@ export default function PollCard({ item, onVoteSuccess }: Props) {
       {/* Subtext */}
       {voted && (
         <div style={{ fontSize: 11, color: "#7d8590", textAlign: "center", marginTop: 12, animation: "fadeIn .3s ease" }}>
-          Thanks for voting · Results based on all SF360 fans
+          ✓ Vote recorded · Results updating live from all SF360 fans
         </div>
       )}
 
-      {/* Footer / Counters with Dynamic Likes */}
+      {/* Footer / Counters with Dynamic Likes, Shares & Banter Comments */}
       <div
         style={{
           display: "flex",
@@ -221,32 +229,81 @@ export default function PollCard({ item, onVoteSuccess }: Props) {
           color: "#7d8590",
         }}
       >
-        <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+          {/* Like Button */}
           <button
             onClick={handleLike}
             style={{
-              background: "none", border: "none", color: liked ? "#ff6b6b" : "#7d8590",
-              display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12,
+              background: "none",
+              border: "none",
+              color: liked ? "#ff6b6b" : "#7d8590",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
               transition: "transform .15s ease",
               transform: liked ? "scale(1.08)" : "scale(1)",
             }}
+            title="Like this poll"
           >
             <span>{liked ? "❤️" : "🤍"}</span> {likesCount.toLocaleString()}
           </button>
+
+          {/* Share Button */}
           <button
             onClick={handleShare}
             style={{
-              background: "none", border: "none", color: "#7d8590",
-              display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12,
+              background: "none",
+              border: "none",
+              color: "#7d8590",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
             }}
+            title="Share with friends"
           >
             <span>🔗</span> Share {sharesCount > 0 ? `(${sharesCount})` : ""}
           </button>
+
+          {/* Banter / Comment Button */}
+          <button
+            onClick={() => setShowComments(!showComments)}
+            style={{
+              background: showComments ? "rgba(56, 139, 253, 0.15)" : "none",
+              border: showComments ? "1px solid rgba(56, 139, 253, 0.4)" : "1px solid transparent",
+              borderRadius: 6,
+              padding: "4px 8px",
+              color: showComments ? "#58a6ff" : "#7d8590",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              transition: "all .15s ease",
+            }}
+            title="Discuss and reply to fans"
+          >
+            <span>💬</span> Banter {commentsCount > 0 ? `(${commentsCount})` : ""}
+          </button>
         </div>
+
         <div>
           {totalEngaged.toLocaleString()} engaged
         </div>
       </div>
+
+      {/* Expandable Threaded Comments Drawer */}
+      <EngagementCommentsThread
+        engagementId={item.id}
+        isOpen={showComments}
+        onCommentsCountChange={setCommentsCount}
+      />
     </div>
   );
 }

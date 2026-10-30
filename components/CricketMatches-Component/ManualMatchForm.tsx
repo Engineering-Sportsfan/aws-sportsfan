@@ -20,7 +20,7 @@ interface FormState {
   match_result: "normal" | "no_result" | "tie" | "abandoned";
   tournament: string;
   gender: "male" | "female";
-  format: "T20" | "ODI" | "Test";
+  format: "T20" | "T20I" | "ODI" | "Test" | string;
 }
 
 const EMPTY: FormState = {

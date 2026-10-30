@@ -42,6 +42,7 @@ export const TABLES = {
   userwaitinglist: `userwaitinglist${suffix}`,
   records: `records${suffix}`,
   homeDatabase: `homeDatabase`,
+  MatchMoments: `MatchMoments${suffix}`,
 } as const;
 
 export type TableKey = keyof typeof TABLES;

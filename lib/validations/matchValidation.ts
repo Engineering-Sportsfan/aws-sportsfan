@@ -5,7 +5,7 @@ import { z } from "zod";
 const TournamentEnum = z.string().min(1);
 
 const GenderEnum = z.enum(["male", "female"]);
-const FormatEnum = z.enum(["T20", "ODI", "Test"]);
+const FormatEnum = z.enum(["T20", "T20I", "ODI", "Test", "T10", "The Hundred", "First-Class", "List A"]).or(z.string().min(1));
 const MatchResultEnum = z.enum(["normal", "no_result", "tie", "abandoned"]);
 const TossDecisionEnum = z.enum(["bat", "field"]);
 

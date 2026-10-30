@@ -3,10 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
-import { GetCommand, UpdateCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { UpdateCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
 import { getUser } from "@/lib/getUser";
+import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +15,12 @@ type RouteParams = { params: Promise<{ id: string }> };
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
+    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+
     const body = await req.json();
     const authUser = await getUser(req);
 
-    const { winningChoiceId, outcomeNotes, winningChoiceText } = body;
+    const { winningChoiceId, outcomeNotes, winningChoiceText, matchId } = body;
 
     if (!winningChoiceId) {
       return NextResponse.json({ error: "winningChoiceId is required to resolve outcome" }, { status: 400 });
@@ -26,41 +28,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     const adminEmail = authUser?.email || body.adminEmail || "admin@sportsfan.com";
 
-    // 1. Fetch existing engagement
-    let engagement: any = null;
-    const candidateTables = getCandidateTableNames(TABLES.SocialAndContent);
-    for (const table of candidateTables) {
-      try {
-        const getRes = await docClient.send(
-          new GetCommand({
-            TableName: table,
-            Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
-          })
-        );
-        if (getRes.Item) {
-          engagement = getRes.Item;
-          break;
-        }
-      } catch (err: any) {
-        console.warn(`[Resolve] DDB fetch notice on "${table}":`, err?.message || err);
-      }
+    // 1. Fetch existing engagement across SocialAndContent, MatchMoments, and Firestore
+    const found = await findEngagementById(cleanId, matchId);
+    if (!found?.item) {
+      return NextResponse.json({ error: `Engagement "${cleanId}" not found` }, { status: 404 });
     }
 
-    if (!engagement && db) {
-      try {
-        const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
-        if (snap.exists) {
-          engagement = { id: snap.id, ...snap.data() };
-        }
-      } catch (fbErr) {
-        console.warn("[Resolve] Firestore fallback notice:", fbErr);
-      }
-    }
-
-    if (!engagement) {
-      return NextResponse.json({ error: `Engagement "${id}" not found` }, { status: 404 });
-    }
-
+    const engagement = found.item;
     const now = Date.now();
     const normalizedWinId = String(winningChoiceId).trim().toLowerCase();
 
@@ -72,7 +46,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           TableName: TABLES.SocialAndContent,
           KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
           ExpressionAttributeValues: {
-            ":cid": `ENGAGEMENT#${id}`,
+            ":cid": `ENGAGEMENT#${cleanId}`,
             ":skpfx": "VOTE#",
           },
         })
@@ -89,7 +63,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       try {
         const snap = await db
           .collection(getFirestoreCollection("user_engagements"))
-          .where("engagementId", "==", id)
+          .where("engagementId", "==", cleanId)
           .get();
         voteItems = snap.docs.map(d => ({ ...d.data(), firestoreDocId: d.id }));
       } catch (fbVoteErr) {
@@ -120,7 +94,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               userEmail: voterEmail,
               userName: voterName,
               action: "accuracy_bonus",
-              engagementId: id,
+              engagementId: cleanId,
               engagementType: engagement.type,
               engagementTitle: engagement.title,
               pointsBonus: bonusPoints,
@@ -135,7 +109,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               await docClient.send(
                 new UpdateCommand({
                   TableName: TABLES.SocialAndContent,
-                  Key: { contentId: `ENGAGEMENT#${id}`, sk: vote.sk },
+                  Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: vote.sk },
                   UpdateExpression: "SET accuracyBonusAwarded = :t, isCorrect = :t, wonBonusPoints = :pts, resolvedAt = :now",
                   ExpressionAttributeValues: {
                     ":t": true,
@@ -148,7 +122,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
             // Update Firestore user_engagements record
             if (db) {
-              const docKey = vote.firestoreDocId || `${voterUserId || voterEmail}_${id}`;
+              const docKey = vote.firestoreDocId || `${voterUserId || voterEmail}_${cleanId}`;
               await db.collection(getFirestoreCollection("user_engagements")).doc(docKey).set({
                 accuracyBonusAwarded: true,
                 isCorrect: true,
@@ -164,8 +138,20 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // 4. Update the engagement status to "settled" with outcome details
-    const updatedEngagement = {
+    const existingOptions = Array.isArray(engagement.options) ? engagement.options : [];
+    const updatedOptions = existingOptions.map((o: any) => {
+      const isWinner =
+        String(o.id).trim().toLowerCase() === normalizedWinId ||
+        (winningChoiceText && String(o.text).trim().toLowerCase() === String(winningChoiceText).trim().toLowerCase());
+      return {
+        ...o,
+        isWinner,
+      };
+    });
+
+    const updatedEngagement: any = {
       ...engagement,
+      id: cleanId,
       status: "settled",
       winningChoiceId,
       outcomeWinningChoiceId: winningChoiceId,
@@ -173,11 +159,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       resolvedAt: now,
       resolvedBy: adminEmail,
       updatedAt: now,
+      options: updatedOptions.length > 0 ? updatedOptions : engagement.options,
       predictionData: engagement.predictionData
         ? {
             ...engagement.predictionData,
             status: "settled",
             winningChoiceId,
+            outcomeWinningChoiceId: winningChoiceId,
             correctAnswer: winningChoiceId,
             answer: winningChoiceId,
             resolvedAt: now,
@@ -188,6 +176,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             ...engagement.debateData,
             status: "settled",
             winningChoiceId,
+            outcomeWinningChoiceId: winningChoiceId,
             verdict: winningChoiceId,
             resolvedAt: now,
           }
@@ -199,24 +188,25 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             resolvedAt: now,
           }
         : undefined,
+      pollData: engagement.pollData
+        ? {
+            ...engagement.pollData,
+            status: "settled",
+            winningChoiceId,
+            correctAnswer: winningChoiceId,
+            resolvedAt: now,
+          }
+        : undefined,
     };
 
-    // Clean up undefined properties for DynamoDB
-    const dynamoItem: any = {
-      contentId: `ENGAGEMENT#${id}`,
-      sk: "ENGAGEMENT#META",
-      entityId: `ENGAGEMENT#${(updatedEngagement.type || "PREDICTION").toUpperCase()}`,
-      ...updatedEngagement,
-    };
-
-    // 5. Dual Write to DynamoDB + Firestore
-    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
+    // 5. Dual-persist update to SocialAndContent AND MatchMoments
+    await persistEngagementUpdate(cleanId, updatedEngagement, found.matchMomentsRecord);
 
     // 6. Record floating in-room notification broadcast in Firestore for live room second screen users
     if (db) {
       try {
         await db.collection("match_room_notifications").add({
-          engagementId: id,
+          engagementId: cleanId,
           type: "OUTCOME_RESOLVED",
           momentType: engagement.type,
           title: engagement.title,
@@ -226,7 +216,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           votersAwardedCount,
           bonusPoints,
           message: `🎯 Outcome Revealed: "${winningChoiceText || winningChoiceId}". Click to view post!`,
-          targetPostUrl: `/feed?engagementId=${id}`,
+          targetPostUrl: `/feed?engagementId=${cleanId}`,
           createdAt: now,
           expiresAt: now + 300000, // 5 min toast lifespan
         });
@@ -238,8 +228,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       success: true,
       message: `Outcome resolved successfully! ${votersAwardedCount} winning voter(s) awarded +${bonusPoints} SXPs bonus.`,
-      engagementId: id,
+      engagementId: cleanId,
       winningChoiceId,
+      status: "settled",
       votersAwardedCount,
       resolvedAt: now,
       engagement: updatedEngagement,

@@ -4,7 +4,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
-import { ScanCommand, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand, PutCommand, GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem, EngagementType, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
                 subtitle: it.subtitle || "",
                 tags: it.tags || [],
                 sport: (it.sport || "cricket").toLowerCase(),
-                status: it.status || "active",
+                status: (it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId) ? "settled" : (it.status || "active"),
                 fanBattleData: it.fanBattleData,
                 quizData: it.quizData,
                 pollData: it.pollData,
@@ -84,10 +84,15 @@ export async function GET(req: NextRequest) {
                 totalEngaged: Number(it.totalEngaged) || 0,
                 createdAt: it.createdAt || Date.now(),
                 updatedAt: it.updatedAt || Date.now(),
-                expiresAt: it.expiresAt || null,
+                expiresAt:
+                  it.expiresAt ||
+                  (it.createdAt && (it.timerMinutes || it.durationMinutes)
+                    ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
+                    : null),
                 category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
                 source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
                 isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+                matchId: it.matchId || undefined,
                 momentId: it.momentId || it.loopId || undefined,
                 loopId: it.loopId || it.momentId || undefined,
                 matchPhase: it.matchPhase || undefined,
@@ -113,6 +118,156 @@ export async function GET(req: NextRequest) {
         if (isTableMissing) continue;
         console.warn(`DynamoDB engagements scan notice on table "${table}":`, dynErr?.message || dynErr);
         break;
+      }
+    }
+
+    // 1b. Fetch match loops from MatchMoments table (MatchMoments-dev, MatchMoments-release, MatchMoments)
+    const matchMomentTables = getCandidateTableNames(TABLES.MatchMoments);
+    const rawSearchMatchId = searchParams.get("matchId");
+    const cleanSearchMatchId = rawSearchMatchId ? rawSearchMatchId.replace(/^MATCH#/, "") : null;
+    for (const table of matchMomentTables) {
+      try {
+        let loopItems: any[] = [];
+        if (cleanSearchMatchId) {
+          try {
+            const qRes = await docClient.send(
+              new QueryCommand({
+                TableName: table,
+                KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skpfx)",
+                ExpressionAttributeValues: {
+                  ":eId": `MATCH#${cleanSearchMatchId}`,
+                  ":skpfx": "LOOP#",
+                },
+                Limit: 100,
+              })
+            );
+            loopItems = qRes.Items || [];
+          } catch (e) {
+            loopItems = [];
+          }
+        } else {
+          const sRes = await docClient.send(
+            new ScanCommand({
+              TableName: table,
+              FilterExpression: "begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":skpfx": "LOOP#",
+              },
+              Limit: 100,
+            })
+          );
+          loopItems = sRes.Items || [];
+        }
+
+        if (loopItems && loopItems.length > 0) {
+          for (const it of loopItems) {
+            const id = it.id || it.loopId || (typeof it.sk === "string" ? it.sk.replace(/^LOOP#/, "") : "");
+            if (!id) continue;
+            if (itemsMap.has(id)) {
+              const existing = itemsMap.get(id);
+              if (existing) {
+                const mergedWinningId =
+                  existing.winningChoiceId ||
+                  existing.outcomeWinningChoiceId ||
+                  existing.predictionData?.winningChoiceId ||
+                  existing.debateData?.winningChoiceId ||
+                  it.winningChoiceId ||
+                  it.outcomeWinningChoiceId ||
+                  it.predictionData?.winningChoiceId ||
+                  it.debateData?.winningChoiceId ||
+                  null;
+
+                const isSettled = Boolean(
+                  mergedWinningId ||
+                  existing.status === "settled" ||
+                  existing.status === "resolved" ||
+                  it.status === "settled" ||
+                  it.status === "resolved"
+                );
+
+                const mergedStatus = isSettled
+                  ? "settled"
+                  : (existing.status && existing.status !== "pending" ? existing.status : it.status || "active");
+
+                itemsMap.set(id, {
+                  ...existing,
+                  ...it,
+                  id,
+                  status: mergedStatus,
+                  winningChoiceId: mergedWinningId,
+                  outcomeWinningChoiceId: mergedWinningId,
+                  outcomeNotes: existing.outcomeNotes || it.outcomeNotes || null,
+                  resolvedAt: existing.resolvedAt || it.resolvedAt || null,
+                  resolvedBy: existing.resolvedBy || it.resolvedBy || null,
+                  likes: Math.max(Number(existing.likes) || 0, Number(it.likes) || 0),
+                  shares: Math.max(Number(existing.shares) || 0, Number(it.shares) || 0),
+                  totalEngaged: Math.max(Number(existing.totalEngaged) || 0, Number(it.totalEngaged) || 0),
+                  commentsCount: Math.max(Number(existing.commentsCount) || 0, Number(it.commentsCount) || 0),
+                  pollData: it.pollData || existing.pollData,
+                  predictionData: it.predictionData || existing.predictionData,
+                  debateData: it.debateData || existing.debateData,
+                  fanBattleData: it.fanBattleData || existing.fanBattleData,
+                  options: it.options || existing.options,
+                  matchId: it.matchId || (typeof it.entityId === "string" ? it.entityId.replace(/^MATCH#/, "") : existing.matchId),
+                  isMatchMoment: true,
+                });
+              }
+              continue;
+            }
+            const resolvedTitle = it.title || it.subtitle || it.headline || it.caption || it.question || "";
+            itemsMap.set(id, {
+              id,
+              type: it.type || "poll",
+              title: resolvedTitle || "Match Engagement",
+              subtitle: it.subtitle || "",
+              tags: it.tags || [],
+              sport: (it.sport || "cricket").toLowerCase(),
+              status: (it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId) ? "settled" : (it.status || "active"),
+              fanBattleData: it.fanBattleData,
+              quizData: it.quizData,
+              pollData: it.pollData,
+              predictionData: it.predictionData,
+              memeData: it.memeData,
+              debateData: it.debateData,
+              expressData: it.expressData,
+              questionData: it.questionData,
+              winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+              outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+              outcomeNotes: it.outcomeNotes || null,
+              resolvedAt: it.resolvedAt || null,
+              resolvedBy: it.resolvedBy || null,
+              timerMinutes: it.timerMinutes || 4,
+              durationMinutes: it.durationMinutes || 4,
+              options: it.options || it.pollData?.options || it.predictionData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options,
+              likes: Number(it.likes) || 0,
+              shares: Number(it.shares) || 0,
+              totalEngaged: Number(it.totalEngaged) || 0,
+              commentsCount: Number(it.commentsCount) || 0,
+              createdAt: it.createdAt || Date.now(),
+              updatedAt: it.updatedAt || Date.now(),
+              expiresAt: it.expiresAt || null,
+              category: it.category || "match_moment",
+              source: it.source || "match_moment",
+              isMatchMoment: true,
+              matchId: it.matchId || (typeof it.entityId === "string" ? it.entityId.replace(/^MATCH#/, "") : undefined),
+              momentId: it.momentId || undefined,
+              loopId: it.loopId || id,
+              matchPhase: it.matchPhase || undefined,
+              anchorTrigger: it.anchorTrigger || undefined,
+              scoreState: it.scoreState || undefined,
+              sportsMoment: it.sportsMoment || undefined,
+              overNumber: it.overNumber !== undefined ? it.overNumber : undefined,
+              innings: it.innings !== undefined ? Number(it.innings) : undefined,
+              creatorId: it.creatorId || undefined,
+              creatorEmail: it.creatorEmail || undefined,
+              creatorName: it.creatorName || undefined,
+              creatorAvatar: it.creatorAvatar || undefined,
+            });
+          }
+          break;
+        }
+      } catch (mmErr: any) {
+        // Continue to next candidate table
       }
     }
 
@@ -161,10 +316,15 @@ export async function GET(req: NextRequest) {
               totalEngaged: Number(it.totalEngaged) || 0,
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
-              expiresAt: it.expiresAt || null,
+              expiresAt:
+                it.expiresAt ||
+                (it.createdAt && (it.timerMinutes || it.durationMinutes)
+                  ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
+                  : null),
               category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
               source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
               isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+              matchId: it.matchId || undefined,
               momentId: it.momentId || it.loopId || undefined,
               loopId: it.loopId || it.momentId || undefined,
               matchPhase: it.matchPhase || undefined,
@@ -231,6 +391,15 @@ export async function GET(req: NextRequest) {
     }
     if (sport && sport !== "all") {
       items = items.filter(i => (i.sport || "cricket").toLowerCase() === sport.toLowerCase());
+    }
+
+    const matchIdParam = searchParams.get("matchId");
+    if (matchIdParam) {
+      const cleanTargetMatchId = matchIdParam.replace(/^MATCH#/i, "").toLowerCase();
+      items = items.filter(i => {
+        const itemMatchId = String((i as any).matchId || "").replace(/^MATCH#/i, "").toLowerCase();
+        return itemMatchId === cleanTargetMatchId;
+      });
     }
 
     // Support excludeFlipArena or source=match_moment filter
@@ -894,6 +1063,7 @@ export async function POST(req: NextRequest) {
       category: body.category || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : (type === "fan_battle" || type === "meme" ? "fliparena" : undefined)),
       source: body.source || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : "fliparena"),
       isMatchMoment: body.isMatchMoment !== undefined ? Boolean(body.isMatchMoment) : Boolean(formattedDebateData || formattedExpressData || formattedQuestionData || (type !== "meme" && type !== "fan_battle" && matchMomentDurationMins === 4)),
+      matchId: body.matchId || undefined,
       momentId: body.momentId || body.loopId || undefined,
       loopId: body.loopId || body.momentId || undefined,
       matchPhase: body.matchPhase || undefined,
@@ -914,6 +1084,26 @@ export async function POST(req: NextRequest) {
 
     // Dual Write to DynamoDB + Firestore
     await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
+
+    // If this engagement belongs to a match moment (or has matchId), dual-write to MatchMoments table
+    if (newEngagement.isMatchMoment || newEngagement.source === "match_moment" || newEngagement.matchId) {
+      try {
+        await dualWrite({
+          tableName: TABLES.MatchMoments,
+          dynamoItem: {
+            entityId: `MATCH#${newEngagement.matchId || "GLOBAL"}`,
+            sk: `LOOP#${newEngagement.loopId || id}`,
+            contentId: `ENGAGEMENT#${id}`,
+            ...newEngagement,
+          },
+          collectionName: "match_moments_engagements",
+          docId: `${newEngagement.matchId || "GLOBAL"}_${newEngagement.loopId || id}`,
+          firestoreData: newEngagement,
+        });
+      } catch (mmErr) {
+        console.warn("[POST /api/engagements] MatchMoments table dual-write notice:", mmErr);
+      }
+    }
 
     // Award +2 points to creator for creating an engagement (quiz, poll, prediction, fan battle, meme)
     let pointsAwarded = 0;
@@ -968,23 +1158,102 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
+    const rawId = searchParams.get("id");
+    const rawMatchId = searchParams.get("matchId");
 
-    if (!id) {
+    if (!rawId) {
       return NextResponse.json({ success: false, error: "Missing engagement id" }, { status: 400 });
     }
 
-    await dualDelete(
-      "engagements",
-      id,
-      TABLES.SocialAndContent,
-      {
-        contentId: `ENGAGEMENT#${id}`,
-        sk: "ENGAGEMENT#META",
-      }
-    );
+    const cleanId = rawId.replace(/^ENGAGEMENT#/, "").replace(/^LOOP#/, "").trim();
+    const cleanMatchId = rawMatchId ? rawMatchId.replace(/^MATCH#/, "").trim() : "";
 
-    return NextResponse.json({ success: true, message: `Engagement ${id} deleted successfully` });
+    // 1. Delete from SocialAndContent table (with candidate table fallback)
+    try {
+      await dualDelete(
+        "engagements",
+        cleanId,
+        TABLES.SocialAndContent,
+        {
+          contentId: `ENGAGEMENT#${cleanId}`,
+          sk: "ENGAGEMENT#META",
+        }
+      );
+    } catch (e) {
+      console.warn("Notice deleting from SocialAndContent:", e);
+    }
+
+    // 2. Delete from MatchMoments table (MatchMoments-dev, MatchMoments-release, MatchMoments)
+    try {
+      const matchMomentTables = getCandidateTableNames(TABLES.MatchMoments);
+      for (const table of matchMomentTables) {
+        try {
+          // If matchId is known, delete direct key
+          if (cleanMatchId) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: table,
+                Key: {
+                  entityId: `MATCH#${cleanMatchId}`,
+                  sk: `LOOP#${cleanId}`,
+                },
+              })
+            );
+          }
+
+          // Also scan and delete any item matching this id / loopId in MatchMoments
+          const scanRes = await docClient.send(
+            new ScanCommand({
+              TableName: table,
+              FilterExpression:
+                "sk = :loopSk OR begins_with(sk, :loopPfx) OR id = :cid OR loopId = :cid OR contentId = :engCid",
+              ExpressionAttributeValues: {
+                ":loopSk": `LOOP#${cleanId}`,
+                ":loopPfx": `LOOP#${cleanId}`,
+                ":cid": cleanId,
+                ":engCid": `ENGAGEMENT#${cleanId}`,
+              },
+              Limit: 50,
+            })
+          );
+
+          if (scanRes.Items && scanRes.Items.length > 0) {
+            for (const item of scanRes.Items) {
+              if (item.entityId && item.sk) {
+                await docClient.send(
+                  new DeleteCommand({
+                    TableName: table,
+                    Key: {
+                      entityId: item.entityId,
+                      sk: item.sk,
+                    },
+                  })
+                );
+              }
+            }
+          }
+        } catch (tblErr) {
+          // Continue to next candidate table
+        }
+      }
+    } catch (mmErr) {
+      console.warn("Notice deleting from MatchMoments:", mmErr);
+    }
+
+    // 3. Delete from Firestore match_moments_engagements collection if present
+    try {
+      if (db) {
+        const snap = await db.collection("match_moments_engagements").where("id", "==", cleanId).get();
+        for (const doc of snap.docs) {
+          await doc.ref.delete();
+        }
+        if (cleanMatchId) {
+          await db.collection("match_moments_engagements").doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
+        }
+      }
+    } catch {}
+
+    return NextResponse.json({ success: true, message: `Engagement ${cleanId} deleted successfully` });
   } catch (error: unknown) {
     console.error("DELETE /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to delete engagement";

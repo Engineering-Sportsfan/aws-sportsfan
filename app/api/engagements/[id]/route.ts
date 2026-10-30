@@ -4,7 +4,8 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
-import { GetCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
+import { GetCommand, DeleteCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem } from "@/types/engagements";
 
 import { getUser } from "@/lib/getUser";
@@ -19,40 +20,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const { searchParams } = new URL(req.url);
 
-    let item: any = null;
+    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+    const matchIdParam = searchParams.get("matchId") || undefined;
+    const found = await findEngagementById(cleanId, matchIdParam);
 
-    // Try DynamoDB first with candidate table fallback
-    const candidateTables = getCandidateTableNames(TABLES.SocialAndContent);
-    for (const table of candidateTables) {
-      try {
-        const getRes = await docClient.send(
-          new GetCommand({
-            TableName: table,
-            Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
-          })
-        );
-        if (getRes.Item) {
-          item = getRes.Item;
-          break;
-        }
-      } catch (dynErr: any) {
-        const isTableMissing =
-          dynErr?.name === "ResourceNotFoundException" ||
-          dynErr?.message?.includes("Cannot do operations on a non-existent table") ||
-          dynErr?.message?.includes("ResourceNotFoundException");
-        if (isTableMissing) continue;
-        console.warn(`DynamoDB get engagement notice on "${table}":`, dynErr?.message || dynErr);
-      }
-    }
-
-    // Fallback to Firestore
-    if (!item) {
-      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
-      if (snap.exists) {
-        item = { id: snap.id, ...snap.data() };
-      }
-    }
-
+    let item: any = found?.item || null;
     if (!item) {
       return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
     }
@@ -115,42 +87,23 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const body = await req.json();
 
-    // Fetch existing
-    let existing: any = null;
-    try {
-      const getRes = await docClient.send(
-        new GetCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
-        })
-      );
-      if (getRes.Item) existing = getRes.Item;
-    } catch {}
+    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+    const matchIdParam = body.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
+    const found = await findEngagementById(cleanId, matchIdParam);
 
-    if (!existing) {
-      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
-      if (snap.exists) existing = { id: snap.id, ...snap.data() };
-    }
-
-    if (!existing) {
+    if (!found?.item) {
       return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
     }
 
+    const existing = found.item;
     const updatedItem: EngagementItem = {
       ...existing,
       ...body,
-      id,
+      id: cleanId,
       updatedAt: Date.now(),
     };
 
-    const dynamoItem = {
-      contentId: `ENGAGEMENT#${id}`,
-      sk: "ENGAGEMENT#META",
-      entityId: `ENGAGEMENT#${(updatedItem.type || existing.type).toUpperCase()}`,
-      ...updatedItem,
-    };
-
-    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
+    await persistEngagementUpdate(cleanId, updatedItem, found.matchMomentsRecord);
 
     return NextResponse.json({
       success: true,
@@ -167,19 +120,97 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
 // ─── DELETE /api/engagements/[id] — Delete engagement ─────────────────────────
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
-    const { id } = await params;
+    const { id: rawId } = await params;
+    const { searchParams } = new URL(req.url);
+    const rawMatchId = searchParams.get("matchId");
 
-    await dualDelete(
-      "engagements",
-      id,
-      TABLES.SocialAndContent,
-      { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" }
-    );
+    const cleanId = rawId.replace(/^ENGAGEMENT#/, "").replace(/^LOOP#/, "").trim();
+    const cleanMatchId = rawMatchId ? rawMatchId.replace(/^MATCH#/, "").trim() : "";
+
+    // 1. Delete from SocialAndContent table (with candidate table fallback)
+    try {
+      await dualDelete(
+        "engagements",
+        cleanId,
+        TABLES.SocialAndContent,
+        { contentId: `ENGAGEMENT#${cleanId}`, sk: "ENGAGEMENT#META" }
+      );
+    } catch (e) {
+      console.warn("Notice deleting from SocialAndContent:", e);
+    }
+
+    // 2. Delete from MatchMoments table (MatchMoments-dev, MatchMoments-release, MatchMoments)
+    try {
+      const matchMomentTables = getCandidateTableNames(TABLES.MatchMoments);
+      for (const table of matchMomentTables) {
+        try {
+          if (cleanMatchId) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: table,
+                Key: {
+                  entityId: `MATCH#${cleanMatchId}`,
+                  sk: `LOOP#${cleanId}`,
+                },
+              })
+            );
+          }
+
+          const scanRes = await docClient.send(
+            new ScanCommand({
+              TableName: table,
+              FilterExpression:
+                "sk = :loopSk OR begins_with(sk, :loopPfx) OR id = :cid OR loopId = :cid OR contentId = :engCid",
+              ExpressionAttributeValues: {
+                ":loopSk": `LOOP#${cleanId}`,
+                ":loopPfx": `LOOP#${cleanId}`,
+                ":cid": cleanId,
+                ":engCid": `ENGAGEMENT#${cleanId}`,
+              },
+              Limit: 50,
+            })
+          );
+
+          if (scanRes.Items && scanRes.Items.length > 0) {
+            for (const item of scanRes.Items) {
+              if (item.entityId && item.sk) {
+                await docClient.send(
+                  new DeleteCommand({
+                    TableName: table,
+                    Key: {
+                      entityId: item.entityId,
+                      sk: item.sk,
+                    },
+                  })
+                );
+              }
+            }
+          }
+        } catch (tblErr) {
+          // Continue to next candidate table
+        }
+      }
+    } catch (mmErr) {
+      console.warn("Notice deleting from MatchMoments:", mmErr);
+    }
+
+    // 3. Delete from Firestore match_moments_engagements collection if exists
+    try {
+      if (db) {
+        const snap = await db.collection("match_moments_engagements").where("id", "==", cleanId).get();
+        for (const doc of snap.docs) {
+          await doc.ref.delete();
+        }
+        if (cleanMatchId) {
+          await db.collection("match_moments_engagements").doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
+        }
+      }
+    } catch {}
 
     return NextResponse.json({ success: true, message: "Engagement deleted successfully" });
   } catch (error: unknown) {
     console.error("DELETE /api/engagements/[id] error:", error);
     const msg = error instanceof Error ? error.message : "Failed to delete engagement";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }
