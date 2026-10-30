@@ -339,53 +339,40 @@ function VisibleRecognitionContent() {
     fetchRecognitions();
   }, [fetchRecognitions]);
 
-  // ─── SIMULATE OR FETCH PARTICIPANTS FOR CHOSEN MOMENT ─────────────────────
+  // ─── FETCH REAL PARTICIPANTS FOR CHOSEN MOMENT ─────────────────────
   useEffect(() => {
     if (!selectedMomentId) {
       setParticipants([]);
       return;
     }
+    let cancelled = false;
     setLoadingParticipants(true);
 
-    // Mock participants sample based on moment
-    const sampleParticipants: ParticipantUser[] = [
-      {
-        userId: "usr_abhay_45",
-        userName: "Abhay Sharma",
-        userAvatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop",
-        selectedOptionId: "opt_a",
-        selectedOptionLabel: "6-10 Runs (Predicted Squeeze)",
-        votedAt: Date.now() - 140000,
-      },
-      {
-        userId: "usr_suzy_89",
-        userName: "Suzy Patel",
-        userAvatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop",
-        selectedOptionId: "opt_b",
-        selectedOptionLabel: "11-15 Runs (Boundary Surge)",
-        votedAt: Date.now() - 120000,
-      },
-      {
-        userId: "usr_vikram_22",
-        userName: "Vikram Malhotra",
-        userAvatar: "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&h=100&fit=crop",
-        selectedOptionId: "opt_a",
-        selectedOptionLabel: "6-10 Runs (Predicted Squeeze)",
-        votedAt: Date.now() - 95000,
-      },
-      {
-        userId: "usr_rohit_fan_07",
-        userName: "Rohit Fanclub India",
-        userAvatar: null,
-        selectedOptionId: "opt_b",
-        selectedOptionLabel: "11-15 Runs (Boundary Surge)",
-        votedAt: Date.now() - 60000,
-      },
-    ];
+    const mId = encodeURIComponent(selectedMatchId || "");
+    const momId = encodeURIComponent(selectedMomentId || "");
 
-    setParticipants(sampleParticipants);
-    setLoadingParticipants(false);
-  }, [selectedMomentId]);
+    fetch(`/api/visible-recognition/participants?matchId=${mId}&momentId=${momId}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        if (json.success && Array.isArray(json.participants)) {
+          setParticipants(json.participants);
+        } else {
+          setParticipants([]);
+        }
+      })
+      .catch((err) => {
+        console.warn("Failed to fetch participants for moment", err);
+        if (!cancelled) setParticipants([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingParticipants(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMatchId, selectedMomentId]);
 
   // ─── ACTIVE MATCH & MOMENT OBJECTS ────────────────────────────────────────
   const activeMatch = useMemo(() => {
@@ -934,39 +921,55 @@ function VisibleRecognitionContent() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
-                    {participants.map((p) => {
-                      const isChosen = selectedUserId === p.userId;
-                      return (
-                        <button
-                          key={p.userId}
-                          type="button"
-                          onClick={() => {
-                            setSelectedUserId(p.userId);
-                            setCustomUserName(p.userName);
-                          }}
-                          className={`p-2 rounded-lg border text-left flex items-center gap-2.5 transition-all ${
-                            isChosen
-                              ? "bg-purple-950/50 border-purple-500 text-white"
-                              : "bg-[#161b22] border-[#30363d] text-[#8b949e] hover:text-[#c9d1d9]"
-                          }`}
-                        >
-                          {p.userAvatar ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={p.userAvatar} alt="" className="w-7 h-7 rounded-full object-cover" />
-                          ) : (
-                            <div className="w-7 h-7 rounded-full bg-purple-900/50 flex items-center justify-center text-xs text-purple-300 font-bold">
-                              {p.userName.slice(0, 2).toUpperCase()}
+                  {loadingParticipants ? (
+                    <div className="py-6 flex items-center justify-center gap-2 text-xs text-[#8b949e]">
+                      <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
+                      <span>Loading real moment participants...</span>
+                    </div>
+                  ) : participants.length === 0 ? (
+                    <div className="py-3 px-3 rounded-lg bg-[#161b22] border border-[#21262d] text-xs text-[#8b949e] text-center">
+                      No fan voters recorded yet for this moment. You can still broadcast to all or specify a custom user name below.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                      {participants.map((p) => {
+                        const isChosen = selectedUserId === p.userId;
+                        return (
+                          <button
+                            key={p.userId}
+                            type="button"
+                            onClick={() => {
+                              setSelectedUserId(p.userId);
+                              setCustomUserName(p.userName);
+                            }}
+                            className={`p-2 rounded-lg border text-left flex items-center gap-2.5 transition-all ${
+                              isChosen
+                                ? "bg-purple-950/50 border-purple-500 text-white shadow-sm"
+                                : "bg-[#161b22] border-[#30363d] text-[#8b949e] hover:text-[#c9d1d9] hover:border-purple-800/50"
+                            }`}
+                          >
+                            {p.userAvatar ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={p.userAvatar} alt="" className="w-7 h-7 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-7 h-7 rounded-full bg-purple-900/50 flex items-center justify-center text-xs text-purple-300 font-bold">
+                                {p.userName.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="truncate flex-1">
+                              <div className="text-xs font-semibold text-white truncate flex items-center justify-between">
+                                <span className="truncate">{p.userName}</span>
+                                {isChosen && <Check className="w-3 h-3 text-purple-400 shrink-0 ml-1" />}
+                              </div>
+                              <div className="text-[10px] text-amber-400 truncate">
+                                Voted: {p.selectedOptionLabel || p.selectedOptionId || "Participated"}
+                              </div>
                             </div>
-                          )}
-                          <div className="truncate flex-1">
-                            <div className="text-xs font-semibold text-white truncate">{p.userName}</div>
-                            <div className="text-[10px] text-amber-400 truncate">{p.selectedOptionLabel || p.selectedOptionId}</div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {/* Manual user override */}
                   <div className="pt-2 border-t border-[#21262d] flex items-center gap-2">

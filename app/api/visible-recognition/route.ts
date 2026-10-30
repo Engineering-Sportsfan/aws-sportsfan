@@ -385,6 +385,39 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 4. Record inline room broadcast for ROAR Pulse stream
+    if (db) {
+      try {
+        const roomBroadcastData = {
+          id: `rec_inline_${recognitionId}`,
+          recognitionId,
+          matchId: cleanMatchId,
+          momentId: cleanMomentId,
+          type: "VISUAL_RECOGNITION",
+          targetType,
+          targetUserId: targetUserId ? String(targetUserId).trim() : null,
+          targetUserName: payload.targetUserName,
+          targetUserAvatar: payload.targetUserAvatar,
+          archetype,
+          badgeIcon,
+          headline,
+          message,
+          themeColor,
+          rewards: payload.rewards,
+          communityImpact: payload.communityImpact,
+          reengagementHook: payload.reengagementHook,
+          createdAt: now,
+          expiresAt: now + 86400000,
+        };
+
+        await db.collection(getFirestoreCollection("match_room_notifications"))
+          .doc(`rec_inline_${recognitionId}`)
+          .set(roomBroadcastData, { merge: true });
+      } catch (brErr) {
+        console.warn("[visible-recognition] Room broadcast notice:", brErr);
+      }
+    }
+
     return NextResponse.json(
       {
         success: true,
