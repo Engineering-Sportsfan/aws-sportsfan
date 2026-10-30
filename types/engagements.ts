@@ -1,6 +1,6 @@
 // types/engagements.ts — Type definitions for Fan Battles, Quizzes, Polls, Predictions, and Meme Arena
 export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "question" | "debate" | "express";
-export type EngagementStatus = "active" | "inactive" | "expired" | "settled";
+export type EngagementStatus = "active" | "inactive" | "expired" | "settled" | "resolved" | "pending" | "open";
 
 // ─── 1. Fan Battle ─────────────────────────────────────────────────────────
 export interface Competitor {

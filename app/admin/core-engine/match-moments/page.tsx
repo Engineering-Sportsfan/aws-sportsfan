@@ -2312,7 +2312,7 @@ function CoreEngineMatchMomentsContent() {
 
   // Matches list
   const [matches, setMatches] = useState<MatchOption[]>([]);
-  const [selectedMatchId, setSelectedMatchId] = useState<string>(urlMatchId || "NZ-IND-2026-T20I-04");
+  const [selectedMatchId, setSelectedMatchId] = useState<string>(urlMatchId || "");
   const [loadingMatches, setLoadingMatches] = useState(false);
 
   // Moments list for selected match
@@ -2440,25 +2440,15 @@ function CoreEngineMatchMomentsContent() {
       const data = await res.json();
       if (data.success && Array.isArray(data.data) && data.data.length > 0) {
         setMatches(data.data);
-        if (!selectedMatchId && data.data[0]) {
-          setSelectedMatchId(data.data[0].match_id || data.data[0].id);
+        const matchIds = data.data.map((m: any) => m.match_id || m.id);
+        if (urlMatchId && matchIds.includes(urlMatchId)) {
+          setSelectedMatchId(urlMatchId);
+        } else if (!selectedMatchId || !matchIds.includes(selectedMatchId)) {
+          setSelectedMatchId(matchIds[0]);
         }
       } else {
-        // Fallback default match
-        setMatches([
-          {
-            match_id: "NZ-IND-2026-T20I-04",
-            team1: "New Zealand",
-            team2: "India",
-            venue: "Eden Park",
-            city: "Auckland",
-            date: "2026-10-30",
-            time: "19:00 NZDT",
-            format: "T20",
-            stage: "4th T20I",
-            status: "live",
-          },
-        ]);
+        setMatches([]);
+        setSelectedMatchId("");
       }
     } catch (err) {
       console.warn("Failed to load matches:", err);
@@ -2538,16 +2528,16 @@ function CoreEngineMatchMomentsContent() {
   const activeMatch = useMemo(() => {
     return (
       matches.find((m) => (m.match_id || (m as any).id) === selectedMatchId) || {
-        match_id: selectedMatchId,
-        team1: "New Zealand",
-        team1_short: "NZ",
-        team2: "India",
-        team2_short: "IND",
-        venue: "Eden Park",
-        city: "Auckland",
-        date: "2026-10-30",
+        match_id: selectedMatchId || "",
+        team1: "",
+        team1_short: "",
+        team2: "",
+        team2_short: "",
+        venue: "",
+        city: "",
+        date: "",
         format: "T20",
-        stage: "4th T20I",
+        stage: "",
         status: "live",
       }
     );
@@ -2558,11 +2548,9 @@ function CoreEngineMatchMomentsContent() {
   useEffect(() => {
     if (editingMomentId) return; // preserve ID during editing
 
-    const teamCode = (
-      innings === 1
-        ? activeMatch.team1_short || activeMatch.team1.slice(0, 3) || "NZ"
-        : activeMatch.team2_short || activeMatch.team2.slice(0, 3) || "IND"
-    ).toUpperCase();
+    const t1 = activeMatch.team1_short || activeMatch.team1?.replace(/\s+/g, "").slice(0, 3) || "MOM";
+    const t2 = activeMatch.team2_short || activeMatch.team2?.replace(/\s+/g, "").slice(0, 3) || "MOM";
+    const teamCode = (innings === 1 ? t1 : t2).toUpperCase();
 
     setMomentId(getNextMomentId(teamCode, moments));
   }, [innings, moments, activeMatch, editingMomentId]);
@@ -2936,7 +2924,7 @@ function CoreEngineMatchMomentsContent() {
       const data = await res.json();
 
           if (res.ok && data.success) {
-        showToast("success", `Outcome resolved! +10 SXPs awarded to winning fans.`);
+        showToast("success", `Outcome resolved!`);
 
         // Remember the result so later refetches can't overwrite it with stale data
         const ov = { winningChoiceId: selectedWinningId, outcomeNotes: settleNotes.trim() };
@@ -3043,6 +3031,24 @@ function CoreEngineMatchMomentsContent() {
               }}
             >
               <Trophy size={14} color="#f59e0b" /> Section 1: Match Setup
+            </Link>
+            <Link
+              href={`/admin/core-engine/visible-recognition?matchId=${selectedMatchId}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "rgba(139,92,246,0.15)",
+                color: "#c084fc",
+                border: "1px solid rgba(139,92,246,0.4)",
+                padding: "7px 14px",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                textDecoration: "none",
+              }}
+            >
+              <Sparkles size={14} color="#c084fc" /> Section 3: Visible Recognition Studio
             </Link>
           </div>
         </div>
@@ -3234,9 +3240,15 @@ function CoreEngineMatchMomentsContent() {
               </div>
             )}
 
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f6fc", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
-              {editingMomentId ? <Edit3 size={16} color="#d29922" /> : <PlusCircle size={16} color="#388bfd" />}
-              {editingMomentId ? `Edit Match Moment (${editingMomentId})` : "Record New Match Moment"}
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f6fc", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {editingMomentId ? <Edit3 size={16} color="#d29922" /> : <PlusCircle size={16} color="#388bfd" />}
+                {editingMomentId ? `Edit Match Moment (${editingMomentId})` : "Record New Match Moment"}
+  
+  
+              </div>
+              <span style={{ fontSize: 11, fontFamily: "monospace", padding: "3px 8px", borderRadius: 4, background: "#0d2847", color: "#58a6ff", border: "1px solid #1f6feb" }}>
+                📦 DynamoDB: MatchMoments</span>
             </div>
 
             <form onSubmit={handleSaveMoment}>
@@ -3339,7 +3351,7 @@ function CoreEngineMatchMomentsContent() {
                     value={matchOverTimestamp}
                     onChange={(e) => setMatchOverTimestamp(e.target.value)}
                     style={inputStyle}
-                    placeholder="e.g. 19:42 NZDT or 20:15"
+                    placeholder="e.g. 19:42 IST or 20:15"
                   />
                 </div>
 
@@ -3537,6 +3549,25 @@ function CoreEngineMatchMomentsContent() {
                             >
                               ⚡ Create Engagement <ArrowRight size={12} />
                             </button>
+                            <Link
+                              href={`/admin/core-engine/visible-recognition?matchId=${selectedMatchId}&momentId=${m.momentId}`}
+                              style={{
+                                background: "rgba(139,92,246,0.2)",
+                                color: "#c084fc",
+                                border: "1px solid rgba(139,92,246,0.4)",
+                                borderRadius: 6,
+                                padding: "6px 12px",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                textDecoration: "none",
+                              }}
+                            >
+                              <Sparkles size={12} color="#c084fc" /> Visible Recognition <ArrowRight size={12} />
+                            </Link>
 
                             <button
                               onClick={() => handleEditMoment(m)}
@@ -3693,7 +3724,7 @@ function CoreEngineMatchMomentsContent() {
                     <span>📍 Match: <strong style={{ color: "#f0f6fc" }}>{selectedMatchId}</strong></span>
                     <span>⚡ Event: <strong style={{ color: "#f0f6fc" }}>{activeMoment.event}</strong></span>
                     <span>📊 Score: <strong style={{ color: "#3fb950" }}>{activeMoment.score}</strong></span>
-                    <span>⏱ Clock: <strong style={{ color: "#f0f6fc" }}>{activeMoment.matchOverTimestamp || "—"}</strong></span>
+                    {/* <span>⏱ Clock: <strong style={{ color: "#f0f6fc" }}>{activeMoment.matchOverTimestamp || "—"}</strong></span> */}
                   </div>
                 )}
               </div>
@@ -3976,7 +4007,7 @@ function CoreEngineMatchMomentsContent() {
                   Loop Engagements & Reveal Visible Outcomes ({engagements.length})
                 </div>
                 <div style={{ fontSize: 11, color: "#8b949e" }}>
-                  For predictions and debates, reveal the verified outcome to credit +10 SXP accuracy bonus to fans.
+                  For predictions and debates
                 </div>
               </div>
 
@@ -4385,7 +4416,7 @@ function CoreEngineMatchMomentsContent() {
                 }}
               >
                 {isSettling ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
-                Publish Outcome & Award +10 SXPs
+                Publish Outcome 
               </button>
             </div>
           </div>

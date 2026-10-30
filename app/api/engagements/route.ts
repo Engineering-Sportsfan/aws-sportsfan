@@ -5,7 +5,7 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
 import { ScanCommand, PutCommand, GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
-import { EngagementItem, EngagementType, MemePayload, MemeRatingChoice } from "@/types/engagements";
+import { EngagementItem, EngagementType, EngagementStatus, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
 import { dispatchFlipArenaContentDropNotification } from "@/lib/notifications";
@@ -177,17 +177,22 @@ export async function GET(req: NextRequest) {
                   it.debateData?.winningChoiceId ||
                   null;
 
+                const existingStatus = (existing.status as string) || "";
+                const itStatus = (it.status as string) || "";
+
                 const isSettled = Boolean(
                   mergedWinningId ||
-                  existing.status === "settled" ||
-                  existing.status === "resolved" ||
-                  it.status === "settled" ||
-                  it.status === "resolved"
+                  existingStatus === "settled" ||
+                  existingStatus === "resolved" ||
+                  itStatus === "settled" ||
+                  itStatus === "resolved"
                 );
 
-                const mergedStatus = isSettled
+                const mergedStatus: EngagementStatus = isSettled
                   ? "settled"
-                  : (existing.status && existing.status !== "pending" ? existing.status : it.status || "active");
+                  : (existingStatus && existingStatus !== "pending"
+                      ? (existing.status as EngagementStatus)
+                      : (it.status as EngagementStatus) || "active");
 
                 itemsMap.set(id, {
                   ...existing,

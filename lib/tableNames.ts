@@ -27,6 +27,8 @@ const suffix = ENV === "prod" || ENV === "production" ? "" : `-${ENV}`;
 export const TABLES = {
   GamificationAndWallet: `GamificationAndWallet${suffix}`,
   IdentityAndAccess: `IdentityAndAccess${suffix}`,
+  MatchMoments: `MatchMoments${suffix}`,
+  "MatchMoments": `MatchMoments${suffix}`,
   MS_Clubs: `MS_Clubs${suffix}`,
   MS_Leagues: `MS_Leagues${suffix}`,
   MS_LevelFormat: `MS_LevelFormat${suffix}`,
