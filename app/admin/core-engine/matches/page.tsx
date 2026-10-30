@@ -28,7 +28,7 @@ interface MatchFormState {
   team2: string;
   team2_short: string;
   tournament: string;
-  format: "T20" | "ODI" | "Test";
+  format: "T20" | "T20I" | "ODI" | "Test";
   gender: "male" | "female";
   venue: string;
   city: string;
@@ -41,9 +41,18 @@ interface MatchFormState {
   target: string;
 }
 
-// Initial blank form — details shown strictly as placeholders
-const EMPTY_FORM: MatchFormState = {
-  match_id: "",
+// Helper to generate purely random match ID without team names
+const generateRandomMatchId = () => {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let random = "";
+  for (let i = 0; i < 6; i++) {
+    random += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `MATCH-${Date.now().toString(36).toUpperCase()}-${random}`;
+};
+
+const createEmptyForm = (): MatchFormState => ({
+  match_id: generateRandomMatchId(),
   team1: "",
   team1_short: "",
   team2: "",
@@ -53,14 +62,16 @@ const EMPTY_FORM: MatchFormState = {
   gender: "male",
   venue: "",
   city: "",
-  date: "",
+  date: new Date().toISOString().split("T")[0],
   time: "",
   season: String(new Date().getFullYear()),
   stage: "",
   total_overs: 20,
   status: "live",
   target: "",
-};
+});
+
+const EMPTY_FORM: MatchFormState = createEmptyForm();
 
 // Preset available via 1-click button
 const PRESET_FORM: MatchFormState = {
@@ -85,7 +96,7 @@ const PRESET_FORM: MatchFormState = {
 
 export default function CoreEngineMatchesPage() {
   const [activeTab, setActiveTab] = useState<"create" | "directory">("create");
-  const [form, setForm] = useState<MatchFormState>(EMPTY_FORM);
+  const [form, setForm] = useState<MatchFormState>(() => createEmptyForm());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{
     success: boolean;
@@ -99,23 +110,24 @@ export default function CoreEngineMatchesPage() {
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
 
   const handleEditMatch = (m: any) => {
-    setEditingMatchId(m.match_id || m.id);
+    const matchId = m.match_id || m.id;
+    setEditingMatchId(matchId);
     setForm({
-      match_id: m.match_id || m.id || "",
-      team1: m.team1 || "",
+      match_id: matchId,
+      team1: m.team1 || m.home_team || "",
       team1_short: m.team1_short || "",
-      team2: m.team2 || "",
+      team2: m.team2 || m.away_team || "",
       team2_short: m.team2_short || "",
       tournament: m.tournament || "",
       format: (m.format as any) || "T20",
       gender: (m.gender as any) || "male",
       venue: m.venue || "",
       city: m.city || "",
-      date: m.date || "",
+      date: m.date || m.start_date || "",
       time: m.time || "",
       season: String(m.season || new Date().getFullYear()),
       stage: m.stage || "",
-      total_overs: m.total_overs || 20,
+      total_overs: Number(m.total_overs) || 20,
       status: (m.status as any) || "live",
       target: m.target ? String(m.target) : "",
     });
@@ -125,16 +137,21 @@ export default function CoreEngineMatchesPage() {
 
   const handleCancelEdit = () => {
     setEditingMatchId(null);
-    setForm(EMPTY_FORM);
+    setForm(createEmptyForm());
     setSubmitResult(null);
   };
 
   const handleDeleteMatch = async (matchId: string) => {
     if (!confirm(`Are you sure you want to delete match ${matchId}? This cannot be undone.`)) return;
     try {
-      const res = await fetch(`/api/matches/${matchId}`, {
+      let res = await fetch(`/api/matches/${matchId}`, {
         method: "DELETE",
       });
+      if (!res.ok) {
+        res = await fetch(`/api/matches?match_id=${matchId}`, {
+          method: "DELETE",
+        });
+      }
       const data = await res.json();
       if (res.ok && data.success) {
         setSubmitResult({
@@ -181,26 +198,12 @@ export default function CoreEngineMatchesPage() {
 
       // Auto update total_overs based on format
       if (field === "format") {
-        if (value === "T20") updated.total_overs = 20;
+        if (value === "T20" || value === "T20I") updated.total_overs = 20;
         else if (value === "ODI") updated.total_overs = 50;
         else if (value === "Test") updated.total_overs = 90;
       }
 
-      // Auto-update match_id: Team A - Team B - Year - Format - Stage (only when creating new match)
-      if (!editingMatchId && ["team1", "team1_short", "team2", "team2_short", "date", "season", "format", "stage"].includes(field)) {
-        const generated = generateMatchId(
-          updated.team1,
-          updated.team1_short,
-          updated.team2,
-          updated.team2_short,
-          updated.date || updated.season,
-          updated.format,
-          updated.stage
-        );
-        if (generated) {
-          updated.match_id = generated;
-        }
-      }
+      // Keep purely random auto-generated match_id intact (no team name dependency)
 
       return updated;
     });
@@ -237,8 +240,22 @@ export default function CoreEngineMatchesPage() {
     setIsSubmitting(true);
     setSubmitResult(null);
 
+    const finalMatchId = (
+      form.match_id ||
+      generateMatchId(
+        form.team1,
+        form.team1_short,
+        form.team2,
+        form.team2_short,
+        form.date || form.season,
+        form.format,
+        form.stage
+      ) ||
+      `MATCH-${Date.now()}`
+    ).trim();
+
     const payload = {
-      match_id: form.match_id.trim(),
+      match_id: finalMatchId,
       team1: form.team1.trim(),
       team1_short: form.team1_short.trim() || form.team1.slice(0, 3).toUpperCase(),
       team2: form.team2.trim(),
@@ -282,8 +299,8 @@ export default function CoreEngineMatchesPage() {
         });
         if (editingMatchId) {
           setEditingMatchId(null);
-          setForm(EMPTY_FORM);
         }
+        setForm(createEmptyForm());
         fetchMatches();
       } else {
         setSubmitResult({
@@ -513,7 +530,8 @@ export default function CoreEngineMatchesPage() {
                       onChange={(e) => handleFieldChange("format", e.target.value as any)}
                       style={inputStyle}
                     >
-                      <option value="T20">T20 / T20I</option>
+                      <option value="T20">T20 </option>
+                      <option value="T20I">T20I</option>  
                       <option value="ODI">ODI (50 Overs)</option>
                       <option value="Test">Test Match</option>
                     </select>
@@ -539,16 +557,45 @@ export default function CoreEngineMatchesPage() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
                   <div>
-                    <label style={{ display: "block", fontSize: 12, color: "#8b949e", marginBottom: 4 }}>
-                      Match ID <span style={{ fontSize: 10, color: "#7ee787" }}>(TeamA - TeamB - Year - Format - Stage)</span> *
-                    </label>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <label style={{ fontSize: 12, color: "#8b949e" }}>
+                        Match ID <span style={{ fontSize: 10, color: "#7ee787" }}>🔒 (Random Auto-generated)</span> *
+                      </label>
+                      {/* {!editingMatchId && (
+                        <button
+                          type="button"
+                          onClick={() => setForm((prev) => ({ ...prev, match_id: generateRandomMatchId() }))}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "#58a6ff",
+                            fontSize: 11,
+                            cursor: "pointer",
+                            padding: 0,
+                            textDecoration: "underline",
+                            fontWeight: 600,
+                          }}
+                          title="Generate a different random match ID"
+                        >
+                          🎲 Regenerate ID
+                        </button>
+                      )} */}
+                    </div>
                     <input
                       type="text"
+                      readOnly
                       required
                       value={form.match_id}
-                      onChange={(e) => handleFieldChange("match_id", e.target.value)}
-                      style={{ ...inputStyle, fontFamily: "monospace", fontWeight: 600, color: "#58a6ff" }}
-                      placeholder="e.g. NZ-IND-2026-T20-4TH-T20I"
+                      style={{
+                        ...inputStyle,
+                        fontFamily: "monospace",
+                        fontWeight: 700,
+                        color: "#58a6ff",
+                        background: "#161b22",
+                        cursor: "not-allowed",
+                        borderColor: "#30363d",
+                      }}
+                      placeholder="Auto-generated random Match ID"
                     />
                   </div>
                   <div>
@@ -1073,7 +1120,7 @@ export default function CoreEngineMatchesPage() {
 
                     {/* Teams */}
                     <div style={{ fontSize: 16, fontWeight: 700, color: "#f0f6fc", marginBottom: 4 }}>
-                      {m.team1} vs {m.team2}
+                      {m.team1 || m.home_team || "Team A"} vs {m.team2 || m.away_team || "Team B"}
                     </div>
 
                     <div style={{ fontSize: 12, color: "#8b949e", marginBottom: 8 }}>
@@ -1081,8 +1128,8 @@ export default function CoreEngineMatchesPage() {
                     </div>
 
                     <div style={{ fontSize: 11, color: "#6e7681", display: "flex", flexDirection: "column", gap: 3 }}>
-                      <div>📍 {m.venue}{m.city ? `, ${m.city}` : ""}</div>
-                      <div>📅 {m.date} {m.time ? `• ${m.time}` : ""}</div>
+                      <div>📍 {m.venue || "Venue TBD"}{m.city ? `, ${m.city}` : ""}</div>
+                      <div>📅 {m.date || m.start_date || "Date TBD"} {m.time ? `• ${m.time}` : ""}</div>
                     </div>
                   </div>
 

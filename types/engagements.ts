@@ -1,6 +1,6 @@
 // types/engagements.ts — Type definitions for Fan Battles, Quizzes, Polls, Predictions, and Meme Arena
 export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "question" | "debate" | "express";
-export type EngagementStatus = "active" | "inactive" | "expired" | "settled";
+export type EngagementStatus = "active" | "inactive" | "expired" | "settled" | "resolved" | "pending" | "open";
 
 // ─── 1. Fan Battle ─────────────────────────────────────────────────────────
 export interface Competitor {
@@ -290,6 +290,7 @@ export interface EngagementItem {
   isMatchMoment?: boolean;
 
   // Match Moment Linkage fields
+  matchId?: string; // e.g. "NZ-IND-2026-T20-4TH-T20I"
   momentId?: string; // e.g. "NZ-01", "NZ-06", "IND-09"
   loopId?: string; // alias for momentId
   matchPhase?: string; // e.g. "NZ 1st innings", "India chase"
@@ -304,6 +305,7 @@ export interface EngagementItem {
   likeCount?: number;
   shares: number;
   totalEngaged: number;
+  commentsCount?: number;
 
   // Hydrated user interaction fields
   userLiked?: boolean;
@@ -327,4 +329,20 @@ export interface UserEngagementRecord {
   pointsAwarded?: number;
   coinsStaked?: number;
   timestamp: number;
+}
+
+export interface EngagementComment {
+  id: string;
+  commentId: string;
+  engagementId: string;
+  parentId?: string | null;
+  authorUid: string;
+  authorUsername: string;
+  authorAvatarUrl?: string | null;
+  authorBadge?: string | null;
+  text: string;
+  createdAt: number;
+  likesCount: number;
+  isLiked?: boolean;
+  replies?: EngagementComment[];
 }

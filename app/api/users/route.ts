@@ -104,7 +104,7 @@ function resolveUserLastLoginAt(u: any, resolvedCreatedAt: number | null): numbe
   return resolvedCreatedAt;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     // 1. Scan DynamoDB IdentityAndAccess with full pagination
     let rawItems: any[] = [];
@@ -245,6 +245,7 @@ export async function GET() {
         firstName: u.firstName || "",
         lastName: u.lastName || "",
         name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.name || u.userName || u.username || u.email.split("@")[0],
+        phone: u.phone || u.phoneNumber || u.mobile || u.contactNumber || u.phone_number || "",
         avatar: resolvedAvatar,
         avatarUrl: resolvedAvatar,
         photoURL: resolvedAvatar,
@@ -273,6 +274,36 @@ export async function GET() {
       if (timeB !== timeA) return timeB - timeA;
       return (b.lastLoginAt || 0) - (a.lastLoginAt || 0);
     });
+
+    const { searchParams } = new URL(req.url);
+    if (searchParams.get("format") === "csv") {
+      const escapeCsv = (val: any) => {
+        if (val === null || val === undefined) return '""';
+        const str = String(val).replace(/"/g, '""');
+        return `"${str}"`;
+      };
+
+      const rows = [
+        ["Name", "Email", "Phone Number", "Username", "Role", "Auth Method", "Created Date"].join(","),
+        ...users.map(u => [
+          escapeCsv(u.name),
+          escapeCsv(u.email),
+          escapeCsv(u.phone || "N/A"),
+          escapeCsv(u.username),
+          escapeCsv(u.role),
+          escapeCsv(u.authMethod),
+          escapeCsv(u.createdAt ? new Date(u.createdAt).toISOString().split("T")[0] : "N/A"),
+        ].join(","))
+      ];
+
+      return new NextResponse(rows.join("\r\n"), {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": 'attachment; filename="users_export.csv"',
+          "Cache-Control": "no-store",
+        },
+      });
+    }
 
     return NextResponse.json(
       { users, total: users.length },

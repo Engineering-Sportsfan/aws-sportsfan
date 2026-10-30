@@ -1,10 +1,11 @@
-// app/api/matches/[id]/route.ts — Migrated to AWS DynamoDB (SportsData Table)
+// app/api/matches/[id]/route.ts — Match Details, Edit & Delete API (MatchMoments Table)
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { validateMatchUpdate } from "@/lib/validations/matchValidation";
 import { docClient } from "@/lib/dynamodb";
-import { dualWrite } from "@/lib/dualWrite";
+import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
+import { TABLES } from "@/lib/tableNames";
 import { GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -18,53 +19,96 @@ export async function GET(_req: NextRequest, { params }: Params) {
     let matchData: any = null;
     let innings: any[] = [];
 
-    // 1. Check DynamoDB SportsData
-    try {
-      const getRes = await docClient.send(
-        new GetCommand({
-          TableName: "SportsData",
-          Key: {
-            entityId: `MATCH#${id}`,
-            sk: "MATCH#META",
-          },
-        })
-      );
-      if (getRes.Item) {
-        matchData = getRes.Item;
+    // 1. Check DynamoDB MatchMoments (with SportsData fallback)
+    const candidateTables = Array.from(
+      new Set([
+        ...getCandidateTableNames(TABLES.MatchMoments),
+        ...getCandidateTableNames(TABLES.SportsData),
+      ])
+    );
 
-        // Fetch innings from DynamoDB
-        const qRes = await docClient.send(
-          new QueryCommand({
-            TableName: "SportsData",
-            KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
-            ExpressionAttributeValues: {
-              ":eId": `MATCH#${id}`,
-              ":skPrefix": "INNINGS#",
+    for (const table of candidateTables) {
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: table,
+            Key: {
+              entityId: `MATCH#${id}`,
+              sk: "MATCH#META",
             },
           })
         );
-        if (qRes.Items && qRes.Items.length > 0) {
-          innings = (qRes.Items as any[]).sort((a, b) => Number(a.innings_no || 0) - Number(b.innings_no || 0));
+        if (getRes.Item) {
+          matchData = getRes.Item;
+
+          // Fetch innings from DynamoDB
+          try {
+            const qRes = await docClient.send(
+              new QueryCommand({
+                TableName: table,
+                KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
+                ExpressionAttributeValues: {
+                  ":eId": `MATCH#${id}`,
+                  ":skPrefix": "INNINGS#",
+                },
+              })
+            );
+            if (qRes.Items && qRes.Items.length > 0) {
+              innings = (qRes.Items as any[]).sort((a, b) => Number(a.innings_no || 0) - Number(b.innings_no || 0));
+            }
+          } catch {}
+
+          break;
         }
+      } catch (tableErr) {
+        // Continue to next candidate table
       }
-    } catch (e) {
-      console.warn("[matches [id] GET] DynamoDB notice:", e);
     }
 
     // 2. Fallback to Firestore
     if (!matchData) {
       const doc = await db.collection("matches").doc(id).get();
       if (!doc.exists) {
-        return NextResponse.json({ success: false, error: "Match not found" }, { status: 404 });
+        return NextResponse.json({ success: false, error: `Match ${id} not found` }, { status: 404 });
       }
       matchData = doc.data();
 
       // Fetch innings subcollection
-      const inningsSnap = await db.collection("matches").doc(id).collection("innings").orderBy("innings_no").get();
-      innings = inningsSnap.docs.map((d) => d.data());
+      try {
+        const inningsSnap = await db.collection("matches").doc(id).collection("innings").orderBy("innings_no").get();
+        innings = inningsSnap.docs.map((d) => d.data());
+      } catch {}
     }
 
-    return NextResponse.json({ success: true, data: { ...matchData, innings } });
+    const team1 = matchData.team1 || matchData.home_team || "";
+    const team2 = matchData.team2 || matchData.away_team || "";
+    const date = matchData.date || matchData.start_date || "";
+
+    const normalizedData = {
+      ...matchData,
+      id: String(matchData.match_id || matchData.id || id),
+      match_id: String(matchData.match_id || matchData.id || id),
+      team1,
+      team2,
+      home_team: team1,
+      away_team: team2,
+      team1_short: matchData.team1_short || team1.slice(0, 3).toUpperCase(),
+      team2_short: matchData.team2_short || team2.slice(0, 3).toUpperCase(),
+      date,
+      start_date: date,
+      city: matchData.city || "",
+      venue: matchData.venue || "",
+      tournament: matchData.tournament || "",
+      format: matchData.format || "T20",
+      stage: matchData.stage || "",
+      season: matchData.season || new Date().getFullYear(),
+      total_overs: Number(matchData.total_overs) || 20,
+      status: matchData.status || "live",
+      target: matchData.target != null ? String(matchData.target) : "",
+      innings,
+    };
+
+    return NextResponse.json({ success: true, data: normalizedData });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
@@ -74,11 +118,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
 // ─── PATCH /api/matches/[id] ──────────────────────────────────────────────────
 export async function PATCH(req: NextRequest, { params }: Params) {
   const { id } = await params;
-  let body: Record<string, unknown>;
+  let body: Record<string, any>;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ success: false, error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
   const validation = validateMatchUpdate(body);
@@ -87,36 +131,46 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   let existingData: any = null;
-  try {
-    const getRes = await docClient.send(
-      new GetCommand({
-        TableName: "SportsData",
-        Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
-      })
-    );
-    if (getRes.Item) existingData = getRes.Item;
-  } catch (e) {
-    // fallback
+  const candidateTables = Array.from(
+    new Set([
+      ...getCandidateTableNames(TABLES.MatchMoments),
+      ...getCandidateTableNames(TABLES.SportsData),
+    ])
+  );
+
+  for (const table of candidateTables) {
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: table,
+          Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
+        })
+      );
+      if (getRes.Item) {
+        existingData = getRes.Item;
+        break;
+      }
+    } catch (e) {}
   }
 
   if (!existingData) {
-    const docRef = db.collection("matches").doc(id);
-    const existing = await docRef.get();
-    if (!existing.exists) {
-      return NextResponse.json({ success: false, error: "Match not found" }, { status: 404 });
-    }
-    existingData = existing.data();
+    try {
+      const snap = await db.collection("matches").doc(id).get();
+      if (snap.exists) existingData = snap.data();
+    } catch {}
   }
 
   const now = Date.now();
   const updatedMatch = {
-    ...existingData,
+    ...(existingData || {}),
     ...validation.data,
+    match_id: id,
     updatedAt: now,
   };
 
+  // Primary write to MatchMoments table + Firestore dual-write
   await dualWrite({
-    tableName: "SportsData",
+    tableName: TABLES.MatchMoments,
     dynamoItem: {
       entityId: `MATCH#${id}`,
       sk: "MATCH#META",
@@ -129,37 +183,46 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     },
   });
 
-  return NextResponse.json({ success: true, match_id: id });
+  return NextResponse.json({ success: true, match_id: id, data: updatedMatch });
 }
 
 // ─── DELETE /api/matches/[id] ─────────────────────────────────────────────────
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
 
-  // 1. Delete from DynamoDB
-  try {
-    const qRes = await docClient.send(
-      new QueryCommand({
-        TableName: "SportsData",
-        KeyConditionExpression: "entityId = :eId",
-        ExpressionAttributeValues: { ":eId": `MATCH#${id}` },
-      })
-    );
-    if (qRes.Items) {
-      for (const item of qRes.Items) {
-        await docClient.send(
-          new DeleteCommand({
-            TableName: "SportsData",
-            Key: { entityId: item.entityId, sk: item.sk },
-          })
-        );
+  // 1. Delete from DynamoDB MatchMoments & SportsData
+  const candidateTables = Array.from(
+    new Set([
+      ...getCandidateTableNames(TABLES.MatchMoments),
+      ...getCandidateTableNames(TABLES.SportsData),
+    ])
+  );
+
+  for (const table of candidateTables) {
+    try {
+      const qRes = await docClient.send(
+        new QueryCommand({
+          TableName: table,
+          KeyConditionExpression: "entityId = :eId",
+          ExpressionAttributeValues: { ":eId": `MATCH#${id}` },
+        })
+      );
+      if (qRes.Items && qRes.Items.length > 0) {
+        for (const item of qRes.Items) {
+          await docClient.send(
+            new DeleteCommand({
+              TableName: table,
+              Key: { entityId: item.entityId, sk: item.sk },
+            })
+          );
+        }
       }
+    } catch (e) {
+      console.warn(`[matches DELETE] Notice for table ${table}:`, e);
     }
-  } catch (e) {
-    console.warn("[matches DELETE] DynamoDB notice:", e);
   }
 
-  // 2. Delete from Firestore
+  // 2. Delete from Firestore matches collection
   try {
     const docRef = db.collection("matches").doc(id);
     const inningsSnap = await docRef.collection("innings").get();
@@ -171,5 +234,5 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     console.warn("[matches DELETE] Firestore notice:", e);
   }
 
-  return NextResponse.json({ success: true, deleted: id });
+  return NextResponse.json({ success: true, deleted: id, message: `Match ${id} deleted successfully` });
 }

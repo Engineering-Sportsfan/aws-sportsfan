@@ -9,6 +9,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
 import { dispatchFlipArenaNotification } from "@/lib/notifications";
+import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 
 export const dynamic = "force-dynamic";
 
@@ -731,20 +732,26 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // ─── Step 2: Fetch Current Engagement Item ───────────────────────────────
-    let item: any = null;
-    try {
-      const getRes = await docClient.send(
-        new GetCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
-        })
-      );
-      if (getRes.Item) item = getRes.Item;
-    } catch { }
+    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+    const matchIdParam = body.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
+    const foundEngagement = await findEngagementById(cleanId, matchIdParam);
 
-    if (!item && db) {
-      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
-      if (snap.exists) item = { id: snap.id, ...snap.data() };
+    let item: any = foundEngagement?.item || null;
+    if (!item) {
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: "ENGAGEMENT#META" },
+          })
+        );
+        if (getRes.Item) item = getRes.Item;
+      } catch { }
+
+      if (!item && db) {
+        const snap = await db.collection(getFirestoreCollection("engagements")).doc(cleanId).get();
+        if (snap.exists) item = { id: snap.id, ...snap.data() };
+      }
     }
 
     if (!item) {
@@ -788,6 +795,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
       }
 
+      left.percentage = leftPct;
+      right.percentage = rightPct;
       responseData = {
         success: true,
         type: "fan_battle",
@@ -796,6 +805,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         rightPercentage: rightPct,
         leftVotes: left.votes,
         rightVotes: right.votes,
+        leftCompetitor: left,
+        rightCompetitor: right,
         totalVotes: total,
         totalEngaged: Number(item.totalEngaged) || 0,
         isFirstEngagement: isNewUserEngagement,
@@ -839,10 +850,33 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
-    // 3.3 Poll Vote Handling
-    else if (item.type === "poll" && item.pollData) {
-      const options = (item.pollData.options || []).map((opt: any) => {
-        if (opt.id === selectedOptionId || opt.text === selectedOptionId) {
+    // 3.3 Poll / Debate / Express / Question Vote Handling
+    else if (
+      item.type === "poll" ||
+      item.type === "debate" ||
+      item.type === "express" ||
+      item.type === "question" ||
+      item.pollData ||
+      item.debateData ||
+      item.expressData ||
+      Array.isArray(item.options)
+    ) {
+      const rawOptions =
+        item.pollData?.options ||
+        item.debateData?.options ||
+        item.expressData?.options ||
+        item.questionData?.options ||
+        item.options ||
+        [];
+
+      const options = (rawOptions.length > 0 ? rawOptions : [
+        { id: "opt_1", text: "Option A", votes: 0 },
+        { id: "opt_2", text: "Option B", votes: 0 }
+      ]).map((opt: any) => {
+        const isMatch =
+          String(opt.id).toLowerCase() === String(selectedOptionId).toLowerCase() ||
+          String(opt.text || opt.label || "").trim().toLowerCase() === String(selectedOptionId).trim().toLowerCase();
+        if (isMatch) {
           return { ...opt, votes: (Number(opt.votes) || 0) + 1 };
         }
         return { ...opt, votes: Number(opt.votes) || 0 };
@@ -851,18 +885,31 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       const totalVotes = options.reduce((sum: number, o: any) => sum + (o.votes || 0), 0);
       const optionsWithPercentages = options.map((opt: any) => ({
         ...opt,
-        percentage: totalVotes > 0 ? Math.round((opt.votes / totalVotes) * 100) : 0,
+        percentage: totalVotes > 0 ? Math.round((Number(opt.votes) / totalVotes) * 100) : 0,
       }));
 
-      item.pollData.options = options;
-      item.pollData.totalVotes = totalVotes;
+      if (item.pollData) {
+        item.pollData.options = optionsWithPercentages;
+        item.pollData.totalVotes = totalVotes;
+      }
+      if (item.debateData) {
+        item.debateData.options = optionsWithPercentages;
+        item.debateData.totalVotes = totalVotes;
+      }
+      if (item.expressData) {
+        item.expressData.options = optionsWithPercentages;
+        item.expressData.totalVotes = totalVotes;
+      }
+      item.options = optionsWithPercentages;
+      item.totalVotes = totalVotes;
+
       if (isNewUserEngagement) {
         item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
       }
 
       responseData = {
         success: true,
-        type: "poll",
+        type: item.type || "poll",
         selectedOptionId,
         options: optionsWithPercentages,
         totalVotes,
@@ -895,12 +942,18 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
       }
 
+      left.percentage = leftPct;
+      right.percentage = rightPct;
       responseData = {
         success: true,
         type: "prediction",
         selectedOptionId,
         leftPercentage: leftPct,
         rightPercentage: rightPct,
+        leftVotes: left.votes,
+        rightVotes: right.votes,
+        leftChoice: left,
+        rightChoice: right,
         coinsLocked: item.predictionData.coinStake || 10,
         totalVotes: total,
         totalEngaged: Number(item.totalEngaged) || 0,
@@ -1030,15 +1083,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // ─── Step 4: Update Parent Engagement Item ────────────────────────────────
-    const dynamoItem = {
-      contentId: `ENGAGEMENT#${id}`,
-      sk: "ENGAGEMENT#META",
-      entityId: `ENGAGEMENT#${String(item.type).toUpperCase()}`,
-      ...item,
-      updatedAt: now,
-    };
-
-    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
+    await persistEngagementUpdate(cleanId, item, foundEngagement?.matchMomentsRecord);
 
     // ─── Step 4.5: Award Participation Points (+2 points for quiz, polls, predictions, battles) ─
     const quizBonus = item.type === "quiz" && responseData?.isCorrect ? Number(responseData.quizPointsAwarded || 0) : 0;

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { EngagementItem } from "@/types/engagements";
+import EngagementCommentsThread from "./EngagementCommentsThread";
 
 interface Props {
   item: EngagementItem;
@@ -16,6 +17,8 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
   const [likesCount, setLikesCount] = useState<number>(Number(item.likes) || 0);
   const [sharesCount, setSharesCount] = useState<number>(Number(item.shares) || 0);
   const [totalEngaged, setTotalEngaged] = useState<number>(Number(item.totalEngaged) || 0);
+  const [commentsCount, setCommentsCount] = useState<number>(Number(item.commentsCount) || 0);
+  const [showComments, setShowComments] = useState(false);
   const [resultData, setResultData] = useState<{
     leftPercentage: number;
     rightPercentage: number;
@@ -143,6 +146,11 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
           <span style={{ color: "#58a6ff", display: "flex", alignItems: "center", gap: 4 }}>
             💎 SXP
           </span>
+          {item.matchId && (
+            <span style={{ color: "#ff6b6b", background: "rgba(255,107,107,0.12)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 4, padding: "1px 6px", fontSize: 10 }}>
+              MATCH #{item.matchId.replace(/^MATCH#/, "")}
+            </span>
+          )}
         </div>
         <span style={{ fontSize: 11, color: "#6e7681" }}>{formattedTime}</span>
       </div>
@@ -251,7 +259,7 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
         <span>🔒</span> +{resultData?.coinsLocked || pred.coinStake || 10} SXPs locked in · Results after match
       </div>
 
-      {/* Footer / Counters with Dynamic Likes */}
+      {/* Footer / Counters with Dynamic Likes, Shares & Banter Comments */}
       <div
         style={{
           display: "flex",
@@ -264,32 +272,78 @@ export default function PredictionCard({ item, onPredictionSuccess }: Props) {
           color: "#7d8590",
         }}
       >
-        <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           <button
             onClick={handleLike}
             style={{
-              background: "none", border: "none", color: liked ? "#ff6b6b" : "#7d8590",
-              display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12,
+              background: "none",
+              border: "none",
+              color: liked ? "#ff6b6b" : "#7d8590",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
               transition: "transform .15s ease",
               transform: liked ? "scale(1.08)" : "scale(1)",
             }}
+            title="Like this prediction"
           >
             <span>{liked ? "❤️" : "🤍"}</span> {likesCount.toLocaleString()}
           </button>
+
           <button
             onClick={handleShare}
             style={{
-              background: "none", border: "none", color: "#7d8590",
-              display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12,
+              background: "none",
+              border: "none",
+              color: "#7d8590",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
             }}
+            title="Share with friends"
           >
             <span>🔗</span> Share {sharesCount > 0 ? `(${sharesCount})` : ""}
           </button>
+
+          <button
+            onClick={() => setShowComments(!showComments)}
+            style={{
+              background: showComments ? "rgba(255, 107, 107, 0.15)" : "none",
+              border: showComments ? "1px solid rgba(255, 107, 107, 0.4)" : "1px solid transparent",
+              borderRadius: 6,
+              padding: "4px 8px",
+              color: showComments ? "#ff7b72" : "#7d8590",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              transition: "all .15s ease",
+            }}
+            title="Discuss and reply to fans"
+          >
+            <span>💬</span> Banter {commentsCount > 0 ? `(${commentsCount})` : ""}
+          </button>
         </div>
+
         <div>
           {totalEngaged.toLocaleString()} engaged
         </div>
       </div>
+
+      {/* Expandable Threaded Comments Drawer */}
+      <EngagementCommentsThread
+        engagementId={item.id}
+        isOpen={showComments}
+        onCommentsCountChange={setCommentsCount}
+      />
     </div>
   );
 }

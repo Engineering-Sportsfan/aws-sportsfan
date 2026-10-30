@@ -34,6 +34,14 @@ export async function GET(req: NextRequest) {
           const cleanId = String(rawId).replace(/^(MATCH#|WATCHALONG_MATCH#)/, "") || item.id || `m_${Date.now()}`;
           matchesMap.set(cleanId, {
             id: cleanId,
+            match_id: item.match_id || cleanId,
+            team_a: item.team1 || item.team_a || "Team 1",
+            team_b: item.team2 || item.team_b || "Team 2",
+            team1: item.team1 || item.team_a || "Team 1",
+            team2: item.team2 || item.team_b || "Team 2",
+            venue: item.venue || "",
+            format: item.format || "",
+            stage: item.stage || "",
             ...item,
             sport: (item.sport || "cricket").toLowerCase(),
           });
@@ -51,6 +59,14 @@ export async function GET(req: NextRequest) {
         if (!matchesMap.has(doc.id)) {
           matchesMap.set(doc.id, {
             id: doc.id,
+            match_id: data.match_id || doc.id,
+            team_a: data.team1 || data.team_a || "Team 1",
+            team_b: data.team2 || data.team_b || "Team 2",
+            team1: data.team1 || data.team_a || "Team 1",
+            team2: data.team2 || data.team_b || "Team 2",
+            venue: data.venue || "",
+            format: data.format || "",
+            stage: data.stage || "",
             ...data,
             sport: (data.sport || "cricket").toLowerCase(),
           });
