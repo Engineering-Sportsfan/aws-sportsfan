@@ -128,7 +128,7 @@ async function runFlipLineNotificationTestSuite() {
     dispatchFlipLineNotification,
     extractMentions,
     resolveUserIdsFromHandles,
-  } = await import("../lib/fliplineNotifications");
+  } = await import("../lib/notifications");
 
   const authorId = "u_author_rohit";
   const fanAlice = "u_fan_alice";

@@ -3,12 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
-import { ScanCommand, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { EngagementItem, EngagementType, MemePayload, MemeRatingChoice } from "@/types/engagements";
+import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
+import { ScanCommand, PutCommand, GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { EngagementItem, EngagementType, EngagementStatus, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
-import { dispatchFlipArenaContentDropNotification } from "@/lib/fliparenaNotifications";
+import { dispatchFlipArenaContentDropNotification } from "@/lib/notifications";
 import cloudinary from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
@@ -45,25 +45,36 @@ export async function GET(req: NextRequest) {
           for (const it of scanRes.Items) {
             // Ignore vote, like, or share records that share the same contentId prefix
             if (it.sk && it.sk !== "ENGAGEMENT#META") continue;
-            if (!it.title || !it.type) continue;
+            const resolvedTitle = it.title || it.subtitle || it.headline || it.caption || it.memeData?.caption || (it.type === "meme" ? "Meme" : "");
+            if (!resolvedTitle || !it.type) continue;
 
             const id = it.id || String(it.contentId || "").replace(/^ENGAGEMENT#/, "");
             if (!itemsMap.has(id)) {
               itemsMap.set(id, {
                 id,
                 type: it.type,
-                title: it.title,
+                title: resolvedTitle,
                 subtitle: it.subtitle || "",
                 tags: it.tags || [],
                 sport: (it.sport || "cricket").toLowerCase(),
-                status: it.status || "active",
+                status: (it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId) ? "settled" : (it.status || "active"),
                 fanBattleData: it.fanBattleData,
                 quizData: it.quizData,
                 pollData: it.pollData,
                 predictionData: it.predictionData,
                 memeData: it.memeData,
+                debateData: it.debateData,
+                expressData: it.expressData,
+                questionData: it.questionData,
+                winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+                outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+                outcomeNotes: it.outcomeNotes || null,
+                resolvedAt: it.resolvedAt || null,
+                resolvedBy: it.resolvedBy || null,
+                timerMinutes: it.timerMinutes || it.durationMinutes || 4,
+                durationMinutes: it.durationMinutes || it.timerMinutes || 4,
                 memeType: it.memeType || it.memeData?.memeType,
-                options: it.options || it.memeData?.options,
+                options: it.options || it.memeData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options || it.pollData?.options || it.predictionData?.options,
                 imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
                 imageUrlB: it.imageUrlB || it.memeData?.imageUrlB,
                 labelA: it.labelA || it.memeData?.labelA,
@@ -73,7 +84,23 @@ export async function GET(req: NextRequest) {
                 totalEngaged: Number(it.totalEngaged) || 0,
                 createdAt: it.createdAt || Date.now(),
                 updatedAt: it.updatedAt || Date.now(),
-                expiresAt: it.expiresAt || null,
+                expiresAt:
+                  it.expiresAt ||
+                  (it.createdAt && (it.timerMinutes || it.durationMinutes)
+                    ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
+                    : null),
+                category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
+                source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
+                isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+                matchId: it.matchId || undefined,
+                momentId: it.momentId || it.loopId || undefined,
+                loopId: it.loopId || it.momentId || undefined,
+                matchPhase: it.matchPhase || undefined,
+                anchorTrigger: it.anchorTrigger || undefined,
+                scoreState: it.scoreState || undefined,
+                sportsMoment: it.sportsMoment || undefined,
+                overNumber: it.overNumber !== undefined ? it.overNumber : undefined,
+                innings: it.innings !== undefined ? Number(it.innings) : undefined,
                 creatorId: it.creatorId || undefined,
                 creatorEmail: it.creatorEmail || undefined,
                 creatorName: it.creatorName || undefined,
@@ -94,6 +121,161 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // 1b. Fetch match loops from MatchMoments table (MatchMoments-dev, MatchMoments-release, MatchMoments)
+    const matchMomentTables = getCandidateTableNames(TABLES.MatchMoments);
+    const rawSearchMatchId = searchParams.get("matchId");
+    const cleanSearchMatchId = rawSearchMatchId ? rawSearchMatchId.replace(/^MATCH#/, "") : null;
+    for (const table of matchMomentTables) {
+      try {
+        let loopItems: any[] = [];
+        if (cleanSearchMatchId) {
+          try {
+            const qRes = await docClient.send(
+              new QueryCommand({
+                TableName: table,
+                KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skpfx)",
+                ExpressionAttributeValues: {
+                  ":eId": `MATCH#${cleanSearchMatchId}`,
+                  ":skpfx": "LOOP#",
+                },
+                Limit: 100,
+              })
+            );
+            loopItems = qRes.Items || [];
+          } catch (e) {
+            loopItems = [];
+          }
+        } else {
+          const sRes = await docClient.send(
+            new ScanCommand({
+              TableName: table,
+              FilterExpression: "begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":skpfx": "LOOP#",
+              },
+              Limit: 100,
+            })
+          );
+          loopItems = sRes.Items || [];
+        }
+
+        if (loopItems && loopItems.length > 0) {
+          for (const it of loopItems) {
+            const id = it.id || it.loopId || (typeof it.sk === "string" ? it.sk.replace(/^LOOP#/, "") : "");
+            if (!id) continue;
+            if (itemsMap.has(id)) {
+              const existing = itemsMap.get(id);
+              if (existing) {
+                const mergedWinningId =
+                  existing.winningChoiceId ||
+                  existing.outcomeWinningChoiceId ||
+                  existing.predictionData?.winningChoiceId ||
+                  existing.debateData?.winningChoiceId ||
+                  it.winningChoiceId ||
+                  it.outcomeWinningChoiceId ||
+                  it.predictionData?.winningChoiceId ||
+                  it.debateData?.winningChoiceId ||
+                  null;
+
+                const existingStatus = (existing.status as string) || "";
+                const itStatus = (it.status as string) || "";
+
+                const isSettled = Boolean(
+                  mergedWinningId ||
+                  existingStatus === "settled" ||
+                  existingStatus === "resolved" ||
+                  itStatus === "settled" ||
+                  itStatus === "resolved"
+                );
+
+                const mergedStatus: EngagementStatus = isSettled
+                  ? "settled"
+                  : (existingStatus && existingStatus !== "pending"
+                      ? (existing.status as EngagementStatus)
+                      : (it.status as EngagementStatus) || "active");
+
+                itemsMap.set(id, {
+                  ...existing,
+                  ...it,
+                  id,
+                  status: mergedStatus,
+                  winningChoiceId: mergedWinningId,
+                  outcomeWinningChoiceId: mergedWinningId,
+                  outcomeNotes: existing.outcomeNotes || it.outcomeNotes || null,
+                  resolvedAt: existing.resolvedAt || it.resolvedAt || null,
+                  resolvedBy: existing.resolvedBy || it.resolvedBy || null,
+                  likes: Math.max(Number(existing.likes) || 0, Number(it.likes) || 0),
+                  shares: Math.max(Number(existing.shares) || 0, Number(it.shares) || 0),
+                  totalEngaged: Math.max(Number(existing.totalEngaged) || 0, Number(it.totalEngaged) || 0),
+                  commentsCount: Math.max(Number(existing.commentsCount) || 0, Number(it.commentsCount) || 0),
+                  pollData: it.pollData || existing.pollData,
+                  predictionData: it.predictionData || existing.predictionData,
+                  debateData: it.debateData || existing.debateData,
+                  fanBattleData: it.fanBattleData || existing.fanBattleData,
+                  options: it.options || existing.options,
+                  matchId: it.matchId || (typeof it.entityId === "string" ? it.entityId.replace(/^MATCH#/, "") : existing.matchId),
+                  isMatchMoment: true,
+                });
+              }
+              continue;
+            }
+            const resolvedTitle = it.title || it.subtitle || it.headline || it.caption || it.question || "";
+            itemsMap.set(id, {
+              id,
+              type: it.type || "poll",
+              title: resolvedTitle || "Match Engagement",
+              subtitle: it.subtitle || "",
+              tags: it.tags || [],
+              sport: (it.sport || "cricket").toLowerCase(),
+              status: (it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId) ? "settled" : (it.status || "active"),
+              fanBattleData: it.fanBattleData,
+              quizData: it.quizData,
+              pollData: it.pollData,
+              predictionData: it.predictionData,
+              memeData: it.memeData,
+              debateData: it.debateData,
+              expressData: it.expressData,
+              questionData: it.questionData,
+              winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+              outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+              outcomeNotes: it.outcomeNotes || null,
+              resolvedAt: it.resolvedAt || null,
+              resolvedBy: it.resolvedBy || null,
+              timerMinutes: it.timerMinutes || 4,
+              durationMinutes: it.durationMinutes || 4,
+              options: it.options || it.pollData?.options || it.predictionData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options,
+              likes: Number(it.likes) || 0,
+              shares: Number(it.shares) || 0,
+              totalEngaged: Number(it.totalEngaged) || 0,
+              commentsCount: Number(it.commentsCount) || 0,
+              createdAt: it.createdAt || Date.now(),
+              updatedAt: it.updatedAt || Date.now(),
+              expiresAt: it.expiresAt || null,
+              category: it.category || "match_moment",
+              source: it.source || "match_moment",
+              isMatchMoment: true,
+              matchId: it.matchId || (typeof it.entityId === "string" ? it.entityId.replace(/^MATCH#/, "") : undefined),
+              momentId: it.momentId || undefined,
+              loopId: it.loopId || id,
+              matchPhase: it.matchPhase || undefined,
+              anchorTrigger: it.anchorTrigger || undefined,
+              scoreState: it.scoreState || undefined,
+              sportsMoment: it.sportsMoment || undefined,
+              overNumber: it.overNumber !== undefined ? it.overNumber : undefined,
+              innings: it.innings !== undefined ? Number(it.innings) : undefined,
+              creatorId: it.creatorId || undefined,
+              creatorEmail: it.creatorEmail || undefined,
+              creatorName: it.creatorName || undefined,
+              creatorAvatar: it.creatorAvatar || undefined,
+            });
+          }
+          break;
+        }
+      } catch (mmErr: any) {
+        // Continue to next candidate table
+      }
+    }
+
     // 2. Fetch from Firestore 'engagements' collection and merge
     if (db) {
       try {
@@ -101,13 +283,14 @@ export async function GET(req: NextRequest) {
         for (const doc of snap.docs) {
           const it = doc.data();
           const id = doc.id;
-          if (!it.type || !it.title) continue;
+          const resolvedTitle = it.title || it.subtitle || it.headline || it.caption || it.memeData?.caption || (it.type === "meme" ? "Meme" : "");
+          if (!it.type || !resolvedTitle) continue;
 
           if (!itemsMap.has(id)) {
             itemsMap.set(id, {
               id,
               type: it.type,
-              title: it.title,
+              title: resolvedTitle,
               subtitle: it.subtitle,
               tags: it.tags || [],
               sport: (it.sport || "cricket").toLowerCase(),
@@ -117,8 +300,18 @@ export async function GET(req: NextRequest) {
               pollData: it.pollData,
               predictionData: it.predictionData,
               memeData: it.memeData,
+              debateData: it.debateData,
+              expressData: it.expressData,
+              questionData: it.questionData,
+              winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+              outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
+              outcomeNotes: it.outcomeNotes || null,
+              resolvedAt: it.resolvedAt || null,
+              resolvedBy: it.resolvedBy || null,
+              timerMinutes: it.timerMinutes || it.durationMinutes || 4,
+              durationMinutes: it.durationMinutes || it.timerMinutes || 4,
               memeType: it.memeType || it.memeData?.memeType,
-              options: it.options || it.memeData?.options,
+              options: it.options || it.memeData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options || it.pollData?.options || it.predictionData?.options,
               imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
               imageUrlB: it.imageUrlB || it.memeData?.imageUrlB,
               labelA: it.labelA || it.memeData?.labelA,
@@ -128,7 +321,23 @@ export async function GET(req: NextRequest) {
               totalEngaged: Number(it.totalEngaged) || 0,
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
-              expiresAt: it.expiresAt || null,
+              expiresAt:
+                it.expiresAt ||
+                (it.createdAt && (it.timerMinutes || it.durationMinutes)
+                  ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
+                  : null),
+              category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
+              source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
+              isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+              matchId: it.matchId || undefined,
+              momentId: it.momentId || it.loopId || undefined,
+              loopId: it.loopId || it.momentId || undefined,
+              matchPhase: it.matchPhase || undefined,
+              anchorTrigger: it.anchorTrigger || undefined,
+              scoreState: it.scoreState || undefined,
+              sportsMoment: it.sportsMoment || undefined,
+              overNumber: it.overNumber !== undefined ? it.overNumber : undefined,
+              innings: it.innings !== undefined ? Number(it.innings) : undefined,
               creatorId: it.creatorId || undefined,
               creatorEmail: it.creatorEmail || undefined,
               creatorName: it.creatorName || undefined,
@@ -158,6 +367,7 @@ export async function GET(req: NextRequest) {
         it.predictionData?.scheduledStartTime ||
         it.fanBattleData?.startTime ||
         it.fanBattleData?.scheduledStartTime ||
+        (it.memeData as any)?.createdAt ||
         0;
       if (typeof raw === "number") return raw;
       const parsed = new Date(raw).getTime();
@@ -168,14 +378,66 @@ export async function GET(req: NextRequest) {
     items.sort((a, b) => getItemTimestamp(b) - getItemTimestamp(a));
 
     // Apply Filters
+    const nowMs = Date.now();
     if (type && type !== ("all" as any)) {
       items = items.filter(i => (i.type || "").toLowerCase() === type.toLowerCase());
     }
     if (status && status !== "all") {
-      items = items.filter(i => (i.status || "active").toLowerCase() === status.toLowerCase());
+      items = items.filter(i => {
+        const itemStatus = (i.status || "active").toLowerCase();
+        if (status.toLowerCase() === "active") {
+          if (itemStatus !== "active") return false;
+          if ((i as any).isClosed || (i as any).closed || (i as any).isEnded) return false;
+          if (i.expiresAt && Number(i.expiresAt) > 0 && nowMs >= Number(i.expiresAt)) return false;
+          return true;
+        }
+        return itemStatus === status.toLowerCase();
+      });
     }
     if (sport && sport !== "all") {
       items = items.filter(i => (i.sport || "cricket").toLowerCase() === sport.toLowerCase());
+    }
+
+    const matchIdParam = searchParams.get("matchId");
+    if (matchIdParam) {
+      const cleanTargetMatchId = matchIdParam.replace(/^MATCH#/i, "").toLowerCase();
+      items = items.filter(i => {
+        const itemMatchId = String((i as any).matchId || "").replace(/^MATCH#/i, "").toLowerCase();
+        return itemMatchId === cleanTargetMatchId;
+      });
+    }
+
+    // Support excludeFlipArena or source=match_moment filter
+    const sourceParam = searchParams.get("source");
+    const categoryParam = searchParams.get("category");
+    const shouldExcludeFlipArena =
+      searchParams.get("excludeFlipArena") === "true" ||
+      sourceParam === "match_moment" ||
+      categoryParam === "match_moment";
+
+    if (shouldExcludeFlipArena) {
+      items = items.filter(i => {
+        if (i.type === "meme" || i.type === "fan_battle" || (i as any).memeData || (i as any).fanBattleData) return false;
+        if (i.type === "quiz" && i.quizData?.questions && i.quizData.questions.length > 1) return false;
+        if ((i as any).source === "fliparena" || (i as any).category === "fliparena") return false;
+        return true;
+      });
+    }
+
+    // Support excludeMatchMoments (for FlipArena feed / manager)
+    const shouldExcludeMatchMoments =
+      searchParams.get("excludeMatchMoments") === "true" ||
+      sourceParam === "fliparena" ||
+      categoryParam === "fliparena";
+
+    if (shouldExcludeMatchMoments) {
+      items = items.filter(i => {
+        if (i.isMatchMoment === true || (i as any).category === "match_moment" || (i as any).source === "match_moment") return false;
+        if (i.type === "debate" || i.type === "express" || i.type === "question") return false;
+        if (Boolean(i.debateData || i.expressData || i.questionData)) return false;
+        if (Array.isArray(i.tags) && i.tags.some(t => t.toUpperCase().includes("MATCH MOMENT") || t.toUpperCase().includes("4-MIN"))) return false;
+        return true;
+      });
     }
 
     if (limit > 0) {
@@ -255,7 +517,6 @@ export async function GET(req: NextRequest) {
     }
 
     // Check if any scheduled engagement has just become live and needs notification
-    const nowMs = Date.now();
     for (const it of items) {
       const itStartMs =
         Number((it as any).scheduledStartTime) ||
@@ -423,7 +684,7 @@ export async function POST(req: NextRequest) {
     }
 
     const now = Date.now();
-    const id = `eng_${now}_${Math.random().toString(36).slice(2, 8)}`;
+    const id = body.id || body.engagementId || `eng_${now}_${Math.random().toString(36).slice(2, 8)}`;
 
     // Resolve creator identity
     const authUser = await getUser(req);
@@ -451,24 +712,51 @@ export async function POST(req: NextRequest) {
     if (!computedTags || computedTags.length === 0) {
       if (type === "fan_battle") computedTags = ["⚔️ FAN BATTLE", "🔥 TRENDING"];
       else if (type === "quiz") computedTags = ["🧠 QUIZ", `⭐ ${quizData?.pointsReward || 50} PTS`];
-      else if (type === "poll") computedTags = ["📊 POLL"];
-      else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 POINTS"];
+      else if (type === "question") computedTags = ["❓ QUESTION", "⚡ MATCH MOMENT"];
+      else if (type === "poll") computedTags = ["📊 POLL", "⚡ 4-MIN LIVE"];
+      else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 +10 SXP", "⚡ 4-MIN LIVE"];
+      else if (type === "debate") computedTags = ["⚖️ DEBATE", "🔥 LIVE VERDICT"];
+      else if (type === "express") computedTags = ["⚡ EXPRESS", "🚀 PULSE"];
       else if (type === "meme") computedTags = ["🔥 MEME ARENA", "😂 VIRAL"];
+      else computedTags = ["⚡ MATCH MOMENT", "🔥 LIVE"];
     }
 
-    // Resolve expiry for polls, predictions, and quizzes
-    const pollDurationMins = Number(pollData?.durationMinutes || pollData?.timerMinutes || 10);
-    const predDurationMins = Number(predictionData?.durationMinutes || predictionData?.timerMinutes || 30);
+    // Default timer: standard 4 minutes for all live match moments
+    const matchMomentDurationMins = Number(
+      body.durationMinutes ||
+      body.timerMinutes ||
+      pollData?.durationMinutes ||
+      pollData?.timerMinutes ||
+      predictionData?.durationMinutes ||
+      predictionData?.timerMinutes ||
+      body.debateData?.durationMinutes ||
+      body.debateData?.timerMinutes ||
+      body.expressData?.durationMinutes ||
+      body.expressData?.timerMinutes ||
+      body.questionData?.durationMinutes ||
+      body.questionData?.timerMinutes ||
+      (type === "quiz" ? 600 : 4)
+    );
+
+    const pollDurationMins = Number(pollData?.durationMinutes || pollData?.timerMinutes || matchMomentDurationMins || 4);
+    const predDurationMins = Number(predictionData?.durationMinutes || predictionData?.timerMinutes || matchMomentDurationMins || 4);
     const quizDurationMins = Number(quizData?.durationMinutes || quizData?.timerMinutes || 600);
+
     const computedExpiresAt =
       expiresAt ||
       (type === "poll"
         ? pollData?.expiresAt || now + pollDurationMins * 60 * 1000
         : type === "prediction"
           ? predictionData?.expiresAt || now + predDurationMins * 60 * 1000
-          : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
-            ? quizData?.expiresAt || now + quizDurationMins * 60 * 1000
-            : null);
+          : type === "debate"
+            ? (body.debateData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
+            : type === "express"
+              ? (body.expressData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
+              : type === "question"
+                ? (body.questionData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
+                : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
+                  ? quizData?.expiresAt || now + quizDurationMins * 60 * 1000
+                  : now + matchMomentDurationMins * 60 * 1000);
 
     const formattedQuizData =
       type === "quiz" && quizData
@@ -481,32 +769,124 @@ export async function POST(req: NextRequest) {
         : undefined;
 
     const formattedPollData =
-      type === "poll" && pollData
+      type === "poll" && (pollData || body.options)
         ? {
-          ...pollData,
+          ...(pollData || {}),
+          question: pollData?.question || body.title || body.question || "",
+          options: Array.isArray(pollData?.options) && pollData.options.length > 0
+            ? pollData.options
+            : Array.isArray(body.options)
+            ? body.options.map((opt: any, idx: number) => ({
+                id: opt.id || String(idx + 1),
+                text: typeof opt === "string" ? opt : opt.text,
+                votes: Number(opt.votes) || 0,
+              }))
+            : [],
+          totalVotes: Number(pollData?.totalVotes) || 0,
           durationMinutes: pollDurationMins,
           timerMinutes: pollDurationMins,
           expiresAt: computedExpiresAt,
-          correctAnswer: pollData.correctAnswer || pollData.answer || "",
-          answer: pollData.correctAnswer || pollData.answer || "",
+          correctAnswer: pollData?.correctAnswer || pollData?.answer || "",
+          answer: pollData?.correctAnswer || pollData?.answer || "",
         }
         : undefined;
 
     const formattedPredData =
-      type === "prediction" && predictionData
+      type === "prediction" && (predictionData || body.options)
         ? {
-          ...predictionData,
+          ...(predictionData || {}),
+          question: predictionData?.question || body.title || body.question || "",
+          options: Array.isArray(predictionData?.options) && predictionData.options.length > 0
+            ? predictionData.options
+            : Array.isArray(body.options)
+            ? body.options.map((opt: any, idx: number) => ({
+                id: opt.id || (idx === 0 ? "left" : idx === 1 ? "right" : String(idx + 1)),
+                text: typeof opt === "string" ? opt : opt.text,
+                votes: Number(opt.votes) || 0,
+              }))
+            : [],
+          coinStake: Number(predictionData?.coinStake || body.coinStake || 10),
           durationMinutes: predDurationMins,
           timerMinutes: predDurationMins,
           expiresAt: computedExpiresAt,
-          correctAnswer: predictionData.correctAnswer || predictionData.answer || "",
-          answer: predictionData.correctAnswer || predictionData.answer || "",
+          correctAnswer: predictionData?.correctAnswer || predictionData?.answer || "",
+          answer: predictionData?.correctAnswer || predictionData?.answer || "",
           winningChoiceId:
-            predictionData.winningChoiceId ||
-            predictionData.correctAnswer ||
-            predictionData.answer ||
+            predictionData?.winningChoiceId ||
+            body.winningChoiceId ||
+            predictionData?.correctAnswer ||
+            predictionData?.answer ||
             null,
+          status: predictionData?.status || body.status || "open",
         }
+        : undefined;
+
+    const formattedDebateData =
+      type === "debate" && (body.debateData || body.options || body.title)
+        ? {
+            question: body.debateData?.question || body.title || body.question || "",
+            topic: body.debateData?.topic || body.title || "",
+            options: Array.isArray(body.debateData?.options) && body.debateData.options.length > 0
+              ? body.debateData.options
+              : Array.isArray(body.options)
+              ? body.options.map((opt: any, idx: number) => ({
+                  id: opt.id || String(idx + 1),
+                  text: typeof opt === "string" ? opt : opt.text,
+                  votes: Number(opt.votes) || 0,
+                }))
+              : [],
+            totalVotes: Number(body.debateData?.totalVotes) || 0,
+            status: body.debateData?.status || body.status || "open",
+            winningChoiceId: body.debateData?.winningChoiceId || body.winningChoiceId || null,
+            verdict: body.debateData?.verdict || body.verdict || null,
+            durationMinutes: matchMomentDurationMins,
+            timerMinutes: matchMomentDurationMins,
+            expiresAt: computedExpiresAt,
+          }
+        : undefined;
+
+    const formattedExpressData =
+      type === "express" && (body.expressData || body.options || body.title)
+        ? {
+            question: body.expressData?.question || body.prompt || body.title || "",
+            prompt: body.expressData?.prompt || body.title || "",
+            options: Array.isArray(body.expressData?.options) && body.expressData.options.length > 0
+              ? body.expressData.options
+              : Array.isArray(body.options)
+              ? body.options.map((opt: any, idx: number) => ({
+                  id: opt.id || String(idx + 1),
+                  text: typeof opt === "string" ? opt : opt.text,
+                  emoji: opt.emoji || "",
+                  votes: Number(opt.votes) || 0,
+                }))
+              : [],
+            totalVotes: Number(body.expressData?.totalVotes) || 0,
+            durationMinutes: matchMomentDurationMins,
+            timerMinutes: matchMomentDurationMins,
+            expiresAt: computedExpiresAt,
+          }
+        : undefined;
+
+    const formattedQuestionData =
+      type === "question" && (body.questionData || body.options || body.title)
+        ? {
+            question: body.questionData?.question || body.question || body.title || "",
+            options: Array.isArray(body.questionData?.options) && body.questionData.options.length > 0
+              ? body.questionData.options
+              : Array.isArray(body.options)
+              ? body.options.map((opt: any, idx: number) => ({
+                  id: opt.id || String.fromCharCode(65 + idx),
+                  text: typeof opt === "string" ? opt : opt.text,
+                  votes: Number(opt.votes) || 0,
+                }))
+              : [],
+            correctOptionId: body.questionData?.correctOptionId || body.correctOptionId || body.correctAnswer || "",
+            explanation: body.questionData?.explanation || body.explanation || "",
+            pointsReward: Number(body.questionData?.pointsReward || body.pointsReward || 10),
+            durationMinutes: matchMomentDurationMins,
+            timerMinutes: matchMomentDurationMins,
+            expiresAt: computedExpiresAt,
+          }
         : undefined;
 
     const isDualMemeDetected = Boolean(
@@ -664,6 +1044,16 @@ export async function POST(req: NextRequest) {
       pollData: formattedPollData,
       predictionData: formattedPredData,
       memeData: formattedMemeData,
+      debateData: formattedDebateData,
+      expressData: formattedExpressData,
+      questionData: formattedQuestionData,
+      options: body.options || formattedDebateData?.options || formattedExpressData?.options || formattedQuestionData?.options || formattedPollData?.options || formattedPredData?.options,
+      winningChoiceId: body.winningChoiceId || formattedPredData?.winningChoiceId || formattedDebateData?.winningChoiceId || null,
+      outcomeNotes: body.outcomeNotes || null,
+      resolvedAt: body.resolvedAt || null,
+      resolvedBy: body.resolvedBy || null,
+      timerMinutes: matchMomentDurationMins,
+      durationMinutes: matchMomentDurationMins,
       likes: Number(likes) || 0,
       shares: Number(shares) || 0,
       totalEngaged: Number(totalEngaged) || 0,
@@ -675,6 +1065,18 @@ export async function POST(req: NextRequest) {
       createdAt: now,
       updatedAt: now,
       expiresAt: computedExpiresAt,
+      category: body.category || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : (type === "fan_battle" || type === "meme" ? "fliparena" : undefined)),
+      source: body.source || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : "fliparena"),
+      isMatchMoment: body.isMatchMoment !== undefined ? Boolean(body.isMatchMoment) : Boolean(formattedDebateData || formattedExpressData || formattedQuestionData || (type !== "meme" && type !== "fan_battle" && matchMomentDurationMins === 4)),
+      matchId: body.matchId || undefined,
+      momentId: body.momentId || body.loopId || undefined,
+      loopId: body.loopId || body.momentId || undefined,
+      matchPhase: body.matchPhase || undefined,
+      anchorTrigger: body.anchorTrigger || undefined,
+      scoreState: body.scoreState || undefined,
+      sportsMoment: body.sportsMoment || undefined,
+      overNumber: body.overNumber !== undefined ? body.overNumber : undefined,
+      innings: body.innings !== undefined ? Number(body.innings) : undefined,
     };
 
     // DynamoDB Item for SocialAndContent table
@@ -687,6 +1089,26 @@ export async function POST(req: NextRequest) {
 
     // Dual Write to DynamoDB + Firestore
     await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
+
+    // If this engagement belongs to a match moment (or has matchId), dual-write to MatchMoments table
+    if (newEngagement.isMatchMoment || newEngagement.source === "match_moment" || newEngagement.matchId) {
+      try {
+        await dualWrite({
+          tableName: TABLES.MatchMoments,
+          dynamoItem: {
+            entityId: `MATCH#${newEngagement.matchId || "GLOBAL"}`,
+            sk: `LOOP#${newEngagement.loopId || id}`,
+            contentId: `ENGAGEMENT#${id}`,
+            ...newEngagement,
+          },
+          collectionName: "match_moments_engagements",
+          docId: `${newEngagement.matchId || "GLOBAL"}_${newEngagement.loopId || id}`,
+          firestoreData: newEngagement,
+        });
+      } catch (mmErr) {
+        console.warn("[POST /api/engagements] MatchMoments table dual-write notice:", mmErr);
+      }
+    }
 
     // Award +2 points to creator for creating an engagement (quiz, poll, prediction, fan battle, meme)
     let pointsAwarded = 0;
@@ -734,5 +1156,112 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to create engagement";
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+// ─── DELETE /api/engagements?id=... ─────────────────────────────────────────
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const rawId = searchParams.get("id");
+    const rawMatchId = searchParams.get("matchId");
+
+    if (!rawId) {
+      return NextResponse.json({ success: false, error: "Missing engagement id" }, { status: 400 });
+    }
+
+    const cleanId = rawId.replace(/^ENGAGEMENT#/, "").replace(/^LOOP#/, "").trim();
+    const cleanMatchId = rawMatchId ? rawMatchId.replace(/^MATCH#/, "").trim() : "";
+
+    // 1. Delete from SocialAndContent table (with candidate table fallback)
+    try {
+      await dualDelete(
+        "engagements",
+        cleanId,
+        TABLES.SocialAndContent,
+        {
+          contentId: `ENGAGEMENT#${cleanId}`,
+          sk: "ENGAGEMENT#META",
+        }
+      );
+    } catch (e) {
+      console.warn("Notice deleting from SocialAndContent:", e);
+    }
+
+    // 2. Delete from MatchMoments table (MatchMoments-dev, MatchMoments-release, MatchMoments)
+    try {
+      const matchMomentTables = getCandidateTableNames(TABLES.MatchMoments);
+      for (const table of matchMomentTables) {
+        try {
+          // If matchId is known, delete direct key
+          if (cleanMatchId) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: table,
+                Key: {
+                  entityId: `MATCH#${cleanMatchId}`,
+                  sk: `LOOP#${cleanId}`,
+                },
+              })
+            );
+          }
+
+          // Also scan and delete any item matching this id / loopId in MatchMoments
+          const scanRes = await docClient.send(
+            new ScanCommand({
+              TableName: table,
+              FilterExpression:
+                "sk = :loopSk OR begins_with(sk, :loopPfx) OR id = :cid OR loopId = :cid OR contentId = :engCid",
+              ExpressionAttributeValues: {
+                ":loopSk": `LOOP#${cleanId}`,
+                ":loopPfx": `LOOP#${cleanId}`,
+                ":cid": cleanId,
+                ":engCid": `ENGAGEMENT#${cleanId}`,
+              },
+              Limit: 50,
+            })
+          );
+
+          if (scanRes.Items && scanRes.Items.length > 0) {
+            for (const item of scanRes.Items) {
+              if (item.entityId && item.sk) {
+                await docClient.send(
+                  new DeleteCommand({
+                    TableName: table,
+                    Key: {
+                      entityId: item.entityId,
+                      sk: item.sk,
+                    },
+                  })
+                );
+              }
+            }
+          }
+        } catch (tblErr) {
+          // Continue to next candidate table
+        }
+      }
+    } catch (mmErr) {
+      console.warn("Notice deleting from MatchMoments:", mmErr);
+    }
+
+    // 3. Delete from Firestore match_moments_engagements collection if present
+    try {
+      if (db) {
+        const snap = await db.collection("match_moments_engagements").where("id", "==", cleanId).get();
+        for (const doc of snap.docs) {
+          await doc.ref.delete();
+        }
+        if (cleanMatchId) {
+          await db.collection("match_moments_engagements").doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
+        }
+      }
+    } catch {}
+
+    return NextResponse.json({ success: true, message: `Engagement ${cleanId} deleted successfully` });
+  } catch (error: unknown) {
+    console.error("DELETE /api/engagements error:", error);
+    const msg = error instanceof Error ? error.message : "Failed to delete engagement";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

@@ -1,10 +1,6 @@
 // app/api/engagements/[id]/share/route.ts — Dynamic Share counter increment
 import { NextRequest, NextResponse } from "next/server";
-import { docClient } from "@/lib/dynamodb";
-import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
-import { db } from "@/lib/firebaseAdmin";
-import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
-import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 
 export const dynamic = "force-dynamic";
 
@@ -13,42 +9,19 @@ type RouteParams = { params: Promise<{ id: string }> };
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
-    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").trim();
+    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
 
     const body = await req.json().catch(() => ({}));
     const userId = String(body?.userId || req.nextUrl.searchParams.get("userId") || "").trim();
+    const matchId = body?.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
 
-    let item: any = null;
-    const candidateTables = getCandidateTableNames(TABLES.SocialAndContent);
-    for (const table of candidateTables) {
-      if (item) break;
-      for (const cid of [`ENGAGEMENT#${cleanId}`, cleanId]) {
-        try {
-          const getRes = await docClient.send(
-            new GetCommand({
-              TableName: table,
-              Key: { contentId: cid, sk: "ENGAGEMENT#META" },
-            })
-          );
-          if (getRes.Item) {
-            item = getRes.Item;
-            break;
-          }
-        } catch {}
-      }
-    }
+    const found = await findEngagementById(cleanId, matchId);
 
-    if (!item && db) {
-      try {
-        const snap = await db.collection(getFirestoreCollection("engagements")).doc(cleanId).get();
-        if (snap.exists) item = { id: snap.id, ...snap.data() };
-      } catch {}
-    }
-
-    if (!item) {
+    if (!found?.item) {
       return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
     }
 
+    const item = found.item;
     const sharedUsers: string[] = Array.isArray(item.sharedUsers) ? item.sharedUsers : [];
     const alreadyShared = Boolean(userId && sharedUsers.includes(userId));
 
@@ -60,22 +33,16 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
       item.shares = newShares;
       item.sharedUsers = sharedUsers;
+      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
       item.updatedAt = Date.now();
 
-      const dynamoItem = {
-        contentId: `ENGAGEMENT#${cleanId}`,
-        sk: "ENGAGEMENT#META",
-        entityId: `ENGAGEMENT#${String(item.type || "").toUpperCase()}`,
-        ...item,
-        id: cleanId,
-      };
-
-      await dualWrite("engagements", cleanId, TABLES.SocialAndContent, dynamoItem);
+      await persistEngagementUpdate(cleanId, item, found.matchMomentsRecord);
     }
 
     return NextResponse.json({
       success: true,
       sharesCount: newShares,
+      shares: newShares,
       totalEngaged: Number(item.totalEngaged) || 0,
       alreadyShared,
     });

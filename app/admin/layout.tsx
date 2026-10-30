@@ -714,6 +714,14 @@ const FULL_NAV: NavGroup[] = [
         ],
       },
       {
+        label: "Core Engine", icon: "⚙️", badge: "CORE LOOPS", badgeBg: "#388bfd",
+        children: [
+          { href: "/admin/core-engine/matches", label: "🏏 Match Setup & Directory" },
+          { href: "/admin/core-engine/match-moments", label: "⚡ Match Moments & Loops" },
+          { href: "/admin/core-engine/visible-recognition", label: "📸 Visual Recognition" },
+        ],
+      },
+      {
         label: "Feed Engagements", icon: "⚡",
         children: [
           { href: "/admin/engagements-management", label: "⚡ All Engagements & Creator" },

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { EngagementItem } from "@/types/engagements";
+import EngagementCommentsThread from "./EngagementCommentsThread";
 
 interface Props {
   item: EngagementItem;
@@ -15,6 +16,8 @@ export default function FanBattleCard({ item, onVoteSuccess }: Props) {
   const [likesCount, setLikesCount] = useState<number>(Number(item.likes) || 0);
   const [sharesCount, setSharesCount] = useState<number>(Number(item.shares) || 0);
   const [totalEngaged, setTotalEngaged] = useState<number>(Number(item.totalEngaged) || 0);
+  const [commentsCount, setCommentsCount] = useState<number>(Number(item.commentsCount) || 0);
+  const [showComments, setShowComments] = useState(false);
   const [resultData, setResultData] = useState<{
     leftPercentage: number;
     rightPercentage: number;
@@ -310,11 +313,38 @@ export default function FanBattleCard({ item, onVoteSuccess }: Props) {
           >
             <span>🔗</span> Share {sharesCount > 0 ? `(${sharesCount})` : ""}
           </button>
+          <button
+            onClick={() => setShowComments(!showComments)}
+            style={{
+              background: showComments ? "rgba(56, 139, 253, 0.15)" : "none",
+              border: showComments ? "1px solid rgba(56, 139, 253, 0.4)" : "1px solid transparent",
+              borderRadius: 6,
+              padding: "4px 8px",
+              color: showComments ? "#58a6ff" : "#7d8590",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              transition: "all .15s ease",
+            }}
+            title="Discuss and reply to fans"
+          >
+            <span>💬</span> Banter {commentsCount > 0 ? `(${commentsCount})` : ""}
+          </button>
         </div>
         <div>
           {totalEngaged.toLocaleString()} engaged
         </div>
       </div>
+
+      {/* Expandable Threaded Comments Drawer */}
+      <EngagementCommentsThread
+        engagementId={item.id}
+        isOpen={showComments}
+        onCommentsCountChange={setCommentsCount}
+      />
     </div>
   );
 }

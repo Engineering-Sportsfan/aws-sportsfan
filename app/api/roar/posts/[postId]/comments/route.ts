@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
-import {  notifyRoomMessageComment } from "@/lib/roarNotifyHelpers";
+import { notifyPostComment, notifyRoomMessageComment } from "@/lib/notifications";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, PutCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
@@ -248,11 +248,9 @@ export async function POST(
     }
 
     // Notify post author (non-blocking)
-    if (roomId) {
-      notifyRoomMessageComment(roomId, postId, user.userId, user.email, username, text.slice(0, 80)).catch(() => { });
-    } else {
-      // notifyPostComment(postId, user.userId, user.email, username, text.slice(0, 80)).catch(() => { });
-    }
+    notifyPostComment(postId, user.userId, user.email, username, text.slice(0, 80), roomId).catch((notifErr) => {
+      console.warn("[Comments POST] Notification notice:", notifErr);
+    });
 
     return NextResponse.json({
       success: true,

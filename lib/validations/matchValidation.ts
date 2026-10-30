@@ -2,17 +2,10 @@
 import { z } from "zod";
 
 // ─── Shared enums ─────────────────────────────────────────────────────────────
-const TournamentEnum = z.enum([
-  "mens_ipl",
-  "womens_ipl",
-  "womens_wc",
-  "womens_odi",
-  "womens_test",
-  "womens_t20i",
-]);
+const TournamentEnum = z.string().min(1);
 
 const GenderEnum = z.enum(["male", "female"]);
-const FormatEnum = z.enum(["T20", "ODI", "Test"]);
+const FormatEnum = z.enum(["T20", "T20I", "ODI", "Test", "T10", "The Hundred", "First-Class", "List A"]).or(z.string().min(1));
 const MatchResultEnum = z.enum(["normal", "no_result", "tie", "abandoned"]);
 const TossDecisionEnum = z.enum(["bat", "field"]);
 
@@ -25,11 +18,13 @@ export const MatchCreateSchema = z.object({
   season: z.number().int().min(2000).max(2100),
   team1: z.string().min(1),
   team2: z.string().min(1),
+  team1_short: z.string().optional().nullable().default(null),
+  team2_short: z.string().optional().nullable().default(null),
   venue: z.string().min(1),
   city: z.string().nullable().default(null),
   winner: z.string().nullable().default(null),
-  toss_winner: z.string().min(1),
-  toss_decision: TossDecisionEnum,
+  toss_winner: z.string().optional().nullable().default(null),
+  toss_decision: TossDecisionEnum.optional().nullable().default("bat"),
   player_of_match: z.string().nullable().default(null),
   player_of_match_id: z.string().nullable().default(null),
   target: z.number().nullable().default(null),
@@ -38,8 +33,12 @@ export const MatchCreateSchema = z.object({
   tournament: TournamentEnum,
   gender: GenderEnum,
   format: FormatEnum,
+  status: z.enum(["upcoming", "live", "completed"]).optional().default("upcoming"),
+  stage: z.string().optional().nullable().default(null),
+  time: z.string().optional().nullable().default(null),
+  total_overs: z.number().optional().nullable().default(20),
   source_file: z.string().nullable().default(null),
-});
+}).passthrough();
 
 export const MatchUpdateSchema = MatchCreateSchema.partial().omit({
   match_id: true,

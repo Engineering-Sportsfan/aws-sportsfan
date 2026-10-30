@@ -4,6 +4,13 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { PutCommand, UpdateCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
+import {
+  notifyPointsEarned,
+  notifyBadgeUnlocked,
+  notifyLevelUp,
+  notifyStreakMilestone,
+  dispatchGamificationNotification,
+} from "@/lib/notifications/gamificationNotifications";
 
 // Simple in-memory cache for user profiles to reduce Firestore reads
 interface CachedUserProfile {
@@ -718,6 +725,10 @@ export async function awardUserPoints({
       let featureStats = userDoc.featureStats ?? {};
       let featureLevels = userDoc.featureLevels ?? {};
 
+      // Snapshot previous state for notification comparison
+      const previousGlobalTier = userDoc.globalTier ?? "Spark";
+      const previousFeatureLevels = { ...featureLevels };
+
       let welcomeBackXP = 0;
 
       // 4. Welcome Back Grace Bonus & Streak Freeze Grant (§8)
@@ -1089,6 +1100,101 @@ export async function awardUserPoints({
         ).catch((dErr) => console.warn("DynamoDB user points sync notice:", dErr));
       } catch (dynamoSyncErr) {
         console.warn("[PointsEngine] DynamoDB async sync notice:", dynamoSyncErr);
+      }
+
+      // ── Gamification Notifications (fire-and-forget, never blocks the transaction) ──
+      try {
+        // 1. Points Earned notification
+        if (finalTotalXPGained > 0) {
+          notifyPointsEarned({
+            userId: actualUserId,
+            userEmail,
+            userName,
+            pointsAwarded: finalTotalXPGained,
+            newTotalXP: totalXP,
+            reason,
+            reasonLabel: metadata?.statement ?? metadata?.label,
+            entityId: metadata?.entityId,
+            metadata: { transactionId },
+          }).catch((err) => console.warn("[PointsEngine] Points notification notice:", err));
+        }
+
+        // 2. Level Up notification (global tier changed)
+        if (rankState.globalTier !== previousGlobalTier) {
+          const tierLabel = `${rankState.globalTier} ${rankState.subRank}`;
+          notifyLevelUp({
+            userId: actualUserId,
+            userEmail,
+            userName,
+            previousTier: previousGlobalTier,
+            newTier: rankState.globalTier,
+            tierLevel: ["Spark","Chant","Roar","Storm","Legend","Icon","GOAT"].indexOf(rankState.globalTier) + 1,
+            subRank: ["I","II","III"].indexOf(rankState.subRank) + 1 || 0,
+            tierLabel,
+            tierIcon: `/images/badges/global${rankState.globalTier.toLowerCase()}.png`,
+            totalXP,
+          }).catch((err) => console.warn("[PointsEngine] Level-up notification notice:", err));
+        }
+
+        // 3. Badge Unlocked notification (feature level increased)
+        const FEATURE_BADGE_NAMES: Record<string, string[]> = {
+          post:       ["Rookie Writer", "Story Teller", "Headliner", "Trend Maker", "News Breaker"],
+          debate:     ["Challenger", "Debater", "Analyst", "Strategist", "Debate Master"],
+          prediction: ["Predictor", "Forecaster", "Oracle", "Visionary", "Prediction Legend"],
+          trivia:     ["Rookie Quizzer", "Brainiac", "Sports Scholar", "Quiz Master", "Hall of Fame"],
+          fanBattle:  ["Contender", "Fighter", "Champion", "Gladiator", "Arena Legend"],
+          community:  ["Appreciated", "Popular", "Fan Favorite", "Crowd Hero", "Community Icon"],
+          shares:     ["Messenger", "Amplifier", "Influencer", "Viral Voice", "Global Fan"],
+          comments:   ["Participant", "Conversationalist", "Voice", "Community Leader", "People's Champion"],
+          media:      ["Photographer", "Story Creator", "Highlight Artist", "Content Pro", "Media Legend"],
+          referrals:  ["Recruiter", "Squad Builder", "Ambassador", "Community Pioneer", "Clan Master"],
+        };
+        for (const [fKey, newLevel] of Object.entries(featureLevels)) {
+          const prevLevel = previousFeatureLevels[fKey] ?? "—";
+          if (newLevel !== prevLevel && newLevel !== "—") {
+            const levelNum = parseInt(newLevel.replace("L", ""), 10) || 0;
+            const names = FEATURE_BADGE_NAMES[fKey];
+            const badgeName = names ? (names[levelNum - 1] || newLevel) : newLevel;
+            notifyBadgeUnlocked({
+              userId: actualUserId,
+              userEmail,
+              userName,
+              badgeId: fKey,
+              badgeName,
+              badgeLevel: levelNum,
+              badgeIcon: `/images/badges/${fKey}l${levelNum}.png`,
+              featureKey: fKey,
+            }).catch((err) => console.warn("[PointsEngine] Badge notification notice:", err));
+          }
+        }
+
+        // 4. Streak Milestone notification
+        if (milestoneToUnlock && milestoneBonusXP > 0) {
+          notifyStreakMilestone({
+            userId: actualUserId,
+            userEmail,
+            userName,
+            streakDays: currentLoginStreak,
+            milestoneId: milestoneToUnlock,
+            bonusXP: milestoneBonusXP,
+          }).catch((err) => console.warn("[PointsEngine] Streak notification notice:", err));
+        }
+
+        // 5. Power Fan Combo bonus notification
+        if (comboBonusXP > 0) {
+          dispatchGamificationNotification({
+            userId: actualUserId,
+            recipientEmail: userEmail,
+            notificationType: "gamification.combo_bonus",
+            title: "⚡ Power Fan Combo!",
+            body: `You completed 3 different activities today and earned a ${comboBonusXP} XP combo bonus!`,
+            priority: "HIGH",
+            metadata: { comboBonusXP, dailyActionsList },
+          }).catch((err) => console.warn("[PointsEngine] Combo notification notice:", err));
+        }
+      } catch (notifErr) {
+        // Never let notification failures affect the points transaction
+        console.warn("[PointsEngine] Gamification notifications dispatch notice:", notifErr);
       }
 
       return true;

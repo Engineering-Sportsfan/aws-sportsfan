@@ -5,6 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, ScanCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
+import { notifyFlipLongVideoLiked } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -190,6 +191,29 @@ export async function POST(req: NextRequest) {
       } catch (fbErr) {
         console.warn("Firestore flipLong like update notice:", fbErr);
       }
+    }
+
+    // Notify video creator (User 2) if client didn't already send notification
+    if (action === "like" && isLiked && !body.notificationSentFromClient) {
+      const creatorEmail = videoItem?.email || videoItem?.userEmail;
+      const creatorUid = videoItem?.userId || videoItem?.recipientUid;
+      const likerEmail = body.likerEmail || (userId.includes("@") ? userId : null);
+      const likerUid = body.likerUserId || body.userId;
+      const likerName = body.likerName || "Someone";
+      const likerPhoto = body.likerPhoto || "";
+      const videoTitle = videoItem?.title || "your video";
+
+      notifyFlipLongVideoLiked({
+        videoId: cleanId,
+        videoTitle,
+        creatorId: creatorUid,
+        creatorEmail: creatorEmail,
+        likerId: likerUid,
+        likerName,
+        likerAvatar: likerPhoto,
+      }).catch((notifErr) => {
+        console.warn("Notice sending FlipLong like notification:", notifErr);
+      });
     }
 
     return NextResponse.json({
