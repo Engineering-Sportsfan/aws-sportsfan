@@ -1,4 +1,4 @@
-// api\engagements\[id]\comments\route.ts
+// app/api/engagements/[id]/comments/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/getUser";
@@ -47,7 +47,8 @@ export async function GET(
     const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
     const { searchParams } = new URL(req.url);
     const limit = Math.min(parseInt(searchParams.get("limit") || "50", 10), 100);
-  // Lightweight count for the card badge
+
+    // Lightweight count for the card badge
     if (searchParams.get("countOnly") === "1") {
       let count = 0;
       try {
@@ -74,6 +75,7 @@ export async function GET(
       }
       return NextResponse.json({ success: true, commentsCount: count });
     }
+
     let flatComments: any[] = [];
     let fetchedFromDynamo = false;
 
@@ -207,15 +209,16 @@ export async function POST(
     const now = Date.now();
     const commentId = `comm_${now}_${Math.random().toString(36).slice(2, 7)}`;
 
+    // Server-resolved profile wins; the client-sent values are only a fallback
     const newComment: EngagementComment = {
       id: commentId,
       commentId,
       engagementId: cleanId,
       parentId: parentId || null,
       authorUid: userId,
-      authorUsername: authorUsername || userInfo.username,
-      authorAvatarUrl: authorAvatarUrl || userInfo.avatarUrl,
-      authorBadge: authorBadge || userInfo.badge,
+      authorUsername: userInfo.username || authorUsername,
+      authorAvatarUrl: userInfo.avatarUrl || authorAvatarUrl,
+      authorBadge: userInfo.badge || authorBadge,
       text: text.trim(),
       createdAt: now,
       likesCount: 0,

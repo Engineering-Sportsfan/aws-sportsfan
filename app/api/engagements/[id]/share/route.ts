@@ -1,49 +1,99 @@
-// app/api/engagements/[id]/share/route.ts — Dynamic Share counter increment
+// app/api/engagements/[id]/share/route.ts — Share counter (one share per user)
 import { NextRequest, NextResponse } from "next/server";
+import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { docClient } from "@/lib/dynamodb";
+import { TABLES } from "@/lib/tableNames";
+import { getUser } from "@/lib/getUser";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
+import { countRecords } from "@/lib/engagementSocial";
 
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
+const clean = (id: string) =>
+  String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+
+// ─── GET: has this user shared + current share count ───
+export async function GET(req: NextRequest, { params }: RouteParams) {
+  const cleanId = clean((await params).id);
+  const authUser = await getUser(req);
+  const userId = authUser?.userId || authUser?.email || req.nextUrl.searchParams.get("userId");
+
+  const shares = await countRecords(cleanId, "SHARE#").catch(() => 0);
+  let shared = false;
+  if (userId) {
+    const r = await docClient
+      .send(
+        new GetCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: `SHARE#${userId}` },
+        })
+      )
+      .catch(() => null);
+    shared = !!r?.Item;
+  }
+  return NextResponse.json({ shared, shares });
+}
+
+// ─── POST: record a share (idempotent per user) ───
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
-    const { id } = await params;
-    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
-
+    const cleanId = clean((await params).id);
     const body = await req.json().catch(() => ({}));
-    const userId = String(body?.userId || req.nextUrl.searchParams.get("userId") || "").trim();
+    const authUser = await getUser(req);
+    const userId = authUser?.userId || authUser?.email || String(body?.userId || "").trim();
     const matchId = body?.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
 
-    const found = await findEngagementById(cleanId, matchId);
-
-    if (!found?.item) {
-      return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
+    if (!userId) {
+      return NextResponse.json({ error: "userId required" }, { status: 400 });
     }
 
-    const item = found.item;
-    const sharedUsers: string[] = Array.isArray(item.sharedUsers) ? item.sharedUsers : [];
-    const alreadyShared = Boolean(userId && sharedUsers.includes(userId));
+    const now = Date.now();
+    let alreadyShared = false;
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.SocialAndContent,
+          Item: {
+            contentId: `ENGAGEMENT#${cleanId}`,
+            sk: `SHARE#${userId}`,
+            entityId: "SHARE#ENGAGEMENT",
+            userId,
+            engagementId: cleanId,
+            sharedAt: now,
+            createdAt: now,
+          },
+          // one share per user, enforced by the database itself
+          ConditionExpression: "attribute_not_exists(sk)",
+        })
+      );
+    } catch (e: any) {
+      if (e?.name === "ConditionalCheckFailedException") alreadyShared = true;
+      else throw e;
+    }
 
-    let newShares = Number(item.shares) || 0;
-    if (!alreadyShared) {
-      newShares += 1;
-      if (userId) {
-        sharedUsers.push(userId);
+    const shares = await countRecords(cleanId, "SHARE#");
+
+    let totalEngaged = 0;
+    try {
+      const found = await findEngagementById(cleanId, matchId);
+      if (found?.item) {
+        found.item.shares = shares;
+        if (!alreadyShared) found.item.totalEngaged = (Number(found.item.totalEngaged) || 0) + 1;
+        found.item.updatedAt = now;
+        totalEngaged = Number(found.item.totalEngaged) || 0;
+        await persistEngagementUpdate(cleanId, found.item, found.matchMomentsRecord);
       }
-      item.shares = newShares;
-      item.sharedUsers = sharedUsers;
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
-      item.updatedAt = Date.now();
-
-      await persistEngagementUpdate(cleanId, item, found.matchMomentsRecord);
+    } catch (e) {
+      console.warn("share mirror notice:", e);
     }
 
     return NextResponse.json({
       success: true,
-      sharesCount: newShares,
-      shares: newShares,
-      totalEngaged: Number(item.totalEngaged) || 0,
+      shares,
+      sharesCount: shares,
+      totalEngaged,
       alreadyShared,
     });
   } catch (error: unknown) {

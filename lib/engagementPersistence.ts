@@ -1,8 +1,10 @@
+// lib/engagementPersistence.ts
+
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
-import { GetCommand, ScanCommand, QueryCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, ScanCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 
 export interface FoundEngagement {
   item: any;
@@ -16,10 +18,40 @@ export interface FoundEngagement {
 }
 
 /**
+ * Scan a table for the engagement. The FilterExpression is applied AFTER DynamoDB reads a page,
+ * so the old `Limit: 10` only looked at the first 10 rows of the table and usually found nothing.
+ * We paginate instead (capped so a huge table can't run forever).
+ */
+async function scanForEngagement(table: string, cleanId: string): Promise<any | null> {
+  let lastKey: Record<string, any> | undefined;
+  let pages = 0;
+  do {
+    const res = await docClient.send(
+      new ScanCommand({
+        TableName: table,
+        FilterExpression:
+          "sk = :loopSk OR begins_with(sk, :loopPfx) OR id = :cid OR loopId = :cid OR contentId = :engCid",
+        ExpressionAttributeValues: {
+          ":loopSk": `LOOP#${cleanId}`,
+          ":loopPfx": `LOOP#${cleanId}`,
+          ":cid": cleanId,
+          ":engCid": `ENGAGEMENT#${cleanId}`,
+        },
+        ExclusiveStartKey: lastKey,
+      })
+    );
+    if (res.Items && res.Items.length > 0) return res.Items[0];
+    lastKey = res.LastEvaluatedKey;
+    pages++;
+  } while (lastKey && pages < 20);
+  return null;
+}
+
+/**
  * Searches for an engagement item across:
  * 1. SocialAndContent (contentId = ENGAGEMENT#{cleanId}, sk = ENGAGEMENT#META)
- * 2. Firestore engagements collection
- * 3. MatchMoments candidate tables (sk begins_with LOOP#{cleanId} or id = cleanId)
+ * 2. MatchMoments candidate tables (sk begins_with LOOP#{cleanId} or id = cleanId)
+ * 3. Firestore engagements collection
  */
 export async function findEngagementById(rawId: string, rawMatchId?: string): Promise<FoundEngagement | null> {
   const cleanId = String(rawId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
@@ -74,23 +106,9 @@ export async function findEngagementById(rawId: string, rawMatchId?: string): Pr
         } catch {}
       }
 
-      // Query or Scan by loopId/cleanId
-      const scanRes = await docClient.send(
-        new ScanCommand({
-          TableName: table,
-          FilterExpression: "sk = :loopSk OR begins_with(sk, :loopPfx) OR id = :cid OR loopId = :cid OR contentId = :engCid",
-          ExpressionAttributeValues: {
-            ":loopSk": `LOOP#${cleanId}`,
-            ":loopPfx": `LOOP#${cleanId}`,
-            ":cid": cleanId,
-            ":engCid": `ENGAGEMENT#${cleanId}`,
-          },
-          Limit: 10,
-        })
-      );
-
-      if (scanRes.Items && scanRes.Items.length > 0) {
-        const mmItem = scanRes.Items[0];
+      // Fallback: scan by loopId/cleanId (paginated)
+      const mmItem = await scanForEngagement(table, cleanId);
+      if (mmItem) {
         matchMomentsRecord = {
           table,
           entityId: mmItem.entityId,
@@ -124,9 +142,9 @@ export async function findEngagementById(rawId: string, rawMatchId?: string): Pr
 
   const isMatchMoment = Boolean(
     foundItem.isMatchMoment ||
-    foundItem.source === "match_moment" ||
-    foundItem.matchId ||
-    matchMomentsRecord
+      foundItem.source === "match_moment" ||
+      foundItem.matchId ||
+      matchMomentsRecord
   );
 
   return {
@@ -139,6 +157,13 @@ export async function findEngagementById(rawId: string, rawMatchId?: string): Pr
 
 /**
  * Dual-writes engagement updates across SocialAndContent, Firestore, and MatchMoments tables.
+ *
+ * BUG FIXED: the old code spread `...fullItem` AFTER the key fields. An item that was read from
+ * one table carries that table's keys (contentId / sk / entityId), so the spread overwrote the
+ * keys of the OTHER table. Result: the MatchMoments row (what the room list reads) was never
+ * updated, and a junk row was written under the wrong key. That is why votes / likes / shares
+ * looked "not persistent" after the 12s refresh.
+ * Now the table keys are stripped from the body and set LAST.
  */
 export async function persistEngagementUpdate(
   id: string,
@@ -147,18 +172,21 @@ export async function persistEngagementUpdate(
 ) {
   const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
   const now = Date.now();
+
+  // strip keys that belong to whichever table the item was read from
+  const { contentId: _cid, sk: _sk, entityId: _eid, ...body } = updatedItem || {};
   const fullItem = {
-    ...updatedItem,
+    ...body,
     id: cleanId,
     updatedAt: now,
   };
 
   // 1. Dual-write to SocialAndContent
   const dynamoItem = {
+    ...fullItem,
     contentId: `ENGAGEMENT#${cleanId}`,
     sk: "ENGAGEMENT#META",
     entityId: `ENGAGEMENT#${String(fullItem.type || "POLL").toUpperCase()}`,
-    ...fullItem,
   };
 
   await dualWrite("engagements", cleanId, TABLES.SocialAndContent, dynamoItem);
@@ -166,21 +194,23 @@ export async function persistEngagementUpdate(
   // 2. If it's a match moment, write to MatchMoments table(s)
   const isMatchMoment = Boolean(
     fullItem.isMatchMoment ||
-    fullItem.source === "match_moment" ||
-    fullItem.matchId ||
-    matchMomentsRecord
+      fullItem.source === "match_moment" ||
+      fullItem.matchId ||
+      matchMomentsRecord
   );
 
   if (isMatchMoment) {
-    const rawMatchId = fullItem.matchId || (matchMomentsRecord?.entityId ? matchMomentsRecord.entityId.replace(/^MATCH#/, "") : "GLOBAL");
+    const rawMatchId =
+      fullItem.matchId ||
+      (matchMomentsRecord?.entityId ? matchMomentsRecord.entityId.replace(/^MATCH#/, "") : "GLOBAL");
     const cleanMatchId = String(rawMatchId).replace(/^MATCH#/, "").trim();
     const loopSk = matchMomentsRecord?.sk || `LOOP#${fullItem.loopId || cleanId}`;
 
     const mmDynamoItem = {
+      ...fullItem,
       entityId: `MATCH#${cleanMatchId}`,
       sk: loopSk,
       contentId: `ENGAGEMENT#${cleanId}`,
-      ...fullItem,
     };
 
     const mmTables = getCandidateTableNames(TABLES.MatchMoments);
@@ -205,7 +235,10 @@ export async function persistEngagementUpdate(
 
     if (db) {
       try {
-        await db.collection("match_moments_engagements").doc(`${cleanMatchId}_${fullItem.loopId || cleanId}`).set(fullItem, { merge: true });
+        await db
+          .collection("match_moments_engagements")
+          .doc(`${cleanMatchId}_${fullItem.loopId || cleanId}`)
+          .set(fullItem, { merge: true });
       } catch {}
     }
   }

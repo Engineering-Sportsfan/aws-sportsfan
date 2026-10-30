@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { dualWrite } from "@/lib/dualWrite";
 import { GetCommand, UpdateCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
@@ -384,7 +383,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     for (const uid of candidateIds) {
       if (existingVote) break;
-       if (questionId) {
+      if (questionId) {
         try {
           const r = await docClient.send(new GetCommand({
             TableName: TABLES.SocialAndContent,
@@ -773,8 +772,68 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const now = Date.now();
 
     // ─── Step 3: Vote Calculation by Type ─────────────────────────────────────
+
+    // 3.0 Prediction Vote Handling — MUST run BEFORE the generic "options" branch below,
+    // otherwise a prediction that has `item.options` is counted as a poll and the
+    // left/right choices never update.
+    if (item.type === "prediction") {
+      const pd = (item.predictionData = item.predictionData || {});
+      const sel = String(selectedOptionId).trim().toLowerCase();
+
+      const current: any[] =
+        (Array.isArray(pd.options) && pd.options.length ? pd.options : null) ||
+        (Array.isArray(item.options) && item.options.length ? item.options : null) ||
+        [
+          { id: pd.leftChoice?.id ?? "left", text: pd.leftChoice?.text ?? "Option A", code: pd.leftChoice?.code, votes: pd.leftChoice?.votes ?? 0 },
+          { id: pd.rightChoice?.id ?? "right", text: pd.rightChoice?.text ?? "Option B", code: pd.rightChoice?.code, votes: pd.rightChoice?.votes ?? 0 },
+        ];
+
+      let hit = -1;
+      current.forEach((o, i) => {
+        if (hit !== -1) return;
+        const keys = [o.id, o.text, o.label, o.code, i === 0 ? "left" : i === 1 ? "right" : null]
+          .filter((v) => v != null)
+          .map((v) => String(v).trim().toLowerCase());
+        if (keys.includes(sel)) hit = i;
+      });
+
+      if (hit === -1) {
+        return NextResponse.json({ error: "Invalid option" }, { status: 400 });
+      }
+
+      const counted = current.map((o, i) => ({ ...o, votes: (Number(o.votes) || 0) + (i === hit ? 1 : 0) }));
+      const totalVotes = counted.reduce((s, o) => s + o.votes, 0);
+      const options = counted.map((o) => ({
+        ...o,
+        percentage: totalVotes ? Math.round((o.votes / totalVotes) * 100) : 0,
+      }));
+
+      pd.options = options;
+      pd.totalVotes = totalVotes;
+      item.options = options;
+      item.totalVotes = totalVotes;
+      if (pd.leftChoice) pd.leftChoice = { ...pd.leftChoice, votes: options[0].votes, percentage: options[0].percentage };
+      if (pd.rightChoice) pd.rightChoice = { ...pd.rightChoice, votes: options[1]?.votes ?? 0, percentage: options[1]?.percentage ?? 0 };
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
+
+      responseData = {
+        success: true,
+        type: "prediction",
+        selectedOptionId,
+        options,
+        totalVotes,
+        coinsLocked: pd.coinStake || 10,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
+      };
+    }
+
     // 3.1 Fan Battle Vote Handling
-    if (item.type === "fan_battle" && item.fanBattleData) {
+    else if (item.type === "fan_battle" && item.fanBattleData) {
       const left = { ...item.fanBattleData.leftCompetitor };
       const right = { ...item.fanBattleData.rightCompetitor };
 
@@ -828,7 +887,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       const ptsReward = 10;
       const isCorrect = String(selectedOptionId).trim().toUpperCase() === String(correctOptId).trim().toUpperCase();
       const pointsAwarded = isCorrect ? ptsReward : 0;
-      
+
       // ONLY increment totalEngaged if this is the user's first time interacting with this quiz
       if (isNewUserEngagement) {
         item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
@@ -913,49 +972,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         selectedOptionId,
         options: optionsWithPercentages,
         totalVotes,
-        totalEngaged: Number(item.totalEngaged) || 0,
-        isFirstEngagement: isNewUserEngagement,
-        participationPointsAwarded: 2,
-        pointsAwarded: 2,
-      };
-    }
-
-    // 3.4 Prediction Stake Handling
-    else if (item.type === "prediction" && item.predictionData) {
-      const left = { ...item.predictionData.leftChoice };
-      const right = { ...item.predictionData.rightChoice };
-
-      if (selectedOptionId === "left" || selectedOptionId === left.text || selectedOptionId === left.code) {
-        left.votes = (Number(left.votes) || 0) + 1;
-      } else {
-        right.votes = (Number(right.votes) || 0) + 1;
-      }
-
-      const total = (left.votes || 0) + (right.votes || 0);
-      const leftPct = total > 0 ? Math.round((left.votes / total) * 100) : 50;
-      const rightPct = 100 - leftPct;
-
-      item.predictionData.leftChoice = left;
-      item.predictionData.rightChoice = right;
-      item.predictionData.totalVotes = total;
-      if (isNewUserEngagement) {
-        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
-      }
-
-      left.percentage = leftPct;
-      right.percentage = rightPct;
-      responseData = {
-        success: true,
-        type: "prediction",
-        selectedOptionId,
-        leftPercentage: leftPct,
-        rightPercentage: rightPct,
-        leftVotes: left.votes,
-        rightVotes: right.votes,
-        leftChoice: left,
-        rightChoice: right,
-        coinsLocked: item.predictionData.coinStake || 10,
-        totalVotes: total,
         totalEngaged: Number(item.totalEngaged) || 0,
         isFirstEngagement: isNewUserEngagement,
         participationPointsAwarded: 2,
@@ -1098,7 +1114,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         engagementTitle: item.title,
         questionId: questionId || undefined,
         quizPointsBonus: quizBonus,
-        syncQuizLeaderboard: false, 
+        syncQuizLeaderboard: false,
       });
       if (awardRes.success) {
         responseData.pointsAwarded = awardRes.pointsAwarded;
