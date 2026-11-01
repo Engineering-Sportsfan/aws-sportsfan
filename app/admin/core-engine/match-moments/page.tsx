@@ -2217,6 +2217,9 @@ import {
   Eye,
   Filter,
   Edit3,
+  Heart,
+  MessageCircle,
+  Share2,
 } from "lucide-react";
 import { MATCH_MOMENTS_LIBRARY, MatchMomentTemplate } from "@/lib/data/matchMomentsData";
 
@@ -2233,7 +2236,17 @@ interface MatchOption {
   format?: string;
   stage?: string;
   status?: string;
+  tournament?: string;
+  season?: string | number;
 }
+
+// "Tournament Season · Stage", e.g. "ICC T20 World Cup 2026 · Semi Final" ("" when the match has none)
+const getSeriesLabel = (m: MatchOption): string => {
+  const tournament = String(m.tournament || "").trim();
+  const season = String(m.season || "").trim();
+  const series = tournament && season && !tournament.includes(season) ? `${tournament} ${season}` : tournament;
+  return [series, String(m.stage || "").trim()].filter(Boolean).join(" · ");
+};
 
 interface MatchMomentItem {
   id: string;
@@ -2253,6 +2266,7 @@ interface MatchMomentItem {
 interface OptionItem {
   id: string;
   text: string;
+  label?: string;
 }
 
 interface EngagementItem {
@@ -2260,6 +2274,7 @@ interface EngagementItem {
   loopId?: string;
   momentId?: string;
   matchId?: string;
+  roomId?: string;
   type: "poll" | "prediction" | "express" | "debate" | "question";
   title: string;
   subtitle?: string;
@@ -2278,7 +2293,35 @@ interface EngagementItem {
   voteDistribution?: Record<string, number>;
   createdAt?: string | number;
   expiresAt?: string | number | null;
+  likes?: number;
+  shares?: number;
+  commentsCount?: number;
 }
+
+type EngType = "poll" | "prediction" | "express" | "debate" | "question";
+
+// Current wall-clock time in IST, e.g. "19:42 IST"
+const getCurrentISTTime = (): string =>
+  `${new Date().toLocaleTimeString("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })} IST`;
+
+// Overs as a cricket decimal: whole overs + balls (0-6), e.g. 10, 10.2, 13.6
+const OVERS_PATTERN = /^\d{1,3}(\.[0-6])?$/;
+const OVERS_TYPING_PATTERN = /^\d{0,3}(\.[0-6]?)?$/;
+
+// Types that wait for a revealed outcome (Pending Outcome -> Reveal Visible Outcome -> settled)
+const OUTCOME_TYPES = ["prediction", "debate", "poll", "question"];
+const isOutcomeEngType = (type?: string) => OUTCOME_TYPES.includes(String(type));
+
+// Empty option slots per engagement type (no prefilled text)
+const blankOptionsFor = (type: EngType): OptionItem[] => {
+  const count = type === "express" || type === "question" ? 4 : 2;
+  return Array.from({ length: count }, (_, i) => ({ id: String(i + 1), text: "" }));
+};
 
 // Next free moment ID for a team prefix (e.g. MM-NZ-03).
 // Uses the HIGHEST existing number for that prefix (not the count), and skips any ID
@@ -2349,18 +2392,16 @@ function CoreEngineMatchMomentsContent() {
   // TAB 2: ENGAGEMENT FORM STATE
   // ───────────────────────────────────────────────────────────────────────────
   const [selectedMomentForEng, setSelectedMomentForEng] = useState<string>("");
-  const [engType, setEngType] = useState<"poll" | "prediction" | "express" | "debate" | "question">("poll");
-  const [loopId, setLoopId] = useState<string>("NZ-10.2");
-  const [engQuestion, setEngQuestion] = useState<string>("Is Phillips' dismissal the turning point of this innings?");
+  const [engType, setEngType] = useState<EngType>("poll");
+  const [loopId, setLoopId] = useState<string>("");
+  const [engQuestion, setEngQuestion] = useState<string>("");
   const [engTimer, setEngTimer] = useState<number>(4);
-  const [engOptions, setEngOptions] = useState<OptionItem[]>([
-    { id: "1", text: "Yes, India takes full control" },
-    { id: "2", text: "No, NZ batting depth will recover" },
-  ]);
+  const [engOptions, setEngOptions] = useState<OptionItem[]>(() => blankOptionsFor("poll"));
   const [correctOptionId, setCorrectOptionId] = useState<string>("");
   const [resolveStatus, setResolveStatus] = useState<"pending" | "active" | "resolved" | "settled">("active");
   const [isSubmittingEng, setIsSubmittingEng] = useState(false);
   const [editingEngId, setEditingEngId] = useState<string | null>(null);
+  const engFormRef = React.useRef<HTMLDivElement>(null);
 
   // ───────────────────────────────────────────────────────────────────────────
   // OUTCOME SETTLEMENT MODAL STATE
@@ -2386,6 +2427,11 @@ function CoreEngineMatchMomentsContent() {
       setCurrentTime(Date.now());
     }, 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Autofill the match clock with the current IST time (set after mount to avoid a hydration mismatch)
+  useEffect(() => {
+    setMatchOverTimestamp((prev) => prev || getCurrentISTTime());
   }, []);
 
   // Helper to compute live Active/Expired status from timerMinutes / expiresAt
@@ -2588,7 +2634,7 @@ function CoreEngineMatchMomentsContent() {
     setEditingMomentId(null);
     setOvers("");
     setScore("");
-    setMatchOverTimestamp("");
+    setMatchOverTimestamp(getCurrentISTTime());
     setEvent("");
     setMatchMoment("");
     setDescription("");
@@ -2659,7 +2705,7 @@ function CoreEngineMatchMomentsContent() {
     if (eng.momentId) setSelectedMomentForEng(eng.momentId);
     setEngQuestion(eng.title || "");
     setEngTimer(eng.timerMinutes || 4);
-    const isOutcomeType = eng.type === "prediction" || eng.type === "debate";
+    const isOutcomeType = isOutcomeEngType(eng.type);
     const statusVal: "pending" | "active" | "resolved" | "settled" =
       eng.status === "active" || eng.status === "resolved" || eng.status === "settled"
         ? eng.status
@@ -2678,12 +2724,20 @@ function CoreEngineMatchMomentsContent() {
     }
   };
 
+  // Clear the Tab 2 form back to empty fields (nothing prefilled unless a preset is applied)
+  const resetEngagementForm = (type: EngType = engType) => {
+    setEditingEngId(null);
+    setEngType(type);
+    setEngQuestion("");
+    setEngTimer(4);
+    setEngOptions(blankOptionsFor(type));
+    setCorrectOptionId("");
+    setResolveStatus(isOutcomeEngType(type) ? "pending" : "active");
+  };
+
   // Cancel edit engagement handler
   const handleCancelEditEngagement = () => {
-    setEditingEngId(null);
-    setEngQuestion("");
-    handleTypeChange("poll");
-    setResolveStatus("active");
+    resetEngagementForm("poll");
     if (selectedMomentForEng) {
       const momentBase = selectedMomentForEng.replace(/^MM-/, "");
       const existingForMoment = engagements.filter((e) => e.momentId === selectedMomentForEng);
@@ -2716,6 +2770,10 @@ function CoreEngineMatchMomentsContent() {
     e.preventDefault();
     if (!momentId.trim() || !selectedMatchId) {
       showToast("error", "Moment ID and Match Selection are required");
+      return;
+    }
+    if (!OVERS_PATTERN.test(overs.trim())) {
+      showToast("error", "Overs must be a number like 10.2 or 13.6 (balls 0-6 after the dot)");
       return;
     }
 
@@ -2754,7 +2812,7 @@ function CoreEngineMatchMomentsContent() {
         setEditingMomentId(null);
         setOvers("");
         setScore("");
-        setMatchOverTimestamp("");
+        setMatchOverTimestamp(getCurrentISTTime());
         setEvent("");
         setMatchMoment("");
         setDescription("");
@@ -2786,50 +2844,24 @@ function CoreEngineMatchMomentsContent() {
     setInnings(m.innings as 1 | 2);
     setOvers(m.overs);
     setScore(m.score);
+    // A new engagement starts from an empty form (preset text, if one was applied, is kept)
+    if (editingEngId) resetEngagementForm();
     setActiveTab("engagements");
+    // Land on the Tab 2 form, not wherever the page was scrolled to in Tab 1
+    setTimeout(() => {
+      engFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
   };
 
   // ───────────────────────────────────────────────────────────────────────────
   // TAB 2: ENGAGEMENT TYPE CHANGE HANDLER
   // ───────────────────────────────────────────────────────────────────────────
-  const handleTypeChange = (type: "poll" | "prediction" | "express" | "debate" | "question") => {
+  const handleTypeChange = (type: EngType) => {
     setEngType(type);
-    if (type === "poll") {
-      setResolveStatus("active");
-      setEngOptions([
-        { id: "1", text: "Batters dominating" },
-        { id: "2", text: "Bowlers pulling it back" },
-      ]);
-    } else if (type === "prediction") {
-      setResolveStatus("pending");
-      setEngOptions([
-        { id: "1", text: "Yes, under 165 runs" },
-        { id: "2", text: "No, 166 or more" },
-      ]);
-    } else if (type === "debate") {
-      setResolveStatus("pending");
-      setEngOptions([
-        { id: "1", text: "Side A: Smart aggression" },
-        { id: "2", text: "Side B: Costly mistake" },
-      ]);
-    } else if (type === "express") {
-      setResolveStatus("active");
-      setEngOptions([
-        { id: "1", text: "🔥 On Fire" },
-        { id: "2", text: "🤯 Shocked" },
-        { id: "3", text: "👏 World Class" },
-        { id: "4", text: "💔 Heartbroken" },
-      ]);
-    } else if (type === "question") {
-      setResolveStatus("active");
-      setEngOptions([
-        { id: "1", text: "Option A" },
-        { id: "2", text: "Option B" },
-        { id: "3", text: "Option C" },
-        { id: "4", text: "Option D" },
-      ]);
-      setCorrectOptionId("1");
-    }
+    setResolveStatus(isOutcomeEngType(type) ? "pending" : "active");
+    setCorrectOptionId("");
+    // Keep options the admin already typed (or a preset filled); otherwise give empty slots for this type
+    setEngOptions((prev) => (prev.some((o) => o.text.trim()) ? prev : blankOptionsFor(type)));
   };
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -2845,10 +2877,14 @@ function CoreEngineMatchMomentsContent() {
       showToast("error", "All option fields must have text");
       return;
     }
+    if (engType === "question" && !engOptions.some((o) => o.id === correctOptionId)) {
+      showToast("error", "Select the correct answer for the trivia question");
+      return;
+    }
 
     setIsSubmittingEng(true);
     try {
-      const isOutcomeType = engType === "prediction" || engType === "debate";
+      const isOutcomeType = isOutcomeEngType(engType);
       const payload: any = {
         id: editingEngId || undefined,
         title: engQuestion.trim(),
@@ -2884,9 +2920,7 @@ function CoreEngineMatchMomentsContent() {
           "success",
           editingEngId ? `Engagement ${loopId} updated successfully!` : `Engagement ${loopId} pushed live to fans!`
         );
-        if (editingEngId) {
-          setEditingEngId(null);
-        }
+        resetEngagementForm();
         fetchEngagements();
       } else {
         showToast("error", data.error || "Failed to create engagement");
@@ -2909,22 +2943,30 @@ function CoreEngineMatchMomentsContent() {
     }
 
     setIsSettling(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     try {
       const selectedOption = settleModalItem.options?.find((o) => o.id === selectedWinningId);
-      const res = await fetch(`/api/engagements/${settleModalItem.id}/resolve`, {
+      const res = await fetch(`/api/engagements/${encodeURIComponent(settleModalItem.id)}/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           winningChoiceId: selectedWinningId,
-          winningChoiceText: selectedOption?.text || "",
+          winningChoiceText: selectedOption?.text || selectedOption?.label || selectedWinningId,
           outcomeNotes: settleNotes.trim(),
           matchId: selectedMatchId || settleModalItem.matchId,
+          roomId: settleModalItem.roomId || "NMryj1w7t8mJpGzEvF9q",
+          engagement: settleModalItem,
         }),
       });
-      const data = await res.json();
+      clearTimeout(timeoutId);
 
-          if (res.ok && data.success) {
-        showToast("success", `Outcome resolved!`);
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.success) {
+        showToast("success", `Outcome resolved successfully!`);
 
         // Remember the result so later refetches can't overwrite it with stale data
         const ov = { winningChoiceId: selectedWinningId, outcomeNotes: settleNotes.trim() };
@@ -2953,7 +2995,12 @@ function CoreEngineMatchMomentsContent() {
         showToast("error", data.error || "Failed to settle outcome");
       }
     } catch (err: any) {
-      showToast("error", err.message || "Network error settling outcome");
+      clearTimeout(timeoutId);
+      if (err.name === "AbortError") {
+        showToast("error", "Resolution timed out. Please check your connection and try again.");
+      } else {
+        showToast("error", err.message || "Network error settling outcome");
+      }
     } finally {
       setIsSettling(false);
     }
@@ -3263,10 +3310,26 @@ function CoreEngineMatchMomentsContent() {
                   >
                     {matches.map((m) => (
                       <option key={m.match_id || (m as any).id} value={m.match_id || (m as any).id}>
-                        {m.match_id || (m as any).id}
+                        {/* Team names first so they stay visible in the narrow column */}
+                        {m.team1} vs {m.team2}
+                        {getSeriesLabel(m) ? ` | ${getSeriesLabel(m)}` : ""} — {m.match_id || (m as any).id} ({m.venue || "Stadium"})
                       </option>
                     ))}
                   </select>
+                  {activeMatch.team1 && (
+                    <div style={{ marginTop: 6, fontSize: 11, color: "#8b949e", lineHeight: 1.5 }}>
+                      {getSeriesLabel(activeMatch) && (
+                        <div>
+                          🏆 <strong style={{ color: "#f59e0b" }}>{getSeriesLabel(activeMatch)}</strong>
+                        </div>
+                      )}
+                      <div>
+                        🏏 <strong style={{ color: "#f0f6fc" }}>{activeMatch.team1} vs {activeMatch.team2}</strong>
+                        {activeMatch.venue ? ` · ${activeMatch.venue}` : ""}
+                        {activeMatch.date ? ` · ${activeMatch.date}` : ""}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Innings */}
@@ -3314,12 +3377,19 @@ function CoreEngineMatchMomentsContent() {
 
                 {/* Overs */}
                 <div>
-                  <label style={labelStyle}>Overs (e.g. 10.2 / 14.1) *</label>
+                  <label style={labelStyle}>Overs (e.g. 10.2 / 13.6) *</label>
                   <input
                     type="text"
+                    inputMode="decimal"
                     required
                     value={overs}
-                    onChange={(e) => setOvers(e.target.value)}
+                    onChange={(e) => {
+                      // numbers only: up to 3 digits, optional "." and one ball digit (0-6)
+                      const v = e.target.value.trim();
+                      if (OVERS_TYPING_PATTERN.test(v)) setOvers(v);
+                    }}
+                    pattern="\d{1,3}(\.[0-6])?"
+                    title="Overs like 10.2 or 13.6"
                     style={{ ...inputStyle, fontFamily: "monospace", fontWeight: 700 }}
                     placeholder="10.2"
                   />
@@ -3345,14 +3415,37 @@ function CoreEngineMatchMomentsContent() {
                   <label style={labelStyle}>
                     Match Over Timestamp <span style={{ color: "#7ee787", fontSize: 10 }}>(Match Time Clock)</span> *
                   </label>
-                  <input
-                    type="text"
-                    required
-                    value={matchOverTimestamp}
-                    onChange={(e) => setMatchOverTimestamp(e.target.value)}
-                    style={inputStyle}
-                    placeholder="e.g. 19:42 IST or 20:15"
-                  />
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="text"
+                      required
+                      value={matchOverTimestamp}
+                      onChange={(e) => setMatchOverTimestamp(e.target.value)}
+                      style={{ ...inputStyle, flex: 1 }}
+                      placeholder="e.g. 19:42 IST"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setMatchOverTimestamp(getCurrentISTTime())}
+                      title="Refill with current IST time"
+                      style={{
+                        background: "#21262d",
+                        color: "#7ee787",
+                        border: "1px solid #30363d",
+                        borderRadius: 6,
+                        padding: "0 10px",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <RefreshCw size={12} /> Now
+                    </button>
+                  </div>
                 </div>
 
                 {/* Event Type (Simple text input as requested) */}
@@ -3627,7 +3720,9 @@ function CoreEngineMatchMomentsContent() {
         <div style={{ maxWidth: 1240, margin: "0 auto" }}>
           {/* Main 2-Column Engagement Creator */}
           <div
+            ref={engFormRef}
             style={{
+              scrollMarginTop: 20,
               background: "#161b22",
               border: "1px solid #30363d",
               borderRadius: 10,
@@ -3768,7 +3863,7 @@ function CoreEngineMatchMomentsContent() {
                 style={{
                   display: "grid",
                   gridTemplateColumns:
-                    engType === "prediction" || engType === "debate"
+                    isOutcomeEngType(engType)
                       ? "1fr 1fr 1fr 1fr"
                       : "1fr 1fr 1fr",
                   gap: 14,
@@ -3819,7 +3914,7 @@ function CoreEngineMatchMomentsContent() {
                     <option value={10}>10 Minutes</option>
                   </select>
                 </div>
-                {(engType === "prediction" || engType === "debate") && (
+                {isOutcomeEngType(engType) && (
                   <div>
                     <label style={labelStyle}>Initial Resolve Status</label>
                     <select
@@ -3868,7 +3963,7 @@ function CoreEngineMatchMomentsContent() {
                       onClick={() =>
                         setEngOptions([
                           ...engOptions,
-                          { id: String(engOptions.length + 1), text: `Option ${engOptions.length + 1}` },
+                          { id: String(engOptions.length + 1), text: "" },
                         ])
                       }
                       style={{
@@ -4046,6 +4141,7 @@ function CoreEngineMatchMomentsContent() {
                       <th style={{ padding: "8px 12px" }}>Type</th>
                       <th style={{ padding: "8px 12px" }}>Question / Prompt</th>
                       <th style={{ padding: "8px 12px" }}>Options</th>
+                      <th style={{ padding: "8px 12px" }}>Fan Activity</th>
                       <th style={{ padding: "8px 12px" }}>Timer / Status</th>
                       <th style={{ padding: "8px 12px" }}>Resolution</th>
                       <th style={{ padding: "8px 12px", textAlign: "right" }}>Actions</th>
@@ -4135,6 +4231,23 @@ function CoreEngineMatchMomentsContent() {
                           </div>
                         </td>
                         <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
+                          {/* Real counts from the API (recounted from per-user LIKE# / COMMENT# / SHARE# records) */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
+                            <span title="Total likes" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#c9d1d9" }}>
+                              <Heart size={12} color="#f85149" />
+                              <strong style={{ color: "#f0f6fc" }}>{Number(eng.likes) || 0}</strong> likes
+                            </span>
+                            <span title="Total comments" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#c9d1d9" }}>
+                              <MessageCircle size={12} color="#58a6ff" />
+                              <strong style={{ color: "#f0f6fc" }}>{Number(eng.commentsCount) || 0}</strong> comments
+                            </span>
+                            <span title="Total shares" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#c9d1d9" }}>
+                              <Share2 size={12} color="#3fb950" />
+                              <strong style={{ color: "#f0f6fc" }}>{Number(eng.shares) || 0}</strong> shares
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
                           {(() => {
                             const { isExpired, remainingText } = getEngagementTimerStatus(eng);
                             return (
@@ -4182,7 +4295,7 @@ function CoreEngineMatchMomentsContent() {
                           })()}
                         </td>
                         <td style={{ padding: "10px 12px" }}>
-                          {eng.type === "prediction" || eng.type === "debate" ? (
+                          {isOutcomeEngType(eng.type) ? (
                             isFulfilled ? (
                               <span style={{ color: "#3fb950", fontWeight: 700, fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}>
                                 ✓ Outcome Fulfilled
@@ -4200,7 +4313,7 @@ function CoreEngineMatchMomentsContent() {
                         </td>
                         <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
                           <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                            {(eng.type === "prediction" || eng.type === "debate") && (
+                            {isOutcomeEngType(eng.type) && (
                               <button
                                 onClick={() => {
                                   const opts =
@@ -4216,7 +4329,8 @@ function CoreEngineMatchMomentsContent() {
                                           { id: "B", text: "Option B" },
                                         ];
                                   setSettleModalItem({ ...eng, options: opts });
-                                  setSelectedWinningId(winningId || (opts[0]?.id ?? ""));
+                                  // Trivia questions already know their answer; preselect it
+                                  setSelectedWinningId(winningId || eng.correctOptionId || (opts[0]?.id ?? ""));
                                   setSettleNotes(eng.outcomeNotes || "");
                                 }}
                                 style={{
@@ -4322,7 +4436,8 @@ function CoreEngineMatchMomentsContent() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: "#f0f6fc", display: "flex", alignItems: "center", gap: 8 }}>
                 <Scale size={18} color="#f59e0b" />
-                Reveal Visible Outcome & Settle {settleModalItem.type === "debate" ? "Debate" : "Prediction"}
+                Reveal Visible Outcome & Settle{" "}
+                {settleModalItem.type.charAt(0).toUpperCase() + settleModalItem.type.slice(1)}
               </div>
               <button
                 onClick={() => setSettleModalItem(null)}
@@ -4402,7 +4517,7 @@ function CoreEngineMatchMomentsContent() {
                 disabled={isSettling}
                 onClick={handleSettleOutcome}
                 style={{
-                  background: "#238636",
+                  background: isSettling ? "#195026" : "#238636",
                   color: "#fff",
                   border: "none",
                   borderRadius: 6,
@@ -4416,7 +4531,7 @@ function CoreEngineMatchMomentsContent() {
                 }}
               >
                 {isSettling ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
-                Publish Outcome 
+                {isSettling ? "Publishing Outcome..." : "Publish Outcome"}
               </button>
             </div>
           </div>

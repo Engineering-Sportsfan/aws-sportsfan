@@ -129,6 +129,7 @@ export async function createNotification(
   // 1. Put into central DynamoDB candidate tables for each candidate identifier
   const candidateTables = getCandidateTableNames(TABLE);
   for (const table of candidateTables) {
+    let anySuccess = false;
     for (const cand of targetCandidates) {
       try {
         await docClient.send(
@@ -142,10 +143,15 @@ export async function createNotification(
             },
           })
         );
-      } catch (err) {
-        // Soft catch for candidate tables
+        anySuccess = true;
+      } catch (err: any) {
+        const isTableMissing =
+          err?.name === "ResourceNotFoundException" ||
+          err?.message?.includes("Cannot do operations on a non-existent table");
+        if (isTableMissing) break; // Table does not exist in AWS, stop testing candidates on it
       }
     }
+    if (anySuccess) break; // Active DynamoDB table successfully recorded item, stop trying fallback tables
   }
 
   // 2. Dual-write to Firestore for client fallback
@@ -162,12 +168,16 @@ export async function createNotification(
         .set(fsPayload, { merge: true })
         .catch(() => {});
 
-      for (const cand of targetCandidates) {
-        await db
-          .collection(getFirestoreCollection("notifications"))
-          .doc(`${notifId}_${cand}`)
-          .set(fsPayload, { merge: true })
-          .catch(() => {});
+      if (targetCandidates.length > 0) {
+        await Promise.allSettled(
+          targetCandidates.map((cand) =>
+            db!
+              .collection(getFirestoreCollection("notifications"))
+              .doc(`${notifId}_${cand}`)
+              .set(fsPayload, { merge: true })
+              .catch(() => {})
+          )
+        );
       }
     } catch (fsErr) {
       console.warn("[NotificationService] Firestore fallback write notice:", fsErr);

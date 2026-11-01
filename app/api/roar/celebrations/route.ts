@@ -75,14 +75,56 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Fallback: If no outcome reveals found yet in DynamoDB, scan candidate tables for recent reveals
+    if (outcomeRevealsList.length === 0) {
+      for (const tbl of candidateTables) {
+        try {
+          const scanRes = await docClient.send(
+            new ScanCommand({
+              TableName: tbl,
+              FilterExpression: "begins_with(sk, :skpfx)",
+              ExpressionAttributeValues: {
+                ":skpfx": "REVEAL#",
+              },
+              Limit: 25,
+            })
+          );
+          if (scanRes.Items) {
+            for (const item of scanRes.Items) {
+              const outId = item.id || item.engagementId || item.sk?.replace(/^REVEAL#/, "");
+              if (outId && !seenOutcomeIds.has(outId)) {
+                seenOutcomeIds.add(outId);
+                outcomeRevealsList.push({ id: outId, ...item });
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
     // 2. Fetch from Firestore match_room_notifications collection
     if (db) {
       try {
-        let q: FirebaseFirestore.Query = db.collection(getFirestoreCollection("match_room_notifications"));
+        // Build list of all matchId candidates to query against
+        const matchCandidates = new Set<string>();
         if (cleanMatchId) {
-          q = q.where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`]);
+          matchCandidates.add(cleanMatchId);
+          matchCandidates.add(`MATCH#${cleanMatchId}`);
         }
-        const snap = await q.get();
+        if (roomId) {
+          matchCandidates.add(roomId);
+          matchCandidates.add(roomId.replace(/^MATCH#/, ""));
+        }
+        matchCandidates.add("NMryj1w7t8mJpGzEvF9q");
+
+        // Firestore `in` supports max 10 values
+        const candidateArr = [...matchCandidates].slice(0, 10);
+
+        let q: FirebaseFirestore.Query = db.collection(getFirestoreCollection("match_room_notifications"));
+        if (candidateArr.length > 0) {
+          q = q.where("matchId", "in", candidateArr);
+        }
+        const snap = await q.orderBy("createdAt", "desc").limit(50).get();
         for (const doc of snap.docs) {
           const data = doc.data();
           const docType = data.type;
@@ -90,18 +132,67 @@ export async function GET(req: NextRequest) {
             const outId = doc.id || data.id || data.engagementId;
             if (outId && !seenOutcomeIds.has(outId)) {
               seenOutcomeIds.add(outId);
-              outcomeRevealsList.push({ id: outId, ...data });
+              outcomeRevealsList.push({ id: outId, firestoreId: doc.id, ...data });
             }
           } else if (docType === "VISUAL_RECOGNITION") {
             const recId = doc.id || data.recognitionId || data.id;
             if (recId && !seenRecognitionIds.has(recId)) {
               seenRecognitionIds.add(recId);
-              recognitionsList.push({ id: recId, ...data });
+              recognitionsList.push({ id: recId, firestoreId: doc.id, ...data });
             }
           }
         }
       } catch (err) {
-        // Firestore notice
+        // Try without orderBy if composite index not yet created
+        try {
+          const matchCandidates = new Set<string>();
+          if (cleanMatchId) { matchCandidates.add(cleanMatchId); matchCandidates.add(`MATCH#${cleanMatchId}`); }
+          if (roomId) { matchCandidates.add(roomId); matchCandidates.add(roomId.replace(/^MATCH#/, "")); }
+          const candidateArr = [...matchCandidates].slice(0, 10);
+
+          let q2: FirebaseFirestore.Query = db.collection(getFirestoreCollection("match_room_notifications"));
+          if (candidateArr.length > 0) {
+            q2 = q2.where("matchId", "in", candidateArr);
+          }
+          const snap2 = await q2.limit(50).get();
+          for (const doc of snap2.docs) {
+            const data = doc.data();
+            const docType = data.type;
+            if (docType === "OUTCOME_RESOLVED") {
+              const outId = doc.id || data.id || data.engagementId;
+              if (outId && !seenOutcomeIds.has(outId)) {
+                seenOutcomeIds.add(outId);
+                outcomeRevealsList.push({ id: outId, firestoreId: doc.id, ...data });
+              }
+            } else if (docType === "VISUAL_RECOGNITION") {
+              const recId = doc.id || data.recognitionId || data.id;
+              if (recId && !seenRecognitionIds.has(recId)) {
+                seenRecognitionIds.add(recId);
+                recognitionsList.push({ id: recId, firestoreId: doc.id, ...data });
+              }
+            }
+          }
+        } catch (fallbackErr) {
+          console.warn("[celebrations] Firestore notice:", fallbackErr);
+        }
+      }
+
+      // Global Firestore fallback: if outcome reveals still 0, query recent notifications
+      if (outcomeRevealsList.length === 0) {
+        try {
+          const recentSnap = await db.collection(getFirestoreCollection("match_room_notifications"))
+            .where("type", "==", "OUTCOME_RESOLVED")
+            .limit(20)
+            .get();
+          for (const doc of recentSnap.docs) {
+            const data = doc.data();
+            const outId = doc.id || data.id || data.engagementId;
+            if (outId && !seenOutcomeIds.has(outId)) {
+              seenOutcomeIds.add(outId);
+              outcomeRevealsList.push({ id: outId, firestoreId: doc.id, ...data });
+            }
+          }
+        } catch {}
       }
 
       // Also check visible_recognitions collection in Firestore
