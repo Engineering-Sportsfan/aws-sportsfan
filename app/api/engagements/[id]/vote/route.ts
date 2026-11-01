@@ -9,6 +9,7 @@ import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
 import { dispatchFlipArenaNotification } from "@/lib/notifications";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
+import { applyEngagementStats, getEngagementStats, primaryOptions } from "@/lib/engagementSocial";
 
 export const dynamic = "force-dynamic";
 
@@ -1098,9 +1099,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // ─── Step 4: Update Parent Engagement Item ────────────────────────────────
-    await persistEngagementUpdate(cleanId, item, foundEngagement?.matchMomentsRecord);
-
     // ─── Step 4.5: Award Participation Points (+2 points for quiz, polls, predictions, battles) ─
     const quizBonus = item.type === "quiz" && responseData?.isCorrect ? Number(responseData.quizPointsAwarded || 0) : 0;
     try {
@@ -1167,6 +1165,21 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     } catch (dynVoteErr) {
       console.warn("DynamoDB standard vote record notice:", dynVoteErr);
     }
+
+    // ─── Step 5.1: Update Parent Engagement Item ──────────────────────────────
+    // Recount from the vote records (now including this one) instead of trusting the in-memory +1,
+    // so two votes landing at the same time can't overwrite each other's count.
+    try {
+      applyEngagementStats(item, await getEngagementStats(cleanId));
+      const recounted = primaryOptions(item);
+      if (Array.isArray(responseData.options) && recounted) {
+        responseData.options = recounted;
+        responseData.totalVotes = Number(item.totalVotes) || 0;
+      }
+    } catch (statsErr) {
+      console.warn("Vote recount notice:", statsErr);
+    }
+    await persistEngagementUpdate(cleanId, item, foundEngagement?.matchMomentsRecord);
 
     // A2. Standardized DynamoDB Participant Marker: contentId = ENGAGEMENT#{id}, sk = USER#{userId}
     try {

@@ -6,7 +6,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
-import { QueryCommand, PutCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { EngagementComment } from "@/types/engagements";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 
@@ -225,7 +225,7 @@ export async function POST(
       replies: [],
     };
 
-    // 1. Dual-write to DynamoDB SocialAndContent table
+    // 1. Save the comment record in DynamoDB SocialAndContent (the source of truth for the count)
     try {
       await docClient.send(
         new PutCommand({
@@ -239,10 +239,37 @@ export async function POST(
         })
       );
     } catch (dynErr) {
-      console.warn("[EngagementComments POST] DynamoDB write notice:", dynErr);
+      console.error("[EngagementComments POST] DynamoDB comment write failed:", dynErr);
+      return NextResponse.json(
+        { success: false, error: "Comment could not be saved. Please try again." },
+        { status: 500 }
+      );
     }
 
-    // 2. Dual-write to Firestore
+    // 2. Recount COMMENT# records (comments + replies, same as GET ?countOnly=1 and the frontend thread).
+    // The count is SET everywhere below, never incremented, so it can't drift or double.
+    // totalEngaged is the unique-fan count (owned by the vote route), so comments don't touch it.
+    let total = 0;
+    try {
+      let lastKey: Record<string, any> | undefined;
+      do {
+        const r = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.SocialAndContent,
+            KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+            ExpressionAttributeValues: { ":c": `ENGAGEMENT#${cleanId}`, ":p": "COMMENT#" },
+            Select: "COUNT",
+            ExclusiveStartKey: lastKey,
+          })
+        );
+        total += r.Count || 0;
+        lastKey = r.LastEvaluatedKey;
+      } while (lastKey);
+    } catch (countErr) {
+      console.warn("[EngagementComments POST] Comment recount notice:", countErr);
+    }
+
+    // 3. Firestore: comment document + engagement count
     if (db) {
       try {
         await db
@@ -255,57 +282,35 @@ export async function POST(
             serverTimestamp: FieldValue.serverTimestamp(),
           });
 
-        await db
-          .collection(getFirestoreCollection("engagements"))
-          .doc(cleanId)
-          .update({
-            commentsCount: FieldValue.increment(1),
-            totalEngaged: FieldValue.increment(1),
-          });
+        if (total > 0) {
+          await db
+            .collection(getFirestoreCollection("engagements"))
+            .doc(cleanId)
+            .set({ commentsCount: total }, { merge: true });
+        }
       } catch (fsErr) {
         console.warn("[EngagementComments POST] Firestore write notice:", fsErr);
       }
     }
 
-    // 3. Atomically increment commentsCount in DynamoDB SocialAndContent
-    try {
-      await docClient.send(
-        new UpdateCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: "ENGAGEMENT#META" },
-          UpdateExpression:
-            "SET commentsCount = if_not_exists(commentsCount, :zero) + :inc, totalEngaged = if_not_exists(totalEngaged, :zero) + :inc",
-          ExpressionAttributeValues: {
-            ":inc": 1,
-            ":zero": 0,
-          },
-        })
-      );
-    } catch (dynUpdateErr) {
-      console.warn("[EngagementComments POST] DynamoDB counter update notice:", dynUpdateErr);
-    }
-
-    // 4. Update MatchMoments table if engagement is a match moment
-    let currentCommentsCount = 1;
-    let currentTotalEngaged = 1;
-    try {
-      const found = await findEngagementById(cleanId, matchId);
-      if (found?.item) {
-        currentCommentsCount = (Number(found.item.commentsCount) || 0) + 1;
-        currentTotalEngaged = (Number(found.item.totalEngaged) || 0) + 1;
-        found.item.commentsCount = currentCommentsCount;
-        found.item.totalEngaged = currentTotalEngaged;
-        await persistEngagementUpdate(cleanId, found.item, found.matchMomentsRecord);
+    // 4. Mirror the count on the engagement. persistEngagementUpdate writes the SocialAndContent META row
+    // for every engagement (plus MatchMoments + Firestore for match moments), so no separate META update.
+    if (total > 0) {
+      try {
+        const found = await findEngagementById(cleanId, matchId);
+        if (found?.item) {
+          found.item.commentsCount = total;
+          await persistEngagementUpdate(cleanId, found.item, found.matchMomentsRecord);
+        }
+      } catch (syncErr) {
+        console.warn("[EngagementComments POST] Engagement count sync notice:", syncErr);
       }
-    } catch (syncErr) {
-      console.warn("[EngagementComments POST] MatchMoments sync notice:", syncErr);
     }
 
     return NextResponse.json({
       success: true,
       comment: newComment,
-      commentsCount: currentCommentsCount,
-      totalEngaged: currentTotalEngaged,
+      commentsCount: total || 1,
     });
   } catch (error: any) {
     console.error("POST /api/engagements/[id]/comments error:", error);

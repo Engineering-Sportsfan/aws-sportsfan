@@ -339,53 +339,40 @@ function VisibleRecognitionContent() {
     fetchRecognitions();
   }, [fetchRecognitions]);
 
-  // ─── SIMULATE OR FETCH PARTICIPANTS FOR CHOSEN MOMENT ─────────────────────
+  // ─── FETCH REAL PARTICIPANTS FOR CHOSEN MOMENT ─────────────────────
   useEffect(() => {
     if (!selectedMomentId) {
       setParticipants([]);
       return;
     }
+    let cancelled = false;
     setLoadingParticipants(true);
 
-    // Mock participants sample based on moment
-    const sampleParticipants: ParticipantUser[] = [
-      {
-        userId: "usr_abhay_45",
-        userName: "Abhay Sharma",
-        userAvatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop",
-        selectedOptionId: "opt_a",
-        selectedOptionLabel: "6-10 Runs (Predicted Squeeze)",
-        votedAt: Date.now() - 140000,
-      },
-      {
-        userId: "usr_suzy_89",
-        userName: "Suzy Patel",
-        userAvatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop",
-        selectedOptionId: "opt_b",
-        selectedOptionLabel: "11-15 Runs (Boundary Surge)",
-        votedAt: Date.now() - 120000,
-      },
-      {
-        userId: "usr_vikram_22",
-        userName: "Vikram Malhotra",
-        userAvatar: "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&h=100&fit=crop",
-        selectedOptionId: "opt_a",
-        selectedOptionLabel: "6-10 Runs (Predicted Squeeze)",
-        votedAt: Date.now() - 95000,
-      },
-      {
-        userId: "usr_rohit_fan_07",
-        userName: "Rohit Fanclub India",
-        userAvatar: null,
-        selectedOptionId: "opt_b",
-        selectedOptionLabel: "11-15 Runs (Boundary Surge)",
-        votedAt: Date.now() - 60000,
-      },
-    ];
+    const mId = encodeURIComponent(selectedMatchId || "");
+    const momId = encodeURIComponent(selectedMomentId || "");
 
-    setParticipants(sampleParticipants);
-    setLoadingParticipants(false);
-  }, [selectedMomentId]);
+    fetch(`/api/visible-recognition/participants?matchId=${mId}&momentId=${momId}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        if (json.success && Array.isArray(json.participants)) {
+          setParticipants(json.participants);
+        } else {
+          setParticipants([]);
+        }
+      })
+      .catch((err) => {
+        console.warn("Failed to fetch participants for moment", err);
+        if (!cancelled) setParticipants([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingParticipants(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMatchId, selectedMomentId]);
 
   // ─── ACTIVE MATCH & MOMENT OBJECTS ────────────────────────────────────────
   const activeMatch = useMemo(() => {
@@ -459,6 +446,8 @@ function VisibleRecognitionContent() {
             ? (activeParticipant?.userName || customUserName.trim() || "Valued Fan")
             : "All Participants",
         targetUserAvatar: activeParticipant?.userAvatar || null,
+        targetUserEmail: activeParticipant?.userEmail || (selectedUserId && selectedUserId.includes("@") ? selectedUserId : null),
+        roomId: "NMryj1w7t8mJpGzEvF9q",
         archetype: selectedArchetype as any,
         badgeIcon,
         headline: headline.trim(),
@@ -934,39 +923,82 @@ function VisibleRecognitionContent() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
-                    {participants.map((p) => {
-                      const isChosen = selectedUserId === p.userId;
-                      return (
-                        <button
-                          key={p.userId}
-                          type="button"
-                          onClick={() => {
-                            setSelectedUserId(p.userId);
-                            setCustomUserName(p.userName);
-                          }}
-                          className={`p-2 rounded-lg border text-left flex items-center gap-2.5 transition-all ${
-                            isChosen
-                              ? "bg-purple-950/50 border-purple-500 text-white"
-                              : "bg-[#161b22] border-[#30363d] text-[#8b949e] hover:text-[#c9d1d9]"
-                          }`}
-                        >
-                          {p.userAvatar ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={p.userAvatar} alt="" className="w-7 h-7 rounded-full object-cover" />
-                          ) : (
-                            <div className="w-7 h-7 rounded-full bg-purple-900/50 flex items-center justify-center text-xs text-purple-300 font-bold">
-                              {p.userName.slice(0, 2).toUpperCase()}
+                  {loadingParticipants ? (
+                    <div className="py-6 flex items-center justify-center gap-2 text-xs text-[#8b949e]">
+                      <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
+                      <span>Loading real moment participants...</span>
+                    </div>
+                  ) : participants.length === 0 ? (
+                    <div className="py-3 px-3 rounded-lg bg-[#161b22] border border-[#21262d] text-xs text-[#8b949e] text-center">
+                      No fan voters recorded yet for this moment. You can still broadcast to all or specify a custom user name below.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-64 sm:max-h-72 overflow-y-auto pr-1">
+                      {participants.map((p) => {
+                        const isChosen = selectedUserId === p.userId;
+                        return (
+                          <button
+                            key={p.userId}
+                            type="button"
+                            onClick={() => {
+                              setSelectedUserId(p.userId);
+                              setCustomUserName(p.userName);
+                            }}
+                            className={`p-2.5 rounded-xl border text-left flex items-center gap-3 transition-all relative ${
+                              isChosen
+                                ? "bg-gradient-to-r from-purple-950/70 to-indigo-950/60 border-purple-500 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-500/50"
+                                : "bg-[#161b22] border-[#30363d] text-[#8b949e] hover:text-[#c9d1d9] hover:border-purple-800/50 hover:bg-[#1c2128]"
+                            }`}
+                          >
+                            {/* Profile Image with Fallback */}
+                            <div className="relative shrink-0">
+                              {p.userAvatar ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={p.userAvatar}
+                                  alt={p.userName}
+                                  className="w-10 h-10 rounded-full object-cover border border-purple-500/40 shadow-sm"
+                                />
+                              ) : (
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-800 to-indigo-900 border border-purple-500/30 flex items-center justify-center text-xs text-purple-100 font-bold shadow-sm">
+                                  {p.userName.slice(0, 2).toUpperCase()}
+                                </div>
+                              )}
+                              {isChosen && (
+                                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-purple-500 text-white flex items-center justify-center text-[9px] shadow">
+                                  <Check className="w-2.5 h-2.5" />
+                                </span>
+                              )}
                             </div>
-                          )}
-                          <div className="truncate flex-1">
-                            <div className="text-xs font-semibold text-white truncate">{p.userName}</div>
-                            <div className="text-[10px] text-amber-400 truncate">{p.selectedOptionLabel || p.selectedOptionId}</div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+
+                            {/* Actual Name, Email and Selection */}
+                            <div className="truncate flex-1 min-w-0">
+                              <div className="text-xs font-bold text-white truncate flex items-center justify-between gap-1">
+                                <span className="truncate">{p.userName}</span>
+                                {isChosen && (
+                                  <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-500/30 text-purple-200 border border-purple-500/40 shrink-0">
+                                    Selected
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Actual Email */}
+                              <div className="text-[11px] font-mono text-purple-300/90 truncate flex items-center gap-1 mt-0.5">
+                                <span>📧</span>
+                                <span className="truncate">{p.userEmail || (p.userId.includes("@") ? p.userId : `${p.userId}`)}</span>
+                              </div>
+
+                              {/* Choice voted */}
+                              <div className="text-[10px] text-amber-400/90 truncate mt-0.5 flex items-center gap-1">
+                                <span>🎯</span>
+                                <span className="truncate">{p.selectedOptionLabel || p.selectedOptionId || "Active Voter"}</span>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {/* Manual user override */}
                   <div className="pt-2 border-t border-[#21262d] flex items-center gap-2">
@@ -1218,28 +1250,35 @@ function VisibleRecognitionContent() {
                 </div>
 
                 {/* Target Avatar / Global Label */}
-                <div className="flex items-center gap-2 mb-2.5">
+                <div className="flex items-center gap-2.5 mb-2.5">
                   {targetType === "user" && activeParticipant?.userAvatar ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={activeParticipant.userAvatar}
                       alt=""
-                      className="w-6 h-6 rounded-full border border-purple-400 object-cover"
+                      className="w-8 h-8 rounded-full border border-purple-400 object-cover shrink-0"
                     />
                   ) : (
                     <div
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
                       style={{ backgroundColor: `${themeColor}30`, color: themeColor }}
                     >
                       {targetType === "all" ? "🏟️" : (customUserName || "U").slice(0, 1)}
                     </div>
                   )}
 
-                  <span className="text-xs font-semibold text-white truncate">
-                    {targetType === "all"
-                      ? "Stadium Roar • All Participants"
-                      : (activeParticipant?.userName || customUserName || "Valued Fan")}
-                  </span>
+                  <div className="truncate min-w-0">
+                    <span className="text-xs font-semibold text-white truncate block">
+                      {targetType === "all"
+                        ? "Stadium Roar • All Participants"
+                        : (activeParticipant?.userName || customUserName || "Valued Fan")}
+                    </span>
+                    {targetType === "user" && activeParticipant?.userEmail && (
+                      <span className="text-[10px] font-mono text-purple-300/80 truncate block">
+                        📧 {activeParticipant.userEmail}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Card Headline */}
