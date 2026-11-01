@@ -4,12 +4,14 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
-import { ScanCommand, PutCommand, GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem, EngagementType, EngagementStatus, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
 import { dispatchFlipArenaContentDropNotification } from "@/lib/notifications";
 import cloudinary from "@/lib/cloudinary";
+import { applyEngagementStats, findUserVote, getEngagementStats, primaryOptions } from "@/lib/engagementSocial";
+import { findEngagementById } from "@/lib/engagementPersistence";
 
 export const dynamic = "force-dynamic";
 
@@ -29,17 +31,26 @@ export async function GET(req: NextRequest) {
     const candidateTables = getCandidateTableNames(TABLES.SocialAndContent);
     for (const table of candidateTables) {
       try {
-        const scanRes = await docClient.send(
-          new ScanCommand({
-            TableName: table,
-            FilterExpression: "begins_with(contentId, :prefix) AND (sk = :metaSk OR attribute_not_exists(sk))",
-            ExpressionAttributeValues: {
-              ":prefix": "ENGAGEMENT#",
-              ":metaSk": "ENGAGEMENT#META",
-            },
-            Limit: 100,
-          })
-        );
+        // Read every page: Limit is applied BEFORE the filter, so a single 100-row page returned a
+        // different, incomplete set of engagements on each call.
+        const scanItems: any[] = [];
+        let scanKey: Record<string, any> | undefined;
+        do {
+          const page = await docClient.send(
+            new ScanCommand({
+              TableName: table,
+              FilterExpression: "begins_with(contentId, :prefix) AND (sk = :metaSk OR attribute_not_exists(sk))",
+              ExpressionAttributeValues: {
+                ":prefix": "ENGAGEMENT#",
+                ":metaSk": "ENGAGEMENT#META",
+              },
+              ExclusiveStartKey: scanKey,
+            })
+          );
+          scanItems.push(...(page.Items || []));
+          scanKey = page.LastEvaluatedKey;
+        } while (scanKey);
+        const scanRes = { Items: scanItems };
 
         if (scanRes.Items && scanRes.Items.length > 0) {
           for (const it of scanRes.Items) {
@@ -130,33 +141,41 @@ export async function GET(req: NextRequest) {
         let loopItems: any[] = [];
         if (cleanSearchMatchId) {
           try {
-            const qRes = await docClient.send(
-              new QueryCommand({
-                TableName: table,
-                KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skpfx)",
-                ExpressionAttributeValues: {
-                  ":eId": `MATCH#${cleanSearchMatchId}`,
-                  ":skpfx": "LOOP#",
-                },
-                Limit: 100,
-              })
-            );
-            loopItems = qRes.Items || [];
+            let qKey: Record<string, any> | undefined;
+            do {
+              const qRes = await docClient.send(
+                new QueryCommand({
+                  TableName: table,
+                  KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skpfx)",
+                  ExpressionAttributeValues: {
+                    ":eId": `MATCH#${cleanSearchMatchId}`,
+                    ":skpfx": "LOOP#",
+                  },
+                  ExclusiveStartKey: qKey,
+                })
+              );
+              loopItems.push(...(qRes.Items || []));
+              qKey = qRes.LastEvaluatedKey;
+            } while (qKey);
           } catch (e) {
             loopItems = [];
           }
         } else {
-          const sRes = await docClient.send(
-            new ScanCommand({
-              TableName: table,
-              FilterExpression: "begins_with(sk, :skpfx)",
-              ExpressionAttributeValues: {
-                ":skpfx": "LOOP#",
-              },
-              Limit: 100,
-            })
-          );
-          loopItems = sRes.Items || [];
+          let sKey: Record<string, any> | undefined;
+          do {
+            const sRes = await docClient.send(
+              new ScanCommand({
+                TableName: table,
+                FilterExpression: "begins_with(sk, :skpfx)",
+                ExpressionAttributeValues: {
+                  ":skpfx": "LOOP#",
+                },
+                ExclusiveStartKey: sKey,
+              })
+            );
+            loopItems.push(...(sRes.Items || []));
+            sKey = sRes.LastEvaluatedKey;
+          } while (sKey);
         }
 
         if (loopItems && loopItems.length > 0) {
@@ -454,66 +473,28 @@ export async function GET(req: NextRequest) {
       )
     ) as string[];
 
-    if (candidateIds.length > 0 && items.length > 0) {
-      try {
-        const [likeResults, voteResults] = await Promise.all([
-          Promise.all(
-            items.map(async (it) => {
-              for (const uid of candidateIds) {
-                try {
-                  const res = await docClient.send(
-                    new GetCommand({
-                      TableName: TABLES.SocialAndContent,
-                      Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `LIKE#${uid}` },
-                    })
-                  );
-                  if (res.Item) return { Item: res.Item };
-                } catch { }
-              }
-              return { Item: null };
-            })
-          ),
-          Promise.all(
-            items.map(async (it) => {
-              for (const uid of candidateIds) {
-                try {
-                  const qRes = await docClient.send(
-                    new QueryCommand({
-                      TableName: TABLES.SocialAndContent,
-                      KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
-                      ExpressionAttributeValues: {
-                        ":cid": `ENGAGEMENT#${it.id}`,
-                        ":skpfx": `VOTE#${uid}`,
-                      },
-                      Limit: 1,
-                    })
-                  );
-                  if (qRes.Items && qRes.Items.length > 0) {
-                    return { Item: qRes.Items[0] };
-                  }
-                  const gRes = await docClient.send(
-                    new GetCommand({
-                      TableName: TABLES.SocialAndContent,
-                      Key: { contentId: `ENGAGEMENT#${it.id}`, sk: `VOTE#${uid}` },
-                    })
-                  );
-                  if (gRes.Item) return { Item: gRes.Item };
-                } catch { }
-              }
-              return { Item: null };
-            })
-          ),
-        ]);
-
-        items = items.map((it, idx) => ({
-          ...it,
-          userLiked: !!likeResults[idx]?.Item,
-          userVoted: !!voteResults[idx]?.Item,
-          userVote: voteResults[idx]?.Item?.selectedOptionId ?? null,
-        }));
-      } catch (hydrationErr) {
-        console.warn("Engagements user interaction hydration notice:", hydrationErr);
-      }
+    // One query per engagement gives the real likes / shares / comments / vote counts AND this user's
+    // like + vote, so the numbers are identical on every refresh whichever stored copy was read.
+    if (items.length > 0) {
+      items = await Promise.all(
+        items.map(async (it) => {
+          try {
+            const stats = await getEngagementStats(String(it.id));
+            applyEngagementStats(it, stats);
+            if (candidateIds.length === 0) return it;
+            const userVote = findUserVote(stats, candidateIds);
+            return {
+              ...it,
+              userLiked: candidateIds.some((uid) => stats.userLikes.has(uid)),
+              userVoted: userVote !== null,
+              userVote,
+            };
+          } catch (hydrationErr) {
+            console.warn("Engagements stats hydration notice:", hydrationErr);
+            return it;
+          }
+        })
+      );
     }
 
     // Check if any scheduled engagement has just become live and needs notification
@@ -685,6 +666,19 @@ export async function POST(req: NextRequest) {
 
     const now = Date.now();
     const id = body.id || body.engagementId || `eng_${now}_${Math.random().toString(36).slice(2, 8)}`;
+
+    // Re-submitting an existing id is an edit (admin "Update Engagement"): keep fan activity and the outcome,
+    // and don't award creator points / send the content-drop notification again.
+    // The timer restarts from now with the submitted minutes (4m -> 2m edit counts down from 2m).
+    const existingEngagement: any = body.id ? (await findEngagementById(String(body.id), body.matchId))?.item || null : null;
+    const isEdit = Boolean(existingEngagement);
+    if (isEdit && Array.isArray(body.options)) {
+      const prevOptions: any[] = primaryOptions(existingEngagement) || [];
+      body.options = body.options.map((opt: any) => {
+        const prev = prevOptions.find((p) => String(p?.id) === String(opt?.id));
+        return prev && opt?.votes == null ? { ...opt, votes: Number(prev.votes) || 0 } : opt;
+      });
+    }
 
     // Resolve creator identity
     const authUser = await getUser(req);
@@ -1048,15 +1042,16 @@ export async function POST(req: NextRequest) {
       expressData: formattedExpressData,
       questionData: formattedQuestionData,
       options: body.options || formattedDebateData?.options || formattedExpressData?.options || formattedQuestionData?.options || formattedPollData?.options || formattedPredData?.options,
-      winningChoiceId: body.winningChoiceId || formattedPredData?.winningChoiceId || formattedDebateData?.winningChoiceId || null,
-      outcomeNotes: body.outcomeNotes || null,
-      resolvedAt: body.resolvedAt || null,
-      resolvedBy: body.resolvedBy || null,
+      winningChoiceId: body.winningChoiceId || formattedPredData?.winningChoiceId || formattedDebateData?.winningChoiceId || existingEngagement?.winningChoiceId || null,
+      outcomeNotes: body.outcomeNotes || existingEngagement?.outcomeNotes || null,
+      resolvedAt: body.resolvedAt || existingEngagement?.resolvedAt || null,
+      resolvedBy: body.resolvedBy || existingEngagement?.resolvedBy || null,
       timerMinutes: matchMomentDurationMins,
       durationMinutes: matchMomentDurationMins,
-      likes: Number(likes) || 0,
-      shares: Number(shares) || 0,
-      totalEngaged: Number(totalEngaged) || 0,
+      likes: Number(likes) || Number(existingEngagement?.likes) || 0,
+      shares: Number(shares) || Number(existingEngagement?.shares) || 0,
+      totalEngaged: Number(totalEngaged) || Number(existingEngagement?.totalEngaged) || 0,
+      commentsCount: Number(existingEngagement?.commentsCount) || 0,
       startTime: startMs,
       scheduledStartTime: startMs,
       postingTime: startMs,
@@ -1112,7 +1107,7 @@ export async function POST(req: NextRequest) {
 
     // Award +2 points to creator for creating an engagement (quiz, poll, prediction, fan battle, meme)
     let pointsAwarded = 0;
-    if (creatorId || creatorEmail) {
+    if (!isEdit && (creatorId || creatorEmail)) {
       try {
         const ptsResult = await awardEngagementPoints({
           userId: creatorId || creatorEmail,
@@ -1133,7 +1128,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Dispatch 60-Minute Aggregated Content Drop Notification asynchronously (fire-and-forget) so creation is instant
-    if (!isFutureScheduled) {
+    if (!isFutureScheduled && !isEdit) {
       dispatchFlipArenaContentDropNotification({
         engagementId: id,
         engagementType: type,

@@ -5,7 +5,8 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
-import { GetCommand, DeleteCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { applyEngagementStats, findUserVote, getEngagementStats } from "@/lib/engagementSocial";
+import { DeleteCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem } from "@/types/engagements";
 
 import { getUser } from "@/lib/getUser";
@@ -29,48 +30,26 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
     }
 
-    // Hydrate user interaction state (userLiked, userVoted, userVote) matching api/roar pattern
+    // Real counts + user interaction state (userLiked, userVoted, userVote) from the child records
     const authUser = await getUser(req);
-    const resolvedUserId = authUser?.userId || authUser?.email || searchParams.get("userId");
+    const candidateIds = Array.from(
+      new Set([authUser?.userId, authUser?.email, searchParams.get("userId")].filter(Boolean))
+    ) as string[];
 
-    if (resolvedUserId) {
-      try {
-        const [likeRes, voteRes, userMarkerRes] = await Promise.all([
-          docClient
-            .send(
-              new GetCommand({
-                TableName: TABLES.SocialAndContent,
-                Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${resolvedUserId}` },
-              })
-            )
-            .catch(() => ({ Item: null })),
-          docClient
-            .send(
-              new GetCommand({
-                TableName: TABLES.SocialAndContent,
-                Key: { contentId: `ENGAGEMENT#${id}`, sk: `VOTE#${resolvedUserId}` },
-              })
-            )
-            .catch(() => ({ Item: null })),
-          docClient
-            .send(
-              new GetCommand({
-                TableName: TABLES.SocialAndContent,
-                Key: { contentId: `ENGAGEMENT#${id}`, sk: `USER#${resolvedUserId}` },
-              })
-            )
-            .catch(() => ({ Item: null })),
-        ]);
-
+    try {
+      const stats = await getEngagementStats(cleanId);
+      applyEngagementStats(item, stats);
+      if (candidateIds.length > 0) {
+        const userVote = findUserVote(stats, candidateIds);
         item = {
           ...item,
-          userLiked: !!likeRes?.Item,
-          userVoted: !!voteRes?.Item || !!userMarkerRes?.Item,
-          userVote: voteRes?.Item?.selectedOptionId ?? userMarkerRes?.Item?.selectedOptionId ?? null,
+          userLiked: candidateIds.some((uid) => stats.userLikes.has(uid)),
+          userVoted: userVote !== null,
+          userVote,
         };
-      } catch (hydrationErr) {
-        console.warn("Single engagement user hydration notice:", hydrationErr);
       }
+    } catch (hydrationErr) {
+      console.warn("Single engagement stats hydration notice:", hydrationErr);
     }
 
     return NextResponse.json({ success: true, engagement: item });

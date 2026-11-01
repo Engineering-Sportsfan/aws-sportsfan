@@ -1,18 +1,19 @@
 // app/api/engagements/[id]/like/route.ts — Dynamic Like / Unlike toggle for Fan Battles, Quizzes, Polls, Predictions
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+import { TABLES } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { GetCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { getUser } from "@/lib/getUser";
 import { dispatchFlipArenaNotification } from "@/lib/notifications";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
+import { countRecords } from "@/lib/engagementSocial";
 
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-// ─── GET /api/engagements/[id]/like — Check if user liked this engagement ────
+// ─── GET /api/engagements/[id]/like — Check if user liked + current like count ──
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
@@ -21,20 +22,24 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const authUser = await getUser(req);
     const userId = authUser?.userId || authUser?.email || searchParams.get("userId");
 
-     const matchIdParam = searchParams.get("matchId") || undefined;
-    let likes: number | undefined;
+    const matchIdParam = searchParams.get("matchId") || undefined;
+
+    // Count real like records; fall back to the stored counter if the query fails
+    let likes = 0;
     try {
-      const found = await findEngagementById(cleanId, matchIdParam);
-      if (found?.item) likes = Math.max(0, Number(found.item.likes ?? found.item.likeCount ?? 0));
-    } catch {}
-    
+      likes = await countRecords(cleanId, "LIKE#");
+    } catch {
+      const found = await findEngagementById(cleanId, matchIdParam).catch(() => null);
+      likes = Math.max(0, Number(found?.item?.likes ?? found?.item?.likeCount ?? 0));
+    }
+
     if (!userId) {
-      return NextResponse.json({ liked: false });
+      return NextResponse.json({ liked: false, likes });
     }
 
     let liked = false;
 
-    // 1. Check standardized DynamoDB key: contentId = ENGAGEMENT#{cleanId}, sk = LIKE#{userId}
+    // 1. Standardized key: contentId = ENGAGEMENT#{cleanId}, sk = LIKE#{userId}
     try {
       const getLike = await docClient.send(
         new GetCommand({
@@ -47,7 +52,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       console.warn("DynamoDB like check notice:", dynErr);
     }
 
-    // 2. Check legacy DynamoDB key: contentId = LIKE#{userId}, sk = ENGAGEMENT#{cleanId}
+    // 2. Legacy key: contentId = LIKE#{userId}, sk = ENGAGEMENT#{cleanId}
     if (!liked) {
       try {
         const legacyLike = await docClient.send(
@@ -60,7 +65,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       } catch {}
     }
 
-    // 3. Fallback to Firestore engagement_likes collection
+    // 3. Firestore fallback
     if (!liked && db) {
       try {
         const snap = await db.collection("engagement_likes").doc(`${userId}_${cleanId}`).get();
@@ -68,7 +73,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       } catch {}
     }
 
-    return NextResponse.json({ liked });
+    return NextResponse.json({ liked, likes });
   } catch (error: unknown) {
     console.error("GET /api/engagements/[id]/like error:", error);
     return NextResponse.json({ liked: false });
@@ -135,22 +140,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     const item = found.item;
-    const currentLikes = Math.max(0, Number(item.likes ?? item.likeCount ?? 0));
-    const newLikesCount = Math.max(0, currentLikes + delta);
 
-    item.likes = newLikesCount;
-    item.likeCount = newLikesCount;
-    if (nextLikedState) {
-      item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
-    } else {
-      item.totalEngaged = Math.max(0, (Number(item.totalEngaged) || 0) - 1);
-    }
-    item.updatedAt = now;
-
-    // Dual-persist update to SocialAndContent AND MatchMoments
-    await persistEngagementUpdate(cleanId, item, found.matchMomentsRecord);
-
-    // 3. Save or remove the user's like record
+    // 3. Save or remove the user's like record FIRST (these records are the source of truth)
     if (nextLikedState) {
       try {
         await docClient.send(
@@ -257,11 +248,23 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // 5. Count the real records, then mirror the number onto the engagement item
+    const likesCount = await countRecords(cleanId, "LIKE#");
+    item.likes = likesCount;
+    item.likeCount = likesCount;
+    item.totalEngaged = Math.max(0, (Number(item.totalEngaged) || 0) + delta);
+    item.updatedAt = now;
+    try {
+      await persistEngagementUpdate(cleanId, item, found.matchMomentsRecord);
+    } catch (e) {
+      console.warn("like mirror notice:", e);
+    }
+
     return NextResponse.json({
       success: true,
       liked: nextLikedState,
-      likesCount: newLikesCount,
-      likes: newLikesCount,
+      likesCount,
+      likes: likesCount,
       totalEngaged: Number(item.totalEngaged) || 0,
     });
   } catch (error: unknown) {
