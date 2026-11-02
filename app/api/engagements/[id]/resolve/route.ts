@@ -331,10 +331,20 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     }
 
+    const isAlreadyResolved = Boolean(
+      engagement.status === "settled" ||
+      engagement.outcomeResolvedAt ||
+      engagement.resolvedAt ||
+      engagement.outcomeWinningChoiceId
+    );
+    const previousWinningId = String(engagement.winningChoiceId || engagement.outcomeWinningChoiceId || "").trim().toLowerCase();
+    const isWinnerChanged = isAlreadyResolved && previousWinningId !== normalizedWinId;
+
     const targetRoomId = String(body.roomId || "NMryj1w7t8mJpGzEvF9q").replace(/^ROOM#/, "").trim();
     const outcomeLabel = winningChoiceText || winningChoiceId;
 
-    // 7. Record floating in-room notification broadcast in Firestore
+    // 7. Record floating in-room notification broadcast in Firestore using deterministic doc ID
+    const outcomeNotifDocId = `outcome_rev_${cleanId}`;
     if (db) {
       const firestoreMatchIds = [
         resolvedMatchId,
@@ -343,8 +353,32 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         "NMryj1w7t8mJpGzEvF9q",
       ].filter(Boolean);
 
-      db.collection(getFirestoreCollection("match_room_notifications"))
-        .add({
+      // Clean up any legacy random docs created with .add() for this engagement to prevent duplicates
+      try {
+        const legacySnap = await db
+          .collection(getFirestoreCollection("match_room_notifications"))
+          .where("engagementId", "==", cleanId)
+          .get();
+        if (!legacySnap.empty) {
+          const batch = db.batch();
+          let hasDeletions = false;
+          for (const doc of legacySnap.docs) {
+            if (doc.id !== outcomeNotifDocId) {
+              batch.delete(doc.ref);
+              hasDeletions = true;
+            }
+          }
+          if (hasDeletions) await batch.commit();
+        }
+      } catch (cleanupErr) {
+        console.warn("[Resolve] Legacy notification cleanup notice:", cleanupErr);
+      }
+
+      await db
+        .collection(getFirestoreCollection("match_room_notifications"))
+        .doc(outcomeNotifDocId)
+        .set({
+          id: `REVEAL-${cleanId}`,
           engagementId: cleanId,
           type: "OUTCOME_RESOLVED",
           matchId: resolvedMatchId,
@@ -362,14 +396,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           winningUserIds,
           message: `🎯 Outcome Revealed: "${outcomeLabel}". Click to view post!`,
           targetPostUrl: `/feed?engagementId=${cleanId}`,
-          createdAt: now,
+          createdAt: engagement.outcomeResolvedAt || engagement.resolvedAt || now,
+          updatedAt: now,
           expiresAt: now + 300000,
-        })
+        }, { merge: true })
         .catch((e) => console.warn("[Resolve] Match room notification notice:", e));
     }
 
-    // 8. Post Outcome Reveal message directly into ROAR Chat (RealTimeChat Table)
-    const chatMsgId = `msg_rev_${now}_${Math.random().toString(36).substring(2, 7)}`;
+    // 8. Update Outcome Reveal message directly into ROAR Chat with deterministic ID
+    const chatMsgId = `msg_rev_${cleanId}`;
     const chatMsgText = `🎯 MOMENT OUTCOME REVEALED: "${engagement.title}"\n🏆 Winning Outcome: "${outcomeLabel}"\n⚡ ${votersAwardedCount > 0 ? `${votersAwardedCount} winning fan(s) earned +${bonusPoints} SXPs accuracy bonus!` : "Participation SXPs awarded to all active fans!"}${outcomeNotes ? `\n📝 Notes: ${outcomeNotes}` : ""}`;
 
     const chatMsgItem: Record<string, any> = {
@@ -396,7 +431,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       agreeCount: 0,
       disagreeCount: 0,
       replyCount: 0,
-      createdAt: now,
+      createdAt: engagement.outcomeResolvedAt || engagement.resolvedAt || now,
       updatedAt: now,
     };
 
@@ -410,7 +445,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       .catch((e) => console.warn("[Resolve] RealTimeChat write notice:", e));
 
     if (db) {
-      db.collection(getFirestoreCollection("roarRooms"))
+      await db
+        .collection(getFirestoreCollection("roarRooms"))
         .doc(targetRoomId)
         .collection("messages")
         .doc(chatMsgId)
@@ -418,79 +454,81 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         .catch((e) => console.warn("[Resolve] Firestore roarRooms message write notice:", e));
     }
 
-    // 9. Dispatch in-app notifications asynchronously in background (doesn't block response)
-    const dispatchNotificationsAsync = async () => {
-      const notifiedUserIds = new Set<string>();
+    // 9. Dispatch in-app notifications only if first-time resolution or winning choice changed
+    if (!isAlreadyResolved || isWinnerChanged) {
+      const dispatchNotificationsAsync = async () => {
+        const notifiedUserIds = new Set<string>();
 
-      // Send to distinct winners
-      for (const winUser of winnersList) {
-        const uId = winUser.userId;
-        if (!uId || notifiedUserIds.has(uId)) continue;
-        notifiedUserIds.add(uId);
+        // Send to distinct winners
+        for (const winUser of winnersList) {
+          const uId = winUser.userId;
+          if (!uId || notifiedUserIds.has(uId)) continue;
+          notifiedUserIds.add(uId);
 
-        try {
-          await createNotification({
-            userId: uId,
-            recipientEmail: winUser.email || (uId.includes("@") ? uId : null),
-            category: "roar",
-            notification_type: "roar.prediction_won",
-            title: `🎉 You predicted correctly! +${bonusPoints} Bonus SXPs`,
-            body: `Outcome settled for "${engagement.title}": "${outcomeLabel}".`,
-            subtitle: `+${bonusPoints} Bonus SXPs awarded to your sports wallet!`,
-            cta_label: "Open ROAR Pulse",
-            cta_target: "/MainModules/ROAR",
-            priority: "HIGH",
-            roomId: targetRoomId,
-            metadata: {
-              engagementId: cleanId,
-              winningChoiceId,
-              winningChoiceText: outcomeLabel,
-              bonusPoints,
-              isWinner: true,
-            },
-          });
-        } catch (winNotifErr) {
-          console.warn("[Resolve] Winning notification notice:", winNotifErr);
+          try {
+            await createNotification({
+              userId: uId,
+              recipientEmail: winUser.email || (uId.includes("@") ? uId : null),
+              category: "roar",
+              notification_type: "roar.prediction_won",
+              title: `🎉 You predicted correctly! +${bonusPoints} Bonus SXPs`,
+              body: `Outcome settled for "${engagement.title}": "${outcomeLabel}".`,
+              subtitle: `+${bonusPoints} Bonus SXPs awarded to your sports wallet!`,
+              cta_label: "Open ROAR Pulse",
+              cta_target: "/MainModules/ROAR",
+              priority: "HIGH",
+              roomId: targetRoomId,
+              metadata: {
+                engagementId: cleanId,
+                winningChoiceId,
+                winningChoiceText: outcomeLabel,
+                bonusPoints,
+                isWinner: true,
+              },
+            });
+          } catch (winNotifErr) {
+            console.warn("[Resolve] Winning notification notice:", winNotifErr);
+          }
         }
-      }
 
-      // Send to distinct non-winning participants
-      const participantsList = Array.from(distinctParticipantsMap.values());
-      for (const partUser of participantsList) {
-        const uId = partUser.userId;
-        if (!uId || notifiedUserIds.has(uId)) continue;
-        notifiedUserIds.add(uId);
+        // Send to distinct non-winning participants
+        const participantsList = Array.from(distinctParticipantsMap.values());
+        for (const partUser of participantsList) {
+          const uId = partUser.userId;
+          if (!uId || notifiedUserIds.has(uId)) continue;
+          notifiedUserIds.add(uId);
 
-        try {
-          await createNotification({
-            userId: uId,
-            recipientEmail: partUser.email || (uId.includes("@") ? uId : null),
-            category: "roar",
-            notification_type: "roar.prediction_resolved",
-            title: `🎯 Outcome Revealed: "${outcomeLabel}"`,
-            body: `The result for "${engagement.title}" has been revealed: "${outcomeLabel}". Thank you for participating!`,
-            subtitle: "See outcome & discussion in ROAR Pulse",
-            cta_label: "Open ROAR Pulse",
-            cta_target: "/MainModules/ROAR",
-            priority: "NORMAL",
-            roomId: targetRoomId,
-            metadata: {
-              engagementId: cleanId,
-              winningChoiceId,
-              winningChoiceText: outcomeLabel,
-              isWinner: false,
-            },
-          });
-        } catch (partNotifErr) {
-          console.warn("[Resolve] Participant notification notice:", partNotifErr);
+          try {
+            await createNotification({
+              userId: uId,
+              recipientEmail: partUser.email || (uId.includes("@") ? uId : null),
+              category: "roar",
+              notification_type: "roar.prediction_resolved",
+              title: `🎯 Outcome Revealed: "${outcomeLabel}"`,
+              body: `The result for "${engagement.title}" has been revealed: "${outcomeLabel}". Thank you for participating!`,
+              subtitle: "See outcome & discussion in ROAR Pulse",
+              cta_label: "Open ROAR Pulse",
+              cta_target: "/MainModules/ROAR",
+              priority: "NORMAL",
+              roomId: targetRoomId,
+              metadata: {
+                engagementId: cleanId,
+                winningChoiceId,
+                winningChoiceText: outcomeLabel,
+                isWinner: false,
+              },
+            });
+          } catch (partNotifErr) {
+            console.warn("[Resolve] Participant notification notice:", partNotifErr);
+          }
         }
-      }
-    };
+      };
 
-    // Non-blocking background trigger
-    dispatchNotificationsAsync().catch((err) => {
-      console.warn("[Resolve] Background notifications notice:", err);
-    });
+      // Non-blocking background trigger
+      dispatchNotificationsAsync().catch((err) => {
+        console.warn("[Resolve] Background notifications notice:", err);
+      });
+    }
 
     return NextResponse.json({
       success: true,
