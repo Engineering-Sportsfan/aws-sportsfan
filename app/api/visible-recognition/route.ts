@@ -322,9 +322,95 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
 
     const newSk = `RECOGNITION#${cleanMomentId}#${targetKey}`;
 
+    // Enforce "one recognition per moment" rule:
+    // If a different recognition already exists for this moment, delete it so the new one replaces it.
+    const candidateTables = getCandidateTableNames("MatchMoments");
+    const momentSkPrefix = `RECOGNITION#${cleanMomentId}#`;
+    for (const tbl of candidateTables) {
+      try {
+        const existingQuery = await docClient.send(
+          new QueryCommand({
+            TableName: tbl,
+            KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPfx)",
+            ExpressionAttributeValues: {
+              ":eId": `MATCH#${cleanMatchId}`,
+              ":skPfx": momentSkPrefix,
+            },
+          })
+        );
+        if (existingQuery.Items) {
+          for (const item of existingQuery.Items) {
+            const itemSk = item.sk;
+            const itemRecId = item.recognitionId || item.id;
+            if (itemSk && itemSk !== newSk) {
+              await docClient.send(
+                new DeleteCommand({
+                  TableName: tbl,
+                  Key: {
+                    entityId: `MATCH#${cleanMatchId}`,
+                    sk: itemSk,
+                  },
+                })
+              ).catch(() => {});
+            }
+            if (itemRecId && itemRecId !== recognitionId) {
+              if (db) {
+                db.collection(getFirestoreCollection("visible_recognitions")).doc(itemRecId).delete().catch(() => {});
+                db.collection(getFirestoreCollection("match_room_notifications")).doc(`rec_inline_${itemRecId}`).delete().catch(() => {});
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Also check and clean from SportsData
+    try {
+      const spExistingQuery = await docClient.send(
+        new QueryCommand({
+          TableName: "SportsData",
+          KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPfx)",
+          ExpressionAttributeValues: {
+            ":eId": `MATCH#${cleanMatchId}`,
+            ":skPfx": momentSkPrefix,
+          },
+        })
+      );
+      if (spExistingQuery.Items) {
+        for (const item of spExistingQuery.Items) {
+          if (item.sk && item.sk !== newSk) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: "SportsData",
+                Key: {
+                  entityId: `MATCH#${cleanMatchId}`,
+                  sk: item.sk,
+                },
+              })
+            ).catch(() => {});
+          }
+        }
+      }
+    } catch {}
+
+    // Also check Firestore visible_recognitions for any other recognition for this moment
+    if (db) {
+      try {
+        const snap = await db.collection(getFirestoreCollection("visible_recognitions"))
+          .where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`])
+          .where("momentId", "in", [cleanMomentId, `MOMENT#${cleanMomentId}`, `MM-${cleanMomentId}`])
+          .get();
+        for (const doc of snap.docs) {
+          if (doc.id !== recognitionId) {
+            doc.ref.delete().catch(() => {});
+            db.collection(getFirestoreCollection("match_room_notifications")).doc(`rec_inline_${doc.id}`).delete().catch(() => {});
+          }
+        }
+      } catch {}
+    }
+
     // Clean up old sk if changing key during an edit
     if (isEdit && body.originalSk && body.originalSk !== newSk) {
-      const candidateTables = getCandidateTableNames("MatchMoments");
       for (const tbl of candidateTables) {
         try {
           await docClient.send(

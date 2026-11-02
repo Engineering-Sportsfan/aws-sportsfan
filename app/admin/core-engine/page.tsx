@@ -387,6 +387,24 @@ function CoreEngineVisualRecognitionContent() {
     return participants.find((p) => p.userId === selectedUserId) || null;
   }, [participants, targetType, selectedUserId]);
 
+  // Check if a recognition already exists for the selected moment (only 1 allowed per moment)
+  const existingRecognitionForMoment = useMemo(() => {
+    if (!selectedMomentId) return null;
+    const cleanMom = selectedMomentId.trim().replace(/^(MOMENT#|MM-)/i, "").toLowerCase();
+    return (
+      recognitions.find((r) => {
+        const rMom = (r.momentId || "").trim().replace(/^(MOMENT#|MM-)/i, "").toLowerCase();
+        return rMom === cleanMom;
+      }) || null
+    );
+  }, [recognitions, selectedMomentId]);
+
+  const isReplacingPrevious = useMemo(() => {
+    if (!existingRecognitionForMoment) return false;
+    const existingId = existingRecognitionForMoment.recognitionId || existingRecognitionForMoment.id;
+    return !editingRecognitionId || editingRecognitionId !== existingId;
+  }, [existingRecognitionForMoment, editingRecognitionId]);
+
   const computedTotalSxp = useMemo(() => {
     return (
       (typeof accuracySxp === "number" ? accuracySxp : 0) +
@@ -502,6 +520,16 @@ function CoreEngineVisualRecognitionContent() {
       return;
     }
 
+    // Alert if moment already has a recognition: previous will be deleted and new will show to users
+    if (isReplacingPrevious && existingRecognitionForMoment) {
+      const confirmed = window.confirm(
+        `⚠️ Only ONE recognition is allowed per moment!\n\nMoment "${selectedMomentId}" already has an active recognition:\n"${existingRecognitionForMoment.headline}"\n\nYour previous recognition will be DELETED and the new recognition will show to users.\n\nDo you want to proceed?`
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const payload: any = {
@@ -547,6 +575,8 @@ function CoreEngineVisualRecognitionContent() {
       const endpoint = "/api/visible-recognition";
       const method = editingRecognitionId ? "PUT" : "POST";
 
+      const wasReplacing = isReplacingPrevious;
+
       const res = await fetch(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
@@ -555,7 +585,15 @@ function CoreEngineVisualRecognitionContent() {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast("success", data.message || (editingRecognitionId ? "Recognition updated!" : "Recognition dispatched!"));
+        showToast(
+          "success",
+          data.message ||
+            (editingRecognitionId
+              ? "Recognition updated!"
+              : wasReplacing
+              ? "Previous recognition deleted and new recognition dispatched to users!"
+              : "Recognition dispatched!")
+        );
         handleClearForm();
         fetchRecognitions();
       } else {
@@ -885,14 +923,69 @@ function CoreEngineVisualRecognitionContent() {
                     ? "-- No Match Moments Found (Record in Tab 2) --"
                     : "-- Select Match Moment --"}
                 </option>
-                {moments.map((mom) => (
-                  <option key={mom.momentId || mom.id} value={mom.momentId || mom.id}>
-                    {mom.momentId || mom.id} | Over {mom.overs || "0.0"} (Inn {mom.innings || 1}) — {mom.event || "Moment"} ({mom.score || "Live"})
-                  </option>
-                ))}
+                {moments.map((mom) => {
+                  const mId = mom.momentId || mom.id;
+                  const cleanMId = mId.trim().replace(/^(MOMENT#|MM-)/i, "").toLowerCase();
+                  const hasExisting = recognitions.some(
+                    (r) => (r.momentId || "").trim().replace(/^(MOMENT#|MM-)/i, "").toLowerCase() === cleanMId
+                  );
+                  return (
+                    <option key={mId} value={mId}>
+                      {mId} | Over {mom.overs || "0.0"} (Inn {mom.innings || 1}) — {mom.event || "Moment"} ({mom.score || "Live"}){hasExisting ? " ⚠️ [Has Active Recognition]" : ""}
+                    </option>
+                  );
+                })}
               </select>
               {loadingMoments && (
                 <div style={{ fontSize: 11, color: "#8b949e", marginTop: 4 }}>Loading match moments...</div>
+              )}
+
+              {/* Alert banner if selected moment already has an active recognition */}
+              {isReplacingPrevious && existingRecognitionForMoment && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    background: "rgba(245, 158, 11, 0.12)",
+                    border: "1px solid #f59e0b",
+                    borderRadius: 6,
+                    padding: "10px 12px",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 10,
+                  }}
+                >
+                  <AlertCircle size={18} color="#f59e0b" style={{ flexShrink: 0, marginTop: 2 }} />
+                  <div style={{ fontSize: 12, lineHeight: 1.5, flex: 1 }}>
+                    <strong style={{ color: "#f59e0b", display: "block", marginBottom: 2 }}>
+                      ⚠️ Notice: Only 1 Recognition Allowed Per Moment
+                    </strong>
+                    Moment <strong style={{ color: "#fff" }}>{selectedMomentId}</strong> already has an active recognition:{" "}
+                    <strong style={{ color: "#fff" }}>&quot;{existingRecognitionForMoment.headline}&quot;</strong>.
+                    If you create a new recognition for this moment, your previous recognition will be <strong>deleted</strong> and the new recognition will show to users.
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleStartEdit(existingRecognitionForMoment)}
+                        style={{
+                          background: "#21262d",
+                          color: "#58a6ff",
+                          border: "1px solid #388bfd",
+                          borderRadius: 4,
+                          padding: "4px 10px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        <Edit3 size={12} />
+                        Edit Existing Recognition Instead
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
 
