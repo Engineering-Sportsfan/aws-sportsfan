@@ -19,8 +19,45 @@ export async function GET(req: NextRequest) {
   try {
     const recognitionsList: any[] = [];
     const outcomeRevealsList: any[] = [];
-    const seenRecognitionIds = new Set<string>();
-    const seenOutcomeIds = new Set<string>();
+
+    const upsertOutcomeReveal = (item: any) => {
+      const engId = String(
+        item.engagementId ||
+        (item.id ? String(item.id).replace(/^REVEAL-/, "") : "") ||
+        (item.sk ? String(item.sk).replace(/^REVEAL#/, "") : "") ||
+        ""
+      ).trim();
+      if (!engId) return;
+      const canonicalId = `REVEAL-${engId}`;
+      const record = { ...item, id: canonicalId, engagementId: engId };
+      const existingIdx = outcomeRevealsList.findIndex(
+        (x) => String(x.engagementId || x.id?.replace(/^REVEAL-/, "")).trim() === engId
+      );
+      if (existingIdx >= 0) {
+        outcomeRevealsList[existingIdx] = { ...outcomeRevealsList[existingIdx], ...record };
+      } else {
+        outcomeRevealsList.push(record);
+      }
+    };
+
+    const upsertRecognition = (item: any) => {
+      const recId = String(
+        item.recognitionId ||
+        item.id ||
+        (item.sk ? String(item.sk).replace(/^RECOGNITION#/, "") : "") ||
+        ""
+      ).trim();
+      if (!recId) return;
+      const record = { ...item, id: recId, recognitionId: recId };
+      const existingIdx = recognitionsList.findIndex(
+        (x) => String(x.recognitionId || x.id).trim() === recId
+      );
+      if (existingIdx >= 0) {
+        recognitionsList[existingIdx] = { ...recognitionsList[existingIdx], ...record };
+      } else {
+        recognitionsList.push(record);
+      }
+    };
 
     const candidateTables = getCandidateTableNames("MatchMoments");
 
@@ -42,11 +79,7 @@ export async function GET(req: NextRequest) {
           );
           if (recRes.Items) {
             for (const item of recRes.Items) {
-              const recId = item.recognitionId || item.id || item.sk?.replace(/^RECOGNITION#/, "");
-              if (recId && !seenRecognitionIds.has(recId)) {
-                seenRecognitionIds.add(recId);
-                recognitionsList.push({ id: recId, ...item });
-              }
+              upsertRecognition(item);
             }
           }
 
@@ -64,11 +97,7 @@ export async function GET(req: NextRequest) {
           );
           if (revealRes.Items) {
             for (const item of revealRes.Items) {
-              const outId = item.id || item.engagementId || item.sk?.replace(/^REVEAL#/, "");
-              if (outId && !seenOutcomeIds.has(outId)) {
-                seenOutcomeIds.add(outId);
-                outcomeRevealsList.push({ id: outId, ...item });
-              }
+              upsertOutcomeReveal(item);
             }
           }
         } catch {}
@@ -91,11 +120,7 @@ export async function GET(req: NextRequest) {
           );
           if (scanRes.Items) {
             for (const item of scanRes.Items) {
-              const outId = item.id || item.engagementId || item.sk?.replace(/^REVEAL#/, "");
-              if (outId && !seenOutcomeIds.has(outId)) {
-                seenOutcomeIds.add(outId);
-                outcomeRevealsList.push({ id: outId, ...item });
-              }
+              upsertOutcomeReveal(item);
             }
           }
         } catch {}
@@ -120,7 +145,7 @@ export async function GET(req: NextRequest) {
         // Firestore `in` supports max 10 values
         const candidateArr = [...matchCandidates].slice(0, 10);
 
-        let q: FirebaseFirestore.Query = db.collection(getFirestoreCollection("match_room_notifications"));
+        let q: any = db.collection(getFirestoreCollection("match_room_notifications"));
         if (candidateArr.length > 0) {
           q = q.where("matchId", "in", candidateArr);
         }
@@ -129,17 +154,9 @@ export async function GET(req: NextRequest) {
           const data = doc.data();
           const docType = data.type;
           if (docType === "OUTCOME_RESOLVED") {
-            const outId = doc.id || data.id || data.engagementId;
-            if (outId && !seenOutcomeIds.has(outId)) {
-              seenOutcomeIds.add(outId);
-              outcomeRevealsList.push({ id: outId, firestoreId: doc.id, ...data });
-            }
+            upsertOutcomeReveal({ ...data, firestoreId: doc.id });
           } else if (docType === "VISUAL_RECOGNITION") {
-            const recId = doc.id || data.recognitionId || data.id;
-            if (recId && !seenRecognitionIds.has(recId)) {
-              seenRecognitionIds.add(recId);
-              recognitionsList.push({ id: recId, firestoreId: doc.id, ...data });
-            }
+            upsertRecognition({ ...data, firestoreId: doc.id });
           }
         }
       } catch (err) {
@@ -150,7 +167,7 @@ export async function GET(req: NextRequest) {
           if (roomId) { matchCandidates.add(roomId); matchCandidates.add(roomId.replace(/^MATCH#/, "")); }
           const candidateArr = [...matchCandidates].slice(0, 10);
 
-          let q2: FirebaseFirestore.Query = db.collection(getFirestoreCollection("match_room_notifications"));
+          let q2: any = db.collection(getFirestoreCollection("match_room_notifications"));
           if (candidateArr.length > 0) {
             q2 = q2.where("matchId", "in", candidateArr);
           }
@@ -159,17 +176,9 @@ export async function GET(req: NextRequest) {
             const data = doc.data();
             const docType = data.type;
             if (docType === "OUTCOME_RESOLVED") {
-              const outId = doc.id || data.id || data.engagementId;
-              if (outId && !seenOutcomeIds.has(outId)) {
-                seenOutcomeIds.add(outId);
-                outcomeRevealsList.push({ id: outId, firestoreId: doc.id, ...data });
-              }
+              upsertOutcomeReveal({ ...data, firestoreId: doc.id });
             } else if (docType === "VISUAL_RECOGNITION") {
-              const recId = doc.id || data.recognitionId || data.id;
-              if (recId && !seenRecognitionIds.has(recId)) {
-                seenRecognitionIds.add(recId);
-                recognitionsList.push({ id: recId, firestoreId: doc.id, ...data });
-              }
+              upsertRecognition({ ...data, firestoreId: doc.id });
             }
           }
         } catch (fallbackErr) {
@@ -185,44 +194,49 @@ export async function GET(req: NextRequest) {
             .limit(20)
             .get();
           for (const doc of recentSnap.docs) {
-            const data = doc.data();
-            const outId = doc.id || data.id || data.engagementId;
-            if (outId && !seenOutcomeIds.has(outId)) {
-              seenOutcomeIds.add(outId);
-              outcomeRevealsList.push({ id: outId, firestoreId: doc.id, ...data });
-            }
+            upsertOutcomeReveal({ ...doc.data(), firestoreId: doc.id });
           }
         } catch {}
       }
 
       // Also check visible_recognitions collection in Firestore
       try {
-        let qRec: FirebaseFirestore.Query = db.collection(getFirestoreCollection("visible_recognitions"));
+        let qRec: any = db.collection(getFirestoreCollection("visible_recognitions"));
         if (cleanMatchId) {
           qRec = qRec.where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`]);
         }
         const snapRec = await qRec.limit(30).get();
         for (const doc of snapRec.docs) {
-          const data = doc.data();
-          const recId = data.recognitionId || doc.id;
-          if (recId && !seenRecognitionIds.has(recId)) {
-            seenRecognitionIds.add(recId);
-            recognitionsList.push({ id: recId, ...data });
-          }
+          upsertRecognition({ ...doc.data(), firestoreId: doc.id });
         }
       } catch {}
     }
 
+    // Filter recognitions by userId if targetType is 'user'
+    const cleanReqUserId = userId ? String(userId).trim().toLowerCase().replace(/^user#/, "") : "";
+    const filteredRecognitions = recognitionsList.filter((rec) => {
+      if (!rec.targetType || rec.targetType === "all") return true;
+      if (!cleanReqUserId) return false; // Anonymous users do not receive private VIP recognitions
+      const cleanTarget = String(rec.targetUserId || "").trim().toLowerCase().replace(/^user#/, "");
+      const cleanTargetName = String(rec.targetUserName || "").trim().toLowerCase();
+      return (
+        cleanTarget === cleanReqUserId ||
+        cleanTarget.includes(cleanReqUserId) ||
+        cleanReqUserId.includes(cleanTarget) ||
+        cleanTargetName === cleanReqUserId
+      );
+    });
+
     // Sort newest first
-    recognitionsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    outcomeRevealsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    filteredRecognitions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+    outcomeRevealsList.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 
     return NextResponse.json({
       success: true,
       matchId: cleanMatchId,
-      recognitionsCount: recognitionsList.length,
+      recognitionsCount: filteredRecognitions.length,
       outcomeRevealsCount: outcomeRevealsList.length,
-      recognitions: recognitionsList,
+      recognitions: filteredRecognitions,
       outcomeReveals: outcomeRevealsList,
     });
   } catch (error: any) {

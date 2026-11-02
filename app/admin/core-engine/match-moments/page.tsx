@@ -3028,6 +3028,7 @@ function CoreEngineMatchMomentsContent() {
           matchId: selectedMatchId || settleModalItem.matchId,
           roomId: settleModalItem.roomId || "NMryj1w7t8mJpGzEvF9q",
           engagement: settleModalItem,
+          isEdit: Boolean(settleModalItem.status === "settled" || settleModalItem.outcomeWinningChoiceId || settleModalItem.outcomeResolvedAt),
         }),
       });
       clearTimeout(timeoutId);
@@ -4513,7 +4514,7 @@ function CoreEngineMatchMomentsContent() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: "#f0f6fc", display: "flex", alignItems: "center", gap: 8 }}>
                 <Scale size={18} color="#f59e0b" />
-                Reveal Visible Outcome & Settle{" "}
+                {settleModalItem.status === "settled" || settleModalItem.outcomeWinningChoiceId ? "Update / Edit Outcome & Settlement" : "Reveal Visible Outcome & Settle"}{" "}
                 {settleModalItem.type.charAt(0).toUpperCase() + settleModalItem.type.slice(1)}
               </div>
               <button
@@ -4608,7 +4609,7 @@ function CoreEngineMatchMomentsContent() {
                 }}
               >
                 {isSettling ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
-                {isSettling ? "Publishing Outcome..." : "Publish Outcome"}
+                {isSettling ? "Saving Outcome..." : (settleModalItem.status === "settled" || settleModalItem.outcomeWinningChoiceId ? "Update Outcome" : "Publish Outcome")}
               </button>
             </div>
           </div>
