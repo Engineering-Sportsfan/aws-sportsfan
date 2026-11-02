@@ -35,14 +35,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     for (const uid of candidateIds) {
       if (voteItem) break;
       try {
-        // Query any vote starting with VOTE#{uid}
+        // Per-question votes (VOTE#{uid}#...); the "#" keeps uid "abc" from matching "abcd"
         const queryVote = await docClient.send(
           new QueryCommand({
             TableName: TABLES.SocialAndContent,
             KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
             ExpressionAttributeValues: {
               ":cid": `ENGAGEMENT#${id}`,
-              ":skpfx": `VOTE#${uid}`,
+              ":skpfx": `VOTE#${uid}#`,
             },
             Limit: 1,
           })
@@ -358,7 +358,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await req.json();
-    const { selectedOptionId, questionId, userId: inputUserId, userName, userAvatar } = body;
+    const { selectedOptionId, questionId, userId: inputUserId, userName, userAvatar, changeVote, previousOptionId } = body;
 
     if (!selectedOptionId) {
       return NextResponse.json({ error: "selectedOptionId is required" }, { status: 400 });
@@ -394,25 +394,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         } catch { }
         continue; // skip the begins_with check below
       }
-      // 1. Check standardized DynamoDB key shape with begins_with VOTE#
+      // 1. Exact key check, then this user's per-question votes (VOTE#{uid}#...).
+      // The "#" keeps uid "abc" from matching another user "abcd".
       try {
-        const queryVote = await docClient.send(
-          new QueryCommand({
-            TableName: TABLES.SocialAndContent,
-            KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
-            ExpressionAttributeValues: {
-              ":cid": `ENGAGEMENT#${id}`,
-              ":skpfx": `VOTE#${uid}`,
-            },
-            Limit: 1,
-          })
-        );
-        if (queryVote.Items && queryVote.Items.length > 0) {
-          existingVote = queryVote.Items[0];
-          break;
-        }
-
-        // Direct key check
         const voteRes = await docClient.send(
           new GetCommand({
             TableName: TABLES.SocialAndContent,
@@ -421,6 +405,22 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         );
         if (voteRes.Item) {
           existingVote = voteRes.Item;
+          break;
+        }
+
+        const queryVote = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.SocialAndContent,
+            KeyConditionExpression: "contentId = :cid AND begins_with(sk, :skpfx)",
+            ExpressionAttributeValues: {
+              ":cid": `ENGAGEMENT#${id}`,
+              ":skpfx": `VOTE#${uid}#`,
+            },
+            Limit: 1,
+          })
+        );
+        if (queryVote.Items && queryVote.Items.length > 0) {
+          existingVote = queryVote.Items[0];
           break;
         }
       } catch (dynCheckErr) {
@@ -623,6 +623,138 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           newlyAwarded,
           selectedOptionId: existingVote.selectedOptionId,
         });
+      }
+
+      // ─── Change an existing vote (edit, not a second vote) ───────────────────
+      if (changeVote === true) {
+        // Exact key match on the user's own VOTE# record, never begins_with
+        let ownVoteSk: string | null = null;
+        for (const uid of candidateIds) {
+          const sk = questionId ? `VOTE#${uid}#${questionId}` : `VOTE#${uid}`;
+          try {
+            const r = await docClient.send(new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk },
+            }));
+            if (r.Item) { ownVoteSk = sk; break; }
+          } catch { }
+        }
+
+        if (ownVoteSk) {
+          const changeCleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+          const changeFound = await findEngagementById(changeCleanId, body.matchId || req.nextUrl.searchParams.get("matchId") || undefined);
+          const changeItem: any = changeFound?.item;
+          if (!changeItem) {
+            return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
+          }
+
+          if (!["poll", "debate", "express", "question", "prediction"].includes(String(changeItem.type))) {
+            return NextResponse.json({ error: "Votes cannot be changed on this engagement type" }, { status: 400 });
+          }
+
+          const changeNow = Date.now();
+          const changeExpiresAt = Number(
+            changeItem.expiresAt ||
+            changeItem.pollData?.expiresAt ||
+            changeItem.predictionData?.expiresAt ||
+            changeItem.debateData?.expiresAt ||
+            changeItem.expressData?.expiresAt ||
+            changeItem.questionData?.expiresAt ||
+            0
+          );
+          if (changeExpiresAt && changeNow > changeExpiresAt) {
+            return NextResponse.json(
+              { success: false, error: "Voting is closed. The timer has expired.", isExpired: true },
+              { status: 400 }
+            );
+          }
+          const changeStatus = String(changeItem.status || "").toLowerCase();
+          if (
+            changeStatus === "settled" ||
+            changeStatus === "resolved" ||
+            changeItem.winningChoiceId ||
+            changeItem.predictionData?.winningChoiceId
+          ) {
+            return NextResponse.json(
+              { success: false, error: "This engagement is already settled. Votes can no longer be changed." },
+              { status: 400 }
+            );
+          }
+
+          // The new choice must be one of this engagement's options
+          const changePd = changeItem.predictionData;
+          const optList: any[] =
+            primaryOptions(changeItem) ||
+            (changePd ? [changePd.leftChoice, changePd.rightChoice].filter(Boolean) : []);
+          const wanted = String(selectedOptionId).trim().toLowerCase();
+          const optionExists = optList.some((o: any, i: number) =>
+            [o?.id, o?.text, o?.label, o?.code, i === 0 ? "left" : i === 1 ? "right" : null]
+              .filter((v) => v != null && v !== "")
+              .map((v) => String(v).trim().toLowerCase())
+              .includes(wanted)
+          );
+          if (optList.length && !optionExists) {
+            return NextResponse.json({ error: "Invalid option" }, { status: 400 });
+          }
+
+          // UPDATE the existing record in place (no second record, no second vote)
+          let updated = false;
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk: ownVoteSk },
+              UpdateExpression: "SET selectedOptionId = :opt, previousOptionId = :prev, voteChangedAt = :now, updatedAt = :now",
+              ConditionExpression: "attribute_exists(contentId)",
+              ExpressionAttributeValues: {
+                ":opt": selectedOptionId,
+                ":prev": previousOptionId ?? existingVote.selectedOptionId ?? null,
+                ":now": changeNow,
+              },
+            }));
+            updated = true;
+          } catch (updErr) {
+            console.warn("DynamoDB vote change update notice:", updErr);
+          }
+
+          if (updated) {
+            // Keep the mirrored copies of the vote record in step (best effort)
+            const ownUid = ownVoteSk.slice("VOTE#".length).split("#")[0];
+            await docClient.send(new UpdateCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: {
+                contentId: `USER_VOTE#${ownUid}`,
+                sk: questionId ? `ENGAGEMENT#${id}#${questionId}` : `ENGAGEMENT#${id}`,
+              },
+              UpdateExpression: "SET selectedOptionId = :opt, voteChangedAt = :now, updatedAt = :now",
+              ConditionExpression: "attribute_exists(contentId)",
+              ExpressionAttributeValues: { ":opt": selectedOptionId, ":now": changeNow },
+            })).catch(() => { });
+            if (db) {
+              await db.collection("user_engagements")
+                .doc(questionId ? `${ownUid}_${id}_${questionId}` : `${ownUid}_${id}`)
+                .set({ selectedOptionId, voteChangedAt: changeNow, updatedAt: changeNow }, { merge: true })
+                .catch(() => { });
+            }
+
+            // SET the counts from the VOTE# records (one per user); never increment/decrement
+            applyEngagementStats(changeItem, await getEngagementStats(changeCleanId, { consistent: true }), { exactVotes: true });
+            await persistEngagementUpdate(changeCleanId, changeItem, changeFound?.matchMomentsRecord);
+
+            return NextResponse.json({
+              success: true,
+              type: changeItem.type,
+              changedVote: true,
+              selectedOptionId,
+              options: primaryOptions(changeItem),
+              totalVotes: Number(changeItem.totalVotes) || 0,
+              totalEngaged: Number(changeItem.totalEngaged) || 0,
+              isFirstEngagement: false,
+              participationPointsAwarded: 0,
+              pointsAwarded: 0,
+              ...(changeItem.type === "prediction" ? { coinsLocked: changePd?.coinStake || 10 } : {}),
+            });
+          }
+        }
       }
 
       return NextResponse.json(
