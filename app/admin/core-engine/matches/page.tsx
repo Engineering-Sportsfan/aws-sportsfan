@@ -18,6 +18,7 @@ import {
   Layers,
   Edit3,
   Trash2,
+  Copy,
   X,
 } from "lucide-react";
 
@@ -28,16 +29,16 @@ interface MatchFormState {
   team2: string;
   team2_short: string;
   tournament: string;
-  format: "T20" | "T20I" | "ODI" | "Test";
-  gender: "male" | "female";
+  format: "" | "T20" | "T20I" | "ODI" | "Test";
+  gender: "" | "male" | "female";
   venue: string;
   city: string;
   date: string;
   time: string;
   season: string;
   stage: string;
-  total_overs: number;
-  status: "upcoming" | "live" | "completed";
+  total_overs: number | "";
+  status: "" | "upcoming" | "live" | "completed";
   target: string;
 }
 
@@ -58,16 +59,16 @@ const createEmptyForm = (): MatchFormState => ({
   team2: "",
   team2_short: "",
   tournament: "",
-  format: "T20",
-  gender: "male",
+  format: "",
+  gender: "",
   venue: "",
   city: "",
   date: new Date().toISOString().split("T")[0],
   time: "",
   season: String(new Date().getFullYear()),
   stage: "",
-  total_overs: 20,
-  status: "live",
+  total_overs: "",
+  status: "",
   target: "",
 });
 
@@ -92,6 +93,16 @@ const PRESET_FORM: MatchFormState = {
   total_overs: 20,
   status: "live",
   target: "",
+};
+
+// Created-at in ms from a Firestore-serialized timestamp, ISO string or number
+const getCreatedMs = (m: any): number => {
+  const v = m.created_at ?? m.createdAt;
+  if (v == null) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v === "string") return Date.parse(v) || 0;
+  const secs = v._seconds ?? v.seconds;
+  return typeof secs === "number" ? secs * 1000 + Math.floor((v._nanoseconds ?? v.nanoseconds ?? 0) / 1e6) : 0;
 };
 
 export default function CoreEngineMatchesPage() {
@@ -133,6 +144,22 @@ export default function CoreEngineMatchesPage() {
     });
     setActiveTab("create");
     setSubmitResult(null);
+  };
+
+  // Copy an existing match into a fresh create form (new match ID, nothing is saved yet)
+  const handleCopyMatch = (m: any) => {
+    handleEditMatch(m);
+    setEditingMatchId(null);
+    setForm((prev) => ({ ...prev, match_id: generateRandomMatchId() }));
+  };
+
+  // Leaving the create tab discards anything typed in the form
+  const handleOpenDirectory = () => {
+    setEditingMatchId(null);
+    setForm(createEmptyForm());
+    setSubmitResult(null);
+    setActiveTab("directory");
+    fetchMatches();
   };
 
   const handleCancelEdit = () => {
@@ -195,13 +222,6 @@ export default function CoreEngineMatchesPage() {
   const handleFieldChange = (field: keyof MatchFormState, value: any) => {
     setForm((prev) => {
       const updated = { ...prev, [field]: value };
-
-      // Auto update total_overs based on format
-      if (field === "format") {
-        if (value === "T20" || value === "T20I") updated.total_overs = 20;
-        else if (value === "ODI") updated.total_overs = 50;
-        else if (value === "Test") updated.total_overs = 90;
-      }
 
       // Keep purely random auto-generated match_id intact (no team name dependency)
 
@@ -393,10 +413,7 @@ export default function CoreEngineMatchesPage() {
           Create Match Form
         </button>
         <button
-          onClick={() => {
-            setActiveTab("directory");
-            fetchMatches();
-          }}
+          onClick={handleOpenDirectory}
           style={{
             display: "flex",
             alignItems: "center",
@@ -466,7 +483,7 @@ export default function CoreEngineMatchesPage() {
               </div>
             )}
             {/* Quick preset banner */}
-            <div
+            {/* <div
               style={{
                 background: "rgba(56,139,253,0.1)",
                 border: "1px solid rgba(56,139,253,0.3)",
@@ -478,7 +495,7 @@ export default function CoreEngineMatchesPage() {
                 justifyContent: "space-between",
                 gap: 12,
               }}
-            >
+             >
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <Sparkles size={18} color="#58a6ff" />
                 <div>
@@ -503,7 +520,7 @@ export default function CoreEngineMatchesPage() {
               >
                 ⚡ 1-Click Load Preset
               </button>
-            </div>
+            </div> */}
 
             <form onSubmit={handleSubmit}>
               {/* SECTION 1: Classification */}
@@ -528,8 +545,10 @@ export default function CoreEngineMatchesPage() {
                     <select
                       value={form.format}
                       onChange={(e) => handleFieldChange("format", e.target.value as any)}
+                      required
                       style={inputStyle}
                     >
+                      <option value="" disabled>Select format</option>
                       <option value="T20">T20 </option>
                       <option value="T20I">T20I</option>  
                       <option value="ODI">ODI (50 Overs)</option>
@@ -541,8 +560,10 @@ export default function CoreEngineMatchesPage() {
                     <select
                       value={form.gender}
                       onChange={(e) => handleFieldChange("gender", e.target.value as any)}
+                      required
                       style={inputStyle}
                     >
+                      <option value="" disabled>Select gender</option>
                       <option value="male">Men's</option>
                       <option value="female">Women's</option>
                     </select>
@@ -555,49 +576,7 @@ export default function CoreEngineMatchesPage() {
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#58a6ff", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>
                   2. Match Identity & Status
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
-                  <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <label style={{ fontSize: 12, color: "#8b949e" }}>
-                        Match ID <span style={{ fontSize: 10, color: "#7ee787" }}>🔒 (Random Auto-generated)</span> *
-                      </label>
-                      {/* {!editingMatchId && (
-                        <button
-                          type="button"
-                          onClick={() => setForm((prev) => ({ ...prev, match_id: generateRandomMatchId() }))}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: "#58a6ff",
-                            fontSize: 11,
-                            cursor: "pointer",
-                            padding: 0,
-                            textDecoration: "underline",
-                            fontWeight: 600,
-                          }}
-                          title="Generate a different random match ID"
-                        >
-                          🎲 Regenerate ID
-                        </button>
-                      )} */}
-                    </div>
-                    <input
-                      type="text"
-                      readOnly
-                      required
-                      value={form.match_id}
-                      style={{
-                        ...inputStyle,
-                        fontFamily: "monospace",
-                        fontWeight: 700,
-                        color: "#58a6ff",
-                        background: "#161b22",
-                        cursor: "not-allowed",
-                        borderColor: "#30363d",
-                      }}
-                      placeholder="Auto-generated random Match ID"
-                    />
-                  </div>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginBottom: 14 }}>
                   <div>
                     <label style={{ display: "block", fontSize: 12, color: "#8b949e", marginBottom: 4 }}>Match Stage / Subtitle</label>
                     <input
@@ -613,12 +592,14 @@ export default function CoreEngineMatchesPage() {
                     <select
                       value={form.status}
                       onChange={(e) => handleFieldChange("status", e.target.value as any)}
+                      required
                       style={{
                         ...inputStyle,
                         color: form.status === "live" ? "#3fb950" : form.status === "upcoming" ? "#58a6ff" : "#8b949e",
                         fontWeight: 600,
                       }}
                     >
+                      <option value="" disabled>Select status</option>
                       <option value="live">🟢 Live Now</option>
                       <option value="upcoming">🔵 Upcoming</option>
                       <option value="completed">⚪ Completed</option>
@@ -663,7 +644,7 @@ export default function CoreEngineMatchesPage() {
                     <input
                       type="number"
                       value={form.total_overs}
-                      onChange={(e) => handleFieldChange("total_overs", parseInt(e.target.value, 10))}
+                      onChange={(e) => handleFieldChange("total_overs", e.target.value === "" ? "" : parseInt(e.target.value, 10))}
                       style={inputStyle}
                       placeholder="20"
                     />
@@ -679,7 +660,7 @@ export default function CoreEngineMatchesPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 14 }}>
                   {/* Team 1 */}
                   <div style={{ background: "#0d1117", border: "1px solid #30363d", borderRadius: 8, padding: 14 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#3fb950", marginBottom: 8 }}>TEAM 1 (HOME / BATTING 1ST)</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#3fb950", marginBottom: 8 }}>TEAM 1</div>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
                       <div>
                         <label style={{ display: "block", fontSize: 11, color: "#8b949e", marginBottom: 4 }}>Team Name *</label>
@@ -707,7 +688,7 @@ export default function CoreEngineMatchesPage() {
 
                   {/* Team 2 */}
                   <div style={{ background: "#0d1117", border: "1px solid #30363d", borderRadius: 8, padding: 14 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#58a6ff", marginBottom: 8 }}>TEAM 2 (AWAY / BOWLING 1ST)</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#58a6ff", marginBottom: 8 }}>TEAM 2</div>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
                       <div>
                         <label style={{ display: "block", fontSize: 11, color: "#8b949e", marginBottom: 4 }}>Team Name *</label>
@@ -852,7 +833,7 @@ export default function CoreEngineMatchesPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setActiveTab("directory")}
+                          onClick={handleOpenDirectory}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
@@ -910,6 +891,27 @@ export default function CoreEngineMatchesPage() {
                       <PlusCircle size={16} /> Save & Register Match in Core Engine
                     </>
                   )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  disabled={isSubmitting}
+                  style={{
+                    background: "#21262d",
+                    color: "#c9d1d9",
+                    border: "1px solid #30363d",
+                    borderRadius: 6,
+                    padding: "12px 20px",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    cursor: isSubmitting ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                >
+                  <X size={16} /> Cancel
                 </button>
               </div>
             </form>
@@ -1081,125 +1083,139 @@ export default function CoreEngineMatchesPage() {
               </button>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 16 }}>
-              {matches.map((m) => (
-                <div
-                  key={m.id || m.match_id}
-                  style={{
-                    background: "#161b22",
-                    border: "1px solid #30363d",
-                    borderRadius: 10,
-                    padding: 16,
-                    display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "space-between",
-                    gap: 12,
-                  }}
-                >
-                  <div>
-                    {/* Top bar */}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: "#58a6ff", fontFamily: "monospace" }}>
-                        {m.match_id || m.id}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          padding: "2px 8px",
-                          borderRadius: 10,
-                          background: m.status === "live" ? "rgba(46,160,67,0.2)" : "rgba(56,139,253,0.15)",
-                          color: m.status === "live" ? "#3fb950" : "#58a6ff",
-                          border: `1px solid ${m.status === "live" ? "#2ea043" : "#388bfd"}`,
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {m.status || "upcoming"}
-                      </span>
-                    </div>
-
-                    {/* Teams */}
-                    <div style={{ fontSize: 16, fontWeight: 700, color: "#f0f6fc", marginBottom: 4 }}>
-                      {m.team1 || m.home_team || "Team A"} vs {m.team2 || m.away_team || "Team B"}
-                    </div>
-
-                    <div style={{ fontSize: 12, color: "#8b949e", marginBottom: 8 }}>
-                      {m.tournament || "Cricket Series"} • {m.format || "T20"} {m.stage ? `• ${m.stage}` : ""}
-                    </div>
-
-                    <div style={{ fontSize: 11, color: "#6e7681", display: "flex", flexDirection: "column", gap: 3 }}>
-                      <div>📍 {m.venue || "Venue TBD"}{m.city ? `, ${m.city}` : ""}</div>
-                      <div>📅 {m.date || m.start_date || "Date TBD"} {m.time ? `• ${m.time}` : ""}</div>
-                    </div>
-                  </div>
-
-                  {/* Action Link to Live Moments, Edit, Delete */}
-                  <div style={{ borderTop: "1px solid #21262d", paddingTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <Link
-                        href={`/admin/core-engine/match-moments?matchId=${m.match_id || m.id}`}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                          background: "#238636",
-                          color: "#fff",
-                          padding: "6px 12px",
-                          borderRadius: 6,
-                          fontSize: 12,
-                          fontWeight: 600,
-                          textDecoration: "none",
-                          boxShadow: "0 2px 6px rgba(35,134,54,0.3)",
-                        }}
-                      >
-                        <PlayCircle size={14} /> Launch Moments
-                      </Link>
-
-                      <button
-                        onClick={() => handleEditMatch(m)}
-                        title="Edit Match"
-                        style={{
-                          background: "#21262d",
-                          color: "#58a6ff",
-                          border: "1px solid #30363d",
-                          borderRadius: 6,
-                          padding: "6px 10px",
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                        }}
-                      >
-                        <Edit3 size={13} /> Edit
-                      </button>
-
-                      <button
-                        onClick={() => handleDeleteMatch(m.match_id || m.id)}
-                        title="Delete Match"
-                        style={{
-                          background: "rgba(248,81,73,0.15)",
-                          color: "#f85149",
-                          border: "1px solid rgba(248,81,73,0.3)",
-                          borderRadius: 6,
-                          padding: "6px 10px",
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                        }}
-                      >
-                        <Trash2 size={13} /> Delete
-                      </button>
-                    </div>
-
-                    <span style={{ fontSize: 11, color: "#6e7681" }}>Season {m.season || "2026"}</span>
-                  </div>
-                </div>
-              ))}
+            <div style={{ overflowX: "auto", background: "#161b22", border: "1px solid #30363d", borderRadius: 10 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid #30363d", color: "#8b949e", textAlign: "left" }}>
+                    <th style={{ padding: "10px 12px" }}>Match ID</th>
+                    <th style={{ padding: "10px 12px" }}>Match</th>
+                    <th style={{ padding: "10px 12px" }}>Tournament</th>
+                    <th style={{ padding: "10px 12px" }}>Venue</th>
+                    <th style={{ padding: "10px 12px" }}>Date & Time</th>
+                    <th style={{ padding: "10px 12px" }}>Status</th>
+                    <th style={{ padding: "10px 12px", textAlign: "right" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...matches]
+                    .sort((a, b) => getCreatedMs(b) - getCreatedMs(a))
+                    .map((m) => {
+                      const id = m.match_id || m.id;
+                      return (
+                        <tr key={m.id || m.match_id} style={{ borderBottom: "1px solid #21262d" }}>
+                          <td style={{ padding: "10px 12px", fontFamily: "monospace", fontWeight: 700, color: "#58a6ff", fontSize: 11 }}>{id}</td>
+                          <td style={{ padding: "10px 12px", color: "#f0f6fc", fontWeight: 600 }}>
+                            {m.team1 || m.home_team || "Team A"} vs {m.team2 || m.away_team || "Team B"}
+                            {m.stage ? <div style={{ fontSize: 11, color: "#8b949e", fontWeight: 400 }}>{m.stage}</div> : null}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#8b949e" }}>
+                            {m.tournament || "—"} {m.format ? `• ${m.format}` : ""}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#8b949e" }}>
+                            {m.venue || "Venue TBD"}{m.city ? `, ${m.city}` : ""}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#8b949e", whiteSpace: "nowrap" }}>
+                            {m.date || m.start_date || "Date TBD"} {m.time ? `• ${m.time}` : ""}
+                          </td>
+                          <td style={{ padding: "10px 12px" }}>
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                padding: "2px 8px",
+                                borderRadius: 10,
+                                background: m.status === "live" ? "rgba(46,160,67,0.2)" : "rgba(56,139,253,0.15)",
+                                color: m.status === "live" ? "#3fb950" : "#58a6ff",
+                                border: `1px solid ${m.status === "live" ? "#2ea043" : "#388bfd"}`,
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              {m.status || "upcoming"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
+                            <div style={{ display: "inline-flex", gap: 8 }}>
+                              <Link
+                                href={`/admin/core-engine/match-moments?matchId=${id}`}
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  background: "#238636",
+                                  color: "#fff",
+                                  padding: "6px 12px",
+                                  borderRadius: 6,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  textDecoration: "none",
+                                }}
+                              >
+                                <PlayCircle size={14} /> Launch Moments
+                              </Link>
+                              <button
+                                onClick={() => handleCopyMatch(m)}
+                                title="Copy into a new match form"
+                                style={{
+                                  background: "#21262d",
+                                  color: "#c9d1d9",
+                                  border: "1px solid #30363d",
+                                  borderRadius: 6,
+                                  padding: "6px 10px",
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                }}
+                              >
+                                <Copy size={13} /> Copy
+                              </button>
+                              <button
+                                onClick={() => handleEditMatch(m)}
+                                title="Edit Match"
+                                style={{
+                                  background: "#21262d",
+                                  color: "#58a6ff",
+                                  border: "1px solid #30363d",
+                                  borderRadius: 6,
+                                  padding: "6px 10px",
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                }}
+                              >
+                                <Edit3 size={13} /> Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteMatch(id)}
+                                title="Delete Match"
+                                style={{
+                                  background: "rgba(248,81,73,0.15)",
+                                  color: "#f85149",
+                                  border: "1px solid rgba(248,81,73,0.3)",
+                                  borderRadius: 6,
+                                  padding: "6px 10px",
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                }}
+                              >
+                                <Trash2 size={13} /> Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

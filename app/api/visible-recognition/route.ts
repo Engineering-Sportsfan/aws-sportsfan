@@ -191,7 +191,7 @@ export async function GET(req: NextRequest) {
     // 3. Fallback to Firestore if empty
     if (recognitions.length === 0 && db) {
       try {
-        let q: FirebaseFirestore.Query = db.collection(getFirestoreCollection("visible_recognitions"));
+        let q: any = db.collection(getFirestoreCollection("visible_recognitions"));
         if (cleanMatchId) {
           q = q.where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`]);
         }
@@ -231,8 +231,19 @@ export async function GET(req: NextRequest) {
 
 // ─── POST /api/visible-recognition ──────────────────────────────────────────
 export async function POST(req: NextRequest) {
+  return handleSaveRecognition(req, false);
+}
+
+// ─── PUT /api/visible-recognition ───────────────────────────────────────────
+export async function PUT(req: NextRequest) {
+  return handleSaveRecognition(req, true);
+}
+
+async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) {
   try {
-    const body: VisualRecognitionPayload = await req.json();
+    const body: VisualRecognitionPayload & { originalSk?: string; isEdit?: boolean } = await req.json();
+
+    const isEdit = isExplicitEdit || Boolean(body.isEdit) || Boolean(body.recognitionId);
 
     const {
       matchId,
@@ -243,7 +254,7 @@ export async function POST(req: NextRequest) {
       targetUserAvatar = null,
       archetype = "SHARP_ORACLE",
       badgeIcon = "🔮",
-      headline = "Tactical Visionary!",
+      headline = "",
       message = "",
       themeColor = "#f59e0b",
       mediaUrl = null,
@@ -270,15 +281,16 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
     const cleanMatchId = String(matchId).trim().replace(/^MATCH[#-]/i, "");
     const cleanMomentId = String(momentId).trim().replace(/^MOMENT#/, "");
-    const targetKey = targetType === "user" ? `USER#${String(targetUserId).trim()}` : "GLOBAL";
-    const recognitionId = body.recognitionId || `VR_${cleanMomentId}_${Date.now()}_${targetType === "user" ? String(targetUserId).trim() : "ALL"}`;
+    const cleanTargetUserId = targetUserId ? String(targetUserId).trim().replace(/^USER#/, "") : null;
+    const targetKey = targetType === "user" && cleanTargetUserId ? `USER#${cleanTargetUserId}` : "GLOBAL";
+    const recognitionId = body.recognitionId || `VR_${cleanMomentId}_${Date.now()}_${targetType === "user" ? cleanTargetUserId : "ALL"}`;
 
     const payload = {
       recognitionId,
       matchId: cleanMatchId,
       momentId: cleanMomentId,
       targetType,
-      targetUserId: targetUserId ? String(targetUserId).trim() : null,
+      targetUserId: cleanTargetUserId,
       targetUserName: targetUserName ? String(targetUserName).trim() : (targetType === "all" ? "All Participants" : "Valued Fan"),
       targetUserAvatar: targetUserAvatar || null,
       archetype,
@@ -308,13 +320,130 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     };
 
+    const newSk = `RECOGNITION#${cleanMomentId}#${targetKey}`;
+
+    // Enforce "one recognition per moment" rule:
+    // If a different recognition already exists for this moment, delete it so the new one replaces it.
+    const candidateTables = getCandidateTableNames("MatchMoments");
+    const momentSkPrefix = `RECOGNITION#${cleanMomentId}#`;
+    for (const tbl of candidateTables) {
+      try {
+        const existingQuery = await docClient.send(
+          new QueryCommand({
+            TableName: tbl,
+            KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPfx)",
+            ExpressionAttributeValues: {
+              ":eId": `MATCH#${cleanMatchId}`,
+              ":skPfx": momentSkPrefix,
+            },
+          })
+        );
+        if (existingQuery.Items) {
+          for (const item of existingQuery.Items) {
+            const itemSk = item.sk;
+            const itemRecId = item.recognitionId || item.id;
+            if (itemSk && itemSk !== newSk) {
+              await docClient.send(
+                new DeleteCommand({
+                  TableName: tbl,
+                  Key: {
+                    entityId: `MATCH#${cleanMatchId}`,
+                    sk: itemSk,
+                  },
+                })
+              ).catch(() => {});
+            }
+            if (itemRecId && itemRecId !== recognitionId) {
+              if (db) {
+                db.collection(getFirestoreCollection("visible_recognitions")).doc(itemRecId).delete().catch(() => {});
+                db.collection(getFirestoreCollection("match_room_notifications")).doc(`rec_inline_${itemRecId}`).delete().catch(() => {});
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Also check and clean from SportsData
+    try {
+      const spExistingQuery = await docClient.send(
+        new QueryCommand({
+          TableName: "SportsData",
+          KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPfx)",
+          ExpressionAttributeValues: {
+            ":eId": `MATCH#${cleanMatchId}`,
+            ":skPfx": momentSkPrefix,
+          },
+        })
+      );
+      if (spExistingQuery.Items) {
+        for (const item of spExistingQuery.Items) {
+          if (item.sk && item.sk !== newSk) {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: "SportsData",
+                Key: {
+                  entityId: `MATCH#${cleanMatchId}`,
+                  sk: item.sk,
+                },
+              })
+            ).catch(() => {});
+          }
+        }
+      }
+    } catch {}
+
+    // Also check Firestore visible_recognitions for any other recognition for this moment
+    if (db) {
+      try {
+        const snap = await db.collection(getFirestoreCollection("visible_recognitions"))
+          .where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`])
+          .where("momentId", "in", [cleanMomentId, `MOMENT#${cleanMomentId}`, `MM-${cleanMomentId}`])
+          .get();
+        for (const doc of snap.docs) {
+          if (doc.id !== recognitionId) {
+            doc.ref.delete().catch(() => {});
+            db.collection(getFirestoreCollection("match_room_notifications")).doc(`rec_inline_${doc.id}`).delete().catch(() => {});
+          }
+        }
+      } catch {}
+    }
+
+    // Clean up old sk if changing key during an edit
+    if (isEdit && body.originalSk && body.originalSk !== newSk) {
+      for (const tbl of candidateTables) {
+        try {
+          await docClient.send(
+            new DeleteCommand({
+              TableName: tbl,
+              Key: {
+                entityId: `MATCH#${cleanMatchId}`,
+                sk: body.originalSk,
+              },
+            })
+          );
+        } catch {}
+      }
+      try {
+        await docClient.send(
+          new DeleteCommand({
+            TableName: "SportsData",
+            Key: {
+              entityId: `MATCH#${cleanMatchId}`,
+              sk: body.originalSk,
+            },
+          })
+        );
+      } catch {}
+    }
+
     // 1. Dual-Write to DynamoDB MatchMoments table (Dual keys: entityId + pk for 100% schema resilience)
     await dualWrite({
       tableName: "MatchMoments",
       dynamoItem: {
         entityId: `MATCH#${cleanMatchId}`,
         pk: `MATCH#${cleanMatchId}`,
-        sk: `RECOGNITION#${cleanMomentId}#${targetKey}`,
+        sk: newSk,
         ...payload,
       },
       collectionName: getFirestoreCollection("visible_recognitions"),
@@ -329,7 +458,7 @@ export async function POST(req: NextRequest) {
         dynamoItem: {
           entityId: `MATCH#${cleanMatchId}`,
           pk: `MATCH#${cleanMatchId}`,
-          sk: `RECOGNITION#${cleanMomentId}#${targetKey}`,
+          sk: newSk,
           ...payload,
         },
         collectionName: getFirestoreCollection("visible_recognitions"),
@@ -341,7 +470,7 @@ export async function POST(req: NextRequest) {
     // 2. Real-time Cache in Redis for instant WebSocket / In-App Retrieval
     try {
       const cacheKey = targetType === "user"
-        ? `recognition:${targetUserId}:latest`
+        ? `recognition:${cleanTargetUserId}:latest`
         : `match:${cleanMatchId}:moment:${cleanMomentId}:recognition:latest`;
       
       await cacheService.set(cacheKey, payload, 300); // 5-minute cache
@@ -349,136 +478,138 @@ export async function POST(req: NextRequest) {
       console.warn("[visible-recognition] Cache notice:", cacheErr);
     }
 
-    // 3. Dispatch In-App Notifications via central notifications engine
+    // 3. Dispatch In-App Notifications via central notifications engine (only for new dispatch, or if target changed)
     const targetRoomId = String((body as any).roomId || "NMryj1w7t8mJpGzEvF9q").replace(/^ROOM#/, "").trim();
     const targetUserEmail = (body as any).targetUserEmail || null;
 
-    if (targetType === "user" && targetUserId) {
-      try {
-        const cleanUid = String(targetUserId).trim().replace(/^USER#/, "");
-        await createNotification({
-          userId: cleanUid,
-          recipientEmail: targetUserEmail || (cleanUid.includes("@") ? cleanUid : null),
-          category: "roar",
-          notification_type: "roar.visual_recognition",
-          title: `🏆 Visual Recognition: ${headline}`,
-          body: message,
-          subtitle: `+${payload.rewards.totalSxp} SXPs bonus awarded!`,
-          cta_label: "Open ROAR Pulse",
-          cta_target: "/MainModules/ROAR",
-          priority: "HIGH",
-          roomId: targetRoomId,
-          metadata: {
-            recognitionId,
-            matchId: cleanMatchId,
-            momentId: cleanMomentId,
-            archetype,
-            rewards: payload.rewards,
-          },
-        });
-      } catch (notifErr) {
-        console.warn("[visible-recognition] User notification notice:", notifErr);
-      }
-    } else if (targetType === "all") {
-      // Broadcast to participants of this moment / match
-      try {
-        const participantSet = new Set<string>();
-        // Query recent voters for this moment from SocialAndContent
+    if (!isEdit) {
+      if (targetType === "user" && cleanTargetUserId) {
         try {
-          const voteRes = await docClient.send(
-            new ScanCommand({
-              TableName: TABLES.SocialAndContent,
-              FilterExpression: "begins_with(contentId, :eng) AND begins_with(sk, :vsk)",
-              ExpressionAttributeValues: {
-                ":eng": "ENGAGEMENT#",
-                ":vsk": "VOTE#",
-              },
-              Limit: 50,
-            })
-          );
-          if (voteRes.Items) {
-            for (const v of voteRes.Items) {
-              const uid = v.userId || String(v.sk || "").replace(/^VOTE#/, "");
-              if (uid && !uid.toLowerCase().startsWith("anon")) participantSet.add(uid);
-            }
-          }
-        } catch {}
-
-        for (const pUid of participantSet) {
           await createNotification({
-            userId: pUid,
-            recipientEmail: pUid.includes("@") ? pUid : null,
+            userId: cleanTargetUserId,
+            recipientEmail: targetUserEmail || (cleanTargetUserId.includes("@") ? cleanTargetUserId : null),
             category: "roar",
             notification_type: "roar.visual_recognition",
-            title: `📢 Stadium Recognition: ${headline}`,
+            title: `🏆 Visual Recognition: ${headline}`,
             body: message,
-            subtitle: payload.communityImpact?.stadiumRoars || "+120 Roars",
+            subtitle: `+${payload.rewards.totalSxp} SXPs bonus awarded!`,
             cta_label: "Open ROAR Pulse",
             cta_target: "/MainModules/ROAR",
-            priority: "NORMAL",
+            priority: "HIGH",
             roomId: targetRoomId,
             metadata: {
               recognitionId,
               matchId: cleanMatchId,
               momentId: cleanMomentId,
               archetype,
+              rewards: payload.rewards,
             },
-          }).catch(() => {});
+          });
+        } catch (notifErr) {
+          console.warn("[visible-recognition] User notification notice:", notifErr);
         }
-      } catch (allNotifErr) {
-        console.warn("[visible-recognition] Broadcast notification notice:", allNotifErr);
+      } else if (targetType === "all") {
+        // Broadcast to participants of this moment / match
+        try {
+          const participantSet = new Set<string>();
+          // Query recent voters for this moment from SocialAndContent
+          try {
+            const voteRes = await docClient.send(
+              new ScanCommand({
+                TableName: TABLES.SocialAndContent,
+                FilterExpression: "begins_with(contentId, :eng) AND begins_with(sk, :vsk)",
+                ExpressionAttributeValues: {
+                  ":eng": "ENGAGEMENT#",
+                  ":vsk": "VOTE#",
+                },
+                Limit: 50,
+              })
+            );
+            if (voteRes.Items) {
+              for (const v of voteRes.Items) {
+                const uid = v.userId || String(v.sk || "").replace(/^VOTE#/, "");
+                if (uid && !uid.toLowerCase().startsWith("anon")) participantSet.add(uid);
+              }
+            }
+          } catch {}
+
+          for (const pUid of participantSet) {
+            await createNotification({
+              userId: pUid,
+              recipientEmail: pUid.includes("@") ? pUid : null,
+              category: "roar",
+              notification_type: "roar.visual_recognition",
+              title: `📢 Stadium Recognition: ${headline}`,
+              body: message,
+              subtitle: payload.communityImpact?.stadiumRoars || "+120 Roars",
+              cta_label: "Open ROAR Pulse",
+              cta_target: "/MainModules/ROAR",
+              priority: "NORMAL",
+              roomId: targetRoomId,
+              metadata: {
+                recognitionId,
+                matchId: cleanMatchId,
+                momentId: cleanMomentId,
+                archetype,
+              },
+            }).catch(() => {});
+          }
+        } catch (allNotifErr) {
+          console.warn("[visible-recognition] Broadcast notification notice:", allNotifErr);
+        }
       }
     }
 
-    // 4. Post announcement message directly into ROAR Chat (RealTimeChat Table)
-    try {
-      const chatMsgId = `msg_rec_${now}_${Math.random().toString(36).substring(2, 7)}`;
-      const chatMsgText =
-        targetType === "user"
-          ? `🏆 [VIP SPOTLIGHT] @${payload.targetUserName} earned "${headline}"! ${message} (+ ${payload.rewards.totalSxp} SXPs)`
-          : `📢 [STADIUM RECOGNITION] "${headline}" — ${message} | ${payload.communityImpact?.stadiumRoars || "+120 Roars"}`;
+    // 4. ROAR Chat: ONLY post to the public chatroom when targetType === 'all'!
+    // DO NOT post to the public chatroom when targeted to a particular user,
+    // so other users do NOT receive this recognition!
+    if (targetType === "all") {
+      try {
+        const chatMsgId = `msg_rec_${recognitionId}`;
+        const chatMsgText = `📢 [STADIUM RECOGNITION] "${headline}" — ${message} | ${payload.communityImpact?.stadiumRoars || "+120 Roars"}`;
 
-      const chatMsgItem: Record<string, any> = {
-        roomId: `ROOM#${targetRoomId}`,
-        sk: `MSG#${targetRoomId}#${now}#${chatMsgId}`,
-        msgId: chatMsgId,
-        chatId: chatMsgId,
-        authorUid: "sportsfan360_system",
-        authorUsername: "SportsFan360 Core Engine",
-        authorBadge: "Stadium Engine",
-        authorAvatarUrl: "/images/sportsfan360logo.png",
-        authorEmail: "admin@sportsfan.com",
-        text: chatMsgText,
-        type: "post",
-        fireCount: 0,
-        heartCount: 0,
-        agreeCount: 0,
-        disagreeCount: 0,
-        replyCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      };
+        const chatMsgItem: Record<string, any> = {
+          roomId: `ROOM#${targetRoomId}`,
+          sk: `MSG#${targetRoomId}#${now}#${chatMsgId}`,
+          msgId: chatMsgId,
+          chatId: chatMsgId,
+          authorUid: "sportsfan360_system",
+          authorUsername: "SportsFan360 Core Engine",
+          authorBadge: "Stadium Engine",
+          authorAvatarUrl: "/images/sportsfan360logo.png",
+          authorEmail: "admin@sportsfan.com",
+          text: chatMsgText,
+          type: "post",
+          fireCount: 0,
+          heartCount: 0,
+          agreeCount: 0,
+          disagreeCount: 0,
+          replyCount: 0,
+          createdAt: payload.createdAt,
+          updatedAt: now,
+        };
 
-      await docClient.send(
-        new PutCommand({
-          TableName: TABLES.RealTimeChat,
-          Item: chatMsgItem,
-        })
-      );
+        await docClient.send(
+          new PutCommand({
+            TableName: TABLES.RealTimeChat,
+            Item: chatMsgItem,
+          })
+        );
 
-      if (db) {
-        await db
-          .collection(getFirestoreCollection("roarRooms"))
-          .doc(targetRoomId)
-          .collection("messages")
-          .doc(chatMsgId)
-          .set(chatMsgItem, { merge: true });
+        if (db) {
+          await db
+            .collection(getFirestoreCollection("roarRooms"))
+            .doc(targetRoomId)
+            .collection("messages")
+            .doc(chatMsgId)
+            .set(chatMsgItem, { merge: true });
+        }
+      } catch (chatErr) {
+        console.warn("[visible-recognition] RealTimeChat write notice:", chatErr);
       }
-    } catch (chatErr) {
-      console.warn("[visible-recognition] RealTimeChat write notice:", chatErr);
     }
 
-    // 5. Record inline room broadcast for ROAR Pulse celebrations stream
+    // 5. Record inline room broadcast for ROAR Pulse celebrations stream with deterministic doc ID
     if (db) {
       try {
         const firestoreMatchIds = [
@@ -496,7 +627,7 @@ export async function POST(req: NextRequest) {
           roomId: targetRoomId,
           type: "VISUAL_RECOGNITION",
           targetType,
-          targetUserId: targetUserId ? String(targetUserId).trim() : null,
+          targetUserId: cleanTargetUserId,
           targetUserName: payload.targetUserName,
           targetUserAvatar: payload.targetUserAvatar,
           archetype,
@@ -507,7 +638,8 @@ export async function POST(req: NextRequest) {
           rewards: payload.rewards,
           communityImpact: payload.communityImpact,
           reengagementHook: payload.reengagementHook,
-          createdAt: now,
+          createdAt: payload.createdAt,
+          updatedAt: now,
           expiresAt: now + 86400000,
         };
 
@@ -522,17 +654,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        message: targetType === "all"
+        message: isEdit
+          ? `Visual Recognition ${recognitionId} updated successfully!`
+          : targetType === "all"
           ? "General Visual Recognition successfully created and dispatched to all moment participants in MatchMoments table"
-          : `Targeted Visual Recognition successfully sent to user ${payload.targetUserName || targetUserId} in MatchMoments table`,
+          : `Targeted Visual Recognition successfully sent to user ${payload.targetUserName || cleanTargetUserId} in MatchMoments table`,
         storageTable: "MatchMoments",
         data: payload,
       },
-      { status: 201 }
+      { status: isEdit ? 200 : 201 }
     );
   } catch (err: any) {
     return NextResponse.json(
-      { success: false, error: err.message || "Failed to create visible recognition" },
+      { success: false, error: err.message || "Failed to process visible recognition" },
       { status: 500 }
     );
   }
@@ -593,6 +727,9 @@ export async function DELETE(req: NextRequest) {
     if (db) {
       try {
         await db.collection(getFirestoreCollection("visible_recognitions")).doc(recognitionId).delete();
+      } catch {}
+      try {
+        await db.collection(getFirestoreCollection("match_room_notifications")).doc(`rec_inline_${recognitionId}`).delete();
       } catch {}
     }
 

@@ -37,7 +37,10 @@ export interface EngagementStats {
  * Reads every child record of an engagement in one paginated query.
  * These records are the source of truth; the counters stored on the engagement are only a mirror.
  */
-export async function getEngagementStats(engagementId: string): Promise<EngagementStats> {
+export async function getEngagementStats(
+  engagementId: string,
+  opts: { consistent?: boolean } = {}
+): Promise<EngagementStats> {
   const stats: EngagementStats = {
     likes: 0,
     shares: 0,
@@ -54,6 +57,7 @@ export async function getEngagementStats(engagementId: string): Promise<Engageme
         KeyConditionExpression: "contentId = :c",
         ExpressionAttributeValues: { ":c": `ENGAGEMENT#${engagementId}` },
         ProjectionExpression: "sk, selectedOptionId, questionId, userId",
+        ConsistentRead: Boolean(opts.consistent),
         ExclusiveStartKey: key,
       })
     );
@@ -93,11 +97,14 @@ function countedVotesFor(opt: any, index: number, votesByOption: Record<string, 
   return n;
 }
 
-function recountOptions(options: any[], votesByOption: Record<string, number>) {
-  // Never go below the stored number: seeded or legacy votes have no VOTE# record
+function recountOptions(options: any[], votesByOption: Record<string, number>, exact = false) {
+  // Default: never go below the stored number, since seeded or legacy votes have no VOTE# record.
+  // exact: the counts ARE the VOTE# records (needed when a vote moves, so the old option can go down).
   const counted = options.map((o, i) => ({
     ...o,
-    votes: Math.max(Number(o?.votes) || 0, countedVotesFor(o, i, votesByOption)),
+    votes: exact
+      ? countedVotesFor(o, i, votesByOption)
+      : Math.max(Number(o?.votes) || 0, countedVotesFor(o, i, votesByOption)),
   }));
   const totalVotes = counted.reduce((s, o) => s + o.votes, 0);
   return {
@@ -110,7 +117,8 @@ function recountOptions(options: any[], votesByOption: Record<string, number>) {
  * Overwrites likes / shares / comments / vote counts on an engagement with the real record counts,
  * so every API returns the same numbers no matter which stored copy the item was read from.
  */
-export function applyEngagementStats(item: any, stats: EngagementStats) {
+export function applyEngagementStats(item: any, stats: EngagementStats, opts: { exactVotes?: boolean } = {}) {
+  const exact = Boolean(opts.exactVotes);
   item.likes = stats.likes;
   item.likeCount = stats.likes;
   item.shares = stats.shares;
@@ -122,13 +130,13 @@ export function applyEngagementStats(item: any, stats: EngagementStats) {
   for (const key of ["pollData", "debateData", "expressData", "questionData", "predictionData"]) {
     const data = item[key];
     if (data && Array.isArray(data.options) && data.options.length) {
-      result = recountOptions(data.options, stats.votesByOption);
+      result = recountOptions(data.options, stats.votesByOption, exact);
       data.options = result.options;
       data.totalVotes = result.totalVotes;
     }
   }
   if (Array.isArray(item.options) && item.options.length) {
-    const top = recountOptions(item.options, stats.votesByOption);
+    const top = recountOptions(item.options, stats.votesByOption, exact);
     item.options = top.options;
     result = result || top;
   }

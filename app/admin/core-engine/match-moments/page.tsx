@@ -2217,6 +2217,7 @@ import {
   Eye,
   Filter,
   Edit3,
+  Copy,
   Heart,
   MessageCircle,
   Share2,
@@ -2253,12 +2254,13 @@ interface MatchMomentItem {
   momentId: string;
   matchId: string;
   innings: number;
+  phase?: string;
   overs: string;
   score: string;
   matchOverTimestamp: string;
   event: string;
   matchMoment: string;
-  description: string;
+  description?: string;
   createdAt: number;
   status: string;
 }
@@ -2310,6 +2312,18 @@ const getCurrentISTTime = (): string =>
   })} IST`;
 
 // Overs as a cricket decimal: whole overs + balls (0-6), e.g. 10, 10.2, 13.6
+const PHASE_OPTIONS = [
+  "Pre Match",
+  "1st Innings",
+  "Innings Break",
+  "2nd Innings",
+  "Strategic Timeout",
+  "Post Match",
+];
+// Moments saved before phases existed only carry a numeric innings
+const phaseOfMoment = (m: { phase?: string; innings?: number }): string =>
+  m.phase || (Number(m.innings) === 2 ? "2nd Innings" : "1st Innings");
+
 const OVERS_PATTERN = /^\d{1,3}(\.[0-6])?$/;
 const OVERS_TYPING_PATTERN = /^\d{0,3}(\.[0-6]?)?$/;
 
@@ -2318,7 +2332,7 @@ const OUTCOME_TYPES = ["prediction", "debate", "poll", "question"];
 const isOutcomeEngType = (type?: string) => OUTCOME_TYPES.includes(String(type));
 
 // Empty option slots per engagement type (no prefilled text)
-const blankOptionsFor = (type: EngType): OptionItem[] => {
+const blankOptionsFor = (type: EngType | ""): OptionItem[] => {
   const count = type === "express" || type === "question" ? 4 : 2;
   return Array.from({ length: count }, (_, i) => ({ id: String(i + 1), text: "" }));
 };
@@ -2378,13 +2392,14 @@ function CoreEngineMatchMomentsContent() {
   // TAB 1: MATCH MOMENT FORM STATE
   // ───────────────────────────────────────────────────────────────────────────
   const [momentId, setMomentId] = useState<string>("MM-NZ-01");
-  const [innings, setInnings] = useState<1 | 2>(1);
+  const [phase, setPhase] = useState<string>("");
+  // Numeric innings (kept for team-code IDs and API sorting) derived from the phase
+  const innings: 1 | 2 = phase === "2nd Innings" || phase === "Post Match" ? 2 : 1;
   const [overs, setOvers] = useState<string>("");
   const [score, setScore] = useState<string>("");
   const [matchOverTimestamp, setMatchOverTimestamp] = useState<string>("");
   const [event, setEvent] = useState<string>("");
   const [matchMoment, setMatchMoment] = useState<string>("");
-  const [description, setDescription] = useState<string>("");
   const [isSavingMoment, setIsSavingMoment] = useState(false);
   const [editingMomentId, setEditingMomentId] = useState<string | null>(null);
 
@@ -2392,13 +2407,14 @@ function CoreEngineMatchMomentsContent() {
   // TAB 2: ENGAGEMENT FORM STATE
   // ───────────────────────────────────────────────────────────────────────────
   const [selectedMomentForEng, setSelectedMomentForEng] = useState<string>("");
-  const [engType, setEngType] = useState<EngType>("poll");
+  const [engType, setEngType] = useState<EngType | "">("");
   const [loopId, setLoopId] = useState<string>("");
   const [engQuestion, setEngQuestion] = useState<string>("");
-  const [engTimer, setEngTimer] = useState<number>(4);
+  const [engTimer, setEngTimer] = useState<number | "">("");
+  const [postLock, setPostLock] = useState<string>("");
   const [engOptions, setEngOptions] = useState<OptionItem[]>(() => blankOptionsFor("poll"));
   const [correctOptionId, setCorrectOptionId] = useState<string>("");
-  const [resolveStatus, setResolveStatus] = useState<"pending" | "active" | "resolved" | "settled">("active");
+  const [resolveStatus, setResolveStatus] = useState<"" | "pending" | "active" | "resolved" | "settled">("");
   const [isSubmittingEng, setIsSubmittingEng] = useState(false);
   const [editingEngId, setEditingEngId] = useState<string | null>(null);
   const engFormRef = React.useRef<HTMLDivElement>(null);
@@ -2514,9 +2530,6 @@ function CoreEngineMatchMomentsContent() {
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setMoments(data.data);
-        if (data.data.length > 0 && !selectedMomentForEng) {
-          setSelectedMomentForEng(data.data[0].momentId);
-        }
       } else {
         setMoments([]);
       }
@@ -2525,7 +2538,7 @@ function CoreEngineMatchMomentsContent() {
     } finally {
       setLoadingMoments(false);
     }
-  }, [selectedMatchId, selectedMomentForEng]);
+  }, [selectedMatchId]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // FETCH ENGAGEMENTS FOR CURRENT MATCH
@@ -2567,6 +2580,9 @@ function CoreEngineMatchMomentsContent() {
     if (selectedMatchId) {
       fetchMoments();
       fetchEngagements();
+    } else {
+      setMoments([]);
+      setEngagements([]);
     }
   }, [selectedMatchId, fetchMoments, fetchEngagements]);
 
@@ -2615,15 +2631,30 @@ function CoreEngineMatchMomentsContent() {
   const handleEditMoment = (m: MatchMomentItem) => {
     setEditingMomentId(m.momentId);
     setMomentId(m.momentId);
-    setInnings((Number(m.innings) || 1) as 1 | 2);
+    setPhase(phaseOfMoment(m));
     setOvers(m.overs || "");
     setScore(m.score || "");
     setMatchOverTimestamp(m.matchOverTimestamp || "");
     setEvent(m.event || "");
     setMatchMoment(m.matchMoment || "");
-    setDescription(m.description || "");
     setActiveTab("moments");
     showToast("success", `Editing Match Moment ${m.momentId}`);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
+  // Copy a moment into a fresh create form (new moment ID is auto-generated; nothing saved yet)
+  const handleCopyMoment = (m: MatchMomentItem) => {
+    setEditingMomentId(null);
+    setPhase(phaseOfMoment(m));
+    setOvers(m.overs || "");
+    setScore(m.score || "");
+    setMatchOverTimestamp(m.matchOverTimestamp || "");
+    setEvent(m.event || "");
+    setMatchMoment(m.matchMoment || "");
+    setActiveTab("moments");
+    showToast("success", `Copied ${m.momentId} - change what you need and save as a new moment`);
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -2632,18 +2663,30 @@ function CoreEngineMatchMomentsContent() {
   // Cancel edit moment handler
   const handleCancelEditMoment = () => {
     setEditingMomentId(null);
+    setPhase("");
     setOvers("");
     setScore("");
     setMatchOverTimestamp(getCurrentISTTime());
     setEvent("");
     setMatchMoment("");
-    setDescription("");
     const teamCode = (
       innings === 1
         ? activeMatch.team1_short || activeMatch.team1.slice(0, 3) || "NZ"
         : activeMatch.team2_short || activeMatch.team2.slice(0, 3) || "IND"
     ).toUpperCase();
     setMomentId(getNextMomentId(teamCode, moments));
+  };
+
+  // Cancel button: clear every field of the moment form, including match and phase
+  const handleClearMomentForm = () => {
+    setEditingMomentId(null);
+    setSelectedMatchId("");
+    setPhase("");
+    setOvers("");
+    setScore("");
+    setMatchOverTimestamp(getCurrentISTTime());
+    setEvent("");
+    setMatchMoment("");
   };
 
   // Delete moment handler
@@ -2705,6 +2748,7 @@ function CoreEngineMatchMomentsContent() {
     if (eng.momentId) setSelectedMomentForEng(eng.momentId);
     setEngQuestion(eng.title || "");
     setEngTimer(eng.timerMinutes || 4);
+    setPostLock((eng as any).questionData?.postLock || (eng as any).postLock || "");
     const isOutcomeType = isOutcomeEngType(eng.type);
     const statusVal: "pending" | "active" | "resolved" | "settled" =
       eng.status === "active" || eng.status === "resolved" || eng.status === "settled"
@@ -2724,26 +2768,49 @@ function CoreEngineMatchMomentsContent() {
     }
   };
 
+  // Copy an engagement into a fresh form (new loop ID is generated by the effect; nothing saved yet)
+  const handleCopyEngagement = (eng: EngagementItem) => {
+    setEditingEngId(null);
+    if (eng.type) setEngType(eng.type);
+    if (eng.momentId) setSelectedMomentForEng(eng.momentId);
+    setEngQuestion(eng.title || "");
+    setEngTimer(eng.timerMinutes || eng.durationMinutes || 4);
+    setPostLock((eng as any).questionData?.postLock || (eng as any).postLock || "");
+    setResolveStatus(isOutcomeEngType(eng.type) ? "pending" : "active");
+    if (eng.options && eng.options.length > 0) {
+      setEngOptions(eng.options.map((o, idx) => ({ id: o.id || String(idx + 1), text: o.text })));
+    }
+    setCorrectOptionId(eng.correctOptionId || "");
+    setActiveTab("engagements");
+    showToast("success", `Copied ${eng.loopId || eng.id} - change what you need and push as a new engagement`);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
   // Clear the Tab 2 form back to empty fields (nothing prefilled unless a preset is applied)
-  const resetEngagementForm = (type: EngType = engType) => {
+  const resetEngagementForm = (type: EngType | "" = engType) => {
     setEditingEngId(null);
     setEngType(type);
     setEngQuestion("");
-    setEngTimer(4);
+    setEngTimer("");
+    setPostLock("");
     setEngOptions(blankOptionsFor(type));
     setCorrectOptionId("");
-    setResolveStatus(isOutcomeEngType(type) ? "pending" : "active");
+    setResolveStatus("");
   };
 
   // Cancel edit engagement handler
   const handleCancelEditEngagement = () => {
-    resetEngagementForm("poll");
-    if (selectedMomentForEng) {
-      const momentBase = selectedMomentForEng.replace(/^MM-/, "");
-      const existingForMoment = engagements.filter((e) => e.momentId === selectedMomentForEng);
-      const engSeq = (existingForMoment.length + 1).toString().padStart(2, "0");
-      setLoopId(`LOOP-${momentBase}-${engSeq}`);
-    }
+    resetEngagementForm("");
+    setSelectedMomentForEng("");
+    setLoopId("");
+  };
+
+  // Switching between Tab 1 and Tab 2 discards whatever was typed in either form
+  const clearBothForms = () => {
+    handleCancelEditMoment();
+    handleCancelEditEngagement();
   };
 
   // Selected moment object in Tab 2
@@ -2755,7 +2822,6 @@ function CoreEngineMatchMomentsContent() {
   const handleApplyPresetTemplate = (tpl: MatchMomentTemplate) => {
     setEvent(tpl.title || tpl.sportsMoment);
     setMatchMoment(tpl.sportsMoment);
-    setDescription(tpl.description || tpl.title);
     setEngQuestion(tpl.promptTemplate);
     if (tpl.defaultOptions && tpl.defaultOptions.length > 0) {
       setEngOptions(tpl.defaultOptions.map((opt: string, i: number) => ({ id: String(i + 1), text: opt })));
@@ -2788,7 +2854,7 @@ function CoreEngineMatchMomentsContent() {
         matchOverTimestamp: matchOverTimestamp.trim(),
         event: event.trim(),
         matchMoment: matchMoment.trim(),
-        description: description.trim(),
+        phase,
         status: "active",
         // true only when updating an existing moment; false = create (server rejects duplicate IDs)
         isEdit: Boolean(editingMomentId),
@@ -2810,16 +2876,14 @@ function CoreEngineMatchMomentsContent() {
             : `Match Moment ${savedId} recorded successfully!`
         );
         setEditingMomentId(null);
+        setPhase("");
         setOvers("");
         setScore("");
         setMatchOverTimestamp(getCurrentISTTime());
         setEvent("");
         setMatchMoment("");
-        setDescription("");
         // Reload the list first so the next auto-generated ID is based on fresh data
         await fetchMoments();
-        // Set as selected moment for engagement form
-        setSelectedMomentForEng(savedId);
       } else {
         showToast("error", data.error || "Failed to save match moment");
         // ID already taken (409) -> refresh list so the next free ID is generated
@@ -2841,7 +2905,7 @@ function CoreEngineMatchMomentsContent() {
     const existingForMoment = engagements.filter((e) => e.momentId === m.momentId);
     const engSeq = (existingForMoment.length + 1).toString().padStart(2, "0");
     setLoopId(`LOOP-${momentBase}-${engSeq}`);
-    setInnings(m.innings as 1 | 2);
+    setPhase(phaseOfMoment(m));
     setOvers(m.overs);
     setScore(m.score);
     // A new engagement starts from an empty form (preset text, if one was applied, is kept)
@@ -2858,7 +2922,7 @@ function CoreEngineMatchMomentsContent() {
   // ───────────────────────────────────────────────────────────────────────────
   const handleTypeChange = (type: EngType) => {
     setEngType(type);
-    setResolveStatus(isOutcomeEngType(type) ? "pending" : "active");
+    setResolveStatus("");
     setCorrectOptionId("");
     // Keep options the admin already typed (or a preset filled); otherwise give empty slots for this type
     setEngOptions((prev) => (prev.some((o) => o.text.trim()) ? prev : blankOptionsFor(type)));
@@ -2869,6 +2933,10 @@ function CoreEngineMatchMomentsContent() {
   // ───────────────────────────────────────────────────────────────────────────
   const handleCreateEngagement = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedMomentForEng) {
+      showToast("error", "Select a match moment to attach this engagement to");
+      return;
+    }
     if (!engQuestion.trim()) {
       showToast("error", "Question / Prompt is required");
       return;
@@ -2888,13 +2956,14 @@ function CoreEngineMatchMomentsContent() {
       const payload: any = {
         id: editingEngId || undefined,
         title: engQuestion.trim(),
-        subtitle: `${activeMatch.team1} vs ${activeMatch.team2} · Innings ${innings} · Over ${overs}`,
+        subtitle: `${activeMatch.team1} vs ${activeMatch.team2} · ${phase || `Innings ${innings}`} · Over ${overs}`,
         type: engType,
         sport: "cricket",
         status: isOutcomeType ? resolveStatus : "active",
         timerMinutes: engTimer,
         options: engOptions.map((o) => ({ id: o.id, text: o.text.trim() })),
         correctOptionId: engType === "question" ? correctOptionId : undefined,
+        postLock: postLock.trim(),
         coinStake: 10,
         // Match Moment & Loop bindings
         loopId: loopId.trim() || `LOOP-${overs}`,
@@ -2903,7 +2972,7 @@ function CoreEngineMatchMomentsContent() {
         innings,
         overNumber: overs,
         scoreState: score,
-        anchorTrigger: activeMoment?.description || description,
+        anchorTrigger: activeMoment?.matchMoment || matchMoment,
         sportsMoment: activeMoment?.matchMoment || matchMoment,
         source: "match_moment",
       };
@@ -2959,6 +3028,7 @@ function CoreEngineMatchMomentsContent() {
           matchId: selectedMatchId || settleModalItem.matchId,
           roomId: settleModalItem.roomId || "NMryj1w7t8mJpGzEvF9q",
           engagement: settleModalItem,
+          isEdit: Boolean(settleModalItem.status === "settled" || settleModalItem.outcomeWinningChoiceId || settleModalItem.outcomeResolvedAt),
         }),
       });
       clearTimeout(timeoutId);
@@ -3101,7 +3171,7 @@ function CoreEngineMatchMomentsContent() {
         </div>
 
         {/* ACTIVE MATCH SELECTOR STRIP */}
-        <div
+        {/* <div
           style={{
             marginTop: 14,
             background: "#161b22",
@@ -3114,7 +3184,7 @@ function CoreEngineMatchMomentsContent() {
             flexWrap: "wrap",
             gap: 12,
           }}
-        >
+         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#8b949e", textTransform: "uppercase" }}>
               Active Match:
@@ -3134,6 +3204,7 @@ function CoreEngineMatchMomentsContent() {
                 cursor: "pointer",
               }}
             >
+              <option value="">Select a match</option>
               {matches.map((m) => (
                 <option key={m.match_id || (m as any).id} value={m.match_id || (m as any).id}>
                   {m.match_id || (m as any).id} — {m.team1} vs {m.team2} ({m.venue || "Stadium"})
@@ -3161,13 +3232,16 @@ function CoreEngineMatchMomentsContent() {
               ● {activeMatch.status || "live"}
             </span>
           </div>
-        </div>
+        </div> */}
       </div>
 
       {/* 2 MAIN TABS */}
       <div style={{ maxWidth: 1240, margin: "0 auto 20px", display: "flex", gap: 8, borderBottom: "1px solid #30363d", paddingBottom: 10 }}>
         <button
-          onClick={() => setActiveTab("moments")}
+          onClick={() => {
+            if (activeTab !== "moments") clearBothForms();
+            setActiveTab("moments");
+          }}
           style={{
             display: "flex",
             alignItems: "center",
@@ -3188,6 +3262,7 @@ function CoreEngineMatchMomentsContent() {
 
         <button
           onClick={() => {
+            if (activeTab !== "engagements") clearBothForms();
             setActiveTab("engagements");
             fetchEngagements();
           }}
@@ -3221,7 +3296,7 @@ function CoreEngineMatchMomentsContent() {
               <Sparkles size={14} color="#f59e0b" /> Quick-Apply Moment Presets:
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {MATCH_MOMENTS_LIBRARY.slice(0, 7).map((tpl) => (
+              {MATCH_MOMENTS_LIBRARY.filter((tpl) => tpl.sportsMoment !== "Opening spell / pitch conditions read").slice(0, 7).map((tpl) => (
                 <button
                   key={tpl.templateId}
                   type="button"
@@ -3304,10 +3379,12 @@ function CoreEngineMatchMomentsContent() {
                 <div>
                   <label style={labelStyle}>Selected Match *</label>
                   <select
+                    required
                     value={selectedMatchId}
                     onChange={(e) => setSelectedMatchId(e.target.value)}
                     style={{ ...inputStyle, fontWeight: 600, color: "#58a6ff" }}
                   >
+                    <option value="" disabled>Select match</option>
                     {matches.map((m) => (
                       <option key={m.match_id || (m as any).id} value={m.match_id || (m as any).id}>
                         {/* Team names first so they stay visible in the narrow column */}
@@ -3323,91 +3400,24 @@ function CoreEngineMatchMomentsContent() {
                           🏆 <strong style={{ color: "#f59e0b" }}>{getSeriesLabel(activeMatch)}</strong>
                         </div>
                       )}
-                      <div>
-                        🏏 <strong style={{ color: "#f0f6fc" }}>{activeMatch.team1} vs {activeMatch.team2}</strong>
-                        {activeMatch.venue ? ` · ${activeMatch.venue}` : ""}
-                        {activeMatch.date ? ` · ${activeMatch.date}` : ""}
-                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Innings */}
+                {/* Phase */}
                 <div>
-                  <label style={labelStyle}>Innings</label>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button
-                      type="button"
-                      onClick={() => setInnings(1)}
-                      style={{
-                        flex: 1,
-                        padding: "7px 10px",
-                        borderRadius: 6,
-                        border: "1px solid",
-                        borderColor: innings === 1 ? "#388bfd" : "#30363d",
-                        background: innings === 1 ? "#1f6feb" : "#0d1117",
-                        color: "#fff",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                      }}
-                    >
-                      1st Innings
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setInnings(2)}
-                      style={{
-                        flex: 1,
-                        padding: "7px 10px",
-                        borderRadius: 6,
-                        border: "1px solid",
-                        borderColor: innings === 2 ? "#388bfd" : "#30363d",
-                        background: innings === 2 ? "#1f6feb" : "#0d1117",
-                        color: "#fff",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                      }}
-                    >
-                      2nd Innings
-                    </button>
-                  </div>
-                </div>
-
-                {/* Overs */}
-                <div>
-                  <label style={labelStyle}>Overs (e.g. 10.2 / 13.6) *</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
+                  <label style={labelStyle}>Phase *</label>
+                  <select
                     required
-                    value={overs}
-                    onChange={(e) => {
-                      // numbers only: up to 3 digits, optional "." and one ball digit (0-6)
-                      const v = e.target.value.trim();
-                      if (OVERS_TYPING_PATTERN.test(v)) setOvers(v);
-                    }}
-                    pattern="\d{1,3}(\.[0-6])?"
-                    title="Overs like 10.2 or 13.6"
-                    style={{ ...inputStyle, fontFamily: "monospace", fontWeight: 700 }}
-                    placeholder="10.2"
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
-                {/* Score */}
-                <div>
-                  <label style={labelStyle}>Live Score / State *</label>
-                  <input
-                    type="text"
-                    required
-                    value={score}
-                    onChange={(e) => setScore(e.target.value)}
+                    value={phase}
+                    onChange={(e) => setPhase(e.target.value)}
                     style={inputStyle}
-                    placeholder="e.g. NZ 84/2 (10.2 ov)"
-                  />
+                  >
+                    <option value="" disabled>Select phase</option>
+                    {PHASE_OPTIONS.map((ph) => (
+                      <option key={ph} value={ph}>{ph}</option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Match Over Timestamp (Match Clock) */}
@@ -3448,6 +3458,41 @@ function CoreEngineMatchMomentsContent() {
                   </div>
                 </div>
 
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
+                {/* Overs */}
+                <div>
+                  <label style={labelStyle}>Overs (e.g. 10.2 / 13.6) *</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    value={overs}
+                    onChange={(e) => {
+                      // numbers only: up to 3 digits, optional "." and one ball digit (0-6)
+                      const v = e.target.value.trim();
+                      if (OVERS_TYPING_PATTERN.test(v)) setOvers(v);
+                    }}
+                    pattern="\d{1,3}(\.[0-6])?"
+                    title="Overs like 10.2 or 13.6"
+                    style={{ ...inputStyle, fontFamily: "monospace", fontWeight: 700 }}
+                    placeholder="10.2"
+                  />
+                </div>
+                {/* Score */}
+                <div>
+                  <label style={labelStyle}>Live Score / State *</label>
+                  <input
+                    type="text"
+                    required
+                    value={score}
+                    onChange={(e) => setScore(e.target.value)}
+                    style={inputStyle}
+                    placeholder="e.g. NZ 84/2 (10.2 ov)"
+                  />
+                </div>
+
                 {/* Event Type (Simple text input as requested) */}
                 <div>
                   <label style={labelStyle}>Cricket Event *</label>
@@ -3475,40 +3520,26 @@ function CoreEngineMatchMomentsContent() {
                 />
               </div>
 
-              {/* Match Moment Description */}
-              <div style={{ marginBottom: 18 }}>
-                <label style={labelStyle}>Match Moment Description / Commentary Context</label>
-                <textarea
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  style={{ ...inputStyle, resize: "vertical" }}
-                  placeholder="Describe the moment and key tactical context..."
-                />
-              </div>
-
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                {editingMomentId && (
-                  <button
-                    type="button"
-                    onClick={handleCancelEditMoment}
-                    style={{
-                      background: "#21262d",
-                      color: "#c9d1d9",
-                      border: "1px solid #30363d",
-                      borderRadius: 6,
-                      padding: "9px 16px",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <X size={14} /> Cancel Edit
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleClearMomentForm}
+                  style={{
+                    background: "#21262d",
+                    color: "#c9d1d9",
+                    border: "1px solid #30363d",
+                    borderRadius: 6,
+                    padding: "9px 16px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <X size={14} /> Cancel
+                </button>
                 <button
                   type="submit"
                   disabled={isSavingMoment}
@@ -3577,22 +3608,24 @@ function CoreEngineMatchMomentsContent() {
                   <thead>
                     <tr style={{ borderBottom: "1px solid #30363d", color: "#8b949e", textAlign: "left" }}>
                       <th style={{ padding: "8px 12px" }}>Moment ID</th>
-                      <th style={{ padding: "8px 12px" }}>Innings & Over</th>
+                      <th style={{ padding: "8px 12px" }}>Phase & Over</th>
                       <th style={{ padding: "8px 12px" }}>Score</th>
                       <th style={{ padding: "8px 12px" }}>Match Time</th>
                       <th style={{ padding: "8px 12px" }}>Event</th>
-                      <th style={{ padding: "8px 12px" }}>Moment & Description</th>
+                      <th style={{ padding: "8px 12px" }}>Match Moment</th>
                       <th style={{ padding: "8px 12px", textAlign: "right" }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {moments.map((m) => (
+                    {[...moments]
+                      .sort((x, y) => (Number(y.createdAt) || 0) - (Number(x.createdAt) || 0))
+                      .map((m) => (
                       <tr key={`${m.matchId || selectedMatchId}-${m.momentId}`} style={{ borderBottom: "1px solid #21262d" }}>
                         <td style={{ padding: "10px 12px", fontFamily: "monospace", color: "#58a6ff", fontWeight: 700 }}>
                           {m.momentId}
                         </td>
                         <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
-                          Inn {m.innings ?? "—"} · Over <strong>{m.overs || "—"}</strong>
+                          {phaseOfMoment(m)} · Over <strong>{m.overs || "—"}</strong>
                         </td>
                         <td style={{ padding: "10px 12px", fontWeight: 600, color: "#3fb950", whiteSpace: "nowrap" }}>
                           {m.score}
@@ -3618,9 +3651,6 @@ function CoreEngineMatchMomentsContent() {
                         </td>
                         <td style={{ padding: "10px 12px", maxWidth: 300 }}>
                           <div style={{ fontWeight: 600, color: "#f0f6fc", marginBottom: 2 }}>{m.matchMoment}</div>
-                          <div style={{ fontSize: 11, color: "#8b949e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {m.description}
-                          </div>
                         </td>
                         <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
                           <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -3661,6 +3691,26 @@ function CoreEngineMatchMomentsContent() {
                             >
                               <Sparkles size={12} color="#c084fc" /> Visible Recognition <ArrowRight size={12} />
                             </Link>
+
+                            <button
+                              onClick={() => handleCopyMoment(m)}
+                              title="Copy into a new Match Moment"
+                              style={{
+                                background: "#21262d",
+                                color: "#c9d1d9",
+                                border: "1px solid #30363d",
+                                borderRadius: 6,
+                                padding: "6px 10px",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                            >
+                              <Copy size={12} /> Copy
+                            </button>
 
                             <button
                               onClick={() => handleEditMoment(m)}
@@ -3799,16 +3849,17 @@ function CoreEngineMatchMomentsContent() {
                         const existingForMoment = engagements.filter((eng) => eng.momentId === m.momentId);
                         const engSeq = (existingForMoment.length + 1).toString().padStart(2, "0");
                         setLoopId(`LOOP-${momentBase}-${engSeq}`);
-                        setInnings(m.innings as 1 | 2);
+                        setPhase(phaseOfMoment(m));
                         setOvers(m.overs);
                         setScore(m.score);
                       }
                     }}
                     style={{ ...inputStyle, fontWeight: 600, color: "#58a6ff" }}
                   >
+                    <option value="" disabled>Select match moment</option>
                     {moments.map((m) => (
                       <option key={`${m.matchId || selectedMatchId}-${m.momentId}`} value={m.momentId}>
-                        {m.momentId} • Inn {m.innings} Over {m.overs} • {m.score} • {m.event} ({m.matchMoment})
+                        {m.momentId} • {phaseOfMoment(m)} Over {m.overs} • {m.score} • {m.event} ({m.matchMoment})
                       </option>
                     ))}
                   </select>
@@ -3834,7 +3885,9 @@ function CoreEngineMatchMomentsContent() {
                     ...inputStyle,
                     fontWeight: 700,
                     color:
-                      engType === "poll"
+                      engType === ""
+                        ? "#8b949e"
+                        : engType === "poll"
                         ? "#58a6ff"
                         : engType === "prediction"
                         ? "#f59e0b"
@@ -3848,6 +3901,7 @@ function CoreEngineMatchMomentsContent() {
                     cursor: "pointer",
                   }}
                 >
+                  <option value="" disabled>Select engagement type</option>
                   <option value="poll">📊 Poll (Fan Sentiment)</option>
                   <option value="prediction">🎯 Prediction (Outcome Settlement)</option>
                   <option value="express">⚡ Express (Live Emoji Reactions)</option>
@@ -3857,46 +3911,27 @@ function CoreEngineMatchMomentsContent() {
               </div>
             </div>
 
-            {/* Dynamic Engagement Form based on Type */}
+            {/* Dynamic Engagement Form based on Type (shown once a type is chosen) */}
+            {engType !== "" && (
             <form onSubmit={handleCreateEngagement}>
               <div
                 style={{
                   display: "grid",
                   gridTemplateColumns:
                     isOutcomeEngType(engType)
-                      ? "1fr 1fr 1fr 1fr"
-                      : "1fr 1fr 1fr",
+                      ? "1fr 1fr 1fr"
+                      : "1fr 1fr",
                   gap: 14,
                   marginBottom: 16,
                 }}
               >
                 <div>
-                  <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6 }}>
-                    Loop ID <span style={{ fontSize: 10, color: "#7ee787" }}>🔒 (Auto-generated · Non-editable)</span> *
-                  </label>
-                  <input
-                    type="text"
-                    readOnly
-                    required
-                    value={loopId}
-                    style={{
-                      ...inputStyle,
-                      fontFamily: "monospace",
-                      fontWeight: 700,
-                      color: "#58a6ff",
-                      background: "#161b22",
-                      cursor: "not-allowed",
-                      borderColor: "#30363d",
-                    }}
-                    placeholder="Auto-generated e.g. LOOP-NZ-01-01"
-                  />
-                </div>
-                <div>
                   <label style={labelStyle}>Attached Moment ID</label>
                   <input
                     type="text"
                     readOnly
-                    value={selectedMomentForEng || momentId}
+                    value={selectedMomentForEng}
+                    placeholder="Select a match moment above"
                     style={{ ...inputStyle, background: "#161b22", color: "#8b949e", cursor: "not-allowed" }}
                   />
                 </div>
@@ -3905,13 +3940,22 @@ function CoreEngineMatchMomentsContent() {
                   <select
                     value={engTimer}
                     onChange={(e) => setEngTimer(Number(e.target.value))}
+                    required
                     style={inputStyle}
                   >
+                    <option value="" disabled>Select timer</option>
                     <option value={2}>2 Minutes</option>
                     <option value={3}>3 Minutes</option>
                     <option value={4}>4 Minutes (Standard)</option>
                     <option value={5}>5 Minutes</option>
                     <option value={10}>10 Minutes</option>
+                    <option value={20}>20 Minutes</option>
+                    <option value={30}>30 Minutes</option>
+                    <option value={45}>45 Minutes</option>
+                    <option value={60}>60 Minutes</option>
+                    <option value={90}>90 Minutes</option>
+                    <option value={120}>2 Hours</option>
+                    <option value={180}>3 Hours</option>
                   </select>
                 </div>
                 {isOutcomeEngType(engType) && (
@@ -3920,8 +3964,10 @@ function CoreEngineMatchMomentsContent() {
                     <select
                       value={resolveStatus}
                       onChange={(e) => setResolveStatus(e.target.value as any)}
+                      required
                       style={inputStyle}
                     >
+                      <option value="" disabled>Select status</option>
                       <option value="pending">🟡 Pending (Wait for Outcome)</option>
                       <option value="active">🟢 Active / Open</option>
                       {resolveStatus === "settled" && (
@@ -4039,9 +4085,20 @@ function CoreEngineMatchMomentsContent() {
                 </div>
               </div>
 
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>Post Lock (optional)</label>
+                <input
+                  type="text"
+                  value={postLock}
+                  onChange={(e) => setPostLock(e.target.value)}
+                  style={inputStyle}
+                  placeholder="Optional"
+                />
+              </div>
+
               {/* Submit Button */}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                {editingEngId && (
+                {(
                   <button
                     type="button"
                     onClick={handleCancelEditEngagement}
@@ -4059,7 +4116,7 @@ function CoreEngineMatchMomentsContent() {
                       gap: 6,
                     }}
                   >
-                    <X size={14} /> Cancel Edit
+                    <X size={14} /> Cancel
                   </button>
                 )}
                 <button
@@ -4091,6 +4148,7 @@ function CoreEngineMatchMomentsContent() {
                 </button>
               </div>
             </form>
+            )}
           </div>
 
           {/* REVEAL VISIBLE OUTCOMES & ENGAGEMENTS LOG */}
@@ -4353,6 +4411,26 @@ function CoreEngineMatchMomentsContent() {
                             )}
 
                             <button
+                              onClick={() => handleCopyEngagement(eng)}
+                              title="Copy into a new Engagement"
+                              style={{
+                                background: "#21262d",
+                                color: "#c9d1d9",
+                                border: "1px solid #30363d",
+                                borderRadius: 6,
+                                padding: "5px 8px",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                            >
+                              <Copy size={12} /> Copy
+                            </button>
+
+                            <button
                               onClick={() => handleEditEngagement(eng)}
                               title="Edit Engagement"
                               style={{
@@ -4436,7 +4514,7 @@ function CoreEngineMatchMomentsContent() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: "#f0f6fc", display: "flex", alignItems: "center", gap: 8 }}>
                 <Scale size={18} color="#f59e0b" />
-                Reveal Visible Outcome & Settle{" "}
+                {settleModalItem.status === "settled" || settleModalItem.outcomeWinningChoiceId ? "Update / Edit Outcome & Settlement" : "Reveal Visible Outcome & Settle"}{" "}
                 {settleModalItem.type.charAt(0).toUpperCase() + settleModalItem.type.slice(1)}
               </div>
               <button
@@ -4531,7 +4609,7 @@ function CoreEngineMatchMomentsContent() {
                 }}
               >
                 {isSettling ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
-                {isSettling ? "Publishing Outcome..." : "Publish Outcome"}
+                {isSettling ? "Saving Outcome..." : (settleModalItem.status === "settled" || settleModalItem.outcomeWinningChoiceId ? "Update Outcome" : "Publish Outcome")}
               </button>
             </div>
           </div>
