@@ -1355,7 +1355,7 @@ function CoreEngineVisualRecognitionContent() {
         style={{
           background: "#161b22",
           border: "1px solid #30363d",
-          borderRadius: 8,
+          borderRadius: 7,
           padding: 20,
         }}
       >
