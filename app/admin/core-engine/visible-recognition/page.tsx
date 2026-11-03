@@ -2,4 +2,6 @@
 
 import CoreEnginePage from "../page";
 
-export default CoreEnginePage;
+export default function VisibleRecognitionPage() {
+  return <CoreEnginePage initialSection="recognition" />;
+}
