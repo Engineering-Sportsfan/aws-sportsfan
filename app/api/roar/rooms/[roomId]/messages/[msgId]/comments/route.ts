@@ -67,12 +67,17 @@ export async function GET(
         const likedBy = Array.isArray(item.likedBy) && item.likedBy.length > 0
           ? Array.from(new Set([...item.likedBy, ...reactionUids]))
           : reactionUids;
-        const heartCount = Number(item.heartCount ?? item.likesCount ?? item.likes ?? likedBy.length ?? 0);
+        const heartCount = Math.max(
+          Number(item.heartCount ?? item.likesCount ?? item.likes ?? 0),
+          likedBy.length
+        );
+        const cid = String(item.commentId || (item.sk as string).split("#").pop() || item.id);
         return {
-          id: (item.sk as string).split("#")[2] || item.commentId,
-          commentId: (item.sk as string).split("#")[2] || item.commentId,
           ...item,
+          id: cid,
+          commentId: cid,
           likedBy,
+          likes: heartCount,
           likesCount: heartCount,
           heartCount,
         };
@@ -81,20 +86,20 @@ export async function GET(
       console.warn("[RoomComments GET] DynamoDB notice:", dynErr);
     }
 
-    // Fallback to Firestore if empty
-    if (comments.length === 0) {
-      try {
-        const snap = await db
-          .collection(getFirestoreCollection("roarRooms"))
-          .doc(cleanRoomId)
-          .collection("messages")
-          .doc(targetMsgId)
-          .collection("comments")
-          .orderBy("createdAt", "desc")
-          .limit(limit)
-          .get();
+    // Always fetch Firestore to merge or fallback so all user reactions and likes are fully synced
+    try {
+      const snap = await db
+        .collection(getFirestoreCollection("roarRooms"))
+        .doc(cleanRoomId)
+        .collection("messages")
+        .doc(targetMsgId)
+        .collection("comments")
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
 
-        comments = snap.docs.map(doc => {
+      if (!snap.empty) {
+        const fsComments = snap.docs.map(doc => {
           const data = doc.data();
           const reactions = data.reactions && typeof data.reactions === "object" ? data.reactions : {};
           const reactionUids = Object.entries(reactions)
@@ -103,19 +108,53 @@ export async function GET(
           const likedBy = Array.isArray(data.likedBy) && data.likedBy.length > 0
             ? Array.from(new Set([...data.likedBy, ...reactionUids]))
             : reactionUids;
-          const heartCount = Number(data.heartCount ?? data.likesCount ?? data.likes ?? likedBy.length ?? 0);
+          const heartCount = Math.max(
+            Number(data.heartCount ?? data.likesCount ?? data.likes ?? 0),
+            likedBy.length
+          );
+          const cid = String(data.commentId || doc.id);
           return {
-            id: doc.id,
-            commentId: doc.id,
             ...data,
+            id: cid,
+            commentId: cid,
             likedBy,
+            likes: heartCount,
             likesCount: heartCount,
             heartCount,
           };
         });
-      } catch (fsErr) {
-        console.warn("[RoomComments GET] Firestore notice:", fsErr);
+
+        if (comments.length === 0) {
+          comments = fsComments;
+        } else {
+          // Merge Firestore confirmed reactions/likes with DynamoDB items
+          const fsMap = new Map<string, any>(fsComments.map(c => [c.id, c]));
+          comments = comments.map((dItem: any) => {
+            const fsItem = fsMap.get(dItem.id);
+            if (!fsItem) return dItem;
+            const combinedLikedBy = Array.from(new Set([...(dItem.likedBy || []), ...(fsItem.likedBy || [])]));
+            const maxCount = Math.max(dItem.heartCount || 0, fsItem.heartCount || 0, combinedLikedBy.length);
+            return {
+              ...dItem,
+              ...fsItem,
+              likedBy: combinedLikedBy,
+              likes: maxCount,
+              likesCount: maxCount,
+              heartCount: maxCount,
+            };
+          });
+
+          // Add any comments from Firestore that were not in DynamoDB
+          const existingIds = new Set(comments.map(c => c.id));
+          for (const fsItem of fsComments) {
+            if (!existingIds.has(fsItem.id)) {
+              comments.push(fsItem);
+            }
+          }
+        }
       }
+    } catch (fsErr) {
+      console.warn("[RoomComments GET] Firestore notice:", fsErr);
     }
 
     comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -244,13 +283,19 @@ export async function POST(
       comment: { 
         id: commentId, 
         commentId, 
+        parentId,
         text, 
         authorUid: resolvedAuthorId, 
         authorUsername: username, 
         authorAvatarUrl: avatarUrl, 
         authorBadge: badge, 
         roomId: cleanRoomId, 
-        createdAt: now 
+        createdAt: now,
+        likes: 0,
+        likesCount: 0,
+        heartCount: 0,
+        likedBy: [],
+        reactions: {}
       },
     });
   } catch (err) {

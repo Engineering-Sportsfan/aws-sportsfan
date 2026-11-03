@@ -98,6 +98,7 @@ export async function GET(
           const cid = String(item.commentId || item.id || String(item.sk || "").replace(/^COMMENT#/, "")).trim();
           const pid = item.parentId ? String(item.parentId).replace(/^COMMENT#/, "").trim() : null;
           const rawLikedBy = Array.isArray(item.likedBy) ? item.likedBy : [];
+          const effectiveLikes = Math.max(Number(item.likesCount || item.likes || 0), rawLikedBy.length);
           return {
             ...item,
             id: cid,
@@ -110,7 +111,8 @@ export async function GET(
             authorBadge: item.authorBadge || null,
             text: item.text || "",
             createdAt: Number(item.createdAt || Date.now()),
-            likesCount: Number(item.likesCount || item.likes || rawLikedBy.length || 0),
+            likes: effectiveLikes,
+            likesCount: effectiveLikes,
             likedBy: rawLikedBy,
           };
         });
@@ -120,8 +122,8 @@ export async function GET(
       console.warn("[EngagementComments GET] DynamoDB notice:", dynErr);
     }
 
-    // 2. Fallback to Firestore subcollection if DynamoDB empty
-    if (!fetchedFromDynamo && db) {
+    // Also check Firestore to merge/fallback any latest comment likes
+    if (db) {
       try {
         const snap = await db
           .collection(getFirestoreCollection("engagements"))
@@ -132,11 +134,12 @@ export async function GET(
           .get();
 
         if (!snap.empty) {
-          flatComments = snap.docs.map((doc) => {
+          const fsItems = snap.docs.map((doc) => {
             const data = doc.data();
             const cid = String(data.commentId || data.id || doc.id).trim();
             const pid = data.parentId ? String(data.parentId).replace(/^COMMENT#/, "").trim() : null;
             const rawLikedBy = Array.isArray(data.likedBy) ? data.likedBy : [];
+            const effectiveLikes = Math.max(Number(data.likesCount || data.likes || 0), rawLikedBy.length);
             return {
               ...data,
               id: cid,
@@ -149,10 +152,36 @@ export async function GET(
               authorBadge: data.authorBadge || null,
               text: data.text || "",
               createdAt: Number(data.createdAt || Date.now()),
-              likesCount: Number(data.likesCount || data.likes || rawLikedBy.length || 0),
+              likes: effectiveLikes,
+              likesCount: effectiveLikes,
               likedBy: rawLikedBy,
             };
           });
+
+          if (!fetchedFromDynamo || flatComments.length === 0) {
+            flatComments = fsItems;
+          } else {
+            const fsMap = new Map<string, any>(fsItems.map(x => [x.id, x]));
+            flatComments = flatComments.map((dItem: any) => {
+              const fsItem = fsMap.get(dItem.id);
+              if (!fsItem) return dItem;
+              const mergedLikedBy = Array.from(new Set([...(dItem.likedBy || []), ...(fsItem.likedBy || [])]));
+              const mergedLikes = Math.max(dItem.likesCount || 0, fsItem.likesCount || 0, mergedLikedBy.length);
+              return {
+                ...dItem,
+                ...fsItem,
+                likedBy: mergedLikedBy,
+                likes: mergedLikes,
+                likesCount: mergedLikes,
+              };
+            });
+            const existingIds = new Set(flatComments.map(c => c.id));
+            for (const fsItem of fsItems) {
+              if (!existingIds.has(fsItem.id)) {
+                flatComments.push(fsItem);
+              }
+            }
+          }
         }
       } catch (fsErr) {
         console.warn("[EngagementComments GET] Firestore fallback notice:", fsErr);

@@ -33,20 +33,27 @@ export async function POST(
       .replace(/^COMMENT#/, "")
       .trim();
 
-    // 1. Fetch parent comment from DynamoDB first
+    // 1. Fetch parent comment from DynamoDB first across candidates
     let commentItem: any = null;
-    try {
-      const qRes = await docClient.send(new QueryCommand({
-        TableName: TABLES.RealTimeChat,
-        KeyConditionExpression: "roomId = :r AND sk = :s",
-        ExpressionAttributeValues: { ":r": roomCand, ":s": `COMMENT#${targetMsgId}#${cleanCommentKey}` },
-        Limit: 1
-      }));
-      if (qRes.Items && qRes.Items.length > 0) {
-        commentItem = qRes.Items[0];
+    let matchedRoomIdKey = roomCand;
+    const roomCandidates = Array.from(new Set([roomCand, `ROOM#${cleanRoomId}`, cleanRoomId]));
+
+    for (const rCand of roomCandidates) {
+      try {
+        const qRes = await docClient.send(new QueryCommand({
+          TableName: TABLES.RealTimeChat,
+          KeyConditionExpression: "roomId = :r AND sk = :s",
+          ExpressionAttributeValues: { ":r": rCand, ":s": `COMMENT#${targetMsgId}#${cleanCommentKey}` },
+          Limit: 1
+        }));
+        if (qRes.Items && qRes.Items.length > 0) {
+          commentItem = qRes.Items[0];
+          matchedRoomIdKey = rCand;
+          break;
+        }
+      } catch (dynErr) {
+        console.warn("[CommentReact POST] DynamoDB comment fetch notice:", dynErr);
       }
-    } catch (dynErr) {
-      console.warn("[CommentReact POST] DynamoDB comment fetch failed:", dynErr);
     }
 
     const commentRef = db
@@ -77,50 +84,82 @@ export async function POST(
     const previousReaction = reactions[userId] ?? null;
     const isSameReaction = previousReaction === reaction;
 
-    const newHeartCount = Math.max(0, (data.heartCount ?? data.likesCount ?? data.likes ?? 0) + (isSameReaction ? -1 : (previousReaction ? 0 : 1)));
+    if (isSameReaction) {
+      delete reactions[userId];
+    } else {
+      reactions[userId] = reaction;
+    }
 
-    const existingLikedBy: string[] = Array.isArray(data.likedBy) ? data.likedBy : Object.keys(reactions);
+    // Compute all unique heart reactors
+    const heartUsers = Object.entries(reactions)
+      .filter(([_, r]) => r === "heart" || r === "like" || r === true)
+      .map(([uid]) => uid);
+
+    const existingLikedBy: string[] = Array.isArray(data.likedBy) ? data.likedBy : [];
+    const combinedLikedBy = Array.from(new Set([...existingLikedBy, ...heartUsers]));
     const updatedLikedBy = isSameReaction
-      ? existingLikedBy.filter((u: string) => u !== userId && u !== "me")
-      : Array.from(new Set([...existingLikedBy, userId]));
+      ? combinedLikedBy.filter((u: string) => u !== userId && u !== "me")
+      : Array.from(new Set([...combinedLikedBy, userId]));
+
+    const newHeartCount = Math.max(0, updatedLikedBy.length);
 
     if (isSameReaction) {
       // Toggle reaction off
-      delete reactions[userId];
       const prevField = reactionCountField(previousReaction);
       const newPrevFieldCount = Math.max(0, (data[prevField] ?? 1) - 1);
 
+      // Build safe UpdateExpression without attribute overlap
+      const removeParts = [
+        "reactions = :r",
+        "heartCount = :hc",
+        "likesCount = :hc",
+        "likes = :hc",
+        "likedBy = :lb"
+      ];
+      const removeAttrNames: Record<string, string> = {};
+      const removeAttrVals: Record<string, any> = {
+        ":r": reactions,
+        ":hc": newHeartCount,
+        ":lb": updatedLikedBy,
+      };
+
+      if (prevField && !["heartCount", "likesCount", "likes"].includes(prevField)) {
+        removeParts.push("#pf = :pfc");
+        removeAttrNames["#pf"] = prevField;
+        removeAttrVals[":pfc"] = newPrevFieldCount;
+      }
+
       // Update DynamoDB
       try {
-        // A. Delete reaction record
         await docClient.send(new DeleteCommand({
           TableName: TABLES.RealTimeChat,
-          Key: { roomId: roomCand, sk: `LIKE#${cleanCommentKey}#${userId}` }
+          Key: { roomId: matchedRoomIdKey, sk: `LIKE#${cleanCommentKey}#${userId}` }
         }));
 
-        // B. Update Parent Item
-        if (commentItem) {
-          await docClient.send(new UpdateCommand({
-            TableName: TABLES.RealTimeChat,
-            Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${cleanCommentKey}` },
-            UpdateExpression: "SET reactions = :r, heartCount = :hc, likesCount = :hc, likedBy = :lb, #pf = :pfc",
-            ExpressionAttributeNames: { "#pf": prevField },
-            ExpressionAttributeValues: { ":r": reactions, ":hc": newHeartCount, ":lb": updatedLikedBy, ":pfc": newPrevFieldCount }
-          }));
-        }
+        await docClient.send(new UpdateCommand({
+          TableName: TABLES.RealTimeChat,
+          Key: { roomId: matchedRoomIdKey, sk: `COMMENT#${targetMsgId}#${cleanCommentKey}` },
+          UpdateExpression: `SET ${removeParts.join(", ")}`,
+          ...(Object.keys(removeAttrNames).length > 0 ? { ExpressionAttributeNames: removeAttrNames } : {}),
+          ExpressionAttributeValues: removeAttrVals
+        }));
       } catch (dynErr) {
-        console.warn("[CommentReact POST] DynamoDB remove failed:", dynErr);
+        console.warn("[CommentReact POST] DynamoDB remove notice:", dynErr);
       }
 
       // Sync/Fallback to Firestore
       try {
-        await commentRef.update({
+        const fsRemoveUpdate: Record<string, any> = {
           [`reactions.${userId}`]: FieldValue.delete(),
           heartCount: newHeartCount,
           likesCount: newHeartCount,
+          likes: newHeartCount,
           likedBy: updatedLikedBy,
-          [reactionCountField(previousReaction)]: FieldValue.increment(-1),
-        });
+        };
+        if (prevField && !["heartCount", "likesCount", "likes"].includes(prevField)) {
+          fsRemoveUpdate[prevField] = FieldValue.increment(-1);
+        }
+        await commentRef.update(fsRemoveUpdate);
         await commentRef.collection("likes").doc(userId).delete();
       } catch (fsErr) {
         console.warn("[CommentReact POST] Firestore remove failed:", fsErr);
@@ -132,29 +171,47 @@ export async function POST(
         reaction: null,
         heartCount: newHeartCount,
         likesCount: newHeartCount,
+        likes: newHeartCount,
         liked: false,
         likedBy: updatedLikedBy,
       });
     }
 
     // Add or Switch reaction
-    reactions[userId] = reaction;
     const field = reactionCountField(reaction);
     const newFieldCount = (data[field] ?? 0) + 1;
 
-    let updateExpr = "SET reactions = :r, heartCount = :hc, likesCount = :hc, likedBy = :lb, #f = :fc";
-    let attrNames: Record<string, string> = { "#f": field };
-    let attrVals: Record<string, any> = { ":r": reactions, ":hc": newHeartCount, ":lb": updatedLikedBy, ":fc": newFieldCount };
+    const setParts = [
+      "reactions = :r",
+      "heartCount = :hc",
+      "likesCount = :hc",
+      "likes = :hc",
+      "likedBy = :lb"
+    ];
+    const attrNames: Record<string, string> = {};
+    const attrVals: Record<string, any> = {
+      ":r": reactions,
+      ":hc": newHeartCount,
+      ":lb": updatedLikedBy,
+    };
+
+    if (field && !["heartCount", "likesCount", "likes"].includes(field)) {
+      setParts.push("#f = :fc");
+      attrNames["#f"] = field;
+      attrVals[":fc"] = newFieldCount;
+    }
 
     let prevField = "";
-    let newPrevFieldCount = 0;
     if (previousReaction) {
       prevField = reactionCountField(previousReaction);
-      newPrevFieldCount = Math.max(0, (data[prevField] ?? 1) - 1);
-      updateExpr += ", #pf = :pfc";
-      attrNames["#pf"] = prevField;
-      attrVals[":pfc"] = newPrevFieldCount;
+      if (prevField && !["heartCount", "likesCount", "likes"].includes(prevField)) {
+        setParts.push("#pf = :pfc");
+        attrNames["#pf"] = prevField;
+        attrVals[":pfc"] = Math.max(0, (data[prevField] ?? 1) - 1);
+      }
     }
+
+    const updateExpr = `SET ${setParts.join(", ")}`;
 
     // Update DynamoDB
     try {
@@ -162,7 +219,7 @@ export async function POST(
       await docClient.send(new PutCommand({
         TableName: TABLES.RealTimeChat,
         Item: {
-          roomId: roomCand,
+          roomId: matchedRoomIdKey,
           sk: `LIKE#${cleanCommentKey}#${userId}`,
           reaction: reaction,
           reactedAt: Date.now()
@@ -170,15 +227,13 @@ export async function POST(
       }));
 
       // B. Update Parent Item
-      if (commentItem) {
-        await docClient.send(new UpdateCommand({
-          TableName: TABLES.RealTimeChat,
-          Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${cleanCommentKey}` },
-          UpdateExpression: updateExpr,
-          ExpressionAttributeNames: attrNames,
-          ExpressionAttributeValues: attrVals
-        }));
-      }
+      await docClient.send(new UpdateCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId: matchedRoomIdKey, sk: `COMMENT#${targetMsgId}#${cleanCommentKey}` },
+        UpdateExpression: updateExpr,
+        ...(Object.keys(attrNames).length > 0 ? { ExpressionAttributeNames: attrNames } : {}),
+        ExpressionAttributeValues: attrVals
+      }));
     } catch (dynErr) {
       console.warn("[CommentReact POST] DynamoDB write failed:", dynErr);
     }
@@ -187,12 +242,15 @@ export async function POST(
     try {
       const fsUpdate: Record<string, any> = {
         [`reactions.${userId}`]: reaction,
-        [field]: FieldValue.increment(1),
         heartCount: newHeartCount,
         likesCount: newHeartCount,
+        likes: newHeartCount,
         likedBy: updatedLikedBy,
       };
-      if (previousReaction) {
+      if (field && !["heartCount", "likesCount", "likes"].includes(field)) {
+        fsUpdate[field] = FieldValue.increment(1);
+      }
+      if (prevField && !["heartCount", "likesCount", "likes"].includes(prevField)) {
         fsUpdate[prevField] = FieldValue.increment(-1);
       }
       await commentRef.update(fsUpdate);
@@ -207,6 +265,7 @@ export async function POST(
       reaction,
       heartCount: newHeartCount,
       likesCount: newHeartCount,
+      likes: newHeartCount,
       liked: true,
       likedBy: updatedLikedBy,
     });

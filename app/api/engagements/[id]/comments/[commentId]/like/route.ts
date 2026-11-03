@@ -27,29 +27,42 @@ export async function POST(
     let currentLikes = 0;
     let likedBy: string[] = [];
     let itemFoundInDynamo = false;
+    let matchedContentId = `ENGAGEMENT#${cleanEngId}`;
 
-    // 1. Fetch current comment item from DynamoDB SocialAndContent
-    try {
-      const getRes = await docClient.send(
-        new GetCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: {
-            contentId: `ENGAGEMENT#${cleanEngId}`,
-            sk: `COMMENT#${cleanCommentId}`,
-          },
-        })
-      );
+    const contentCandidates = Array.from(new Set([
+      `ENGAGEMENT#${cleanEngId}`,
+      cleanEngId,
+      `RECOGNITION#${cleanEngId}`,
+      `MOMENT#${cleanEngId}`,
+      String(id || "").trim(),
+    ]));
 
-      if (getRes.Item) {
-        itemFoundInDynamo = true;
-        currentLikes = Number(getRes.Item.likesCount || getRes.Item.likes || 0);
-        likedBy = Array.isArray(getRes.Item.likedBy) ? getRes.Item.likedBy : [];
+    // 1. Fetch current comment item from DynamoDB SocialAndContent across candidates
+    for (const cCand of contentCandidates) {
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: {
+              contentId: cCand,
+              sk: `COMMENT#${cleanCommentId}`,
+            },
+          })
+        );
+
+        if (getRes.Item) {
+          itemFoundInDynamo = true;
+          matchedContentId = cCand;
+          currentLikes = Number(getRes.Item.likesCount || getRes.Item.likes || 0);
+          likedBy = Array.isArray(getRes.Item.likedBy) ? getRes.Item.likedBy : [];
+          break;
+        }
+      } catch (dynErr) {
+        console.warn("[CommentLike POST] DynamoDB get notice:", dynErr);
       }
-    } catch (dynErr) {
-      console.warn("[CommentLike POST] DynamoDB get notice:", dynErr);
     }
 
-    // 1b. Check Firestore if not found in DynamoDB or to get full likedBy
+    // 1b. Check Firestore to merge full likedBy
     let fsCommentRef: any = null;
     if (db) {
       try {
@@ -59,13 +72,12 @@ export async function POST(
           .collection("comments")
           .doc(cleanCommentId);
 
-        if (!itemFoundInDynamo) {
-          const snap = await fsCommentRef.get();
-          if (snap.exists) {
-            const data = snap.data() || {};
-            currentLikes = Number(data.likesCount || data.likes || 0);
-            likedBy = Array.isArray(data.likedBy) ? data.likedBy : [];
-          }
+        const snap = await fsCommentRef.get();
+        if (snap.exists) {
+          const data = snap.data() || {};
+          const fsLikedBy = Array.isArray(data.likedBy) ? data.likedBy : [];
+          likedBy = Array.from(new Set([...likedBy, ...fsLikedBy]));
+          currentLikes = Math.max(currentLikes, Number(data.likesCount || data.likes || 0), likedBy.length);
         }
       } catch (fsErr) {
         console.warn("[CommentLike POST] Firestore lookup notice:", fsErr);
@@ -74,10 +86,10 @@ export async function POST(
 
     const alreadyLiked = likedBy.includes(userId) || likedBy.includes("me");
     const liked = !alreadyLiked;
-    const nextLikes = Math.max(0, currentLikes + (liked ? 1 : -1));
     const nextLikedBy = liked
       ? Array.from(new Set([...likedBy, userId]))
       : likedBy.filter((u: string) => u !== userId && u !== "me");
+    const nextLikes = nextLikedBy.length;
 
     // Dual-write to DynamoDB
     try {
@@ -85,7 +97,7 @@ export async function POST(
         new UpdateCommand({
           TableName: TABLES.SocialAndContent,
           Key: {
-            contentId: `ENGAGEMENT#${cleanEngId}`,
+            contentId: matchedContentId,
             sk: `COMMENT#${cleanCommentId}`,
           },
           UpdateExpression: "SET likesCount = :lc, likes = :lc, likedBy = :lb",
@@ -116,6 +128,7 @@ export async function POST(
       success: true,
       liked,
       likesCount: nextLikes,
+      likes: nextLikes,
       likedBy: nextLikedBy,
     });
   } catch (error: any) {
