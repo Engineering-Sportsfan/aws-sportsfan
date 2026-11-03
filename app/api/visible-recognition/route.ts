@@ -199,7 +199,7 @@ export async function GET(req: NextRequest) {
           q = q.where("momentId", "in", [cleanMomentId, `MOMENT#${cleanMomentId}`]);
         }
         const snap = await q.get();
-        recognitions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        recognitions = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       } catch (fbErr) {
         console.warn("[visible-recognition GET] Firestore fallback notice:", fbErr);
       }
@@ -560,53 +560,54 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
       }
     }
 
-    // 4. ROAR Chat: ONLY post to the public chatroom when targetType === 'all'!
-    // DO NOT post to the public chatroom when targeted to a particular user,
-    // so other users do NOT receive this recognition!
-    if (targetType === "all") {
-      try {
-        const chatMsgId = `msg_rec_${recognitionId}`;
-        const chatMsgText = `📢 [STADIUM RECOGNITION] "${headline}" — ${message} | ${payload.communityImpact?.stadiumRoars || "+120 Roars"}`;
+    // 4. ROAR Chat: Post recognition celebration into the room chat for all users
+    try {
+      const chatMsgId = `msg_rec_${recognitionId}`;
+      const targetUserDisplay = payload.targetUserName || "Valued Fan";
+      const archetypeClean = String(archetype || "CUSTOM").replace(/_/g, " ");
+      const chatMsgText = targetType === "user"
+        ? `🏆 [FAN RECOGNITION] @${targetUserDisplay} has been awarded ${archetypeClean}: "${headline}" — ${message} | ⚡ +${payload.rewards.totalSxp} Total SXPs!`
+        : `📢 [STADIUM RECOGNITION] "${headline}" — ${message} | ${payload.communityImpact?.stadiumRoars || "+120 Roars"}`;
 
-        const chatMsgItem: Record<string, any> = {
-          roomId: `ROOM#${targetRoomId}`,
-          sk: `MSG#${targetRoomId}#${now}#${chatMsgId}`,
-          msgId: chatMsgId,
-          chatId: chatMsgId,
-          authorUid: "sportsfan360_system",
-          authorUsername: "SportsFan360 Core Engine",
-          authorBadge: "Stadium Engine",
-          authorAvatarUrl: "/images/sportsfan360logo.png",
-          authorEmail: "admin@sportsfan.com",
-          text: chatMsgText,
-          type: "post",
-          fireCount: 0,
-          heartCount: 0,
-          agreeCount: 0,
-          disagreeCount: 0,
-          replyCount: 0,
-          createdAt: payload.createdAt,
-          updatedAt: now,
-        };
+      const chatMsgItem: Record<string, any> = {
+        roomId: `ROOM#${targetRoomId}`,
+        sk: `MSG#${targetRoomId}#${now}#${chatMsgId}`,
+        msgId: chatMsgId,
+        chatId: chatMsgId,
+        authorUid: "sportsfan360_system",
+        authorUsername: "SportsFan360 Core Engine",
+        authorBadge: "Stadium Engine",
+        authorAvatarUrl: "/images/sportsfan360logo.png",
+        authorEmail: "admin@sportsfan.com",
+        text: chatMsgText,
+        type: "post",
+        fireCount: 0,
+        heartCount: 0,
+        agreeCount: 0,
+        disagreeCount: 0,
+        replyCount: 0,
+        shareCount: 0,
+        createdAt: payload.createdAt,
+        updatedAt: now,
+      };
 
-        await docClient.send(
-          new PutCommand({
-            TableName: TABLES.RealTimeChat,
-            Item: chatMsgItem,
-          })
-        );
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.RealTimeChat,
+          Item: chatMsgItem,
+        })
+      );
 
-        if (db) {
-          await db
-            .collection(getFirestoreCollection("roarRooms"))
-            .doc(targetRoomId)
-            .collection("messages")
-            .doc(chatMsgId)
-            .set(chatMsgItem, { merge: true });
-        }
-      } catch (chatErr) {
-        console.warn("[visible-recognition] RealTimeChat write notice:", chatErr);
+      if (db) {
+        await db
+          .collection(getFirestoreCollection("roarRooms"))
+          .doc(targetRoomId)
+          .collection("messages")
+          .doc(chatMsgId)
+          .set(chatMsgItem, { merge: true });
       }
+    } catch (chatErr) {
+      console.warn("[visible-recognition] RealTimeChat write notice:", chatErr);
     }
 
     // 5. Record inline room broadcast for ROAR Pulse celebrations stream with deterministic doc ID

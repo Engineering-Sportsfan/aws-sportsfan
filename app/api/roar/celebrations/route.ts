@@ -213,29 +213,8 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    // Filter recognitions by userId or username if targetType is 'user'
-    const cleanReqUserId = userId ? String(userId).trim().toLowerCase().replace(/^user#/, "") : "";
-    const cleanReqUsername = username ? String(username).trim().toLowerCase() : "";
-    const filteredRecognitions = recognitionsList.filter((rec) => {
-      if (!rec.targetType || rec.targetType === "all") return true;
-      if (!cleanReqUserId && !cleanReqUsername) return false; // Anonymous users do not receive private VIP recognitions
-      const cleanTarget = String(rec.targetUserId || "").trim().toLowerCase().replace(/^user#/, "");
-      const cleanTargetName = String(rec.targetUserName || "").trim().toLowerCase();
-      return (
-        (cleanReqUserId && (
-          cleanTarget === cleanReqUserId ||
-          cleanTarget.includes(cleanReqUserId) ||
-          cleanReqUserId.includes(cleanTarget) ||
-          cleanTargetName === cleanReqUserId
-        )) ||
-        (cleanReqUsername && (
-          cleanTargetName === cleanReqUsername ||
-          cleanTargetName.includes(cleanReqUsername) ||
-          cleanReqUsername.includes(cleanTargetName) ||
-          cleanTarget === cleanReqUsername
-        ))
-      );
-    });
+    // All recognitions (both stadium-wide broadcasts and targeted user spotlights) are included in the room stream
+    const filteredRecognitions = recognitionsList;
 
     // Sort newest first
     filteredRecognitions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
