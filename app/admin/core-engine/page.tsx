@@ -348,14 +348,16 @@ function CoreEngineVisualRecognitionContent() {
   const fetchRecognitions = useCallback(async () => {
     setLoadingRecognitions(true);
     try {
-      let url = "/api/visible-recognition";
-      if (selectedMatchId) {
-        url += `?matchId=${encodeURIComponent(selectedMatchId)}`;
-        if (selectedMomentId) {
-          url += `&momentId=${encodeURIComponent(selectedMomentId)}`;
-        }
-      }
-      const res = await fetch(url);
+      const url = selectedMatchId
+        ? `/api/visible-recognition?matchId=${encodeURIComponent(selectedMatchId)}&_t=${Date.now()}`
+        : `/api/visible-recognition?_t=${Date.now()}`;
+      const res = await fetch(url, {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+        },
+      });
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
         setRecognitions(json.data);
@@ -367,7 +369,7 @@ function CoreEngineVisualRecognitionContent() {
     } finally {
       setLoadingRecognitions(false);
     }
-  }, [selectedMatchId, selectedMomentId]);
+  }, [selectedMatchId]);
 
   useEffect(() => {
     fetchRecognitions();
@@ -390,11 +392,12 @@ function CoreEngineVisualRecognitionContent() {
   // Check if a recognition already exists for the selected moment (only 1 allowed per moment)
   const existingRecognitionForMoment = useMemo(() => {
     if (!selectedMomentId) return null;
-    const cleanMom = selectedMomentId.trim().replace(/^(MOMENT#|MM-)/i, "").toLowerCase();
+    const cleanMom = selectedMomentId.trim().replace(/^(MOMENT[#-]|MM-)/i, "").toLowerCase();
     return (
       recognitions.find((r) => {
-        const rMom = (r.momentId || "").trim().replace(/^(MOMENT#|MM-)/i, "").toLowerCase();
-        return rMom === cleanMom;
+        const rMom = (r.momentId || "").trim().replace(/^(MOMENT[#-]|MM-)/i, "").toLowerCase();
+        const rSk = (r.sk || "").replace(/^RECOGNITION#/, "").split("#")[0].replace(/^(MOMENT[#-]|MM-)/i, "").trim().toLowerCase();
+        return rMom === cleanMom || rSk === cleanMom;
       }) || null
     );
   }, [recognitions, selectedMomentId]);

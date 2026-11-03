@@ -54,13 +54,26 @@ export async function GET(req: NextRequest) {
   const rawMomentId = searchParams.get("momentId");
   const targetUserId = searchParams.get("targetUserId");
 
-  const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : null;
-  const cleanMomentId = rawMomentId ? rawMomentId.trim().replace(/^MOMENT#/, "") : null;
+  const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH[#-]/i, "") : null;
+  const cleanMomentId = rawMomentId ? rawMomentId.trim().replace(/^MOMENT[#-]/i, "") : null;
+
+  const matchKeyCandidates = cleanMatchId
+    ? Array.from(
+        new Set(
+          [
+            `MATCH#${cleanMatchId}`,
+            cleanMatchId,
+            rawMatchId ? rawMatchId.trim() : null,
+            `MATCH-${cleanMatchId}`,
+          ].filter(Boolean) as string[]
+        )
+      )
+    : [];
 
   try {
-    let recognitions: any[] = [];
+    const recMap = new Map<string, any>();
 
-    // 1. Query DynamoDB MatchMoments table first
+    // 1. Query DynamoDB MatchMoments table
     try {
       let skPrefix = "RECOGNITION#";
       if (cleanMomentId) {
@@ -69,63 +82,59 @@ export async function GET(req: NextRequest) {
 
       const candidateTables = getCandidateTableNames("MatchMoments");
 
-      if (cleanMatchId) {
+      if (cleanMatchId && matchKeyCandidates.length > 0) {
         for (const tbl of candidateTables) {
-          try {
-            // A. Query by entityId with MATCH# prefix (Actual AWS schema for MatchMoments)
-            let queryRes = await docClient.send(
-              new QueryCommand({
-                TableName: tbl,
-                KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
-                ExpressionAttributeValues: {
-                  ":eId": `MATCH#${cleanMatchId}`,
-                  ":skPrefix": skPrefix,
-                },
-              })
-            );
+          for (const mKey of matchKeyCandidates) {
+            try {
+              // A. Query by entityId
+              const queryRes = await docClient.send(
+                new QueryCommand({
+                  TableName: tbl,
+                  KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
+                  ExpressionAttributeValues: {
+                    ":eId": mKey,
+                    ":skPrefix": skPrefix,
+                  },
+                })
+              );
 
-            // B. If empty, try without MATCH# prefix
-            if (!queryRes.Items || queryRes.Items.length === 0) {
+              if (queryRes.Items && queryRes.Items.length > 0) {
+                for (const item of queryRes.Items) {
+                  const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                  if (!recMap.has(key)) {
+                    recMap.set(key, {
+                      id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                      ...item,
+                    });
+                  }
+                }
+              }
+            } catch (tblErr) {
+              // Try pk if entityId fails
               try {
-                queryRes = await docClient.send(
-                  new QueryCommand({
-                    TableName: tbl,
-                    KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
-                    ExpressionAttributeValues: {
-                      ":eId": cleanMatchId,
-                      ":skPrefix": skPrefix,
-                    },
-                  })
-                );
-              } catch {}
-            }
-
-            // C. If still empty, try pk
-            if (!queryRes.Items || queryRes.Items.length === 0) {
-              try {
-                queryRes = await docClient.send(
+                const pkRes = await docClient.send(
                   new QueryCommand({
                     TableName: tbl,
                     KeyConditionExpression: "pk = :pk AND begins_with(sk, :skPrefix)",
                     ExpressionAttributeValues: {
-                      ":pk": `MATCH#${cleanMatchId}`,
+                      ":pk": mKey,
                       ":skPrefix": skPrefix,
                     },
                   })
                 );
+                if (pkRes.Items && pkRes.Items.length > 0) {
+                  for (const item of pkRes.Items) {
+                    const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                    if (!recMap.has(key)) {
+                      recMap.set(key, {
+                        id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                        ...item,
+                      });
+                    }
+                  }
+                }
               } catch {}
             }
-
-            if (queryRes.Items && queryRes.Items.length > 0) {
-              recognitions = queryRes.Items.map((item) => ({
-                id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
-                ...item,
-              }));
-              break;
-            }
-          } catch (tblErr) {
-            console.warn(`[visible-recognition GET] Query error on table ${tbl}:`, tblErr);
-            continue;
           }
         }
       } else {
@@ -143,10 +152,15 @@ export async function GET(req: NextRequest) {
               })
             );
             if (scanRes.Items && scanRes.Items.length > 0) {
-              recognitions = scanRes.Items.map((item) => ({
-                id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
-                ...item,
-              }));
+              for (const item of scanRes.Items) {
+                const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                if (!recMap.has(key)) {
+                  recMap.set(key, {
+                    id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                    ...item,
+                  });
+                }
+              }
               break;
             }
           } catch {
@@ -158,52 +172,71 @@ export async function GET(req: NextRequest) {
       console.warn("[visible-recognition GET] MatchMoments notice:", dynErr);
     }
 
-    // 2. Fallback to SportsData table if MatchMoments was empty
-    if (recognitions.length === 0 && cleanMatchId) {
+    // 2. Query SportsData table
+    if (cleanMatchId && matchKeyCandidates.length > 0) {
       try {
         let skPrefix = "RECOGNITION#";
         if (cleanMomentId) {
           skPrefix = `RECOGNITION#${cleanMomentId}#`;
         }
 
-        const queryRes = await docClient.send(
-          new QueryCommand({
-            TableName: "SportsData",
-            KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
-            ExpressionAttributeValues: {
-              ":eId": `MATCH#${cleanMatchId}`,
-              ":skPrefix": skPrefix,
-            },
-          })
-        );
+        for (const mKey of matchKeyCandidates) {
+          try {
+            const queryRes = await docClient.send(
+              new QueryCommand({
+                TableName: "SportsData",
+                KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
+                ExpressionAttributeValues: {
+                  ":eId": mKey,
+                  ":skPrefix": skPrefix,
+                },
+              })
+            );
 
-        if (queryRes.Items && queryRes.Items.length > 0) {
-          recognitions = queryRes.Items.map((item) => ({
-            id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
-            ...item,
-          }));
+            if (queryRes.Items && queryRes.Items.length > 0) {
+              for (const item of queryRes.Items) {
+                const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                if (!recMap.has(key)) {
+                  recMap.set(key, {
+                    id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                    ...item,
+                  });
+                }
+              }
+            }
+          } catch {}
         }
       } catch (spErr) {
-        console.warn("[visible-recognition GET] SportsData fallback notice:", spErr);
+        console.warn("[visible-recognition GET] SportsData notice:", spErr);
       }
     }
 
-    // 3. Fallback to Firestore if empty
-    if (recognitions.length === 0 && db) {
+    // 3. Fallback / Merge with Firestore
+    if (db) {
       try {
         let q: any = db.collection(getFirestoreCollection("visible_recognitions"));
-        if (cleanMatchId) {
-          q = q.where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`]);
+        if (matchKeyCandidates.length > 0) {
+          q = q.where("matchId", "in", matchKeyCandidates.slice(0, 10));
         }
         if (cleanMomentId) {
           q = q.where("momentId", "in", [cleanMomentId, `MOMENT#${cleanMomentId}`]);
         }
         const snap = await q.get();
-        recognitions = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+        if (snap && snap.docs) {
+          for (const d of snap.docs) {
+            const data = d.data();
+            const key = String(data.recognitionId || d.id);
+            if (!recMap.has(key)) {
+              recMap.set(key, { id: d.id, ...data });
+            }
+          }
+        }
       } catch (fbErr) {
-        console.warn("[visible-recognition GET] Firestore fallback notice:", fbErr);
+        console.warn("[visible-recognition GET] Firestore notice:", fbErr);
       }
     }
+
+    let recognitions: any[] = Array.from(recMap.values());
 
     // Filter by targetUserId if requested
     if (targetUserId) {
@@ -215,12 +248,23 @@ export async function GET(req: NextRequest) {
     // Sort newest first
     recognitions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    return NextResponse.json({
-      success: true,
-      data: recognitions,
-      count: recognitions.length,
-      storageTable: "MatchMoments",
-    });
+    return new NextResponse(
+      JSON.stringify({
+        success: true,
+        data: recognitions,
+        count: recognitions.length,
+        storageTable: "MatchMoments",
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0",
+        },
+      }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { success: false, error: err.message || "Failed to fetch visible recognitions" },
@@ -533,7 +577,7 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
             }
           } catch {}
 
-          for (const pUid of participantSet) {
+          for (const pUid of Array.from(participantSet)) {
             await createNotification({
               userId: pUid,
               recipientEmail: pUid.includes("@") ? pUid : null,
