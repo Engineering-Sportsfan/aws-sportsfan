@@ -59,11 +59,24 @@ export async function GET(
         Limit: limit
       }));
 
-      comments = (res.Items ?? []).map(item => ({
-        id: (item.sk as string).split("#")[2] || item.commentId,
-        commentId: (item.sk as string).split("#")[2] || item.commentId,
-        ...item
-      }));
+      comments = (res.Items ?? []).map(item => {
+        const reactions = item.reactions && typeof item.reactions === "object" ? item.reactions : {};
+        const reactionUids = Object.entries(reactions)
+          .filter(([_, r]) => r === "heart" || r === "like" || r === true)
+          .map(([uid]) => uid);
+        const likedBy = Array.isArray(item.likedBy) && item.likedBy.length > 0
+          ? Array.from(new Set([...item.likedBy, ...reactionUids]))
+          : reactionUids;
+        const heartCount = Number(item.heartCount ?? item.likesCount ?? item.likes ?? likedBy.length ?? 0);
+        return {
+          id: (item.sk as string).split("#")[2] || item.commentId,
+          commentId: (item.sk as string).split("#")[2] || item.commentId,
+          ...item,
+          likedBy,
+          likesCount: heartCount,
+          heartCount,
+        };
+      });
     } catch (dynErr) {
       console.warn("[RoomComments GET] DynamoDB notice:", dynErr);
     }
@@ -81,11 +94,25 @@ export async function GET(
           .limit(limit)
           .get();
 
-        comments = snap.docs.map(doc => ({
-          id: doc.id,
-          commentId: doc.id,
-          ...doc.data()
-        }));
+        comments = snap.docs.map(doc => {
+          const data = doc.data();
+          const reactions = data.reactions && typeof data.reactions === "object" ? data.reactions : {};
+          const reactionUids = Object.entries(reactions)
+            .filter(([_, r]) => r === "heart" || r === "like" || r === true)
+            .map(([uid]) => uid);
+          const likedBy = Array.isArray(data.likedBy) && data.likedBy.length > 0
+            ? Array.from(new Set([...data.likedBy, ...reactionUids]))
+            : reactionUids;
+          const heartCount = Number(data.heartCount ?? data.likesCount ?? data.likes ?? likedBy.length ?? 0);
+          return {
+            id: doc.id,
+            commentId: doc.id,
+            ...data,
+            likedBy,
+            likesCount: heartCount,
+            heartCount,
+          };
+        });
       } catch (fsErr) {
         console.warn("[RoomComments GET] Firestore notice:", fsErr);
       }

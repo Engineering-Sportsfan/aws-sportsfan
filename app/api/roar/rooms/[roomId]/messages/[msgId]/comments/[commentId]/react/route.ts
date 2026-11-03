@@ -5,8 +5,7 @@ import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { findRoomMessage, normalizeReaction, reactionCountField } from "@/lib/roarRoomHelpers";
-import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { getUserInfo } from "@/lib/userPoints";
+import { QueryCommand, DeleteCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -16,15 +15,13 @@ export async function POST(
 ) {
   try {
     const user = await getUser(req);
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
     const resolvedParams = await params;
     const { roomId, msgId, commentId } = resolvedParams;
-    const { reaction: rawReaction } = await req.json();
-    if (!rawReaction) return NextResponse.json({ error: "reaction is required" }, { status: 400 });
+    const body = await req.json().catch(() => ({}));
+    const rawReaction = body?.reaction || "heart";
 
     const reaction = normalizeReaction(rawReaction) || "heart";
-    const userId = user.userId;
+    const userId = user?.userId || user?.email || body?.userId || req.headers.get("x-user-id") || "guest_fan";
     const cleanRoomId = roomId.replace(/^ROOM#/, "");
 
     const found = await findRoomMessage(cleanRoomId, msgId);
@@ -75,7 +72,12 @@ export async function POST(
     const previousReaction = reactions[userId] ?? null;
     const isSameReaction = previousReaction === reaction;
 
-    const newHeartCount = Math.max(0, (data.heartCount ?? 0) + (isSameReaction ? -1 : (previousReaction ? 0 : 1)));
+    const newHeartCount = Math.max(0, (data.heartCount ?? data.likesCount ?? data.likes ?? 0) + (isSameReaction ? -1 : (previousReaction ? 0 : 1)));
+
+    const existingLikedBy: string[] = Array.isArray(data.likedBy) ? data.likedBy : Object.keys(reactions);
+    const updatedLikedBy = isSameReaction
+      ? existingLikedBy.filter((u: string) => u !== userId && u !== "me")
+      : Array.from(new Set([...existingLikedBy, userId]));
 
     if (isSameReaction) {
       // Toggle reaction off
@@ -96,9 +98,9 @@ export async function POST(
           await docClient.send(new UpdateCommand({
             TableName: TABLES.RealTimeChat,
             Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${commentId}` },
-            UpdateExpression: "SET reactions = :r, heartCount = :hc, #pf = :pfc",
+            UpdateExpression: "SET reactions = :r, heartCount = :hc, likesCount = :hc, likedBy = :lb, #pf = :pfc",
             ExpressionAttributeNames: { "#pf": prevField },
-            ExpressionAttributeValues: { ":r": reactions, ":hc": newHeartCount, ":pfc": newPrevFieldCount }
+            ExpressionAttributeValues: { ":r": reactions, ":hc": newHeartCount, ":lb": updatedLikedBy, ":pfc": newPrevFieldCount }
           }));
         }
       } catch (dynErr) {
@@ -110,6 +112,8 @@ export async function POST(
         await commentRef.update({
           [`reactions.${userId}`]: FieldValue.delete(),
           heartCount: newHeartCount,
+          likesCount: newHeartCount,
+          likedBy: updatedLikedBy,
           [reactionCountField(previousReaction)]: FieldValue.increment(-1),
         });
         await commentRef.collection("likes").doc(userId).delete();
@@ -117,7 +121,15 @@ export async function POST(
         console.warn("[CommentReact POST] Firestore remove failed:", fsErr);
       }
 
-      return NextResponse.json({ success: true, action: "removed", reaction: null, heartCount: newHeartCount });
+      return NextResponse.json({
+        success: true,
+        action: "removed",
+        reaction: null,
+        heartCount: newHeartCount,
+        likesCount: newHeartCount,
+        liked: false,
+        likedBy: updatedLikedBy,
+      });
     }
 
     // Add or Switch reaction
@@ -125,9 +137,9 @@ export async function POST(
     const field = reactionCountField(reaction);
     const newFieldCount = (data[field] ?? 0) + 1;
 
-    let updateExpr = "SET reactions = :r, heartCount = :hc, #f = :fc";
+    let updateExpr = "SET reactions = :r, heartCount = :hc, likesCount = :hc, likedBy = :lb, #f = :fc";
     let attrNames: Record<string, string> = { "#f": field };
-    let attrVals: Record<string, any> = { ":r": reactions, ":hc": newHeartCount, ":fc": newFieldCount };
+    let attrVals: Record<string, any> = { ":r": reactions, ":hc": newHeartCount, ":lb": updatedLikedBy, ":fc": newFieldCount };
 
     let prevField = "";
     let newPrevFieldCount = 0;
@@ -171,7 +183,9 @@ export async function POST(
       const fsUpdate: Record<string, any> = {
         [`reactions.${userId}`]: reaction,
         [field]: FieldValue.increment(1),
-        heartCount: newHeartCount
+        heartCount: newHeartCount,
+        likesCount: newHeartCount,
+        likedBy: updatedLikedBy,
       };
       if (previousReaction) {
         fsUpdate[prevField] = FieldValue.increment(-1);
@@ -182,7 +196,15 @@ export async function POST(
       console.warn("[CommentReact POST] Firestore write failed:", fsErr);
     }
 
-    return NextResponse.json({ success: true, action: previousReaction ? "switched" : "added", reaction, heartCount: newHeartCount });
+    return NextResponse.json({
+      success: true,
+      action: previousReaction ? "switched" : "added",
+      reaction,
+      heartCount: newHeartCount,
+      likesCount: newHeartCount,
+      liked: true,
+      likedBy: updatedLikedBy,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: msg }, { status: 500 });

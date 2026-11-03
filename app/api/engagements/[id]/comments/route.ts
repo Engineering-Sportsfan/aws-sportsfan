@@ -97,6 +97,7 @@ export async function GET(
         flatComments = res.Items.map((item) => {
           const cid = String(item.commentId || item.id || String(item.sk || "").replace(/^COMMENT#/, "")).trim();
           const pid = item.parentId ? String(item.parentId).replace(/^COMMENT#/, "").trim() : null;
+          const rawLikedBy = Array.isArray(item.likedBy) ? item.likedBy : [];
           return {
             ...item,
             id: cid,
@@ -109,7 +110,8 @@ export async function GET(
             authorBadge: item.authorBadge || null,
             text: item.text || "",
             createdAt: Number(item.createdAt || Date.now()),
-            likesCount: Number(item.likesCount || item.likes || 0),
+            likesCount: Number(item.likesCount || item.likes || rawLikedBy.length || 0),
+            likedBy: rawLikedBy,
           };
         });
         fetchedFromDynamo = true;
@@ -134,6 +136,7 @@ export async function GET(
             const data = doc.data();
             const cid = String(data.commentId || data.id || doc.id).trim();
             const pid = data.parentId ? String(data.parentId).replace(/^COMMENT#/, "").trim() : null;
+            const rawLikedBy = Array.isArray(data.likedBy) ? data.likedBy : [];
             return {
               ...data,
               id: cid,
@@ -146,7 +149,8 @@ export async function GET(
               authorBadge: data.authorBadge || null,
               text: data.text || "",
               createdAt: Number(data.createdAt || Date.now()),
-              likesCount: Number(data.likesCount || data.likes || 0),
+              likesCount: Number(data.likesCount || data.likes || rawLikedBy.length || 0),
+              likedBy: rawLikedBy,
             };
           });
         }
