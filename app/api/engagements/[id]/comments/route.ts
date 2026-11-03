@@ -155,43 +155,37 @@ export async function GET(
       }
     }
 
-    // Build threaded hierarchy: nest replies under parent comments
+    // Build recursive threaded hierarchy: nest replies under parent comments at ANY depth
+    const idMap = new Map<string, EngagementComment>();
+    for (const c of flatComments) {
+      const cid = String(c.commentId || c.id || "").replace(/^COMMENT#/, "").trim();
+      idMap.set(cid, {
+        ...c,
+        id: cid,
+        commentId: cid,
+        replies: [],
+      });
+    }
+
     const topLevelComments: EngagementComment[] = [];
-    const replyMap = new Map<string, EngagementComment[]>();
-
     for (const c of flatComments) {
-      if (c.parentId) {
-        const pKey = String(c.parentId).replace(/^COMMENT#/, "").trim();
-        const existing = replyMap.get(pKey) || [];
-        existing.push(c);
-        replyMap.set(pKey, existing);
+      const cid = String(c.commentId || c.id || "").replace(/^COMMENT#/, "").trim();
+      const node = idMap.get(cid)!;
+      const pKey = c.parentId ? String(c.parentId).replace(/^COMMENT#/, "").trim() : null;
+      const parent = pKey ? idMap.get(pKey) : null;
+      if (parent && parent.id !== cid) {
+        parent.replies = [...(parent.replies || []), node];
+      } else {
+        topLevelComments.push(node);
       }
     }
 
-    for (const c of flatComments) {
-      if (!c.parentId) {
-        const key = String(c.commentId || c.id || "").replace(/^COMMENT#/, "").trim();
-        const replies = (replyMap.get(key) || []).sort(
-          (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
-        );
-        topLevelComments.push({
-          ...c,
-          replies,
-        });
-      }
-    }
-
-    // Catch orphan replies so no user comment is ever hidden
-    const attachedIds = new Set<string>();
-    topLevelComments.forEach((c) => (c.replies || []).forEach((r) => attachedIds.add(r.id || r.commentId)));
-    for (const c of flatComments) {
-      if (c.parentId && !attachedIds.has(c.id || c.commentId)) {
-        topLevelComments.push({ ...c, replies: [] });
-      }
-    }
-
-    // Sort top level comments by createdAt desc
-    topLevelComments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const sortReplies = (n: EngagementComment) => {
+      n.replies = (n.replies || []).sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+      n.replies.forEach(sortReplies);
+    };
+    topLevelComments.forEach(sortReplies);
+    topLevelComments.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
 
     return NextResponse.json({
       success: true,
