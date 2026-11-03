@@ -2,7 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 import { countRecords } from "@/lib/engagementSocial";

@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
   const rawMatchId = searchParams.get("matchId");
   const roomId = searchParams.get("roomId");
   const userId = searchParams.get("userId");
+  const username = searchParams.get("username");
 
   const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : "";
 
@@ -29,12 +30,20 @@ export async function GET(req: NextRequest) {
       ).trim();
       if (!engId) return;
       const canonicalId = `REVEAL-${engId}`;
-      const record = { ...item, id: canonicalId, engagementId: engId };
+      const rawLikes = Number(item.likes ?? item.likesCount ?? 0);
+      const record = { ...item, id: canonicalId, engagementId: engId, likes: rawLikes, likesCount: rawLikes };
       const existingIdx = outcomeRevealsList.findIndex(
         (x) => String(x.engagementId || x.id?.replace(/^REVEAL-/, "")).trim() === engId
       );
       if (existingIdx >= 0) {
-        outcomeRevealsList[existingIdx] = { ...outcomeRevealsList[existingIdx], ...record };
+        const prevLikes = Number(outcomeRevealsList[existingIdx].likes ?? outcomeRevealsList[existingIdx].likesCount ?? 0);
+        const bestLikes = Math.max(prevLikes, rawLikes);
+        outcomeRevealsList[existingIdx] = {
+          ...outcomeRevealsList[existingIdx],
+          ...record,
+          likes: bestLikes,
+          likesCount: bestLikes,
+        };
       } else {
         outcomeRevealsList.push(record);
       }
@@ -48,12 +57,20 @@ export async function GET(req: NextRequest) {
         ""
       ).trim();
       if (!recId) return;
-      const record = { ...item, id: recId, recognitionId: recId };
+      const rawLikes = Number(item.likes ?? item.likesCount ?? 0);
+      const record = { ...item, id: recId, recognitionId: recId, likes: rawLikes, likesCount: rawLikes };
       const existingIdx = recognitionsList.findIndex(
         (x) => String(x.recognitionId || x.id).trim() === recId
       );
       if (existingIdx >= 0) {
-        recognitionsList[existingIdx] = { ...recognitionsList[existingIdx], ...record };
+        const prevLikes = Number(recognitionsList[existingIdx].likes ?? recognitionsList[existingIdx].likesCount ?? 0);
+        const bestLikes = Math.max(prevLikes, rawLikes);
+        recognitionsList[existingIdx] = {
+          ...recognitionsList[existingIdx],
+          ...record,
+          likes: bestLikes,
+          likesCount: bestLikes,
+        };
       } else {
         recognitionsList.push(record);
       }
@@ -212,20 +229,8 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    // Filter recognitions by userId if targetType is 'user'
-    const cleanReqUserId = userId ? String(userId).trim().toLowerCase().replace(/^user#/, "") : "";
-    const filteredRecognitions = recognitionsList.filter((rec) => {
-      if (!rec.targetType || rec.targetType === "all") return true;
-      if (!cleanReqUserId) return false; // Anonymous users do not receive private VIP recognitions
-      const cleanTarget = String(rec.targetUserId || "").trim().toLowerCase().replace(/^user#/, "");
-      const cleanTargetName = String(rec.targetUserName || "").trim().toLowerCase();
-      return (
-        cleanTarget === cleanReqUserId ||
-        cleanTarget.includes(cleanReqUserId) ||
-        cleanReqUserId.includes(cleanTarget) ||
-        cleanTargetName === cleanReqUserId
-      );
-    });
+    // All recognitions (both stadium-wide broadcasts and targeted user spotlights) are included in the room stream
+    const filteredRecognitions = recognitionsList;
 
     // Sort newest first
     filteredRecognitions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
@@ -238,6 +243,12 @@ export async function GET(req: NextRequest) {
       outcomeRevealsCount: outcomeRevealsList.length,
       recognitions: filteredRecognitions,
       outcomeReveals: outcomeRevealsList,
+    }, {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+      },
     });
   } catch (error: any) {
     console.error("GET /api/roar/celebrations error:", error);

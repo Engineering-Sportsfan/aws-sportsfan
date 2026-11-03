@@ -94,28 +94,36 @@ export async function GET(
       );
 
       if (res.Items && res.Items.length > 0) {
-        flatComments = res.Items.map((item) => ({
-          id: item.commentId || String(item.sk).replace(/^COMMENT#/, ""),
-          commentId: item.commentId || String(item.sk).replace(/^COMMENT#/, ""),
-          engagementId: cleanId,
-          parentId: item.parentId || null,
-          authorUid: item.authorUid || "guest",
-          authorUsername: item.authorUsername || "SportsFan",
-          authorAvatarUrl: item.authorAvatarUrl || null,
-          authorBadge: item.authorBadge || null,
-          text: item.text || "",
-          createdAt: Number(item.createdAt || Date.now()),
-          likesCount: Number(item.likesCount || item.likes || 0),
-          ...item,
-        }));
+        flatComments = res.Items.map((item) => {
+          const cid = String(item.commentId || item.id || String(item.sk || "").replace(/^COMMENT#/, "")).trim();
+          const pid = item.parentId ? String(item.parentId).replace(/^COMMENT#/, "").trim() : null;
+          const rawLikedBy = Array.isArray(item.likedBy) ? item.likedBy : [];
+          const effectiveLikes = Math.max(Number(item.likesCount || item.likes || 0), rawLikedBy.length);
+          return {
+            ...item,
+            id: cid,
+            commentId: cid,
+            engagementId: cleanId,
+            parentId: pid,
+            authorUid: item.authorUid || "guest",
+            authorUsername: item.authorUsername || "SportsFan",
+            authorAvatarUrl: item.authorAvatarUrl || null,
+            authorBadge: item.authorBadge || null,
+            text: item.text || "",
+            createdAt: Number(item.createdAt || Date.now()),
+            likes: effectiveLikes,
+            likesCount: effectiveLikes,
+            likedBy: rawLikedBy,
+          };
+        });
         fetchedFromDynamo = true;
       }
     } catch (dynErr) {
       console.warn("[EngagementComments GET] DynamoDB notice:", dynErr);
     }
 
-    // 2. Fallback to Firestore subcollection if DynamoDB empty
-    if (!fetchedFromDynamo && db) {
+    // Also check Firestore to merge/fallback any latest comment likes
+    if (db) {
       try {
         const snap = await db
           .collection(getFirestoreCollection("engagements"))
@@ -126,49 +134,100 @@ export async function GET(
           .get();
 
         if (!snap.empty) {
-          flatComments = snap.docs.map((doc) => ({
-            id: doc.id,
-            commentId: doc.id,
-            engagementId: cleanId,
-            ...doc.data(),
-          }));
+          const fsItems = snap.docs.map((doc) => {
+            const data = doc.data();
+            const cid = String(data.commentId || data.id || doc.id).trim();
+            const pid = data.parentId ? String(data.parentId).replace(/^COMMENT#/, "").trim() : null;
+            const rawLikedBy = Array.isArray(data.likedBy) ? data.likedBy : [];
+            const effectiveLikes = Math.max(Number(data.likesCount || data.likes || 0), rawLikedBy.length);
+            return {
+              ...data,
+              id: cid,
+              commentId: cid,
+              engagementId: cleanId,
+              parentId: pid,
+              authorUid: data.authorUid || "guest",
+              authorUsername: data.authorUsername || "SportsFan",
+              authorAvatarUrl: data.authorAvatarUrl || null,
+              authorBadge: data.authorBadge || null,
+              text: data.text || "",
+              createdAt: Number(data.createdAt || Date.now()),
+              likes: effectiveLikes,
+              likesCount: effectiveLikes,
+              likedBy: rawLikedBy,
+            };
+          });
+
+          if (!fetchedFromDynamo || flatComments.length === 0) {
+            flatComments = fsItems;
+          } else {
+            const fsMap = new Map<string, any>(fsItems.map(x => [x.id, x]));
+            flatComments = flatComments.map((dItem: any) => {
+              const fsItem = fsMap.get(dItem.id);
+              if (!fsItem) return dItem;
+              const mergedLikedBy = Array.from(new Set([...(dItem.likedBy || []), ...(fsItem.likedBy || [])]));
+              const mergedLikes = Math.max(dItem.likesCount || 0, fsItem.likesCount || 0, mergedLikedBy.length);
+              return {
+                ...dItem,
+                ...fsItem,
+                likedBy: mergedLikedBy,
+                likes: mergedLikes,
+                likesCount: mergedLikes,
+              };
+            });
+            const existingIds = new Set(flatComments.map(c => c.id));
+            for (const fsItem of fsItems) {
+              if (!existingIds.has(fsItem.id)) {
+                flatComments.push(fsItem);
+              }
+            }
+          }
         }
       } catch (fsErr) {
         console.warn("[EngagementComments GET] Firestore fallback notice:", fsErr);
       }
     }
 
-    // Build threaded hierarchy: nest replies under parent comments
+    // Build recursive threaded hierarchy: nest replies under parent comments at ANY depth
+    const idMap = new Map<string, EngagementComment>();
+    for (const c of flatComments) {
+      const cid = String(c.commentId || c.id || "").replace(/^COMMENT#/, "").trim();
+      idMap.set(cid, {
+        ...c,
+        id: cid,
+        commentId: cid,
+        replies: [],
+      });
+    }
+
     const topLevelComments: EngagementComment[] = [];
-    const replyMap = new Map<string, EngagementComment[]>();
-
     for (const c of flatComments) {
-      if (c.parentId) {
-        const existing = replyMap.get(c.parentId) || [];
-        existing.push(c);
-        replyMap.set(c.parentId, existing);
+      const cid = String(c.commentId || c.id || "").replace(/^COMMENT#/, "").trim();
+      const node = idMap.get(cid)!;
+      const pKey = c.parentId ? String(c.parentId).replace(/^COMMENT#/, "").trim() : null;
+      const parent = pKey ? idMap.get(pKey) : null;
+      if (parent && parent.id !== cid) {
+        parent.replies = [...(parent.replies || []), node];
+      } else {
+        topLevelComments.push(node);
       }
     }
 
-    for (const c of flatComments) {
-      if (!c.parentId) {
-        const replies = (replyMap.get(c.commentId) || []).sort(
-          (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
-        );
-        topLevelComments.push({
-          ...c,
-          replies,
-        });
-      }
-    }
-
-    // Sort top level comments by createdAt desc
-    topLevelComments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const sortReplies = (n: EngagementComment) => {
+      n.replies = (n.replies || []).sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0));
+      n.replies.forEach(sortReplies);
+    };
+    topLevelComments.forEach(sortReplies);
+    topLevelComments.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
 
     return NextResponse.json({
       success: true,
       comments: topLevelComments,
       totalCount: flatComments.length,
+    }, {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      },
     });
   } catch (error: any) {
     console.error("GET /api/engagements/[id]/comments error:", error);
@@ -301,6 +360,16 @@ export async function POST(
         if (found?.item) {
           found.item.commentsCount = total;
           await persistEngagementUpdate(cleanId, found.item, found.matchMomentsRecord);
+        } else {
+          // Dual-write count to visible_recognitions and match_room_notifications collections
+          if (db) {
+            try {
+              await db.collection("visible_recognitions").doc(cleanId).set({ commentsCount: total }, { merge: true });
+            } catch {}
+            try {
+              await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ commentsCount: total }, { merge: true });
+            } catch {}
+          }
         }
       } catch (syncErr) {
         console.warn("[EngagementComments POST] Engagement count sync notice:", syncErr);
