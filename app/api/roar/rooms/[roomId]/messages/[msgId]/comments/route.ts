@@ -93,7 +93,11 @@ export async function GET(
 
     comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    return NextResponse.json({ success: true, comments });
+    return NextResponse.json({ success: true, comments }, {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -111,6 +115,7 @@ export async function POST(
     const { roomId, msgId } = await params;
     const body = await req.json();
     const text: string = (body.text ?? "").trim();
+    const parentId: string | null = body.parentId ? String(body.parentId).trim() : null;
     if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
 
     const info = await getUserInfo(user.userId, undefined, user.email);
@@ -137,6 +142,7 @@ export async function POST(
           sk: `COMMENT#${targetMsgId}#${commentId}`,
           commentId,
           text,
+          parentId,
           authorUid: resolvedAuthorId,
           authorEmail: user.email,
           authorUsername: username,
@@ -169,6 +175,7 @@ export async function POST(
         id: commentId,
         commentId,
         text,
+        parentId,
         authorUid: resolvedAuthorId,
         authorEmail: user.email,
         authorUsername: username,

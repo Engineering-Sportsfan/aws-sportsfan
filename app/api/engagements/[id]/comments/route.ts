@@ -94,20 +94,24 @@ export async function GET(
       );
 
       if (res.Items && res.Items.length > 0) {
-        flatComments = res.Items.map((item) => ({
-          id: item.commentId || String(item.sk).replace(/^COMMENT#/, ""),
-          commentId: item.commentId || String(item.sk).replace(/^COMMENT#/, ""),
-          engagementId: cleanId,
-          parentId: item.parentId || null,
-          authorUid: item.authorUid || "guest",
-          authorUsername: item.authorUsername || "SportsFan",
-          authorAvatarUrl: item.authorAvatarUrl || null,
-          authorBadge: item.authorBadge || null,
-          text: item.text || "",
-          createdAt: Number(item.createdAt || Date.now()),
-          likesCount: Number(item.likesCount || item.likes || 0),
-          ...item,
-        }));
+        flatComments = res.Items.map((item) => {
+          const cid = String(item.commentId || item.id || String(item.sk || "").replace(/^COMMENT#/, "")).trim();
+          const pid = item.parentId ? String(item.parentId).replace(/^COMMENT#/, "").trim() : null;
+          return {
+            ...item,
+            id: cid,
+            commentId: cid,
+            engagementId: cleanId,
+            parentId: pid,
+            authorUid: item.authorUid || "guest",
+            authorUsername: item.authorUsername || "SportsFan",
+            authorAvatarUrl: item.authorAvatarUrl || null,
+            authorBadge: item.authorBadge || null,
+            text: item.text || "",
+            createdAt: Number(item.createdAt || Date.now()),
+            likesCount: Number(item.likesCount || item.likes || 0),
+          };
+        });
         fetchedFromDynamo = true;
       }
     } catch (dynErr) {
@@ -126,12 +130,25 @@ export async function GET(
           .get();
 
         if (!snap.empty) {
-          flatComments = snap.docs.map((doc) => ({
-            id: doc.id,
-            commentId: doc.id,
-            engagementId: cleanId,
-            ...doc.data(),
-          }));
+          flatComments = snap.docs.map((doc) => {
+            const data = doc.data();
+            const cid = String(data.commentId || data.id || doc.id).trim();
+            const pid = data.parentId ? String(data.parentId).replace(/^COMMENT#/, "").trim() : null;
+            return {
+              ...data,
+              id: cid,
+              commentId: cid,
+              engagementId: cleanId,
+              parentId: pid,
+              authorUid: data.authorUid || "guest",
+              authorUsername: data.authorUsername || "SportsFan",
+              authorAvatarUrl: data.authorAvatarUrl || null,
+              authorBadge: data.authorBadge || null,
+              text: data.text || "",
+              createdAt: Number(data.createdAt || Date.now()),
+              likesCount: Number(data.likesCount || data.likes || 0),
+            };
+          });
         }
       } catch (fsErr) {
         console.warn("[EngagementComments GET] Firestore fallback notice:", fsErr);
@@ -144,21 +161,32 @@ export async function GET(
 
     for (const c of flatComments) {
       if (c.parentId) {
-        const existing = replyMap.get(c.parentId) || [];
+        const pKey = String(c.parentId).replace(/^COMMENT#/, "").trim();
+        const existing = replyMap.get(pKey) || [];
         existing.push(c);
-        replyMap.set(c.parentId, existing);
+        replyMap.set(pKey, existing);
       }
     }
 
     for (const c of flatComments) {
       if (!c.parentId) {
-        const replies = (replyMap.get(c.commentId) || []).sort(
+        const key = String(c.commentId || c.id || "").replace(/^COMMENT#/, "").trim();
+        const replies = (replyMap.get(key) || []).sort(
           (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
         );
         topLevelComments.push({
           ...c,
           replies,
         });
+      }
+    }
+
+    // Catch orphan replies so no user comment is ever hidden
+    const attachedIds = new Set<string>();
+    topLevelComments.forEach((c) => (c.replies || []).forEach((r) => attachedIds.add(r.id || r.commentId)));
+    for (const c of flatComments) {
+      if (c.parentId && !attachedIds.has(c.id || c.commentId)) {
+        topLevelComments.push({ ...c, replies: [] });
       }
     }
 
@@ -169,6 +197,10 @@ export async function GET(
       success: true,
       comments: topLevelComments,
       totalCount: flatComments.length,
+    }, {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      },
     });
   } catch (error: any) {
     console.error("GET /api/engagements/[id]/comments error:", error);
@@ -301,6 +333,16 @@ export async function POST(
         if (found?.item) {
           found.item.commentsCount = total;
           await persistEngagementUpdate(cleanId, found.item, found.matchMomentsRecord);
+        } else {
+          // Dual-write count to visible_recognitions and match_room_notifications collections
+          if (db) {
+            try {
+              await db.collection("visible_recognitions").doc(cleanId).set({ commentsCount: total }, { merge: true });
+            } catch {}
+            try {
+              await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ commentsCount: total }, { merge: true });
+            } catch {}
+          }
         }
       } catch (syncErr) {
         console.warn("[EngagementComments POST] Engagement count sync notice:", syncErr);

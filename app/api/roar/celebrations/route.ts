@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
   const rawMatchId = searchParams.get("matchId");
   const roomId = searchParams.get("roomId");
   const userId = searchParams.get("userId");
+  const username = searchParams.get("username");
 
   const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : "";
 
@@ -212,18 +213,27 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    // Filter recognitions by userId if targetType is 'user'
+    // Filter recognitions by userId or username if targetType is 'user'
     const cleanReqUserId = userId ? String(userId).trim().toLowerCase().replace(/^user#/, "") : "";
+    const cleanReqUsername = username ? String(username).trim().toLowerCase() : "";
     const filteredRecognitions = recognitionsList.filter((rec) => {
       if (!rec.targetType || rec.targetType === "all") return true;
-      if (!cleanReqUserId) return false; // Anonymous users do not receive private VIP recognitions
+      if (!cleanReqUserId && !cleanReqUsername) return false; // Anonymous users do not receive private VIP recognitions
       const cleanTarget = String(rec.targetUserId || "").trim().toLowerCase().replace(/^user#/, "");
       const cleanTargetName = String(rec.targetUserName || "").trim().toLowerCase();
       return (
-        cleanTarget === cleanReqUserId ||
-        cleanTarget.includes(cleanReqUserId) ||
-        cleanReqUserId.includes(cleanTarget) ||
-        cleanTargetName === cleanReqUserId
+        (cleanReqUserId && (
+          cleanTarget === cleanReqUserId ||
+          cleanTarget.includes(cleanReqUserId) ||
+          cleanReqUserId.includes(cleanTarget) ||
+          cleanTargetName === cleanReqUserId
+        )) ||
+        (cleanReqUsername && (
+          cleanTargetName === cleanReqUsername ||
+          cleanTargetName.includes(cleanReqUsername) ||
+          cleanReqUsername.includes(cleanTargetName) ||
+          cleanTarget === cleanReqUsername
+        ))
       );
     });
 
@@ -238,6 +248,12 @@ export async function GET(req: NextRequest) {
       outcomeRevealsCount: outcomeRevealsList.length,
       recognitions: filteredRecognitions,
       outcomeReveals: outcomeRevealsList,
+    }, {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+      },
     });
   } catch (error: any) {
     console.error("GET /api/roar/celebrations error:", error);
