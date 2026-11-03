@@ -14,6 +14,7 @@ export async function POST(
   try {
     const { id, commentId } = await params;
     const cleanEngId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+    const cleanCommentId = String(commentId || "").replace(/^COMMENT#/, "").trim();
     const body = await req.json().catch(() => ({}));
     const authUser = await getUser(req);
     const userId =
@@ -34,7 +35,7 @@ export async function POST(
           TableName: TABLES.SocialAndContent,
           Key: {
             contentId: `ENGAGEMENT#${cleanEngId}`,
-            sk: `COMMENT#${commentId}`,
+            sk: `COMMENT#${cleanCommentId}`,
           },
         })
       );
@@ -56,7 +57,7 @@ export async function POST(
           .collection(getFirestoreCollection("engagements"))
           .doc(cleanEngId)
           .collection("comments")
-          .doc(commentId);
+          .doc(cleanCommentId);
 
         if (!itemFoundInDynamo) {
           const snap = await fsCommentRef.get();
@@ -85,7 +86,7 @@ export async function POST(
           TableName: TABLES.SocialAndContent,
           Key: {
             contentId: `ENGAGEMENT#${cleanEngId}`,
-            sk: `COMMENT#${commentId}`,
+            sk: `COMMENT#${cleanCommentId}`,
           },
           UpdateExpression: "SET likesCount = :lc, likes = :lc, likedBy = :lb",
           ExpressionAttributeValues: {

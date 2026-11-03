@@ -27,6 +27,11 @@ export async function POST(
     const found = await findRoomMessage(cleanRoomId, msgId);
     const targetMsgId = found?.rawMsgId || msgId;
     const roomCand = found?.roomIdKey || `ROOM#${cleanRoomId}`;
+    const cleanCommentKey = String(commentId || "")
+      .replace(/^COMMENT#/, "")
+      .replace(new RegExp(`^${targetMsgId}#`), "")
+      .replace(/^COMMENT#/, "")
+      .trim();
 
     // 1. Fetch parent comment from DynamoDB first
     let commentItem: any = null;
@@ -34,7 +39,7 @@ export async function POST(
       const qRes = await docClient.send(new QueryCommand({
         TableName: TABLES.RealTimeChat,
         KeyConditionExpression: "roomId = :r AND sk = :s",
-        ExpressionAttributeValues: { ":r": roomCand, ":s": `COMMENT#${targetMsgId}#${commentId}` },
+        ExpressionAttributeValues: { ":r": roomCand, ":s": `COMMENT#${targetMsgId}#${cleanCommentKey}` },
         Limit: 1
       }));
       if (qRes.Items && qRes.Items.length > 0) {
@@ -47,7 +52,7 @@ export async function POST(
     const commentRef = db
       .collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId)
       .collection("messages").doc(targetMsgId)
-      .collection("comments").doc(commentId);
+      .collection("comments").doc(cleanCommentKey);
 
     // Fallback: Check Firestore
     let commentExists = !!commentItem;
@@ -90,14 +95,14 @@ export async function POST(
         // A. Delete reaction record
         await docClient.send(new DeleteCommand({
           TableName: TABLES.RealTimeChat,
-          Key: { roomId: roomCand, sk: `LIKE#${commentId}#${userId}` }
+          Key: { roomId: roomCand, sk: `LIKE#${cleanCommentKey}#${userId}` }
         }));
 
         // B. Update Parent Item
         if (commentItem) {
           await docClient.send(new UpdateCommand({
             TableName: TABLES.RealTimeChat,
-            Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${commentId}` },
+            Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${cleanCommentKey}` },
             UpdateExpression: "SET reactions = :r, heartCount = :hc, likesCount = :hc, likedBy = :lb, #pf = :pfc",
             ExpressionAttributeNames: { "#pf": prevField },
             ExpressionAttributeValues: { ":r": reactions, ":hc": newHeartCount, ":lb": updatedLikedBy, ":pfc": newPrevFieldCount }
@@ -158,7 +163,7 @@ export async function POST(
         TableName: TABLES.RealTimeChat,
         Item: {
           roomId: roomCand,
-          sk: `LIKE#${commentId}#${userId}`,
+          sk: `LIKE#${cleanCommentKey}#${userId}`,
           reaction: reaction,
           reactedAt: Date.now()
         }
@@ -168,7 +173,7 @@ export async function POST(
       if (commentItem) {
         await docClient.send(new UpdateCommand({
           TableName: TABLES.RealTimeChat,
-          Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${commentId}` },
+          Key: { roomId: roomCand, sk: `COMMENT#${targetMsgId}#${cleanCommentKey}` },
           UpdateExpression: updateExpr,
           ExpressionAttributeNames: attrNames,
           ExpressionAttributeValues: attrVals

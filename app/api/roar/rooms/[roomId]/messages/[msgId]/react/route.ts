@@ -7,7 +7,6 @@ import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/l
 import { notifyRoomMessageReaction } from "@/lib/notifications";
 import { getUserInfo } from "@/lib/userPoints";
 import { db } from "@/lib/firebaseAdmin";
-import { FieldValue } from "firebase-admin/firestore";
 import { findRoomMessage, VALID_REACTIONS, normalizeReaction, COUNT_FIELDS } from "@/lib/roarRoomHelpers";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +18,7 @@ export async function POST(
   try {
     const { roomId, msgId } = await params;
     const user = await getUser(req);
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const rawReaction: string | null = body.reaction ?? null;
     const reaction = normalizeReaction(rawReaction);
 
@@ -32,12 +29,24 @@ export async function POST(
       );
     }
 
-    const info = await getUserInfo(user.userId, undefined, user.email);
-    const resolvedUserId = info.exists ? info.actualUserId : user.userId;
-    if (!resolvedUserId) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
+    const clientUserId = body?.userId || req.headers.get("x-user-id");
+    let resolvedUserId: string = "";
+    if (user?.userId) {
+      try {
+        const info = await getUserInfo(user.userId, undefined, user.email);
+        resolvedUserId = info.exists ? info.actualUserId : user.userId;
+      } catch {
+        resolvedUserId = user.userId;
+      }
+    } else if (clientUserId) {
+      resolvedUserId = String(clientUserId).trim();
+    } else {
+      resolvedUserId = "guest_fan";
+    }
 
     // 1. Find message across DynamoDB & Firestore
-    const found = await findRoomMessage(roomId, msgId);
+    const cleanRoomId = roomId.replace(/^ROOM#/, "");
+    const found = await findRoomMessage(cleanRoomId, msgId);
     if (!found) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
@@ -60,20 +69,28 @@ export async function POST(
       console.warn("[MessageReact POST] Existing reaction lookup notice:", e);
     }
 
-    // Nothing to do if user clicked same active reaction again
-    if (existingReaction === reaction && reaction !== null) {
-      const field = COUNT_FIELDS[reaction] || "heartCount";
-      const currentCount = msgItem[field] ?? 0;
-      return NextResponse.json({
-        success: true,
-        reaction: existingReaction,
-        heartCount: msgItem.heartCount ?? msgItem.likeCount ?? 0,
-        [field]: currentCount,
-      });
+    // Fallback: check Firestore for existing reaction if not in DynamoDB
+    if (!existingReaction && db) {
+      try {
+        const snap = await db
+          .collection(getFirestoreCollection("roarRooms"))
+          .doc(cleanRoomId)
+          .collection("messages")
+          .doc(targetMsgId)
+          .collection("likes")
+          .doc(resolvedUserId)
+          .get();
+        if (snap.exists) {
+          existingReaction = normalizeReaction(snap.data()?.reaction) ?? null;
+        }
+      } catch {}
     }
 
+    // Determine target reaction: if user sends same reaction that is already active, toggle it off (unlike)
+    const effectiveReaction = (existingReaction === reaction && reaction !== null) ? null : reaction;
+
     const updates: Record<string, number> = {};
-    let totalReactions = Number(msgItem.heartCount ?? msgItem.likeCount ?? 0);
+    let totalReactions = Math.max(0, Number(msgItem.heartCount ?? msgItem.likeCount ?? 0));
 
     // If removing previous reaction
     if (existingReaction) {
@@ -83,8 +100,8 @@ export async function POST(
     }
 
     // If applying new reaction
-    if (reaction) {
-      const newField = COUNT_FIELDS[reaction] || "heartCount";
+    if (effectiveReaction) {
+      const newField = COUNT_FIELDS[effectiveReaction] || "heartCount";
       const base = newField in updates ? updates[newField] : (msgItem[newField] ?? 0);
       updates[newField] = base + 1;
       totalReactions = totalReactions + 1;
@@ -95,13 +112,13 @@ export async function POST(
 
     // 3. Write/delete user's reaction record in DynamoDB
     try {
-      if (reaction) {
+      if (effectiveReaction) {
         await docClient.send(new PutCommand({
           TableName: TABLES.RealTimeChat,
           Item: {
             roomId: roomIdKey,
             sk: `LIKE#${targetMsgId}#${resolvedUserId}`,
-            reaction,
+            reaction: effectiveReaction,
             reactedAt: Date.now(),
           }
         }));
@@ -132,12 +149,11 @@ export async function POST(
 
     // 4. Firestore Sync
     try {
-      const cleanRoomId = roomId.replace(/^ROOM#/, "");
       const msgRef = db.collection(getFirestoreCollection("roarRooms")).doc(cleanRoomId).collection("messages").doc(targetMsgId);
       const reactionRef = msgRef.collection("likes").doc(resolvedUserId);
 
-      if (reaction) {
-        await reactionRef.set({ reaction, reactedAt: Date.now(), userId: resolvedUserId }, { merge: true });
+      if (effectiveReaction) {
+        await reactionRef.set({ reaction: effectiveReaction, reactedAt: Date.now(), userId: resolvedUserId }, { merge: true });
       } else {
         await reactionRef.delete();
       }
@@ -147,9 +163,9 @@ export async function POST(
       console.warn("[MessageReact POST] Firestore sync notice:", fsErr);
     }
 
-    // Notify author if a new reaction was added
-    if (reaction) {
-      notifyRoomMessageReaction(roomId, targetMsgId, resolvedUserId, reaction, user.email, {
+    // Notify author if a new reaction was added and user is authenticated
+    if (effectiveReaction && user?.email) {
+      notifyRoomMessageReaction(roomId, targetMsgId, resolvedUserId, effectiveReaction, user.email, {
         authorUid: msgItem.authorUid || msgItem.userId,
         authorEmail: msgItem.authorEmail || msgItem.email,
         text: msgItem.text || msgItem.content,
@@ -160,7 +176,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      reaction,
+      reaction: effectiveReaction,
       heartCount: totalReactions,
       likeCount: totalReactions,
       ...updates,

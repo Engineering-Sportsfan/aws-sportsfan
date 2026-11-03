@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { GetCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getUser } from "@/lib/getUser";
 import { dispatchFlipArenaNotification } from "@/lib/notifications";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 import { countRecords } from "@/lib/engagementSocial";
+import { getCandidateTableNames } from "@/lib/dualWrite";
 
 export const dynamic = "force-dynamic";
 
@@ -271,6 +272,39 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
         } catch {}
       }
+
+      // Also mirror count to MatchMoments table (for recognitions and outcome reveals)
+      if (matchId) {
+        const cleanM = String(matchId).replace(/^MATCH#/, "");
+        for (const tbl of getCandidateTableNames("MatchMoments")) {
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${cleanM}`, sk: `RECOGNITION#${cleanId}` },
+              UpdateExpression: "SET likes = :l, likesCount = :l",
+              ExpressionAttributeValues: { ":l": likesCount },
+            }));
+          } catch {}
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${cleanM}`, sk: `REVEAL#${cleanId}` },
+              UpdateExpression: "SET likes = :l, likesCount = :l",
+              ExpressionAttributeValues: { ":l": likesCount },
+            }));
+          } catch {}
+        }
+      }
+
+      // Also mirror count to SocialAndContent META row
+      try {
+        await docClient.send(new UpdateCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: "META" },
+          UpdateExpression: "SET likes = :l, likesCount = :l",
+          ExpressionAttributeValues: { ":l": likesCount },
+        }));
+      } catch {}
     }
 
     return NextResponse.json({
