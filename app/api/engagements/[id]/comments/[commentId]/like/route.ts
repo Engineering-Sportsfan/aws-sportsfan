@@ -84,11 +84,18 @@ export async function POST(
       }
     }
 
-    const alreadyLiked = likedBy.includes(userId) || likedBy.includes("me");
+    const cleanTargetUid = String(userId).replace(/^USER#/i, "").toLowerCase();
+    const alreadyLiked = likedBy.some((u: string) => {
+      const cu = String(u).replace(/^USER#/i, "").toLowerCase();
+      return cu === cleanTargetUid || cu === "me";
+    });
     const liked = !alreadyLiked;
     const nextLikedBy = liked
       ? Array.from(new Set([...likedBy, userId]))
-      : likedBy.filter((u: string) => u !== userId && u !== "me");
+      : likedBy.filter((u: string) => {
+          const cu = String(u).replace(/^USER#/i, "").toLowerCase();
+          return cu !== cleanTargetUid && cu !== "me";
+        });
     const nextLikes = nextLikedBy.length;
 
     // Dual-write to DynamoDB

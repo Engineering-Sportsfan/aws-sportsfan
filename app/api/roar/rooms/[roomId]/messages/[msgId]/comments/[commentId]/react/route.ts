@@ -81,12 +81,20 @@ export async function POST(
 
     const data = commentItem || fallbackData || {};
     const reactions = { ...(data.reactions ?? {}) };
-    const previousReaction = reactions[userId] ?? null;
+    const cleanTargetUid = String(userId).replace(/^USER#/i, "").toLowerCase();
+
+    // Check if user already reacted across any candidate key variant
+    const existingKey = Object.keys(reactions).find(
+      k => String(k).replace(/^USER#/i, "").toLowerCase() === cleanTargetUid || k === userId
+    );
+    const previousReaction = existingKey ? reactions[existingKey] : null;
     const isSameReaction = previousReaction === reaction;
 
     if (isSameReaction) {
+      if (existingKey) delete reactions[existingKey];
       delete reactions[userId];
     } else {
+      if (existingKey && existingKey !== userId) delete reactions[existingKey];
       reactions[userId] = reaction;
     }
 
@@ -98,8 +106,11 @@ export async function POST(
     const existingLikedBy: string[] = Array.isArray(data.likedBy) ? data.likedBy : [];
     const combinedLikedBy = Array.from(new Set([...existingLikedBy, ...heartUsers]));
     const updatedLikedBy = isSameReaction
-      ? combinedLikedBy.filter((u: string) => u !== userId && u !== "me")
-      : Array.from(new Set([...combinedLikedBy, userId]));
+      ? combinedLikedBy.filter((u: string) => {
+          const cu = String(u).replace(/^USER#/i, "").toLowerCase();
+          return cu !== cleanTargetUid && cu !== "me";
+        })
+      : Array.from(new Set([...combinedLikedBy.filter(u => String(u).replace(/^USER#/i, "").toLowerCase() !== cleanTargetUid), userId]));
 
     const newHeartCount = Math.max(0, updatedLikedBy.length);
 
