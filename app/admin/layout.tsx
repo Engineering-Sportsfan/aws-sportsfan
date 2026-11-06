@@ -716,10 +716,17 @@ const FULL_NAV: NavGroup[] = [
       {
         label: "Core Engine", icon: "⚙️", badge: "CORE LOOPS", badgeBg: "#388bfd",
         children: [
-          { href: "/admin/core-engine/overview", label: "Overview" },
-          { href: "/admin/core-engine/matches", label: "🏏 Match Setup & Directory" },
-          { href: "/admin/core-engine/match-moments", label: "⚡ Match Moments & Loops" },
-          { href: "/admin/core-engine/visible-recognition", label: "📸 Visual Recognition" },
+          { href: "/admin/core-engine", label: "⚙️ Core Engine Dashboard" },
+          { href: "/admin/core-engine/create-loop", label: "⚡ Create Loop Flow" },
+          { href: "/admin/core-engine/overview", label: "📊 Overview" },
+          { href: "/admin/core-engine/matches/add", label: "🏏 Add Match" },
+          { href: "/admin/core-engine/matches/list", label: "📋 Match List" },
+          { href: "/admin/core-engine/match-moments/add", label: "⚡ Add Moment" },
+          { href: "/admin/core-engine/match-moments/list", label: "📋 Moment List" },
+          { href: "/admin/core-engine/engagement-setup/add", label: "🎯 Add Engagement" },
+          { href: "/admin/core-engine/engagement-setup/list", label: "📋 Engagement List" },
+          { href: "/admin/core-engine/visible-recognition/add", label: "🏆 Add Recognition" },
+          { href: "/admin/core-engine/visible-recognition/list", label: "📋 Recognition List" },
         ],
       },
       {

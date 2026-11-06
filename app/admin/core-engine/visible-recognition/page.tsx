@@ -1,7 +1,7 @@
 "use client";
 
-import CoreEnginePage from "../page";
+import RecognitionListPage from "./list/page";
 
-export default function VisibleRecognitionPage() {
-  return <CoreEnginePage initialSection="recognition" />;
+export default function VisibleRecognitionHubPage() {
+  return <RecognitionListPage />;
 }
