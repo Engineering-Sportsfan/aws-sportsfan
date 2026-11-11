@@ -5,7 +5,6 @@ import { NextRequest } from "next/server";
 
 export async function getUserId(req: NextRequest): Promise<string | null> {
   try {
-    console.log("auth helper req:", req);
     const session = await auth();
     if (!session?.user?.email) return null;
 
