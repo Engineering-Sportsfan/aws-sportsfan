@@ -7,7 +7,7 @@ const API_KEY = process.env.ROANUZ_API_KEY || "";
 
 async function fetchToken() {
   try {
-    const res = await axios.post(`https://api.sports.roanuz.com/v5/core/${PROJECT_KEY}/auth/`, { api_key: API_KEY });
+    const res = await axios.post(`https://api.sports.roanuz.com/v5/core/${PROJECT_KEY}/auth/`, { api_key: API_KEY }, { timeout: 8000 });
     return res.data?.data?.token;
   } catch (e) {
     return null;
@@ -16,7 +16,7 @@ async function fetchToken() {
 
 async function fetchRoanuzMatchScore(token: string, matchKey: string) {
   try {
-    const res = await axios.get(`${ROANUZ_BASE_URL}/${PROJECT_KEY}/match/${matchKey}/`, { headers: { "rs-token": token } });
+    const res = await axios.get(`${ROANUZ_BASE_URL}/${PROJECT_KEY}/match/${matchKey}/`, { headers: { "rs-token": token }, timeout: 8000 });
     return res.data?.data;
   } catch (e) {
     return null;
@@ -33,7 +33,7 @@ export async function GET() {
     let globalCompleted: any[] = [];
     
     try {
-      const res = await axios.get(`${ROANUZ_BASE_URL}/${PROJECT_KEY}/fixtures/`, { headers: { "rs-token": token } });
+      const res = await axios.get(`${ROANUZ_BASE_URL}/${PROJECT_KEY}/fixtures/`, { headers: { "rs-token": token }, timeout: 8000 });
       const days = res.data?.data?.month?.days || [];
       for (const day of days) {
         for (const m of (day.matches || [])) {

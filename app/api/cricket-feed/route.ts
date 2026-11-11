@@ -7,7 +7,7 @@ const ROANUZ_BASE_URL = `https://api.sports.roanuz.com/v5/cricket/${ROANUZ_PROJE
 
 async function fetchToken() {
   try {
-    const res = await axios.post(`https://api.sports.roanuz.com/v5/core/${ROANUZ_PROJECT_KEY}/auth/`, { api_key: ROANUZ_API_KEY });
+    const res = await axios.post(`https://api.sports.roanuz.com/v5/core/${ROANUZ_PROJECT_KEY}/auth/`, { api_key: ROANUZ_API_KEY }, { timeout: 8000 });
     return res.data?.data?.token || res.data?.token || null;
   } catch (e) {
     return null;
@@ -16,7 +16,7 @@ async function fetchToken() {
 
 async function fetchRoanuzMatchScore(token: string, matchKey: string) {
   try {
-    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/`, { headers: { "rs-token": token } });
+    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/`, { headers: { "rs-token": token }, timeout: 8000 });
     return res.data?.data;
   } catch (e) {
     return null;
@@ -28,18 +28,18 @@ export async function GET() {
     const token = await fetchToken();
     if (!token) return NextResponse.json({ success: false, error: "Auth failed" });
 
-    const tourRes = await axios.get(`${ROANUZ_BASE_URL}/association/icc/featured-tournaments/`, { headers: { "rs-token": token } });
+    const tourRes = await axios.get(`${ROANUZ_BASE_URL}/association/icc/featured-tournaments/`, { headers: { "rs-token": token }, timeout: 8000 });
     const tournaments = tourRes.data?.data?.tournaments || [];
 
     let allMatches: any[] = [];
     for (let i = 0; i < Math.min(tournaments.length, 25); i++) {
       try {
-        const fixRes = await axios.get(`${ROANUZ_BASE_URL}/tournament/${tournaments[i].key}/fixtures/`, { headers: { "rs-token": token } });
+        const fixRes = await axios.get(`${ROANUZ_BASE_URL}/tournament/${tournaments[i].key}/fixtures/`, { headers: { "rs-token": token }, timeout: 8000 });
         allMatches.push(...(fixRes.data?.data?.matches || []));
       } catch (e) {}
     }
 
-    const fixResGlobal = await axios.get(`${ROANUZ_BASE_URL}/fixtures/`, { headers: { "rs-token": token } });
+    const fixResGlobal = await axios.get(`${ROANUZ_BASE_URL}/fixtures/`, { headers: { "rs-token": token }, timeout: 8000 });
     const monthDays = fixResGlobal.data?.data?.month?.days || [];
     const globalMatches: any[] = [];
     for (const day of monthDays) {
