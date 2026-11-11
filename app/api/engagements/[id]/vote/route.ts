@@ -1274,6 +1274,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       userName: userDisplayName,
       userAvatar: userProfileAvatar,
       engagementId: id,
+      ...(item.matchId ? { matchId: String(item.matchId) } : {}),
+      ...(item.momentId ? { momentId: String(item.momentId) } : {}),
+      ...(item.seriesId ? { seriesId: String(item.seriesId) } : {}),
       type: item.type,
       selectedOptionId,
       votedAt: now,
@@ -1302,7 +1305,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // Recount from the vote records (now including this one) instead of trusting the in-memory +1,
     // so two votes landing at the same time can't overwrite each other's count.
     try {
-      applyEngagementStats(item, await getEngagementStats(cleanId));
+      applyEngagementStats(item, await getEngagementStats(cleanId, { consistent: true }));
       const recounted = primaryOptions(item);
       if (Array.isArray(responseData.options) && recounted) {
         responseData.options = recounted;

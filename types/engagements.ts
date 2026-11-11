@@ -288,11 +288,15 @@ export interface EngagementItem {
   category?: string;
   source?: string;
   isMatchMoment?: boolean;
+  postLock?: string;
 
-  // Match Moment Linkage fields
+  // Match Moment & Series Linkage fields
+  seriesId?: string; // e.g. "IND-NZ-2026-T20I"
   matchId?: string; // e.g. "NZ-IND-2026-T20-4TH-T20I"
   momentId?: string; // e.g. "NZ-01", "NZ-06", "IND-09"
   loopId?: string; // alias for momentId
+  recognitionId?: string; // 1:1 linked Visible Recognition ID
+  hasRecognition?: boolean;
   matchPhase?: string; // e.g. "NZ 1st innings", "India chase"
   anchorTrigger?: string; // e.g. "NZ innings — over 6 end"
   scoreState?: string; // e.g. "65/1", "80/2"
@@ -305,7 +309,18 @@ export interface EngagementItem {
   likeCount?: number;
   shares: number;
   totalEngaged: number;
+  totalVotes?: number;
+  totalResponses?: number;
+  impressions?: number;
+  impressionsCount?: number;
+  participationsCount?: number;
+  totalActionsCount?: number;
+  actionCommentsCount?: number;
   commentsCount?: number;
+  socialLikesCount?: number;
+  socialCommentsCount?: number;
+  socialImpressionsCount?: number;
+  totalSocialResponsesCount?: number;
 
   // Hydrated user interaction fields
   userLiked?: boolean;

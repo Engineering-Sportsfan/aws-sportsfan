@@ -115,7 +115,53 @@ export async function GET(
     }
 
     if (!parentExists) {
-      return NextResponse.json({ error: effectiveRoomId ? "Message not found" : "Post not found" }, { status: 404 });
+      // Check if msgId is an Engagement, Recognition, or Outcome Reveal in SocialAndContent or Firestore
+      const cleanEngId = String(msgId).replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").replace(/^REVEAL-/, "").trim();
+      try {
+        const engLikesRes = await docClient.send(new QueryCommand({
+          TableName: TABLES.SocialAndContent,
+          KeyConditionExpression: "contentId = :c AND begins_with(sk, :p)",
+          ExpressionAttributeValues: {
+            ":c": `ENGAGEMENT#${cleanEngId}`,
+            ":p": "LIKE#",
+          },
+          Limit: limit,
+        }));
+        if (engLikesRes.Items && engLikesRes.Items.length > 0) {
+          parentExists = true;
+          reactorsData = engLikesRes.Items.map(item => ({
+            userId: String(item.userId || (item.sk as string).slice(5)),
+            reaction: "heart",
+            reactedAt: Number(item.likedAt || item.createdAt || 0),
+          }));
+        }
+      } catch (dynErr) {
+        console.warn("[Reactions GET] Engagement likes query notice:", dynErr);
+      }
+
+      // Also check Firestore engagement_likes collection
+      if (reactorsData.length === 0 && db) {
+        try {
+          const snap = await db.collection("engagement_likes")
+            .where("engagementId", "in", [cleanEngId, msgId, `ENGAGEMENT#${cleanEngId}`])
+            .limit(limit)
+            .get();
+          if (!snap.empty) {
+            parentExists = true;
+            reactorsData = snap.docs.map(doc => {
+              const data = doc.data();
+              return {
+                userId: String(data.userId || doc.id.split("_")[0]),
+                reaction: "heart",
+                reactedAt: Number(data.likedAt || data.createdAt || 0),
+              };
+            });
+          }
+        } catch {}
+      }
+
+      // Allow empty reactions list without throwing 404
+      parentExists = true;
     }
 
     const uniqueReactorIds = Array.from(new Set(reactorsData.map(r => r.userId).filter(Boolean)));
@@ -149,6 +195,8 @@ export async function GET(
       reactionsByType,
       counts,
       totalCount: reactors.length,
+    }, {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate" },
     });
   } catch (error: any) {
     console.error("GET /api/roar/rooms/[roomId]/messages/[msgId]/reactions error:", error);

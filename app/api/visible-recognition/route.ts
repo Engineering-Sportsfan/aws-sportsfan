@@ -5,16 +5,19 @@ import { docClient } from "@/lib/dynamodb";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
 import { cacheService } from "@/lib/cacheService";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
-import { QueryCommand, ScanCommand, DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand, ScanCommand, DeleteCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { createNotification } from "@/lib/notifications";
+import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 
 export const dynamic = "force-dynamic";
 
 export interface VisualRecognitionPayload {
   id?: string;
   recognitionId: string;
+  seriesId?: string;
   matchId: string;
   momentId: string;
+  engagementId?: string;
   targetType: "all" | "user";
   targetUserId?: string | null;
   targetUserName?: string | null;
@@ -52,15 +55,33 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const rawMatchId = searchParams.get("matchId");
   const rawMomentId = searchParams.get("momentId");
+  const rawEngagementId = searchParams.get("engagementId");
   const targetUserId = searchParams.get("targetUserId");
+  const includeAllEnvs = searchParams.get("allEnvs") === "true";
 
-  const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : null;
-  const cleanMomentId = rawMomentId ? rawMomentId.trim().replace(/^MOMENT#/, "") : null;
+  const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH[#-]/i, "") : null;
+  const cleanMomentId = rawMomentId ? rawMomentId.trim().replace(/^MOMENT[#-]/i, "") : null;
+  const cleanEngagementIdFilter = rawEngagementId
+    ? rawEngagementId.trim().replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "")
+    : null;
+
+  const matchKeyCandidates = cleanMatchId
+    ? Array.from(
+        new Set(
+          [
+            `MATCH#${cleanMatchId}`,
+            cleanMatchId,
+            rawMatchId ? rawMatchId.trim() : null,
+            `MATCH-${cleanMatchId}`,
+          ].filter(Boolean) as string[]
+        )
+      )
+    : [];
 
   try {
-    let recognitions: any[] = [];
+    const recMap = new Map<string, any>();
 
-    // 1. Query DynamoDB MatchMoments table first
+    // 1. Query DynamoDB MatchMoments table
     try {
       let skPrefix = "RECOGNITION#";
       if (cleanMomentId) {
@@ -69,63 +90,59 @@ export async function GET(req: NextRequest) {
 
       const candidateTables = getCandidateTableNames("MatchMoments");
 
-      if (cleanMatchId) {
+      if (cleanMatchId && matchKeyCandidates.length > 0) {
         for (const tbl of candidateTables) {
-          try {
-            // A. Query by entityId with MATCH# prefix (Actual AWS schema for MatchMoments)
-            let queryRes = await docClient.send(
-              new QueryCommand({
-                TableName: tbl,
-                KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
-                ExpressionAttributeValues: {
-                  ":eId": `MATCH#${cleanMatchId}`,
-                  ":skPrefix": skPrefix,
-                },
-              })
-            );
+          for (const mKey of matchKeyCandidates) {
+            try {
+              // A. Query by entityId
+              const queryRes = await docClient.send(
+                new QueryCommand({
+                  TableName: tbl,
+                  KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
+                  ExpressionAttributeValues: {
+                    ":eId": mKey,
+                    ":skPrefix": skPrefix,
+                  },
+                })
+              );
 
-            // B. If empty, try without MATCH# prefix
-            if (!queryRes.Items || queryRes.Items.length === 0) {
+              if (queryRes.Items && queryRes.Items.length > 0) {
+                for (const item of queryRes.Items) {
+                  const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                  if (!recMap.has(key)) {
+                    recMap.set(key, {
+                      id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                      ...item,
+                    });
+                  }
+                }
+              }
+            } catch (tblErr) {
+              // Try pk if entityId fails
               try {
-                queryRes = await docClient.send(
-                  new QueryCommand({
-                    TableName: tbl,
-                    KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
-                    ExpressionAttributeValues: {
-                      ":eId": cleanMatchId,
-                      ":skPrefix": skPrefix,
-                    },
-                  })
-                );
-              } catch {}
-            }
-
-            // C. If still empty, try pk
-            if (!queryRes.Items || queryRes.Items.length === 0) {
-              try {
-                queryRes = await docClient.send(
+                const pkRes = await docClient.send(
                   new QueryCommand({
                     TableName: tbl,
                     KeyConditionExpression: "pk = :pk AND begins_with(sk, :skPrefix)",
                     ExpressionAttributeValues: {
-                      ":pk": `MATCH#${cleanMatchId}`,
+                      ":pk": mKey,
                       ":skPrefix": skPrefix,
                     },
                   })
                 );
+                if (pkRes.Items && pkRes.Items.length > 0) {
+                  for (const item of pkRes.Items) {
+                    const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                    if (!recMap.has(key)) {
+                      recMap.set(key, {
+                        id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                        ...item,
+                      });
+                    }
+                  }
+                }
               } catch {}
             }
-
-            if (queryRes.Items && queryRes.Items.length > 0) {
-              recognitions = queryRes.Items.map((item) => ({
-                id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
-                ...item,
-              }));
-              break;
-            }
-          } catch (tblErr) {
-            console.warn(`[visible-recognition GET] Query error on table ${tbl}:`, tblErr);
-            continue;
           }
         }
       } else {
@@ -143,12 +160,17 @@ export async function GET(req: NextRequest) {
               })
             );
             if (scanRes.Items && scanRes.Items.length > 0) {
-              recognitions = scanRes.Items.map((item) => ({
-                id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
-                ...item,
-              }));
-              break;
-            }
+                for (const item of scanRes.Items) {
+                  const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                  if (!recMap.has(key)) {
+                    recMap.set(key, {
+                      id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                      ...item,
+                    });
+                  }
+                }
+                if (!includeAllEnvs) break;
+              }
           } catch {
             continue;
           }
@@ -158,51 +180,76 @@ export async function GET(req: NextRequest) {
       console.warn("[visible-recognition GET] MatchMoments notice:", dynErr);
     }
 
-    // 2. Fallback to SportsData table if MatchMoments was empty
-    if (recognitions.length === 0 && cleanMatchId) {
+    // 2. Query SportsData table
+    if (cleanMatchId && matchKeyCandidates.length > 0) {
       try {
         let skPrefix = "RECOGNITION#";
         if (cleanMomentId) {
           skPrefix = `RECOGNITION#${cleanMomentId}#`;
         }
 
-        const queryRes = await docClient.send(
-          new QueryCommand({
-            TableName: "SportsData",
-            KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
-            ExpressionAttributeValues: {
-              ":eId": `MATCH#${cleanMatchId}`,
-              ":skPrefix": skPrefix,
-            },
-          })
-        );
+        for (const mKey of matchKeyCandidates) {
+          try {
+            const queryRes = await docClient.send(
+              new QueryCommand({
+                TableName: "SportsData",
+                KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
+                ExpressionAttributeValues: {
+                  ":eId": mKey,
+                  ":skPrefix": skPrefix,
+                },
+              })
+            );
 
-        if (queryRes.Items && queryRes.Items.length > 0) {
-          recognitions = queryRes.Items.map((item) => ({
-            id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
-            ...item,
-          }));
+            if (queryRes.Items && queryRes.Items.length > 0) {
+              for (const item of queryRes.Items) {
+                const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                if (!recMap.has(key)) {
+                  recMap.set(key, {
+                    id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                    ...item,
+                  });
+                }
+              }
+            }
+          } catch {}
         }
       } catch (spErr) {
-        console.warn("[visible-recognition GET] SportsData fallback notice:", spErr);
+        console.warn("[visible-recognition GET] SportsData notice:", spErr);
       }
     }
 
-    // 3. Fallback to Firestore if empty
-    if (recognitions.length === 0 && db) {
+    // 3. Fallback / Merge with Firestore
+    if (db) {
       try {
         let q: any = db.collection(getFirestoreCollection("visible_recognitions"));
-        if (cleanMatchId) {
-          q = q.where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`]);
+        if (matchKeyCandidates.length > 0) {
+          q = q.where("matchId", "in", matchKeyCandidates.slice(0, 10));
         }
         if (cleanMomentId) {
           q = q.where("momentId", "in", [cleanMomentId, `MOMENT#${cleanMomentId}`]);
         }
         const snap = await q.get();
-        recognitions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        if (snap && snap.docs) {
+          for (const d of snap.docs) {
+            const data = d.data();
+            const key = String(data.recognitionId || d.id);
+            if (!recMap.has(key)) {
+              recMap.set(key, { id: d.id, ...data });
+            }
+          }
+        }
       } catch (fbErr) {
-        console.warn("[visible-recognition GET] Firestore fallback notice:", fbErr);
+        console.warn("[visible-recognition GET] Firestore notice:", fbErr);
       }
+    }
+
+    let recognitions: any[] = Array.from(recMap.values());
+
+    if (cleanEngagementIdFilter) {
+      recognitions = recognitions.filter(
+        (r) => String(r.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim() === cleanEngagementIdFilter
+      );
     }
 
     // Filter by targetUserId if requested
@@ -215,12 +262,23 @@ export async function GET(req: NextRequest) {
     // Sort newest first
     recognitions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    return NextResponse.json({
-      success: true,
-      data: recognitions,
-      count: recognitions.length,
-      storageTable: "MatchMoments",
-    });
+    return new NextResponse(
+      JSON.stringify({
+        success: true,
+        data: recognitions,
+        count: recognitions.length,
+        storageTable: "MatchMoments",
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0",
+        },
+      }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { success: false, error: err.message || "Failed to fetch visible recognitions" },
@@ -246,8 +304,10 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
     const isEdit = isExplicitEdit || Boolean(body.isEdit) || Boolean(body.recognitionId);
 
     const {
+      seriesId = "",
       matchId,
       momentId,
+      engagementId = "",
       targetType = "all",
       targetUserId = null,
       targetUserName = null,
@@ -281,14 +341,43 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
     const now = Date.now();
     const cleanMatchId = String(matchId).trim().replace(/^MATCH[#-]/i, "");
     const cleanMomentId = String(momentId).trim().replace(/^MOMENT#/, "");
+    const cleanEngagementId = engagementId
+      ? String(engagementId).trim().replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "")
+      : "";
     const cleanTargetUserId = targetUserId ? String(targetUserId).trim().replace(/^USER#/, "") : null;
     const targetKey = targetType === "user" && cleanTargetUserId ? `USER#${cleanTargetUserId}` : "GLOBAL";
-    const recognitionId = body.recognitionId || `VR_${cleanMomentId}_${Date.now()}_${targetType === "user" ? cleanTargetUserId : "ALL"}`;
+    const recognitionId =
+      body.recognitionId ||
+      `VR_${cleanEngagementId || cleanMomentId}_${Date.now()}_${targetType === "user" ? cleanTargetUserId : "ALL"}`;
 
-    const payload = {
+    // Resolve parent Engagement (1:1 link) & seriesId if omitted
+    const parentEng = cleanEngagementId
+      ? await findEngagementById(cleanEngagementId, cleanMatchId).catch(() => null)
+      : null;
+    let resolvedSeriesId = String(seriesId || parentEng?.item?.seriesId || "").trim();
+    if (!resolvedSeriesId) {
+      for (const tbl of Array.from(new Set([TABLES.MatchMoments, TABLES.SportsData]))) {
+        try {
+          const matchRes = await docClient.send(
+            new GetCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${cleanMatchId}`, sk: "MATCH#META" },
+            })
+          );
+          if (matchRes.Item?.seriesId) {
+            resolvedSeriesId = String(matchRes.Item.seriesId).trim();
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    const payload: Record<string, any> = {
       recognitionId,
+      ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
       matchId: cleanMatchId,
       momentId: cleanMomentId,
+      ...(cleanEngagementId ? { engagementId: cleanEngagementId } : {}),
       targetType,
       targetUserId: cleanTargetUserId,
       targetUserName: targetUserName ? String(targetUserName).trim() : (targetType === "all" ? "All Participants" : "Valued Fan"),
@@ -320,12 +409,24 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
       updatedAt: now,
     };
 
-    const newSk = `RECOGNITION#${cleanMomentId}#${targetKey}`;
+    // Enforce 1:1 Engagement <-> Recognition (keyed per engagementId when provided; moment fallback otherwise)
+    const newSk = cleanEngagementId
+      ? `RECOGNITION#ENG#${cleanEngagementId}#${targetKey}`
+      : `RECOGNITION#${cleanMomentId}#${targetKey}`;
 
-    // Enforce "one recognition per moment" rule:
-    // If a different recognition already exists for this moment, delete it so the new one replaces it.
     const candidateTables = getCandidateTableNames("MatchMoments");
-    const momentSkPrefix = `RECOGNITION#${cleanMomentId}#`;
+    const cleanupPrefix = cleanEngagementId ? "RECOGNITION#" : `RECOGNITION#${cleanMomentId}#`;
+    const shouldReplaceItem = (item: Record<string, any>): boolean => {
+      const itemSk = String(item?.sk || "");
+      if (!itemSk || itemSk === newSk) return false;
+      const itemEngId = String(item?.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+      if (cleanEngagementId) {
+        return itemEngId === cleanEngagementId || itemSk.startsWith(`RECOGNITION#ENG#${cleanEngagementId}#`);
+      }
+      // Legacy moment-level call without engagementId: do not wipe recognitions linked to specific engagements
+      return !itemEngId;
+    };
+
     for (const tbl of candidateTables) {
       try {
         const existingQuery = await docClient.send(
@@ -334,25 +435,24 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
             KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPfx)",
             ExpressionAttributeValues: {
               ":eId": `MATCH#${cleanMatchId}`,
-              ":skPfx": momentSkPrefix,
+              ":skPfx": cleanupPrefix,
             },
           })
         );
         if (existingQuery.Items) {
           for (const item of existingQuery.Items) {
+            if (!shouldReplaceItem(item)) continue;
             const itemSk = item.sk;
             const itemRecId = item.recognitionId || item.id;
-            if (itemSk && itemSk !== newSk) {
-              await docClient.send(
-                new DeleteCommand({
-                  TableName: tbl,
-                  Key: {
-                    entityId: `MATCH#${cleanMatchId}`,
-                    sk: itemSk,
-                  },
-                })
-              ).catch(() => {});
-            }
+            await docClient.send(
+              new DeleteCommand({
+                TableName: tbl,
+                Key: {
+                  entityId: `MATCH#${cleanMatchId}`,
+                  sk: itemSk,
+                },
+              })
+            ).catch(() => {});
             if (itemRecId && itemRecId !== recognitionId) {
               if (db) {
                 db.collection(getFirestoreCollection("visible_recognitions")).doc(itemRecId).delete().catch(() => {});
@@ -372,13 +472,13 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
           KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPfx)",
           ExpressionAttributeValues: {
             ":eId": `MATCH#${cleanMatchId}`,
-            ":skPfx": momentSkPrefix,
+            ":skPfx": cleanupPrefix,
           },
         })
       );
       if (spExistingQuery.Items) {
         for (const item of spExistingQuery.Items) {
-          if (item.sk && item.sk !== newSk) {
+          if (shouldReplaceItem(item)) {
             await docClient.send(
               new DeleteCommand({
                 TableName: "SportsData",
@@ -393,7 +493,7 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
       }
     } catch {}
 
-    // Also check Firestore visible_recognitions for any other recognition for this moment
+    // Also check Firestore visible_recognitions for any replaced duplicate under the same 1:1 scope
     if (db) {
       try {
         const snap = await db.collection(getFirestoreCollection("visible_recognitions"))
@@ -401,7 +501,10 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
           .where("momentId", "in", [cleanMomentId, `MOMENT#${cleanMomentId}`, `MM-${cleanMomentId}`])
           .get();
         for (const doc of snap.docs) {
-          if (doc.id !== recognitionId) {
+          const d = doc.data() || {};
+          const docEngId = String(d.engagementId || "").trim();
+          const sameScope = cleanEngagementId ? docEngId === cleanEngagementId : !docEngId;
+          if (doc.id !== recognitionId && sameScope) {
             doc.ref.delete().catch(() => {});
             db.collection(getFirestoreCollection("match_room_notifications")).doc(`rec_inline_${doc.id}`).delete().catch(() => {});
           }
@@ -466,6 +569,19 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
         firestoreData: payload,
       });
     } catch {}
+
+    // 1b. Bidirectional 1:1 link on the parent Engagement record
+    if (cleanEngagementId && parentEng?.item) {
+      try {
+        parentEng.item.recognitionId = recognitionId;
+        parentEng.item.hasRecognition = true;
+        if (resolvedSeriesId && !parentEng.item.seriesId) parentEng.item.seriesId = resolvedSeriesId;
+        parentEng.item.updatedAt = now;
+        await persistEngagementUpdate(cleanEngagementId, parentEng.item, parentEng.matchMomentsRecord);
+      } catch (engSyncErr) {
+        console.warn("[visible-recognition] Engagement 1:1 link sync notice:", engSyncErr);
+      }
+    }
 
     // 2. Real-time Cache in Redis for instant WebSocket / In-App Retrieval
     try {
@@ -533,7 +649,7 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
             }
           } catch {}
 
-          for (const pUid of participantSet) {
+          for (const pUid of Array.from(participantSet)) {
             await createNotification({
               userId: pUid,
               recipientEmail: pUid.includes("@") ? pUid : null,
@@ -560,53 +676,54 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
       }
     }
 
-    // 4. ROAR Chat: ONLY post to the public chatroom when targetType === 'all'!
-    // DO NOT post to the public chatroom when targeted to a particular user,
-    // so other users do NOT receive this recognition!
-    if (targetType === "all") {
-      try {
-        const chatMsgId = `msg_rec_${recognitionId}`;
-        const chatMsgText = `📢 [STADIUM RECOGNITION] "${headline}" — ${message} | ${payload.communityImpact?.stadiumRoars || "+120 Roars"}`;
+    // 4. ROAR Chat: Post recognition celebration into the room chat for all users
+    try {
+      const chatMsgId = `msg_rec_${recognitionId}`;
+      const targetUserDisplay = payload.targetUserName || "Valued Fan";
+      const archetypeClean = String(archetype || "CUSTOM").replace(/_/g, " ");
+      const chatMsgText = targetType === "user"
+        ? `🏆 [FAN RECOGNITION] @${targetUserDisplay} has been awarded ${archetypeClean}: "${headline}" — ${message} | ⚡ +${payload.rewards.totalSxp} Total SXPs!`
+        : `📢 [STADIUM RECOGNITION] "${headline}" — ${message} | ${payload.communityImpact?.stadiumRoars || "+120 Roars"}`;
 
-        const chatMsgItem: Record<string, any> = {
-          roomId: `ROOM#${targetRoomId}`,
-          sk: `MSG#${targetRoomId}#${now}#${chatMsgId}`,
-          msgId: chatMsgId,
-          chatId: chatMsgId,
-          authorUid: "sportsfan360_system",
-          authorUsername: "SportsFan360 Core Engine",
-          authorBadge: "Stadium Engine",
-          authorAvatarUrl: "/images/sportsfan360logo.png",
-          authorEmail: "admin@sportsfan.com",
-          text: chatMsgText,
-          type: "post",
-          fireCount: 0,
-          heartCount: 0,
-          agreeCount: 0,
-          disagreeCount: 0,
-          replyCount: 0,
-          createdAt: payload.createdAt,
-          updatedAt: now,
-        };
+      const chatMsgItem: Record<string, any> = {
+        roomId: `ROOM#${targetRoomId}`,
+        sk: `MSG#${targetRoomId}#${now}#${chatMsgId}`,
+        msgId: chatMsgId,
+        chatId: chatMsgId,
+        authorUid: "sportsfan360_system",
+        authorUsername: "SportsFan360 Core Engine",
+        authorBadge: "Stadium Engine",
+        authorAvatarUrl: "/images/sportsfan360logo.png",
+        authorEmail: "admin@sportsfan.com",
+        text: chatMsgText,
+        type: "post",
+        fireCount: 0,
+        heartCount: 0,
+        agreeCount: 0,
+        disagreeCount: 0,
+        replyCount: 0,
+        shareCount: 0,
+        createdAt: payload.createdAt,
+        updatedAt: now,
+      };
 
-        await docClient.send(
-          new PutCommand({
-            TableName: TABLES.RealTimeChat,
-            Item: chatMsgItem,
-          })
-        );
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.RealTimeChat,
+          Item: chatMsgItem,
+        })
+      );
 
-        if (db) {
-          await db
-            .collection(getFirestoreCollection("roarRooms"))
-            .doc(targetRoomId)
-            .collection("messages")
-            .doc(chatMsgId)
-            .set(chatMsgItem, { merge: true });
-        }
-      } catch (chatErr) {
-        console.warn("[visible-recognition] RealTimeChat write notice:", chatErr);
+      if (db) {
+        await db
+          .collection(getFirestoreCollection("roarRooms"))
+          .doc(targetRoomId)
+          .collection("messages")
+          .doc(chatMsgId)
+          .set(chatMsgItem, { merge: true });
       }
+    } catch (chatErr) {
+      console.warn("[visible-recognition] RealTimeChat write notice:", chatErr);
     }
 
     // 5. Record inline room broadcast for ROAR Pulse celebrations stream with deterministic doc ID

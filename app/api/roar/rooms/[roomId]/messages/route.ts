@@ -345,6 +345,7 @@ export async function GET(
                 disagreeCount: item.disagreeCount ?? 0,
                 heartCount: item.likeCount ?? item.heartCount ?? 0,
                 replyCount: item.replyCount ?? 0,
+                shareCount: item.shareCount ?? 0,
               });
             }
           }
@@ -386,6 +387,7 @@ export async function GET(
                 disagreeCount: data.disagreeCount ?? 0,
                 heartCount: data.likeCount ?? data.heartCount ?? 0,
                 replyCount: data.replyCount ?? 0,
+                shareCount: data.shareCount ?? 0,
               });
             }
           }

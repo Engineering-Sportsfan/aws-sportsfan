@@ -1,9 +1,12 @@
-// lib/engagementSocial.ts — counts per-user LIKE# / SHARE# / COMMENT# / VOTE# records for an engagement
+// lib/engagementSocial.ts — Single-source-of-truth counters for Engagement Actions & Social Responses
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 
-export async function countRecords(engagementId: string, prefix: "LIKE#" | "SHARE#") {
+export async function countRecords(
+  engagementId: string,
+  prefix: "LIKE#" | "SHARE#" | "IMPRESSION#" | "SOCIAL_LIKE#" | "SOCIAL_COMMENT#" | "SOCIAL_IMPRESSION#"
+) {
   let total = 0;
   let key: Record<string, any> | undefined;
   do {
@@ -23,9 +26,23 @@ export async function countRecords(engagementId: string, prefix: "LIKE#" | "SHAR
 }
 
 export interface EngagementStats {
+  // Primary engagement actions
   likes: number;
   shares: number;
+  impressions: number;
+  participations: number;
+  actionComments: number;
+  totalActions: number;
+
+  // Total comments (top-level + replies) for comment drawer badge
   commentsCount: number;
+
+  // Social responses (reactions on other users' comments under this engagement)
+  socialLikes: number;
+  socialComments: number;
+  socialImpressions: number;
+  totalSocialResponses: number;
+
   /** single-question votes, keyed by lower-cased selectedOptionId */
   votesByOption: Record<string, number>;
   /** sk values present, used to hydrate userLiked / userVote without extra reads */
@@ -35,7 +52,8 @@ export interface EngagementStats {
 
 /**
  * Reads every child record of an engagement in one paginated query.
- * These records are the source of truth; the counters stored on the engagement are only a mirror.
+ * Reconciles primary actions (LIKE#, SHARE#, IMPRESSION#, COMMENT# top-level, VOTE#)
+ * separately from social responses (SOCIAL_LIKE#, SOCIAL_COMMENT# / nested replies, SOCIAL_IMPRESSION#).
  */
 export async function getEngagementStats(
   engagementId: string,
@@ -44,11 +62,26 @@ export async function getEngagementStats(
   const stats: EngagementStats = {
     likes: 0,
     shares: 0,
+    impressions: 0,
+    participations: 0,
+    actionComments: 0,
+    totalActions: 0,
     commentsCount: 0,
+    socialLikes: 0,
+    socialComments: 0,
+    socialImpressions: 0,
+    totalSocialResponses: 0,
     votesByOption: {},
     userLikes: new Set(),
     userVotes: new Map(),
   };
+
+  const commentMap = new Map<string, any>();
+  const explicitSocialLikes = new Set<string>();      // key: `${commentId}#${actorId}`
+  const explicitSocialComments = new Set<string>();   // key: `${commentId}`
+  const seenImpressions = new Set<string>();
+  const seenSocialImpressions = new Set<string>();
+
   let key: Record<string, any> | undefined;
   do {
     const r = await docClient.send(
@@ -56,11 +89,13 @@ export async function getEngagementStats(
         TableName: TABLES.SocialAndContent,
         KeyConditionExpression: "contentId = :c",
         ExpressionAttributeValues: { ":c": `ENGAGEMENT#${engagementId}` },
-        ProjectionExpression: "sk, selectedOptionId, questionId, userId",
+        ProjectionExpression:
+          "sk, selectedOptionId, questionId, userId, parentId, authorUid, likedBy, actorUserId, targetCommentId, targetAuthorUid, commentId, id",
         ConsistentRead: Boolean(opts.consistent),
         ExclusiveStartKey: key,
       })
     );
+
     for (const it of r.Items || []) {
       const sk = String(it.sk || "");
       if (sk.startsWith("LIKE#")) {
@@ -68,19 +103,77 @@ export async function getEngagementStats(
         stats.userLikes.add(sk.slice(5));
       } else if (sk.startsWith("SHARE#")) {
         stats.shares++;
-      } else if (sk.startsWith("COMMENT#")) {
-        stats.commentsCount++;
+      } else if (sk.startsWith("IMPRESSION#") || sk.startsWith("VIEW#")) {
+        const uid = String(it.userId || sk.replace(/^(IMPRESSION|VIEW)#/, "")).trim().toLowerCase();
+        if (uid && !seenImpressions.has(uid)) {
+          seenImpressions.add(uid);
+          stats.impressions++;
+        }
       } else if (sk.startsWith("VOTE#") && it.selectedOptionId != null) {
-        // key is "{userId}" or "{userId}#{questionId}" for quiz answers
+        stats.participations++;
         stats.userVotes.set(sk.slice(5), String(it.selectedOptionId));
         if (!it.questionId) {
           const opt = String(it.selectedOptionId).trim().toLowerCase();
           stats.votesByOption[opt] = (stats.votesByOption[opt] || 0) + 1;
         }
+      } else if (sk.startsWith("COMMENT#")) {
+        stats.commentsCount++;
+        const cid = String(it.commentId || it.id || sk.replace(/^COMMENT#/, "")).trim();
+        if (cid) commentMap.set(cid, it);
+      } else if (sk.startsWith("SOCIAL_LIKE#")) {
+        const rest = sk.slice("SOCIAL_LIKE#".length);
+        const parts = rest.split("#");
+        const cId = String(it.targetCommentId || parts[0] || "").trim();
+        const actor = String(it.actorUserId || parts[1] || "").trim().toLowerCase();
+        if (cId && actor) explicitSocialLikes.add(`${cId}#${actor}`);
+      } else if (sk.startsWith("SOCIAL_COMMENT#")) {
+        const cId = String(it.commentId || sk.slice("SOCIAL_COMMENT#".length)).trim();
+        if (cId) explicitSocialComments.add(cId);
+      } else if (sk.startsWith("SOCIAL_IMPRESSION#")) {
+        const impKey = sk.slice("SOCIAL_IMPRESSION#".length).toLowerCase();
+        if (impKey && !seenSocialImpressions.has(impKey)) {
+          seenSocialImpressions.add(impKey);
+          stats.socialImpressions++;
+        }
       }
     }
     key = r.LastEvaluatedKey;
   } while (key);
+
+  // Classify COMMENT# items into Action Comments vs Social Response Comments and merge likedBy
+  for (const [cid, c] of commentMap.entries()) {
+    const author = String(c.authorUid || "").trim().toLowerCase();
+    const pId = c.parentId ? String(c.parentId).replace(/^COMMENT#/, "").trim() : "";
+
+    if (pId) {
+      const parentC = commentMap.get(pId);
+      const parentAuthor = parentC ? String(parentC.authorUid || "").trim().toLowerCase() : "";
+      if (!parentAuthor || !author || author !== parentAuthor || explicitSocialComments.has(cid)) {
+        explicitSocialComments.add(cid);
+      } else {
+        stats.actionComments++;
+      }
+    } else {
+      stats.actionComments++;
+    }
+
+    const likedBy: string[] = Array.isArray(c.likedBy) ? c.likedBy : [];
+    for (const rawLiker of likedBy) {
+      const liker = String(rawLiker || "").trim().toLowerCase();
+      if (!liker || liker === "me") continue;
+      if (!author || liker !== author) {
+        explicitSocialLikes.add(`${cid}#${liker}`);
+      }
+    }
+  }
+
+  stats.socialLikes = explicitSocialLikes.size;
+  stats.socialComments = explicitSocialComments.size;
+  stats.totalActions =
+    stats.likes + stats.actionComments + stats.shares + stats.impressions + stats.participations;
+  stats.totalSocialResponses =
+    stats.socialLikes + stats.socialComments + stats.socialImpressions;
+
   return stats;
 }
 
@@ -98,8 +191,6 @@ function countedVotesFor(opt: any, index: number, votesByOption: Record<string, 
 }
 
 function recountOptions(options: any[], votesByOption: Record<string, number>, exact = false) {
-  // Default: never go below the stored number, since seeded or legacy votes have no VOTE# record.
-  // exact: the counts ARE the VOTE# records (needed when a vote moves, so the old option can go down).
   const counted = options.map((o, i) => ({
     ...o,
     votes: exact
@@ -114,15 +205,26 @@ function recountOptions(options: any[], votesByOption: Record<string, number>, e
 }
 
 /**
- * Overwrites likes / shares / comments / vote counts on an engagement with the real record counts,
- * so every API returns the same numbers no matter which stored copy the item was read from.
+ * Overwrites primary action & social response counters on an engagement from its real child records,
+ * so every API returns the exact separated counts stored cleanly in DynamoDB.
  */
 export function applyEngagementStats(item: any, stats: EngagementStats, opts: { exactVotes?: boolean } = {}) {
   const exact = Boolean(opts.exactVotes);
   item.likes = stats.likes;
   item.likeCount = stats.likes;
   item.shares = stats.shares;
+  item.impressionsCount = stats.impressions;
+  item.impressions = stats.impressions;
+  item.actionCommentsCount = stats.actionComments;
   item.commentsCount = Math.max(stats.commentsCount, Number(item.commentsCount) || 0);
+  item.participationsCount = stats.participations;
+  item.totalActionsCount = stats.totalActions;
+
+  // Separate Social Response counters stored on engagement
+  item.socialLikesCount = stats.socialLikes;
+  item.socialCommentsCount = stats.socialComments;
+  item.socialImpressionsCount = stats.socialImpressions;
+  item.totalSocialResponsesCount = stats.totalSocialResponses;
 
   if (item.type === "quiz" || item.type === "fan_battle" || item.type === "meme") return item;
 

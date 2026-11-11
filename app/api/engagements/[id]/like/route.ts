@@ -1,13 +1,14 @@
 // app/api/engagements/[id]/like/route.ts — Dynamic Like / Unlike toggle for Fan Battles, Quizzes, Polls, Predictions
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { GetCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getUser } from "@/lib/getUser";
 import { dispatchFlipArenaNotification } from "@/lib/notifications";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
-import { countRecords } from "@/lib/engagementSocial";
+import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
+import { getCandidateTableNames } from "@/lib/dualWrite";
 
 export const dynamic = "force-dynamic";
 
@@ -73,7 +74,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       } catch {}
     }
 
-    return NextResponse.json({ liked, likes });
+    return NextResponse.json({ liked, likes }, {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate" },
+    });
   } catch (error: unknown) {
     console.error("GET /api/engagements/[id]/like error:", error);
     return NextResponse.json({ liked: false });
@@ -131,15 +134,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const nextLikedState = !alreadyLiked;
     const delta = nextLikedState ? 1 : -1;
 
-    // 2. Find engagement item across SocialAndContent and MatchMoments
+    // 2. Find engagement item across SocialAndContent and MatchMoments (optional for recognitions/outcomes)
     const matchId = body?.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
-    const found = await findEngagementById(cleanId, matchId);
-
-    if (!found?.item) {
-      return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
-    }
-
-    const item = found.item;
+    const found = await findEngagementById(cleanId, matchId).catch(() => null);
+    const item = found?.item || null;
+    const resolvedMatchId = item?.matchId || matchId || undefined;
+    const resolvedMomentId = body?.momentId || item?.momentId || undefined;
+    const resolvedSeriesId = body?.seriesId || item?.seriesId || undefined;
 
     // 3. Save or remove the user's like record FIRST (these records are the source of truth)
     if (nextLikedState) {
@@ -152,7 +153,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               sk: `LIKE#${userId}`,
               entityId: "LIKE#ENGAGEMENT",
               userId,
+              userName: body?.userName || authUser?.name || undefined,
               engagementId: cleanId,
+              ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
+              ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
+              ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
               likedAt: now,
               createdAt: now,
             },
@@ -188,12 +193,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
 
       // 4. Dispatch FlipArena Notification to Creator (Async)
-      const recipientId =
+      const recipientId = item ? (
         item.creatorId ||
         item.creatorEmail ||
         item.userId ||
         item.authorId ||
-        item.createdBy;
+        item.createdBy
+      ) : null;
 
       if (recipientId && String(recipientId) !== String(userId)) {
         const actorName =
@@ -248,16 +254,69 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // 5. Count the real records, then mirror the number onto the engagement item
-    const likesCount = await countRecords(cleanId, "LIKE#");
-    item.likes = likesCount;
-    item.likeCount = likesCount;
-    item.totalEngaged = Math.max(0, (Number(item.totalEngaged) || 0) + delta);
-    item.updatedAt = now;
-    try {
-      await persistEngagementUpdate(cleanId, item, found.matchMomentsRecord);
-    } catch (e) {
-      console.warn("like mirror notice:", e);
+    // 5. Count the real records, then mirror all separated action/social counts onto the engagement item
+    const engStats = await getEngagementStats(cleanId, { consistent: true }).catch(() => null);
+    const likesCount = engStats ? engStats.likes : await countRecords(cleanId, "LIKE#");
+    let totalEngaged = likesCount;
+
+    if (item) {
+      if (engStats) {
+        applyEngagementStats(item, engStats);
+      } else {
+        item.likes = likesCount;
+        item.likeCount = likesCount;
+      }
+      item.totalEngaged = Math.max(0, (Number(item.totalEngaged) || 0) + delta);
+      item.updatedAt = now;
+      totalEngaged = Number(item.totalEngaged) || 0;
+      try {
+        await persistEngagementUpdate(cleanId, item, found?.matchMomentsRecord);
+      } catch (e) {
+        console.warn("like mirror notice:", e);
+      }
+    } else {
+      // Dual-write count to visible_recognitions or match_room_notifications if present
+      if (db) {
+        try {
+          await db.collection("visible_recognitions").doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
+        } catch {}
+        try {
+          await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
+        } catch {}
+      }
+
+      // Also mirror count to MatchMoments table (for recognitions and outcome reveals)
+      if (matchId) {
+        const cleanM = String(matchId).replace(/^MATCH#/, "");
+        for (const tbl of getCandidateTableNames("MatchMoments")) {
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${cleanM}`, sk: `RECOGNITION#${cleanId}` },
+              UpdateExpression: "SET likes = :l, likesCount = :l",
+              ExpressionAttributeValues: { ":l": likesCount },
+            }));
+          } catch {}
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${cleanM}`, sk: `REVEAL#${cleanId}` },
+              UpdateExpression: "SET likes = :l, likesCount = :l",
+              ExpressionAttributeValues: { ":l": likesCount },
+            }));
+          } catch {}
+        }
+      }
+
+      // Also mirror count to SocialAndContent META row
+      try {
+        await docClient.send(new UpdateCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: "META" },
+          UpdateExpression: "SET likes = :l, likesCount = :l",
+          ExpressionAttributeValues: { ":l": likesCount },
+        }));
+      } catch {}
     }
 
     return NextResponse.json({
@@ -265,7 +324,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       liked: nextLikedState,
       likesCount,
       likes: likesCount,
-      totalEngaged: Number(item.totalEngaged) || 0,
+      totalEngaged,
+    }, {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate" },
     });
   } catch (error: unknown) {
     console.error("POST /api/engagements/[id]/like error:", error);

@@ -668,21 +668,25 @@ export async function GET(req: NextRequest) {
 
       for (const tbl of candidateTables) {
         try {
-          const scanRes = await docClient.send(
-            new ScanCommand({
-              TableName: tbl,
-              FilterExpression: "begins_with(sk, :skPrefix)",
-              ExpressionAttributeValues: { ":skPrefix": "MOMENT#" },
-              Limit: 200,
-            })
-          );
-          for (const item of scanRes.Items || []) {
-            const key = getMomentKey(item);
-            if (!key || seen.has(key)) continue;
-            seen.add(key);
-            const mId = stripMatchPrefix(item.matchId || item.entityId || item.pk);
-            if (mId) matchMap.set(mId, (matchMap.get(mId) || 0) + 1);
-          }
+          let lastKey: Record<string, any> | undefined;
+          do {
+            const scanRes = await docClient.send(
+              new ScanCommand({
+                TableName: tbl,
+                FilterExpression: "begins_with(sk, :skPrefix)",
+                ExpressionAttributeValues: { ":skPrefix": "MOMENT#" },
+                ExclusiveStartKey: lastKey,
+              })
+            );
+            for (const item of scanRes.Items || []) {
+              const key = getMomentKey(item);
+              if (!key || seen.has(key)) continue;
+              seen.add(key);
+              const mId = stripMatchPrefix(item.matchId || item.entityId || item.pk);
+              if (mId) matchMap.set(mId, (matchMap.get(mId) || 0) + 1);
+            }
+            lastKey = scanRes.LastEvaluatedKey;
+          } while (lastKey);
         } catch {
           continue;
         }
@@ -764,16 +768,20 @@ export async function GET(req: NextRequest) {
             (res.Items || []).forEach(addMoment);
           } catch {}
         } else {
-          // No matchId: scan for all moments
-          const scanRes = await docClient.send(
-            new ScanCommand({
-              TableName: tbl,
-              FilterExpression: "begins_with(sk, :skPrefix)",
-              ExpressionAttributeValues: { ":skPrefix": "MOMENT#" },
-              Limit: 200,
-            })
-          );
-          (scanRes.Items || []).forEach(addMoment);
+          // No matchId: paginate full Scan so pre-filter Limit does not truncate MOMENT# items
+          let lastKey: Record<string, any> | undefined;
+          do {
+            const scanRes = await docClient.send(
+              new ScanCommand({
+                TableName: tbl,
+                FilterExpression: "begins_with(sk, :skPrefix)",
+                ExpressionAttributeValues: { ":skPrefix": "MOMENT#" },
+                ExclusiveStartKey: lastKey,
+              })
+            );
+            (scanRes.Items || []).forEach(addMoment);
+            lastKey = scanRes.LastEvaluatedKey;
+          } while (lastKey);
         }
       } catch (tblErr) {
         console.warn(`[match-moments GET] table ${tbl} skipped:`, tblErr);
@@ -873,9 +881,28 @@ export async function POST(req: NextRequest) {
     }
 
     const now = Date.now();
+    let resolvedSeriesId = String(body?.seriesId || existing?.seriesId || "").trim();
+    if (!resolvedSeriesId) {
+      for (const tbl of getAllCandidateTables()) {
+        try {
+          const matchRes = await docClient.send(
+            new GetCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${cleanMatchId}`, sk: "MATCH#META" },
+            })
+          );
+          if (matchRes.Item?.seriesId) {
+            resolvedSeriesId = String(matchRes.Item.seriesId).trim();
+            break;
+          }
+        } catch {}
+      }
+    }
+
     const payload = {
       momentId: cleanMomentId,
       matchId: cleanMatchId,
+      ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
       innings: Number(innings) || 1,
       phase: String(phase || "").trim(),
       overs: String(overs || "").trim(),
