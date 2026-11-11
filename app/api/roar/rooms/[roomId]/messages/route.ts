@@ -17,6 +17,34 @@ import { batchGetItems } from "@/lib/dynamodbBatch";
 
 export const dynamic = "force-dynamic";
 
+// ── Room type-count cache (per server instance, 60s TTL) ─────────────────────
+// Computing the counts requires paging through every message in the room, so the
+// GET handler reuses the last result for up to 60s. POST drops the entry for its
+// room so the author's own instance recomputes immediately.
+type RoomTypeCounts = { post: number; debate: number; prediction: number; trivia: number; battle: number };
+const ROOM_COUNTS_TTL_MS = 60_000;
+const ROOM_COUNTS_MAX_ENTRIES = 500;
+const roomCountsCache = new Map<string, { counts: RoomTypeCounts; expiresAt: number }>();
+
+function getCachedRoomCounts(roomId: string): RoomTypeCounts | null {
+  const entry = roomCountsCache.get(roomId);
+  if (!entry) return null;
+  if (Date.now() >= entry.expiresAt) {
+    roomCountsCache.delete(roomId);
+    return null;
+  }
+  return entry.counts;
+}
+
+function setCachedRoomCounts(roomId: string, counts: RoomTypeCounts) {
+  if (roomCountsCache.size >= ROOM_COUNTS_MAX_ENTRIES) {
+    const now = Date.now();
+    for (const [k, v] of roomCountsCache) if (v.expiresAt <= now) roomCountsCache.delete(k);
+    if (roomCountsCache.size >= ROOM_COUNTS_MAX_ENTRIES) roomCountsCache.clear();
+  }
+  roomCountsCache.set(roomId, { counts: { ...counts }, expiresAt: Date.now() + ROOM_COUNTS_TTL_MS });
+}
+
 // async function resolveUser(
 //   email: string,
 //   userId: string
@@ -413,7 +441,10 @@ export async function GET(
 
     // 3. Room-wide type counts — accurately count all active messages (including bot posts, predictions, debates, trivia, battles)
     const countedMsgIds = new Set<string>();
-    const trueCounts = { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
+    const cachedCounts = getCachedRoomCounts(cleanRoomId);
+    const trueCounts: RoomTypeCounts = cachedCounts
+      ? { ...cachedCounts }
+      : { post: 0, debate: 0, prediction: 0, trivia: 0, battle: 0 };
 
     function classifyAndCount(mId: string, rawType?: string, rawPostType?: string) {
       if (!mId || countedMsgIds.has(mId)) return;
@@ -426,68 +457,62 @@ export async function GET(
       else trueCounts.post++;
     }
 
-    // A. Count from all active DynamoDB messages in this room (paginated to ensure complete accuracy)
-    const countCandidates = Array.from(new Set([`ROOM#${cleanRoomId}`, cleanRoomId]));
-    for (const cand of countCandidates) {
-      try {
-        let lastKey: Record<string, any> | undefined = undefined;
-        do {
-          const typeQueryRes: any = await docClient.send(new QueryCommand({
-            TableName: TABLES.RealTimeChat,
-            KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
-            ExpressionAttributeValues: {
-              ":r": cand,
-              ":mPrefix": "MSG#",
-            },
-            ProjectionExpression: "sk, msgId, id, chatId, #t, postType",
-            ExpressionAttributeNames: { "#t": "type" },
-            ExclusiveStartKey: lastKey,
-          }));
+    if (!cachedCounts) {
+      // A. Count from all active DynamoDB messages in this room (paginated to ensure complete accuracy)
+      const countCandidates = Array.from(new Set([`ROOM#${cleanRoomId}`, cleanRoomId]));
+      for (const cand of countCandidates) {
+        try {
+          let lastKey: Record<string, any> | undefined = undefined;
+          do {
+            const typeQueryRes: any = await docClient.send(new QueryCommand({
+              TableName: TABLES.RealTimeChat,
+              KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
+              ExpressionAttributeValues: {
+                ":r": cand,
+                ":mPrefix": "MSG#",
+              },
+              ProjectionExpression: "sk, msgId, id, chatId, #t, postType",
+              ExpressionAttributeNames: { "#t": "type" },
+              ExclusiveStartKey: lastKey,
+            }));
 
-          if (typeQueryRes.Items && typeQueryRes.Items.length > 0) {
-            for (const item of typeQueryRes.Items) {
-              const mId = extractMsgId(item, cleanRoomId);
-              classifyAndCount(mId, item.type, item.postType);
+            if (typeQueryRes.Items && typeQueryRes.Items.length > 0) {
+              for (const item of typeQueryRes.Items) {
+                const mId = extractMsgId(item, cleanRoomId);
+                classifyAndCount(mId, item.type, item.postType);
+              }
+            }
+            lastKey = typeQueryRes.LastEvaluatedKey;
+          } while (lastKey);
+        } catch (dynCountErr) {
+          console.warn("[Messages GET] Fast type counting notice:", dynCountErr);
+        }
+      }
+
+      // B. Count from Firestore fallback rooms if any active messages exist there
+      for (const collName of ["roarRooms", "watchAlongRooms"]) {
+        try {
+          const roomRef = db.collection(getFirestoreCollection(collName)).doc(cleanRoomId);
+          const roomSnap = await roomRef.get();
+          if (roomSnap.exists) {
+            const fsMsgsSnap = await roomRef.collection("messages").select("type", "postType").get();
+            for (const doc of fsMsgsSnap.docs) {
+              classifyAndCount(doc.id, doc.data().type, doc.data().postType);
             }
           }
-          lastKey = typeQueryRes.LastEvaluatedKey;
-        } while (lastKey);
-      } catch (dynCountErr) {
-        console.warn("[Messages GET] Fast type counting notice:", dynCountErr);
-      }
-    }
-
-    // B. Count from Firestore fallback rooms if any active messages exist there
-    for (const collName of ["roarRooms", "watchAlongRooms"]) {
-      try {
-        const roomRef = db.collection(getFirestoreCollection(collName)).doc(cleanRoomId);
-        const roomSnap = await roomRef.get();
-        if (roomSnap.exists) {
-          const fsMsgsSnap = await roomRef.collection("messages").select("type", "postType").get();
-          for (const doc of fsMsgsSnap.docs) {
-            classifyAndCount(doc.id, doc.data().type, doc.data().postType);
-          }
+        } catch {
+          // Firestore count best-effort
         }
-      } catch {
-        // Firestore count best-effort
       }
-    }
 
-    // C. Also factor in loaded messages array to ensure 100% parity with feed
-    for (const m of messages) {
-      classifyAndCount(m.msgId, m.type, m.postType);
-    }
+      // C. Also factor in loaded messages array to ensure 100% parity with feed
+      for (const m of messages) {
+        classifyAndCount(m.msgId, m.type, m.postType);
+      }
 
-    // D. Self-heal ROOM#META in DynamoDB with the accurate true counts
-    try {
-      await docClient.send(new UpdateCommand({
-        TableName: TABLES.RealTimeChat,
-        Key: { roomId: `ROOM#${cleanRoomId}`, sk: "ROOM#META" },
-        UpdateExpression: "SET typeCounts = :counts",
-        ExpressionAttributeValues: { ":counts": trueCounts },
-      }));
-    } catch {
-      // Best-effort cache update
+      // D. Cache the computed counts for 60s. (The per-GET ROOM#META "self-heal" write was
+      // removed; ROOM#META.typeCounts is now only updated by POST.)
+      setCachedRoomCounts(cleanRoomId, trueCounts);
     }
 
     return NextResponse.json({
@@ -693,6 +718,7 @@ export async function POST(
     };
 
     await docClient.send(new PutCommand({ TableName: TABLES.RealTimeChat, Item: dynamoMessage }));
+    roomCountsCache.delete(cleanRoomId);
 
     // ── Bump room-level per-type counter (drives the header category counts) ──
     const countKey =
