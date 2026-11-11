@@ -53,9 +53,12 @@ interface EngagementItem {
   id: string;
   type: string;
   title: string;
+  seriesId?: string;
   matchId?: string;
   momentId?: string;
   loopId?: string;
+  recognitionId?: string;
+  hasRecognition?: boolean;
   status?: string;
   options?: EngagementOptionItem[];
   pollData?: { options?: EngagementOptionItem[] };
@@ -77,8 +80,10 @@ interface EngagementItem {
 interface RecognitionItem {
   id: string;
   recognitionId?: string;
+  seriesId?: string;
   matchId?: string;
   momentId?: string;
+  engagementId?: string;
   targetType?: "all" | "user";
   targetUserId?: string | null;
   targetUserName?: string | null;
@@ -138,6 +143,10 @@ function normalizeMomentKey(val?: string | null): string {
   return String(val || "").trim().replace(/^MOMENT#/i, "").toLowerCase();
 }
 
+function getMomentCompositeKey(matchId?: string | null, momentId?: string | null): string {
+  return `${normalizeMatchKey(matchId)}|${normalizeMomentKey(momentId)}`;
+}
+
 function resolveOptionLabel(eng: EngagementItem, choiceId?: string | null): string | null {
   if (!choiceId) return null;
   const target = String(choiceId).trim().toLowerCase();
@@ -185,9 +194,9 @@ function OverviewContent() {
     setLoading(true);
     try {
       const [mRes, momRes, engRes, recRes] = await Promise.allSettled([
-        fetch("/api/matches?limit=100").then((r) => r.json()),
+        fetch(`/api/matches?limit=500&_t=${Date.now()}`).then((r) => r.json()),
         fetch(`/api/match-moments?_t=${Date.now()}`).then((r) => r.json()),
-        fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=200&_t=${Date.now()}`).then((r) => r.json()),
+        fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=500&_t=${Date.now()}`).then((r) => r.json()),
         fetch(`/api/visible-recognition?_t=${Date.now()}`).then((r) => r.json()),
       ]);
 
@@ -245,16 +254,31 @@ function OverviewContent() {
 
   // ─── Filter Hierarchies ────────────────────────────────────────────────────
 
+  const matchLabelByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of matches) {
+      const k = normalizeMatchKey(m.match_id);
+      if (k) map.set(k, `${m.team1} vs ${m.team2}`);
+    }
+    return map;
+  }, [matches]);
+
   const availableMoments = useMemo(() => {
-    if (!selectedMatchId) return moments;
+    const deduped = new Map<string, MatchMomentItem>();
     const targetM = normalizeMatchKey(selectedMatchId);
-    return moments.filter((m) => normalizeMatchKey(m.matchId) === targetM);
+    for (const m of moments) {
+      const mMatchKey = normalizeMatchKey(m.matchId);
+      if (targetM && mMatchKey !== targetM) continue;
+      const compKey = getMomentCompositeKey(m.matchId, m.momentId);
+      if (!deduped.has(compKey)) deduped.set(compKey, m);
+    }
+    return Array.from(deduped.values());
   }, [moments, selectedMatchId]);
 
   useEffect(() => {
     if (
       selectedMomentId &&
-      !availableMoments.some((m) => normalizeMomentKey(m.momentId) === normalizeMomentKey(selectedMomentId))
+      !availableMoments.some((m) => getMomentCompositeKey(m.matchId, m.momentId) === selectedMomentId)
     ) {
       setSelectedMomentId("");
     }
@@ -262,14 +286,19 @@ function OverviewContent() {
 
   const availableEngagements = useMemo(() => {
     const targetMatch = normalizeMatchKey(selectedMatchId);
-    const targetMoment = normalizeMomentKey(selectedMomentId);
+    const hasCompositeMoment = selectedMomentId.includes("|");
+    const [selMomMatch, selMomId] = hasCompositeMoment
+      ? selectedMomentId.split("|")
+      : ["", normalizeMomentKey(selectedMomentId)];
 
     return engagements.filter((e) => {
-      if (targetMatch && normalizeMatchKey(e.matchId) !== targetMatch) return false;
-      if (targetMoment) {
+      const engMatch = normalizeMatchKey(e.matchId);
+      if (targetMatch && engMatch !== targetMatch) return false;
+      if (selectedMomentId) {
+        if (selMomMatch && engMatch && engMatch !== selMomMatch) return false;
         const engMom = normalizeMomentKey(e.momentId);
         const engLoop = normalizeMomentKey(e.loopId);
-        const matchesMom = engMom ? engMom === targetMoment : engLoop === targetMoment;
+        const matchesMom = engMom ? engMom === selMomId : engLoop === selMomId;
         if (!matchesMom) return false;
       }
       return true;
@@ -291,8 +320,7 @@ function OverviewContent() {
 
   const momentsInScope = useMemo(() => {
     if (selectedMomentId) {
-      const targetMom = normalizeMomentKey(selectedMomentId);
-      return availableMoments.filter((m) => normalizeMomentKey(m.momentId) === targetMom);
+      return availableMoments.filter((m) => getMomentCompositeKey(m.matchId, m.momentId) === selectedMomentId);
     }
     return availableMoments;
   }, [availableMoments, selectedMomentId]);
@@ -387,14 +415,18 @@ function OverviewContent() {
 
   const activeUserEntry = usersInScope.find((u) => u.user.userId === selectedUserId) || null;
   const activeMatch = matches.find((m) => m.match_id === selectedMatchId);
-  const activeMoment = momentsInScope.find((m) => normalizeMomentKey(m.momentId) === normalizeMomentKey(selectedMomentId));
+  const activeMoment = momentsInScope.find((m) => getMomentCompositeKey(m.matchId, m.momentId) === selectedMomentId);
   const activeEngagement = engagementsInScope.find((e) => e.id === selectedEngagementId);
 
-  // Moment lookup for table rows
+  // Moment lookup for table rows (composite matchId|momentId + fallback by momentId)
   const momentMap = useMemo(() => {
     const map = new Map<string, MatchMomentItem>();
     moments.forEach((m) => {
-      if (m.momentId) map.set(normalizeMomentKey(m.momentId), m);
+      if (m.momentId) {
+        map.set(getMomentCompositeKey(m.matchId, m.momentId), m);
+        const rawKey = normalizeMomentKey(m.momentId);
+        if (!map.has(rawKey)) map.set(rawKey, m);
+      }
     });
     return map;
   }, [moments]);
@@ -506,13 +538,44 @@ function OverviewContent() {
     };
   }, [engagementsInScope]);
 
+  const recognitionByEngagement = useMemo(() => {
+    const map = new Map<string, RecognitionItem>();
+    for (const r of recognitions) {
+      const rEng = String(r.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+      if (rEng && !map.has(rEng)) {
+        map.set(rEng, r);
+      }
+    }
+    return map;
+  }, [recognitions]);
+
   const recognitionMetrics = useMemo(() => {
     const targetMatch = normalizeMatchKey(selectedMatchId);
-    const targetMoment = normalizeMomentKey(selectedMomentId);
+    const hasCompositeMoment = selectedMomentId.includes("|");
+    const [selMomMatch, selMomId] = hasCompositeMoment
+      ? selectedMomentId.split("|")
+      : ["", normalizeMomentKey(selectedMomentId)];
+    const cleanSelectedEng = selectedEngagementId.replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
 
     const filtered = recognitions.filter((r) => {
-      if (targetMatch && normalizeMatchKey(r.matchId) !== targetMatch) return false;
-      if (targetMoment && normalizeMomentKey(r.momentId) !== targetMoment) return false;
+      const rMatch = normalizeMatchKey(r.matchId);
+      if (targetMatch && rMatch !== targetMatch) return false;
+      if (selectedMomentId) {
+        if (selMomMatch && rMatch && rMatch !== selMomMatch) return false;
+        if (normalizeMomentKey(r.momentId) !== selMomId) return false;
+      }
+
+      if (cleanSelectedEng) {
+        const rEng = String(r.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+        const activeRecId = activeEngagement?.recognitionId;
+        if (rEng) {
+          if (rEng !== cleanSelectedEng) return false;
+        } else if (activeRecId) {
+          if ((r.recognitionId || r.id) !== activeRecId) return false;
+        } else {
+          return false;
+        }
+      }
 
       if (activeUserEntry) {
         if (r.targetType !== "user") return false;
@@ -548,7 +611,7 @@ function OverviewContent() {
       totalSxp,
       archetypeCount,
     };
-  }, [recognitions, selectedMatchId, selectedMomentId, activeUserEntry]);
+  }, [recognitions, selectedMatchId, selectedMomentId, selectedEngagementId, activeEngagement, activeUserEntry]);
 
   const returnMetrics = useMemo(() => {
     const totalServed = engagementsInScope.length;
@@ -718,11 +781,15 @@ function OverviewContent() {
               className="w-full bg-[#0a0d17] border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 font-bold"
             >
               <option value="">All Moments ({availableMoments.length})</option>
-              {availableMoments.map((m) => (
-                <option key={m.momentId} value={m.momentId}>
-                  Over {m.overs} {m.score ? `(${m.score})` : ""} — {m.event || m.matchMoment || m.momentId}
-                </option>
-              ))}
+              {availableMoments.map((m) => {
+                const compKey = getMomentCompositeKey(m.matchId, m.momentId);
+                const mLabel = !selectedMatchId ? matchLabelByKey.get(normalizeMatchKey(m.matchId)) : "";
+                return (
+                  <option key={compKey} value={compKey}>
+                    {mLabel ? `[${mLabel}] ` : ""}Over {m.overs} {m.score ? `(${m.score})` : ""} — {m.event || m.matchMoment || m.momentId}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -1065,6 +1132,7 @@ function OverviewContent() {
                 <th className="py-2.5 px-3">Engagement</th>
                 <th className="py-2.5 px-3">Type</th>
                 <th className="py-2.5 px-3">Moment</th>
+                <th className="py-2.5 px-3">1:1 Recognition</th>
                 <th className="py-2.5 px-3">Status</th>
                 <th className="py-2.5 px-3">Winning Outcome</th>
                 <th className="py-2.5 px-3 text-right">Votes</th>
@@ -1073,7 +1141,7 @@ function OverviewContent() {
             <tbody className="divide-y divide-white/5">
               {outcomeMetrics.engagements.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-gray-400 text-xs">
+                  <td colSpan={7} className="py-8 text-center text-gray-400 text-xs">
                     No engagements found for this filter selection.
                   </td>
                 </tr>
@@ -1094,8 +1162,15 @@ function OverviewContent() {
                     (isSettled ? "Settled" : "Awaiting outcome");
 
                   const linkedMoment = eng.momentId
-                    ? momentMap.get(normalizeMomentKey(eng.momentId))
+                    ? (momentMap.get(getMomentCompositeKey(eng.matchId, eng.momentId)) ||
+                      momentMap.get(normalizeMomentKey(eng.momentId)))
                     : undefined;
+
+                  const linkedRecognition =
+                    recognitionByEngagement.get(eng.id) ||
+                    (eng.recognitionId
+                      ? recognitions.find((r) => (r.recognitionId || r.id) === eng.recognitionId)
+                      : undefined);
 
                   const realVoteCount = activeUserEntry
                     ? activeUserEntry.user.engagements?.[eng.id]?.participations || 0
@@ -1118,6 +1193,20 @@ function OverviewContent() {
                           <span className="text-amber-400 font-mono text-[11px]">{eng.momentId}</span>
                         ) : (
                           <span className="text-gray-500">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3">
+                        {linkedRecognition ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                            {linkedRecognition.headline || linkedRecognition.archetype || "Linked 1:1"}
+                          </span>
+                        ) : (
+                          <Link
+                            href={`/admin/core-engine/visible-recognition/add?matchId=${encodeURIComponent(eng.matchId || "")}&momentId=${encodeURIComponent(eng.momentId || "")}&engagementId=${encodeURIComponent(eng.id)}`}
+                            className="text-[11px] text-purple-400 hover:underline font-medium"
+                          >
+                            + Link 1:1
+                          </Link>
                         )}
                       </td>
                       <td className="py-3 px-3">

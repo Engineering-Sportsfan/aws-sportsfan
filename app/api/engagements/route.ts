@@ -4,7 +4,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
-import { ScanCommand, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand, PutCommand, GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { EngagementItem, EngagementType, EngagementStatus, MemePayload, MemeRatingChoice } from "@/types/engagements";
 import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
@@ -1019,6 +1019,39 @@ export async function POST(req: NextRequest) {
       (fanBattleData as any)?.topic ||
       (type ? `${type.charAt(0).toUpperCase() + type.slice(1).replace("_", " ")} Arena` : "SportsFan Arena");
 
+    let resolvedSeriesId = String(body.seriesId || existingEngagement?.seriesId || "").trim();
+    const resolvedMatchIdStr = String(body.matchId || existingEngagement?.matchId || "").replace(/^MATCH#/i, "").trim();
+    const resolvedMomentIdStr = String(body.momentId || body.loopId || existingEngagement?.momentId || "").replace(/^MOMENT#/i, "").trim();
+    if (!resolvedSeriesId && resolvedMatchIdStr) {
+      const mmTables = Array.from(new Set([TABLES.MatchMoments, TABLES.SportsData]));
+      for (const tbl of mmTables) {
+        try {
+          if (resolvedMomentIdStr) {
+            const momRes = await docClient.send(
+              new GetCommand({
+                TableName: tbl,
+                Key: { entityId: `MATCH#${resolvedMatchIdStr}`, sk: `MOMENT#${resolvedMomentIdStr}` },
+              })
+            );
+            if (momRes.Item?.seriesId) {
+              resolvedSeriesId = String(momRes.Item.seriesId).trim();
+              break;
+            }
+          }
+          const matchRes = await docClient.send(
+            new GetCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${resolvedMatchIdStr}`, sk: "MATCH#META" },
+            })
+          );
+          if (matchRes.Item?.seriesId) {
+            resolvedSeriesId = String(matchRes.Item.seriesId).trim();
+            break;
+          }
+        } catch {}
+      }
+    }
+
     const newEngagement: EngagementItem & {
       startTime?: number;
       scheduledStartTime?: number;
@@ -1068,6 +1101,7 @@ export async function POST(req: NextRequest) {
       category: body.category || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : (type === "fan_battle" || type === "meme" ? "fliparena" : undefined)),
       source: body.source || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : "fliparena"),
       isMatchMoment: body.isMatchMoment !== undefined ? Boolean(body.isMatchMoment) : Boolean(formattedDebateData || formattedExpressData || formattedQuestionData || (type !== "meme" && type !== "fan_battle" && matchMomentDurationMins === 4)),
+      ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
       matchId: body.matchId || undefined,
       momentId: body.momentId || body.loopId || undefined,
       loopId: body.loopId || body.momentId || undefined,

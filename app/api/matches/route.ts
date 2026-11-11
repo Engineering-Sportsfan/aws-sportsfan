@@ -6,7 +6,7 @@
 // import { docClient } from "@/lib/dynamodb";
 // import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
 // import { TABLES } from "@/lib/tableNames";
-// import { ScanCommand, GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+// import { ScanCommand, GetCommand, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 // export const dynamic = "force-dynamic";
 
@@ -380,7 +380,7 @@ import { validateMatchCreate } from "@/lib/validations/matchValidation";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
 import { TABLES } from "@/lib/tableNames";
-import { ScanCommand, GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { ScanCommand, GetCommand, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -388,19 +388,20 @@ export const dynamic = "force-dynamic";
 // Query params: tournament, gender, format, season, limit (default 50), after (cursor)
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const tournament = searchParams.get("tournament");
-  const gender = searchParams.get("gender");
-  const format = searchParams.get("format");
-  const season = searchParams.get("season");
-  const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 500);
-  const after = searchParams.get("after");
+    const tournament = searchParams.get("tournament");
+    const gender = searchParams.get("gender");
+    const format = searchParams.get("format");
+    const season = searchParams.get("season");
+    const seriesIdFilter = searchParams.get("seriesId");
+    const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 500);
+    const after = searchParams.get("after");
 
   try {
     let matches: any[] = [];
     const seenIds = new Set<string>();
 
     // 1. Scan ALL candidate tables (MatchMoments + SportsData, incl. env variants)
-    //    for MATCH#META records. Covers accidental writes to the wrong table.
+    //    for MATCH#META records with full pagination (avoiding pre-filter Limit truncation).
     const candidateTables = Array.from(
       new Set([
         ...getCandidateTableNames(TABLES.MatchMoments),
@@ -421,19 +422,21 @@ export async function GET(req: NextRequest) {
         if (gender) { filterExpr += " AND gender = :g"; exprVals[":g"] = gender; }
         if (format) { filterExpr += " AND #fmt = :f"; exprNames["#fmt"] = "format"; exprVals[":f"] = format; }
         if (season) { filterExpr += " AND season = :s"; exprVals[":s"] = parseInt(season, 10); }
+        if (seriesIdFilter) { filterExpr += " AND seriesId = :sid"; exprVals[":sid"] = seriesIdFilter; }
 
-        const scanRes = await docClient.send(
-          new ScanCommand({
-            TableName: table,
-            FilterExpression: filterExpr,
-            ExpressionAttributeNames: Object.keys(exprNames).length > 0 ? exprNames : undefined,
-            ExpressionAttributeValues: exprVals,
-            Limit: 200,
-          })
-        );
+        let lastKey: Record<string, any> | undefined;
+        do {
+          const scanRes = await docClient.send(
+            new ScanCommand({
+              TableName: table,
+              FilterExpression: filterExpr,
+              ExpressionAttributeNames: Object.keys(exprNames).length > 0 ? exprNames : undefined,
+              ExpressionAttributeValues: exprVals,
+              ExclusiveStartKey: lastKey,
+            })
+          );
 
-        if (scanRes.Items && scanRes.Items.length > 0) {
-          for (const item of scanRes.Items as any[]) {
+          for (const item of (scanRes.Items || []) as any[]) {
             const matchId: string = item.match_id || (item.entityId as string)?.replace(/^MATCH#/, "");
             // Only include real match records: must have team1 or team2, and not duplicated
             if (matchId && !seenIds.has(matchId) && (item.team1 || item.team2)) {
@@ -441,7 +444,8 @@ export async function GET(req: NextRequest) {
               matches.push({ id: matchId, match_id: matchId, ...item });
             }
           }
-        }
+          lastKey = scanRes.LastEvaluatedKey;
+        } while (lastKey);
       } catch {
         // Table doesn't exist — skip silently
       }
@@ -594,8 +598,12 @@ export async function POST(req: NextRequest) {
   }
 
   const now = Date.now();
+  const seriesId = String(body?.seriesId || body?.series_id || (match as any)?.seriesId || "").trim() || undefined;
+  const seriesName = String(body?.seriesName || body?.series_name || (match as any)?.seriesName || "").trim() || undefined;
   const matchPayload = {
     ...match,
+    ...(seriesId ? { seriesId } : {}),
+    ...(seriesName ? { seriesName } : {}),
     createdAt: now,
     updatedAt: now,
   };
@@ -615,6 +623,35 @@ export async function POST(req: NextRequest) {
       updated_at: FieldValue.serverTimestamp(),
     },
   });
+
+  // 1:N relational reverse index in SportsData (Series -> Matches)
+  if (seriesId) {
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.SportsData,
+          Item: {
+            entityId: `SERIES#${seriesId}`,
+            sk: `MATCH#${match.date || "0000-00-00"}#${match.match_id}`,
+            seriesId,
+            ...(seriesName ? { seriesName } : {}),
+            matchId: match.match_id,
+            match_id: match.match_id,
+            team1: match.team1,
+            team2: match.team2,
+            date: match.date,
+            format: match.format,
+            venue: match.venue,
+            status: match.status,
+            createdAt: now,
+            updatedAt: now,
+          },
+        })
+      );
+    } catch (seriesIdxErr) {
+      console.warn("[matches POST] Series->Match SportsData index write notice:", seriesIdxErr);
+    }
+  }
 
   return NextResponse.json({ success: true, match_id: match.match_id, data: matchPayload }, { status: 201 });
 }

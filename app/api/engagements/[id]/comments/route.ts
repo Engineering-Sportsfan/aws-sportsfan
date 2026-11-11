@@ -9,6 +9,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { QueryCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { EngagementComment } from "@/types/engagements";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
+import { applyEngagementStats, getEngagementStats } from "@/lib/engagementSocial";
 
 export const dynamic = "force-dynamic";
 
@@ -247,7 +248,7 @@ export async function POST(
     const { id } = await params;
     const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
     const body = await req.json();
-    const { text, parentId, authorUsername, authorUid, authorBadge, authorAvatarUrl, matchId } = body;
+    const { text, parentId, authorUsername, authorUid, authorBadge, authorAvatarUrl, matchId, momentId: reqMomentId, seriesId: reqSeriesId } = body;
 
     if (!text || !text.trim()) {
       return NextResponse.json(
@@ -264,6 +265,11 @@ export async function POST(
       authorUsername || authUser?.name || "",
       authUser?.email || ""
     );
+
+    const found = await findEngagementById(cleanId, matchId).catch(() => null);
+    const resolvedMatchId = String(found?.item?.matchId || matchId || "").trim() || undefined;
+    const resolvedMomentId = String(found?.item?.momentId || reqMomentId || "").trim() || undefined;
+    const resolvedSeriesId = String(found?.item?.seriesId || reqSeriesId || "").trim() || undefined;
 
     const now = Date.now();
     const commentId = `comm_${now}_${Math.random().toString(36).slice(2, 7)}`;
@@ -294,6 +300,9 @@ export async function POST(
             sk: `COMMENT#${commentId}`,
             entityId: `COMMENT#${cleanId}`,
             ...newComment,
+            ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
+            ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
+            ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
           },
         })
       );
@@ -303,6 +312,50 @@ export async function POST(
         { success: false, error: "Comment could not be saved. Please try again." },
         { status: 500 }
       );
+    }
+
+    // 1b. If this is a reply to another user's comment, store a dedicated Social Response record
+    if (parentId) {
+      try {
+        const cleanParentId = String(parentId).replace(/^COMMENT#/, "").trim();
+        let targetAuthorUid = "";
+        if (cleanParentId) {
+          const parentRes = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: `COMMENT#${cleanParentId}` },
+            })
+          );
+          targetAuthorUid = String(parentRes.Item?.authorUid || parentRes.Item?.userId || "").trim();
+        }
+        if (!targetAuthorUid || userId !== targetAuthorUid) {
+          await docClient.send(
+            new PutCommand({
+              TableName: TABLES.SocialAndContent,
+              Item: {
+                contentId: `ENGAGEMENT#${cleanId}`,
+                sk: `SOCIAL_COMMENT#${commentId}`,
+                entityId: "SOCIAL_RESPONSE#COMMENT",
+                responseType: "comment",
+                actorUserId: userId,
+                actorUserName: newComment.authorUsername,
+                userId,
+                userName: newComment.authorUsername,
+                commentId,
+                targetCommentId: cleanParentId,
+                ...(targetAuthorUid ? { targetAuthorUid } : {}),
+                engagementId: cleanId,
+                ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
+                ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
+                ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
+                createdAt: now,
+              },
+            })
+          );
+        }
+      } catch (srErr) {
+        console.warn("[EngagementComments POST] Social response write notice:", srErr);
+      }
     }
 
     // 2. Recount COMMENT# records (comments + replies, same as GET ?countOnly=1 and the frontend thread).
@@ -356,9 +409,10 @@ export async function POST(
     // for every engagement (plus MatchMoments + Firestore for match moments), so no separate META update.
     if (total > 0) {
       try {
-        const found = await findEngagementById(cleanId, matchId);
+        const engStats = await getEngagementStats(cleanId, { consistent: true });
         if (found?.item) {
-          found.item.commentsCount = total;
+          applyEngagementStats(found.item, engStats);
+          found.item.commentsCount = Math.max(total, engStats.commentsCount);
           await persistEngagementUpdate(cleanId, found.item, found.matchMomentsRecord);
         } else {
           // Dual-write count to visible_recognitions and match_room_notifications collections

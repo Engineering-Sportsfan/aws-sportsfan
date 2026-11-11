@@ -436,6 +436,10 @@ async function handleOverviewRequest(req: NextRequest, body: {
       const seenLikes = new Set<string>();
       const seenShares = new Set<string>();
       const seenVotes = new Set<string>();
+      const seenImpressions = new Set<string>();
+      const seenSocialLikes = new Set<string>();
+      const seenSocialComments = new Set<string>();
+      const seenSocialImpressions = new Set<string>();
       const participants = new Set<string>();
       const commentMap = new Map<string, any>();
 
@@ -531,11 +535,53 @@ async function handleOverviewRequest(req: NextRequest, body: {
         } else if (sk.startsWith("IMPRESSION#") || sk.startsWith("VIEW#")) {
           const rawUid = item.userId || sk.replace(/^(IMPRESSION|VIEW)#/, "").split("#")[0];
           const profile = resolve(rawUid, item.userName, item.userAvatar);
-          if (!profile) continue;
+          if (!profile || seenImpressions.has(profile.userId)) continue;
+          seenImpressions.add(profile.userId);
 
           const m = getOrInitUserEngagement(profile, engId);
           m.impressions += 1;
           totals.impressions += 1;
+          participants.add(profile.userId);
+        } else if (sk.startsWith("SOCIAL_LIKE#")) {
+          const rest = sk.slice("SOCIAL_LIKE#".length);
+          const hashIdx = rest.lastIndexOf("#");
+          const cId = String(item.targetCommentId || (hashIdx >= 0 ? rest.slice(0, hashIdx) : rest)).trim();
+          const rawUid = item.actorUserId || item.userId || (hashIdx >= 0 ? rest.slice(hashIdx + 1) : "");
+          const profile = resolve(rawUid, item.actorUserName || item.userName);
+          if (!profile) continue;
+          const dedupeKey = `${cId}#${profile.userId}`;
+          if (seenSocialLikes.has(dedupeKey)) continue;
+          seenSocialLikes.add(dedupeKey);
+
+          const m = getOrInitUserEngagement(profile, engId);
+          m.socialLikes += 1;
+          totals.socialLikes += 1;
+          participants.add(profile.userId);
+        } else if (sk.startsWith("SOCIAL_COMMENT#")) {
+          const cId = String(item.commentId || sk.slice("SOCIAL_COMMENT#".length)).trim();
+          const rawUid = item.actorUserId || item.userId;
+          const profile = resolve(rawUid, item.actorUserName || item.userName);
+          if (!profile || seenSocialComments.has(cId)) continue;
+          seenSocialComments.add(cId);
+
+          const m = getOrInitUserEngagement(profile, engId);
+          m.socialComments += 1;
+          totals.socialComments += 1;
+          participants.add(profile.userId);
+        } else if (sk.startsWith("SOCIAL_IMPRESSION#")) {
+          const rest = sk.slice("SOCIAL_IMPRESSION#".length);
+          const hashIdx = rest.lastIndexOf("#");
+          const cId = String(item.targetCommentId || (hashIdx >= 0 ? rest.slice(0, hashIdx) : rest)).trim();
+          const rawUid = item.actorUserId || item.userId || (hashIdx >= 0 ? rest.slice(hashIdx + 1) : "");
+          const profile = resolve(rawUid, item.actorUserName || item.userName);
+          if (!profile) continue;
+          const dedupeKey = `${cId}#${profile.userId}`;
+          if (seenSocialImpressions.has(dedupeKey)) continue;
+          seenSocialImpressions.add(dedupeKey);
+
+          const m = getOrInitUserEngagement(profile, engId);
+          m.socialImpressions += 1;
+          totals.socialImpressions += 1;
           participants.add(profile.userId);
         } else if (sk.startsWith("USER#")) {
           const rawUid = item.userId || sk.slice(5);
@@ -589,10 +635,13 @@ async function handleOverviewRequest(req: NextRequest, body: {
           participants.add(authorProfile.userId);
 
           if (comment.parentId) {
-            // Nested reply to another user counts as a Social Response comment
+            // Nested reply to another user counts as a Social Response comment (deduped with SOCIAL_COMMENT#)
             if (!parentAuthorProfile || authorProfile.userId !== parentAuthorProfile.userId) {
-              m.socialComments += 1;
-              totals.socialComments += 1;
+              if (!seenSocialComments.has(comment.commentId)) {
+                seenSocialComments.add(comment.commentId);
+                m.socialComments += 1;
+                totals.socialComments += 1;
+              }
             } else {
               // Self-continuation on own thread stays an engagement comment
               m.comments += 1;
@@ -605,7 +654,7 @@ async function handleOverviewRequest(req: NextRequest, body: {
           }
         }
 
-        // Likes on comments count under Social Response (likes done on other users' comments)
+        // Likes on comments count under Social Response (deduped with SOCIAL_LIKE#)
         const likedByList: string[] = Array.isArray(comment.likedBy) ? comment.likedBy : [];
         const seenCommentLikers = new Set<string>();
         for (const likerUid of likedByList) {
@@ -614,6 +663,10 @@ async function handleOverviewRequest(req: NextRequest, body: {
           seenCommentLikers.add(likerProfile.userId);
 
           if (!authorProfile || likerProfile.userId !== authorProfile.userId) {
+            const likeDedupeKey = `${comment.commentId}#${likerProfile.userId}`;
+            if (seenSocialLikes.has(likeDedupeKey)) continue;
+            seenSocialLikes.add(likeDedupeKey);
+
             const m = getOrInitUserEngagement(likerProfile, engId);
             m.socialLikes += 1;
             totals.socialLikes += 1;

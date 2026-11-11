@@ -20,6 +20,7 @@ interface MatchOption {
   match_id: string;
   team1: string;
   team2: string;
+  format?: string;
 }
 
 interface MatchMomentItem {
@@ -36,6 +37,16 @@ interface ParticipantUser {
   userName: string;
   userAvatar?: string | null;
   userEmail?: string | null;
+}
+
+interface EngagementOption {
+  id: string;
+  title: string;
+  type: string;
+  matchId?: string;
+  momentId?: string;
+  loopId?: string;
+  recognitionId?: string;
 }
 
 const ARCHETYPES = [
@@ -105,6 +116,7 @@ function AddRecognitionContent() {
   const searchParams = useSearchParams();
   const urlMatchId = searchParams.get("matchId") || "";
   const urlMomentId = searchParams.get("momentId") || "";
+  const urlEngagementId = searchParams.get("engagementId") || "";
   const editId = searchParams.get("editId");
 
   // Selection states
@@ -112,6 +124,8 @@ function AddRecognitionContent() {
   const [selectedMatchId, setSelectedMatchId] = useState<string>(urlMatchId);
   const [moments, setMoments] = useState<MatchMomentItem[]>([]);
   const [selectedMomentId, setSelectedMomentId] = useState<string>(urlMomentId);
+  const [engagements, setEngagements] = useState<EngagementOption[]>([]);
+  const [selectedEngagementId, setSelectedEngagementId] = useState<string>(urlEngagementId);
 
   const [participants, setParticipants] = useState<ParticipantUser[]>([]);
 
@@ -202,6 +216,32 @@ function AddRecognitionContent() {
       }
     };
     fetchParticipants();
+
+    const fetchMomentEngagements = async () => {
+      try {
+        const res = await fetch(`/api/engagements?limit=300&_t=${Date.now()}`);
+        const json = await res.json();
+        const rawList = Array.isArray(json.engagements)
+          ? json.engagements
+          : Array.isArray(json.data)
+          ? json.data
+          : [];
+        const cleanM = selectedMatchId.replace(/^MATCH#/i, "").trim().toLowerCase();
+        const cleanMom = selectedMomentId.replace(/^MOMENT#/i, "").trim().toLowerCase();
+        const filtered = rawList.filter((e: EngagementOption) => {
+          const eMatch = String(e.matchId || "").replace(/^MATCH#/i, "").trim().toLowerCase();
+          const eMom = String(e.momentId || e.loopId || "").replace(/^MOMENT#/i, "").trim().toLowerCase();
+          return eMatch === cleanM && eMom === cleanMom;
+        });
+        setEngagements(filtered);
+        if (filtered.length === 1 && !selectedEngagementId) {
+          setSelectedEngagementId(filtered[0].id);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch moment engagements", err);
+      }
+    };
+    fetchMomentEngagements();
   }, [selectedMatchId, selectedMomentId]);
 
   // Apply archetype preset
@@ -257,6 +297,7 @@ function AddRecognitionContent() {
       recognitionId: editId || undefined,
       matchId: selectedMatchId,
       momentId: selectedMomentId,
+      engagementId: selectedEngagementId || undefined,
       targetType,
       targetUserId: targetType === "user" ? (selectedUserId || `usr_custom_${Date.now()}`) : null,
       targetUserName:
@@ -394,7 +435,7 @@ function AddRecognitionContent() {
             </h3>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
                 Match Fixture *
@@ -404,6 +445,7 @@ function AddRecognitionContent() {
                 onChange={(e) => {
                   setSelectedMatchId(e.target.value);
                   setSelectedMomentId("");
+                  setSelectedEngagementId("");
                 }}
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
               >
@@ -422,13 +464,34 @@ function AddRecognitionContent() {
               </label>
               <select
                 value={selectedMomentId}
-                onChange={(e) => setSelectedMomentId(e.target.value)}
+                onChange={(e) => {
+                  setSelectedMomentId(e.target.value);
+                  setSelectedEngagementId("");
+                }}
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
               >
                 <option value="">-- Choose Moment --</option>
                 {moments.map((m) => (
                   <option key={m.momentId} value={m.momentId}>
                     Over {m.overs}{m.score ? ` (${m.score})` : ""} - {m.event || "Over"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                Linked Engagement (1:1)
+              </label>
+              <select
+                value={selectedEngagementId}
+                onChange={(e) => setSelectedEngagementId(e.target.value)}
+                className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
+              >
+                <option value="">-- Optional: Select Engagement --</option>
+                {engagements.map((eng) => (
+                  <option key={eng.id} value={eng.id}>
+                    [{String(eng.type || "loop").toUpperCase()}] {eng.title || eng.id}
                   </option>
                 ))}
               </select>

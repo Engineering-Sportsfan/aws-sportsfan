@@ -7,7 +7,7 @@ import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/l
 import { getUser } from "@/lib/getUser";
 import { dispatchFlipArenaNotification } from "@/lib/notifications";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
-import { countRecords } from "@/lib/engagementSocial";
+import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
 import { getCandidateTableNames } from "@/lib/dualWrite";
 
 export const dynamic = "force-dynamic";
@@ -138,6 +138,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const matchId = body?.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
     const found = await findEngagementById(cleanId, matchId).catch(() => null);
     const item = found?.item || null;
+    const resolvedMatchId = item?.matchId || matchId || undefined;
+    const resolvedMomentId = body?.momentId || item?.momentId || undefined;
+    const resolvedSeriesId = body?.seriesId || item?.seriesId || undefined;
 
     // 3. Save or remove the user's like record FIRST (these records are the source of truth)
     if (nextLikedState) {
@@ -150,7 +153,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               sk: `LIKE#${userId}`,
               entityId: "LIKE#ENGAGEMENT",
               userId,
+              userName: body?.userName || authUser?.name || undefined,
               engagementId: cleanId,
+              ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
+              ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
+              ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
               likedAt: now,
               createdAt: now,
             },
@@ -247,13 +254,18 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // 5. Count the real records, then mirror the number onto the engagement item
-    const likesCount = await countRecords(cleanId, "LIKE#");
+    // 5. Count the real records, then mirror all separated action/social counts onto the engagement item
+    const engStats = await getEngagementStats(cleanId, { consistent: true }).catch(() => null);
+    const likesCount = engStats ? engStats.likes : await countRecords(cleanId, "LIKE#");
     let totalEngaged = likesCount;
 
     if (item) {
-      item.likes = likesCount;
-      item.likeCount = likesCount;
+      if (engStats) {
+        applyEngagementStats(item, engStats);
+      } else {
+        item.likes = likesCount;
+        item.likeCount = likesCount;
+      }
       item.totalEngaged = Math.max(0, (Number(item.totalEngaged) || 0) + delta);
       item.updatedAt = now;
       totalEngaged = Number(item.totalEngaged) || 0;

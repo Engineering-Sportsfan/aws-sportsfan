@@ -6,7 +6,7 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
-import { countRecords } from "@/lib/engagementSocial";
+import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
 
 export const dynamic = "force-dynamic";
 
@@ -44,11 +44,22 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const body = await req.json().catch(() => ({}));
     const authUser = await getUser(req);
     const userId = authUser?.userId || authUser?.email || String(body?.userId || "").trim();
-    const matchId = body?.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
+    const userObj = authUser as { userName?: string; username?: string; name?: string } | null;
+    const userName = String(
+      body?.userName || body?.username || userObj?.userName || userObj?.username || userObj?.name || ""
+    ).trim();
+    const reqMatchId = body?.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
+    const reqMomentId = body?.momentId ? String(body.momentId).trim() : undefined;
+    const reqSeriesId = body?.seriesId ? String(body.seriesId).trim() : undefined;
 
     if (!userId) {
       return NextResponse.json({ error: "userId required" }, { status: 400 });
     }
+
+    const found = await findEngagementById(cleanId, reqMatchId).catch(() => null);
+    const resolvedMatchId = String(found?.item?.matchId || reqMatchId || "").trim() || undefined;
+    const resolvedMomentId = String(found?.item?.momentId || reqMomentId || "").trim() || undefined;
+    const resolvedSeriesId = String(found?.item?.seriesId || reqSeriesId || "").trim() || undefined;
 
     const now = Date.now();
     let alreadyShared = false;
@@ -61,7 +72,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             sk: `SHARE#${userId}`,
             entityId: "SHARE#ENGAGEMENT",
             userId,
+            ...(userName ? { userName } : {}),
             engagementId: cleanId,
+            ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
+            ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
+            ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
             sharedAt: now,
             createdAt: now,
           },
@@ -74,14 +89,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       else throw e;
     }
 
-    const shares = await countRecords(cleanId, "SHARE#");
+    const engStats = await getEngagementStats(cleanId, { consistent: true });
+    const shares = engStats.shares || (await countRecords(cleanId, "SHARE#"));
 
     let totalEngaged = 0;
     try {
-      const found = await findEngagementById(cleanId, matchId);
       if (found?.item) {
-        found.item.shares = shares;
         if (!alreadyShared) found.item.totalEngaged = (Number(found.item.totalEngaged) || 0) + 1;
+        applyEngagementStats(found.item, engStats);
         found.item.updatedAt = now;
         totalEngaged = Number(found.item.totalEngaged) || 0;
         await persistEngagementUpdate(cleanId, found.item, found.matchMomentsRecord);
