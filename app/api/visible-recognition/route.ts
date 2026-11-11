@@ -57,6 +57,7 @@ export async function GET(req: NextRequest) {
   const rawMomentId = searchParams.get("momentId");
   const rawEngagementId = searchParams.get("engagementId");
   const targetUserId = searchParams.get("targetUserId");
+  const includeAllEnvs = searchParams.get("allEnvs") === "true";
 
   const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH[#-]/i, "") : null;
   const cleanMomentId = rawMomentId ? rawMomentId.trim().replace(/^MOMENT[#-]/i, "") : null;
@@ -159,17 +160,17 @@ export async function GET(req: NextRequest) {
               })
             );
             if (scanRes.Items && scanRes.Items.length > 0) {
-              for (const item of scanRes.Items) {
-                const key = String(item.recognitionId || item.id || item.sk || Math.random());
-                if (!recMap.has(key)) {
-                  recMap.set(key, {
-                    id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
-                    ...item,
-                  });
+                for (const item of scanRes.Items) {
+                  const key = String(item.recognitionId || item.id || item.sk || Math.random());
+                  if (!recMap.has(key)) {
+                    recMap.set(key, {
+                      id: item.recognitionId || item.sk?.replace(/^RECOGNITION#/, ""),
+                      ...item,
+                    });
+                  }
                 }
+                if (!includeAllEnvs) break;
               }
-              break;
-            }
           } catch {
             continue;
           }

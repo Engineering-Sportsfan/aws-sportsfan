@@ -30,6 +30,8 @@ interface MatchOption {
   team2: string;
   format?: string;
   status?: string;
+  isCoreEngineMatch?: boolean;
+  source_file?: string | null;
 }
 
 interface MatchMomentItem {
@@ -194,20 +196,25 @@ function OverviewContent() {
     setLoading(true);
     try {
       const [mRes, momRes, engRes, recRes] = await Promise.allSettled([
-        fetch(`/api/matches?limit=500&_t=${Date.now()}`).then((r) => r.json()),
+        fetch(`/api/matches?limit=1000&_t=${Date.now()}`).then((r) => r.json()),
         fetch(`/api/match-moments?_t=${Date.now()}`).then((r) => r.json()),
-        fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=500&_t=${Date.now()}`).then((r) => r.json()),
-        fetch(`/api/visible-recognition?_t=${Date.now()}`).then((r) => r.json()),
+        fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&allEnvs=true&limit=500&_t=${Date.now()}`).then((r) => r.json()),
+        fetch(`/api/visible-recognition?allEnvs=true&_t=${Date.now()}`).then((r) => r.json()),
       ]);
 
       const loadedMatches: MatchOption[] =
         mRes.status === "fulfilled" && mRes.value?.success && Array.isArray(mRes.value.data) ? mRes.value.data : [];
       const loadedMoments: MatchMomentItem[] =
         momRes.status === "fulfilled" && momRes.value?.success && Array.isArray(momRes.value.data) ? momRes.value.data : [];
-      const loadedEngagements: EngagementItem[] =
+      const rawEngagements: EngagementItem[] =
         engRes.status === "fulfilled" && engRes.value?.success && Array.isArray(engRes.value.engagements)
           ? engRes.value.engagements
           : [];
+      const loadedEngagements = rawEngagements.filter(
+        (e) =>
+          Boolean(e.matchId && e.matchId !== "GLOBAL") ||
+          Boolean(e.momentId || e.loopId)
+      );
       const loadedRecognitions: RecognitionItem[] =
         recRes.status === "fulfilled" && recRes.value?.success && Array.isArray(recRes.value.data) ? recRes.value.data : [];
 
@@ -218,14 +225,26 @@ function OverviewContent() {
 
       // Query real per-user / per-engagement child records from DynamoDB & Firestore
       const engIds = loadedEngagements.map((e) => e.id).filter(Boolean);
-      const mIds = loadedMatches.map((m) => m.match_id).filter(Boolean);
+      const activeMatchKeys = Array.from(
+        new Set([
+          ...loadedMatches
+            .filter(
+              (m) =>
+                m.isCoreEngineMatch ||
+                String(m.match_id || "").toUpperCase().startsWith("MATCH-")
+            )
+            .map((m) => m.match_id),
+          ...loadedMoments.map((m) => m.matchId),
+          ...loadedEngagements.map((e) => e.matchId || ""),
+        ].filter(Boolean))
+      );
 
-      if (engIds.length > 0 || mIds.length > 0) {
+      if (engIds.length > 0 || activeMatchKeys.length > 0) {
         try {
           const telRes = await fetch("/api/admin/core-engine/overview", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ engagementIds: engIds, matchIds: mIds }),
+            body: JSON.stringify({ engagementIds: engIds, matchIds: activeMatchKeys }),
           }).then((r) => r.json());
 
           if (telRes?.success) {
@@ -252,16 +271,60 @@ function OverviewContent() {
     fetchOverviewData();
   }, [fetchOverviewData]);
 
+  // ─── Core Engine Matches Scope (excludes raw Cricsheet archive matches unless linked) ──
+
+  const coreMatches = useMemo(() => {
+    const referencedMatchKeys = new Set<string>();
+    const rawMatchIdByKey = new Map<string, string>();
+    const recordRef = (rawId?: string | null) => {
+      const k = normalizeMatchKey(rawId);
+      if (!k) return;
+      referencedMatchKeys.add(k);
+      if (!rawMatchIdByKey.has(k)) rawMatchIdByKey.set(k, String(rawId).replace(/^MATCH#/i, "").trim());
+    };
+    moments.forEach((m) => recordRef(m.matchId));
+    engagements.forEach((e) => recordRef(e.matchId));
+    recognitions.forEach((r) => recordRef(r.matchId));
+
+    const matchByKey = new Map<string, MatchOption>();
+    for (const m of matches) {
+      const k = normalizeMatchKey(m.match_id);
+      if (!k) continue;
+      const isCore =
+        Boolean(m.isCoreEngineMatch) ||
+        String(m.match_id || "").toUpperCase().startsWith("MATCH-") ||
+        referencedMatchKeys.has(k);
+      if (!isCore) continue;
+      if (!matchByKey.has(k)) matchByKey.set(k, m);
+    }
+
+    // Include any matchId referenced on a Moment/Engagement/Recognition even if MATCH#META wasn't returned
+    for (const k of referencedMatchKeys) {
+      if (!matchByKey.has(k)) {
+        const rawId = rawMatchIdByKey.get(k) || k;
+        matchByKey.set(k, {
+          match_id: rawId,
+          team1: rawId,
+          team2: "Core Engine Match",
+        });
+      }
+    }
+
+    return Array.from(matchByKey.values());
+  }, [matches, moments, engagements, recognitions]);
+
   // ─── Filter Hierarchies ────────────────────────────────────────────────────
 
   const matchLabelByKey = useMemo(() => {
     const map = new Map<string, string>();
-    for (const m of matches) {
+    for (const m of coreMatches) {
       const k = normalizeMatchKey(m.match_id);
-      if (k) map.set(k, `${m.team1} vs ${m.team2}`);
+      if (k) {
+        map.set(k, m.team2 === "Core Engine Match" ? m.team1 : `${m.team1} vs ${m.team2}`);
+      }
     }
     return map;
-  }, [matches]);
+  }, [coreMatches]);
 
   const availableMoments = useMemo(() => {
     const deduped = new Map<string, MatchMomentItem>();
@@ -325,10 +388,9 @@ function OverviewContent() {
     return availableMoments;
   }, [availableMoments, selectedMomentId]);
 
-  // Real users who actually participated or viewed in the current Match / Moment / Engagement scope
+  // Real users who actually participated or engaged (vote/participation, like, comment, share, impression, or social response)
   const usersInScope = useMemo(() => {
     const engIdSet = new Set(engagementsInScope.map((e) => e.id));
-    const targetMatch = normalizeMatchKey(selectedMatchId);
 
     return telemetryUsers
       .map((user) => {
@@ -372,10 +434,6 @@ function OverviewContent() {
 
         const totalActionCount = participations + likes + comments + shares + impressions;
         const totalSocialCount = socialLikes + socialComments + socialShares + socialImpressions;
-        const visitedRoomInScope =
-          !selectedMomentId &&
-          !selectedEngagementId &&
-          (user.roomVisitMatchIds || []).some((m) => !targetMatch || m === targetMatch);
 
         return {
           user,
@@ -391,12 +449,11 @@ function OverviewContent() {
           totalActionCount,
           totalSocialCount,
           activeEngagements,
-          visitedRoomInScope,
         };
       })
-      .filter((entry) => entry.totalActionCount > 0 || entry.totalSocialCount > 0 || entry.visitedRoomInScope)
+      .filter((entry) => entry.totalActionCount > 0 || entry.totalSocialCount > 0)
       .sort((a, b) => (b.totalActionCount + b.totalSocialCount) - (a.totalActionCount + a.totalSocialCount));
-  }, [telemetryUsers, engagementsInScope, selectedMatchId, selectedMomentId, selectedEngagementId]);
+  }, [telemetryUsers, engagementsInScope]);
 
   useEffect(() => {
     if (selectedUserId && !usersInScope.some((entry) => entry.user.userId === selectedUserId)) {
@@ -414,7 +471,7 @@ function OverviewContent() {
   const hasActiveFilters = Boolean(selectedMatchId || selectedMomentId || selectedEngagementId || selectedUserId);
 
   const activeUserEntry = usersInScope.find((u) => u.user.userId === selectedUserId) || null;
-  const activeMatch = matches.find((m) => m.match_id === selectedMatchId);
+  const activeMatch = coreMatches.find((m) => normalizeMatchKey(m.match_id) === normalizeMatchKey(selectedMatchId));
   const activeMoment = momentsInScope.find((m) => getMomentCompositeKey(m.matchId, m.momentId) === selectedMomentId);
   const activeEngagement = engagementsInScope.find((e) => e.id === selectedEngagementId);
 
@@ -668,13 +725,13 @@ function OverviewContent() {
     if (entry.shares > 0) parts.push(`${entry.shares} share${entry.shares > 1 ? "s" : ""}`);
     if (entry.impressions > 0) parts.push(`${entry.impressions} impression${entry.impressions > 1 ? "s" : ""}`);
     if (entry.socialLikes > 0) parts.push(`${entry.socialLikes} reply like${entry.socialLikes > 1 ? "s" : ""}`);
-    if (parts.length === 0 && entry.visitedRoomInScope) parts.push("visited match room");
+    if (entry.socialImpressions > 0) parts.push(`${entry.socialImpressions} reply impr.`);
 
     const identity = entry.user.email && entry.user.name !== entry.user.email
       ? `${entry.user.name} (${entry.user.email})`
       : entry.user.name;
 
-    return `${identity} — ${parts.join(", ")}`;
+    return `${identity}${parts.length > 0 ? ` — ${parts.join(", ")}` : ""}`;
   };
 
   return (
@@ -757,10 +814,10 @@ function OverviewContent() {
               }}
               className="w-full bg-[#0a0d17] border border-white/15 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-pink-500 font-bold"
             >
-              <option value="">All Matches ({matches.length})</option>
-              {matches.map((m) => (
+              <option value="">All Matches ({coreMatches.length})</option>
+              {coreMatches.map((m) => (
                 <option key={m.match_id} value={m.match_id}>
-                  {m.team1} vs {m.team2} {m.format ? `(${m.format})` : ""}
+                  {m.team2 === "Core Engine Match" ? m.team1 : `${m.team1} vs ${m.team2}`} {m.format ? `(${m.format})` : ""}
                 </option>
               ))}
             </select>
@@ -826,8 +883,8 @@ function OverviewContent() {
             >
               <option value="">
                 {usersInScope.length > 0
-                  ? `All Active Fans (${usersInScope.length})`
-                  : "All Fans (No user actions yet)"}
+                  ? `All Participated Fans (${usersInScope.length})`
+                  : "All Participated Fans (0)"}
               </option>
               {usersInScope.map((entry) => (
                 <option key={entry.user.userId} value={entry.user.userId}>
@@ -865,6 +922,147 @@ function OverviewContent() {
         )}
       </div>
 
+      {/* Selected User Summary Panel */}
+      {activeUserEntry && (
+        <div className="p-6 rounded-2xl bg-gradient-to-br from-[#13182b] to-[#0f1320] border border-purple-500/35 space-y-5 shadow-lg">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
+            <div className="flex items-center gap-3">
+              {activeUserEntry.user.avatar ? (
+                <img
+                  src={activeUserEntry.user.avatar}
+                  alt={activeUserEntry.user.name}
+                  className="w-11 h-11 rounded-full object-cover border border-purple-400/50"
+                />
+              ) : (
+                <div className="w-11 h-11 rounded-full bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-base font-black text-purple-300">
+                  {activeUserEntry.user.name.slice(0, 1).toUpperCase()}
+                </div>
+              )}
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-black text-white">{activeUserEntry.user.name}</h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    Fan Summary
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 font-mono">
+                  {activeUserEntry.user.email || activeUserEntry.user.userId}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="px-3 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold">
+                {activeUserEntry.totalActionCount} Total Actions
+              </span>
+              <span className="px-3 py-1 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 font-bold">
+                {activeUserEntry.totalSocialCount} Social Responses
+              </span>
+              <span className="px-3 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                {returnMetrics.percentageReturn}% Return ({activeUserEntry.activeEngagements}/{returnMetrics.totalServed})
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-9 gap-2.5 text-center">
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-white/5">
+              <span className="text-[10px] font-bold uppercase text-emerald-400 block">Participations</span>
+              <span className="text-lg font-black text-white">{activeUserEntry.participations}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-white/5">
+              <span className="text-[10px] font-bold uppercase text-pink-400 block">Likes</span>
+              <span className="text-lg font-black text-white">{activeUserEntry.likes}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-white/5">
+              <span className="text-[10px] font-bold uppercase text-cyan-400 block">Comments</span>
+              <span className="text-lg font-black text-white">{activeUserEntry.comments}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-white/5">
+              <span className="text-[10px] font-bold uppercase text-purple-400 block">Shares</span>
+              <span className="text-lg font-black text-white">{activeUserEntry.shares}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-white/5">
+              <span className="text-[10px] font-bold uppercase text-blue-400 block">Impressions</span>
+              <span className="text-lg font-black text-white">{activeUserEntry.impressions}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-white/5">
+              <span className="text-[10px] font-bold uppercase text-pink-300 block">Social Likes</span>
+              <span className="text-lg font-black text-white">{activeUserEntry.socialLikes}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-white/5">
+              <span className="text-[10px] font-bold uppercase text-cyan-300 block">Social Replies</span>
+              <span className="text-lg font-black text-white">{activeUserEntry.socialComments}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-white/5">
+              <span className="text-[10px] font-bold uppercase text-blue-300 block">Social Impr.</span>
+              <span className="text-lg font-black text-white">{activeUserEntry.socialImpressions}</span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-[#0a0d17] border border-emerald-500/20">
+              <span className="text-[10px] font-bold uppercase text-amber-300 block">SXP Awarded</span>
+              <span className="text-lg font-black text-white">{recognitionMetrics.totalSxp}</span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-white/10 text-gray-400 text-[10px] uppercase font-bold tracking-wider">
+                  <th className="py-2 px-2.5">Engagement Participated</th>
+                  <th className="py-2 px-2.5">Moment</th>
+                  <th className="py-2 px-2.5 text-right">Vote</th>
+                  <th className="py-2 px-2.5 text-right">Like</th>
+                  <th className="py-2 px-2.5 text-right">Comment</th>
+                  <th className="py-2 px-2.5 text-right">Share</th>
+                  <th className="py-2 px-2.5 text-right">Impr.</th>
+                  <th className="py-2 px-2.5 text-right">Social Resp.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {engagementsInScope
+                  .filter((eng) => {
+                    const st = activeUserEntry.user.engagements?.[eng.id];
+                    if (!st) return false;
+                    return (
+                      st.participations +
+                        st.likes +
+                        st.comments +
+                        st.shares +
+                        st.impressions +
+                        st.socialLikes +
+                        st.socialComments +
+                        st.socialShares +
+                        st.socialImpressions >
+                      0
+                    );
+                  })
+                  .map((eng) => {
+                    const st = activeUserEntry.user.engagements[eng.id];
+                    const linkedMom = eng.momentId
+                      ? (momentMap.get(getMomentCompositeKey(eng.matchId, eng.momentId)) ||
+                        momentMap.get(normalizeMomentKey(eng.momentId)))
+                      : undefined;
+                    const socialTotal = st.socialLikes + st.socialComments + st.socialShares + st.socialImpressions;
+                    return (
+                      <tr key={eng.id} className="hover:bg-white/[0.02]">
+                        <td className="py-2 px-2.5 font-semibold text-white max-w-[260px] truncate">{eng.title}</td>
+                        <td className="py-2 px-2.5 text-amber-300 text-[11px]">
+                          {linkedMom ? `Over ${linkedMom.overs}` : eng.momentId || "—"}
+                        </td>
+                        <td className="py-2 px-2.5 text-right font-mono text-gray-200">{st.participations}</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-gray-200">{st.likes}</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-gray-200">{st.comments}</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-gray-200">{st.shares}</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-gray-200">{st.impressions}</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-purple-300">{socialTotal}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Top Row: Moments, Served, Recognition */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Moments */}
@@ -875,7 +1073,7 @@ function OverviewContent() {
           </div>
           <div className="text-3xl font-black text-white">{momentsInScope.length}</div>
           <p className="text-xs text-gray-400">
-            Verified sporting moments captured across {selectedMatchId ? "selected match" : `${matches.length} matches`}
+            Verified sporting moments captured across {selectedMatchId ? "selected match" : `${coreMatches.length} matches`}
           </p>
         </div>
 

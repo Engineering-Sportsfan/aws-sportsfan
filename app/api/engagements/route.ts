@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status"); // active | inactive | all
     const sport = searchParams.get("sport"); // cricket | football | etc
     const limit = parseInt(searchParams.get("limit") || "50", 10);
+    const includeAllEnvs = searchParams.get("allEnvs") === "true";
 
     const itemsMap = new Map<string, EngagementItem>();
 
@@ -120,7 +121,9 @@ export async function GET(req: NextRequest) {
               });
             }
           }
-          break; // Successfully loaded from this DynamoDB table
+          if (!includeAllEnvs) {
+            break; // Default single-env mode stops after active table
+          }
         }
       } catch (dynErr: any) {
         const isTableMissing =
@@ -290,7 +293,9 @@ export async function GET(req: NextRequest) {
               creatorAvatar: it.creatorAvatar || undefined,
             });
           }
-          break;
+          if (!includeAllEnvs) {
+            break;
+          }
         }
       } catch (mmErr: any) {
         // Continue to next candidate table
@@ -442,6 +447,11 @@ export async function GET(req: NextRequest) {
         if (i.type === "meme" || i.type === "fan_battle" || (i as any).memeData || (i as any).fanBattleData) return false;
         if (i.type === "quiz" && i.quizData?.questions && i.quizData.questions.length > 1) return false;
         if ((i as any).source === "fliparena" || (i as any).category === "fliparena") return false;
+        // When explicitly requesting match_moment items, exclude non-match general polls/quizzes
+        if (sourceParam === "match_moment" || categoryParam === "match_moment") {
+          const hasMatchOrMoment = Boolean((i as any).matchId && (i as any).matchId !== "GLOBAL") || Boolean((i as any).momentId || (i as any).loopId);
+          if (!hasMatchOrMoment && (i as any).source !== "match_moment" && i.isMatchMoment !== true) return false;
+        }
         return true;
       });
     }

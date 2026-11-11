@@ -84,19 +84,43 @@ function isValidRealUid(uid?: string | null): boolean {
   return true;
 }
 
+const GENERIC_FALLBACK_NAMES = new Set([
+  "fan",
+  "sportsfan",
+  "guest",
+  "guest_fan",
+  "user",
+  "anonymous",
+  "anon",
+]);
+
+function isGenericName(name?: string | null): boolean {
+  if (!name) return true;
+  return GENERIC_FALLBACK_NAMES.has(String(name).trim().toLowerCase());
+}
+
 function recoverEmailFromSanitizedUid(uid: string): string {
   const lower = uid.toLowerCase();
   if (lower.includes("@")) return lower;
-  for (const domain of ["gmail_com", "yahoo_com", "outlook_com", "hotmail_com", "icloud_com"]) {
+  for (const domain of [
+    "sportsfan360_com",
+    "sf360_com",
+    "gmail_com",
+    "yahoo_com",
+    "outlook_com",
+    "hotmail_com",
+    "icloud_com",
+  ]) {
     if (lower.endsWith(`_${domain}`)) {
-      return lower.slice(0, -(domain.length + 1)) + "@" + domain.replace("_", ".");
+      const localPart = lower.slice(0, -(domain.length + 1)).replace(/_/g, ".");
+      return `${localPart}@${domain.replace("_", ".")}`;
     }
   }
   return "";
 }
 
 /**
- * Loads IdentityAndAccess users (+ Firestore fallback) to map any userId / uid / email /
+ * Loads IdentityAndAccess users (+ Firestore fallback) across env tables to map any userId / uid / email /
  * sanitized email alias onto a single canonical UserProfile.
  */
 async function buildUserResolver() {
@@ -122,7 +146,6 @@ async function buildUserResolver() {
         lastKey = res.LastEvaluatedKey;
         pages++;
       } while (lastKey && pages < 20);
-      if (rawRecords.length > 0) break;
     } catch {
       // try next candidate table
     }
@@ -140,24 +163,57 @@ async function buildUserResolver() {
   }
 
   for (const item of rawRecords) {
-    const email = String(item.email || "").trim().toLowerCase();
+    const rawEmail = String(item.email || "").trim().toLowerCase();
     const rawUserId = String(item.userId || item.uid || item.actualUserId || item.id || String(item.entityId || "").replace(/^USER#/i, "")).trim();
-    const username = String(item.username || item.userName || item.handle || "").trim();
+    const rawEntityKey = String(item.entityId || "").replace(/^USER#/i, "").trim().toLowerCase();
+    const email =
+      rawEmail ||
+      recoverEmailFromSanitizedUid(rawUserId) ||
+      recoverEmailFromSanitizedUid(rawEntityKey);
+
+    const rawUsername = String(item.username || item.userName || item.handle || "").trim();
+    const username = isGenericName(rawUsername) ? "" : rawUsername;
     const fullName = `${item.firstName || ""} ${item.lastName || ""}`.trim();
-    const name = fullName || String(item.name || username || (email ? email.split("@")[0] : rawUserId) || "").trim();
+    const rawItemName = String(item.name || "").trim();
+    const itemName = isGenericName(rawItemName) ? "" : rawItemName;
+    const incomingStrongName = fullName || itemName || username || "";
+    const fallbackDisplay = email ? email.split("@")[0] : rawUserId;
     const avatar = item.avatarUrl || item.avatar || item.photoURL || item.picture || null;
 
     if (!email && !rawUserId) continue;
 
     const canonicalId = email || rawUserId.toLowerCase();
-    const existing = aliasToProfile.get(canonicalId);
-    const profile: UserProfile = {
-      userId: existing?.userId || canonicalId,
-      name: (existing?.name && !existing.name.includes("@") ? existing.name : name) || existing?.name || canonicalId,
-      username: existing?.username || username || undefined,
-      email: existing?.email || (email || undefined),
-      avatar: existing?.avatar || avatar || null,
+    const existing =
+      aliasToProfile.get(canonicalId) ||
+      (rawUserId ? aliasToProfile.get(rawUserId.toLowerCase()) : undefined);
+
+    const existingNameIsWeak =
+      !existing?.name ||
+      existing.name === existing.userId ||
+      existing.name.includes("@") ||
+      existing.name.includes("_") ||
+      isGenericName(existing.name);
+
+    const resolvedName =
+      incomingStrongName && existingNameIsWeak
+        ? incomingStrongName
+        : (!existingNameIsWeak && existing?.name)
+        ? existing.name
+        : incomingStrongName || existing?.name || fallbackDisplay || canonicalId;
+
+    const profile: UserProfile = existing || {
+      userId: canonicalId,
+      name: resolvedName,
+      username: username || undefined,
+      email: email || undefined,
+      avatar: avatar || null,
     };
+
+    profile.userId = email || profile.userId || canonicalId;
+    profile.name = resolvedName;
+    if (!profile.username && username) profile.username = username;
+    if (!profile.email && email) profile.email = email;
+    if (!profile.avatar && avatar) profile.avatar = avatar;
 
     const aliases = [
       canonicalId,
@@ -165,7 +221,7 @@ async function buildUserResolver() {
       String(item.uid || "").trim().toLowerCase(),
       String(item.actualUserId || "").trim().toLowerCase(),
       String(item.id || "").trim().toLowerCase(),
-      String(item.entityId || "").replace(/^USER#/i, "").trim().toLowerCase(),
+      rawEntityKey,
       email,
       email ? email.replace(/[^a-z0-9]/g, "_") : "",
       email ? email.replace(/[@.]/g, "_") : "",
@@ -187,6 +243,7 @@ async function buildUserResolver() {
     const cleaned = String(rawUid).trim().replace(/^USER#/i, "");
     const lower = cleaned.toLowerCase();
     const recoveredEmail = recoverEmailFromSanitizedUid(lower);
+    const cleanFallbackName = !isGenericName(fallbackName) ? String(fallbackName).trim() : "";
 
     const matched =
       aliasToProfile.get(lower) ||
@@ -195,8 +252,8 @@ async function buildUserResolver() {
       (recoveredEmail ? dynamicUsers.get(recoveredEmail) : undefined);
 
     if (matched) {
-      if (fallbackName && (!matched.name || matched.name === matched.userId || matched.name.includes("@"))) {
-        matched.name = fallbackName;
+      if (cleanFallbackName && (!matched.name || matched.name === matched.userId || matched.name.includes("@") || isGenericName(matched.name))) {
+        matched.name = cleanFallbackName;
       }
       if (fallbackAvatar && !matched.avatar) {
         matched.avatar = fallbackAvatar;
@@ -206,7 +263,7 @@ async function buildUserResolver() {
 
     const canonicalId = recoveredEmail || lower;
     const displayName =
-      (fallbackName && fallbackName.trim()) ||
+      cleanFallbackName ||
       (recoveredEmail ? recoveredEmail.split("@")[0] : cleaned);
 
     const created: UserProfile = {
@@ -229,11 +286,10 @@ async function buildUserResolver() {
  */
 async function fetchEngagementChildren(engagementId: string) {
   const cleanEngId = engagementId.replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
-  let dynamoItems: any[] = [];
+  const mergedBySk = new Map<string, any>();
 
   for (const table of getCandidateTableNames(TABLES.SocialAndContent)) {
     try {
-      const items: any[] = [];
       let lastKey: Record<string, any> | undefined;
       do {
         const res = await docClient.send(
@@ -244,22 +300,22 @@ async function fetchEngagementChildren(engagementId: string) {
             ExclusiveStartKey: lastKey,
           })
         );
-        if (res.Items?.length) items.push(...res.Items);
+        for (const it of res.Items || []) {
+          const sk = String(it.sk || "");
+          if (!sk) continue;
+          const prev = mergedBySk.get(sk);
+          if (!prev || Number(it.updatedAt || it.createdAt || 0) >= Number(prev.updatedAt || prev.createdAt || 0)) {
+            mergedBySk.set(sk, it);
+          }
+        }
         lastKey = res.LastEvaluatedKey;
       } while (lastKey);
-
-      const hasActionChildren = items.some((it) => it.sk && it.sk !== "ENGAGEMENT#META");
-      if (hasActionChildren) {
-        dynamoItems = items;
-        break;
-      }
-      if (items.length > 0 && dynamoItems.length === 0) {
-        dynamoItems = items;
-      }
     } catch {
       // try next candidate table
     }
   }
+
+  const dynamoItems = Array.from(mergedBySk.values());
 
   const fsComments: any[] = [];
   const fsVotes: any[] = [];
@@ -308,82 +364,6 @@ async function fetchEngagementChildren(engagementId: string) {
   }
 
   return { dynamoItems, fsComments, fsVotes, fsLikes };
-}
-
-/**
- * Queries dedicated match-linked ROAR room visitors (JOINED# / PRESENCE#) if any rooms
- * explicitly bind matchId to the match(es) in scope.
- */
-async function fetchMatchedRoomVisitors(matchIds: string[]) {
-  const cleanMatches = new Set(matchIds.map(normalizeMatchKey).filter(Boolean));
-  if (cleanMatches.size === 0) return [];
-
-  const matchedRooms: Array<{ roomId: string; matchKey: string; matchId: string }> = [];
-
-  for (const table of getCandidateTableNames(TABLES.RealTimeChat)) {
-    try {
-      let lastKey: Record<string, any> | undefined;
-      do {
-        const res = await docClient.send(
-          new ScanCommand({
-            TableName: table,
-            FilterExpression: "begins_with(sk, :m)",
-            ExpressionAttributeValues: { ":m": "META#" },
-            ProjectionExpression: "roomId, sk, matchId, liveMatchId",
-            ExclusiveStartKey: lastKey,
-          })
-        );
-        for (const item of res.Items || []) {
-          const rawMId = String(item.matchId || item.liveMatchId || "").trim();
-          const mKey = normalizeMatchKey(rawMId);
-          if (mKey && cleanMatches.has(mKey)) {
-            const cleanRoom = String(item.roomId || "").replace(/^ROOM#/, "");
-            if (cleanRoom) {
-              matchedRooms.push({ roomId: cleanRoom, matchKey: mKey, matchId: rawMId });
-            }
-          }
-        }
-        lastKey = res.LastEvaluatedKey;
-      } while (lastKey);
-      if (matchedRooms.length > 0) break;
-    } catch {
-      // try next table
-    }
-  }
-
-  const visitors: Array<{ uid: string; username?: string; avatarUrl?: string | null; matchId: string }> = [];
-
-  for (const room of matchedRooms) {
-    for (const table of getCandidateTableNames(TABLES.RealTimeChat)) {
-      try {
-        const res = await docClient.send(
-          new QueryCommand({
-            TableName: table,
-            KeyConditionExpression: "roomId = :r AND begins_with(sk, :pfx)",
-            ExpressionAttributeValues: { ":r": `ROOM#${room.roomId}`, ":pfx": "JOINED#" },
-          })
-        );
-        if (res.Items?.length) {
-          for (const it of res.Items) {
-            const uid = String(it.uid || it.userId || String(it.sk || "").replace(/^JOINED#/, "")).trim();
-            if (isValidRealUid(uid)) {
-              visitors.push({
-                uid,
-                username: it.username,
-                avatarUrl: it.avatarUrl || null,
-                matchId: room.matchId,
-              });
-            }
-          }
-          break;
-        }
-      } catch {
-        // try next table
-      }
-    }
-  }
-
-  return visitors;
 }
 
 async function handleOverviewRequest(req: NextRequest, body: {
@@ -514,7 +494,7 @@ async function handleOverviewRequest(req: NextRequest, body: {
           participants.add(profile.userId);
         } else if (sk.startsWith("LIKE#")) {
           const rawUid = item.userId || sk.slice(5);
-          const profile = resolve(rawUid);
+          const profile = resolve(rawUid, item.userName || item.name);
           if (!profile || seenLikes.has(profile.userId)) continue;
           seenLikes.add(profile.userId);
 
@@ -524,7 +504,7 @@ async function handleOverviewRequest(req: NextRequest, body: {
           participants.add(profile.userId);
         } else if (sk.startsWith("SHARE#")) {
           const rawUid = item.userId || sk.slice(6);
-          const profile = resolve(rawUid);
+          const profile = resolve(rawUid, item.userName || item.name);
           if (!profile || seenShares.has(profile.userId)) continue;
           seenShares.add(profile.userId);
 
@@ -584,12 +564,8 @@ async function handleOverviewRequest(req: NextRequest, body: {
           totals.socialImpressions += 1;
           participants.add(profile.userId);
         } else if (sk.startsWith("USER#")) {
-          const rawUid = item.userId || sk.slice(5);
-          const profile = resolve(rawUid);
-          if (profile) {
-            getOrInitUserEngagement(profile, engId);
-            participants.add(profile.userId);
-          }
+          // Do not register passive USER# markers without actual interactions (VOTE/LIKE/COMMENT/SHARE/IMPRESSION/SOCIAL)
+          continue;
         }
       }
 
@@ -685,34 +661,28 @@ async function handleOverviewRequest(req: NextRequest, body: {
     }
   }
 
-  // 5. Merge dedicated match-linked ROAR room visitors (if any)
-  if (matchIds.length > 0) {
-    try {
-      const visitors = await fetchMatchedRoomVisitors(matchIds);
-      for (const v of visitors) {
-        const profile = resolve(v.uid, v.username, v.avatarUrl);
-        if (!profile) continue;
-        let userEntry = userStore.get(profile.userId);
-        if (!userEntry) {
-          userEntry = {
-            profile,
-            engagements: {},
-            roomVisitMatchIds: new Set<string>(),
-          };
-          userStore.set(profile.userId, userEntry);
-        }
-        userEntry.roomVisitMatchIds.add(normalizeMatchKey(v.matchId));
-      }
-    } catch {
-      // non-fatal
-    }
-  }
-
-  const users = Array.from(userStore.values()).map((u) => ({
-    ...u.profile,
-    engagements: u.engagements,
-    roomVisitMatchIds: Array.from(u.roomVisitMatchIds),
-  }));
+  // Only participated/interacted users (likes, comments, shares, impressions, votes, or social responses)
+  const users = Array.from(userStore.values())
+    .map((u) => ({
+      ...u.profile,
+      engagements: u.engagements,
+      roomVisitMatchIds: [] as string[],
+    }))
+    .filter((u) =>
+      Object.values(u.engagements).some(
+        (m) =>
+          m.participations +
+            m.likes +
+            m.comments +
+            m.shares +
+            m.impressions +
+            m.socialLikes +
+            m.socialComments +
+            m.socialShares +
+            m.socialImpressions >
+          0
+      )
+    );
 
   users.sort((a, b) => a.name.localeCompare(b.name));
 

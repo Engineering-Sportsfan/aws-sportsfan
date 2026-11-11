@@ -393,7 +393,8 @@ export async function GET(req: NextRequest) {
     const format = searchParams.get("format");
     const season = searchParams.get("season");
     const seriesIdFilter = searchParams.get("seriesId");
-    const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 500);
+    const coreOnly = searchParams.get("coreOnly") === "true";
+    const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 1000);
     const after = searchParams.get("after");
 
   try {
@@ -441,7 +442,13 @@ export async function GET(req: NextRequest) {
             // Only include real match records: must have team1 or team2, and not duplicated
             if (matchId && !seenIds.has(matchId) && (item.team1 || item.team2)) {
               seenIds.add(matchId);
-              matches.push({ id: matchId, match_id: matchId, ...item });
+              matches.push({
+                id: matchId,
+                match_id: matchId,
+                ...item,
+                isCoreEngineMatch: table.startsWith("MatchMoments"),
+                sourceTable: table,
+              });
             }
           }
           lastKey = scanRes.LastEvaluatedKey;
@@ -482,14 +489,39 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Optional Core Engine filter + prioritize Core Engine matches before historical archives
+    if (coreOnly) {
+      matches = matches.filter(
+        (m: any) =>
+          m.isCoreEngineMatch ||
+          String(m.match_id || "").toUpperCase().startsWith("MATCH-")
+      );
+    }
+
+    matches.sort((a: any, b: any) => {
+      const aCore = a.isCoreEngineMatch || String(a.match_id || "").toUpperCase().startsWith("MATCH-") ? 1 : 0;
+      const bCore = b.isCoreEngineMatch || String(b.match_id || "").toUpperCase().startsWith("MATCH-") ? 1 : 0;
+      if (aCore !== bCore) return bCore - aCore;
+      return String(b.date || b.start_date || "").localeCompare(String(a.date || a.start_date || ""));
+    });
+
+    const extractTeamName = (val: any): string => {
+      if (!val) return "";
+      if (typeof val === "string") return val.trim();
+      if (typeof val === "object") {
+        return String(val.name || val.team || val.title || val.shortName || val.short_name || "").trim();
+      }
+      return String(val).trim();
+    };
+
     // 3. Transform & Normalize to complete API Contract
     const data = matches.map((raw) => {
       const match = raw as any;
       const parsedSeason = parseInt(String(match.season ?? ""), 10);
       const matchId = String(match.match_id || match.id || (match.entityId as string)?.replace(/^MATCH#/, "") || "");
-      const team1 = match.team1 || match.home_team || "";
-      const team2 = match.team2 || match.away_team || "";
-      const date = match.date || match.start_date || "";
+      const team1 = extractTeamName(match.team1 || match.home_team);
+      const team2 = extractTeamName(match.team2 || match.away_team);
+      const date = String(match.date || match.start_date || "");
 
       return {
         ...match,
