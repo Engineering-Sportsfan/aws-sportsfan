@@ -13,6 +13,7 @@ import type { RoomMessage, MessageType } from "@/app/models/RoomMessage";
 import type { PostType } from "@/app/models/Post";
 import { notifyMentions, notifyFollowedRoomNewPost, notifyRoomContentAnnounced } from "@/lib/notifications";
 import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { batchGetItems } from "@/lib/dynamodbBatch";
 
 export const dynamic = "force-dynamic";
 
@@ -363,45 +364,42 @@ export async function GET(
     if (messages.length > limit) {
       messages = messages.slice(0, limit);
     }
-
     if (messages.length > 0) {
-      try {
-        const likeChecks = await Promise.all(
-          messages.map((m) =>
-            docClient.send(new QueryCommand({
-              TableName: TABLES.RealTimeChat,
-              KeyConditionExpression: "roomId = :r AND sk = :s",
-              ExpressionAttributeValues: {
-                ":r": `ROOM#${cleanRoomId}`,
-                ":s": `LIKE#${m.msgId}#${resolvedUserId}`,
-              },
-              Limit: 1,
-            }))
-          )
-        );
-        messages = messages.map((m, i) => ({
+      // One BatchGet per kind (likes / votes) instead of one request per message.
+      // Both sets of keys are exact-match lookups, so GetItem semantics are identical
+      // to the previous per-message Query(Limit 1) / GetItem calls.
+      const roomPk = `ROOM#${cleanRoomId}`;
+      const [likeResult, voteResult] = await Promise.allSettled([
+        batchGetItems(
+          TABLES.RealTimeChat,
+          messages.map((m) => ({ roomId: roomPk, sk: `LIKE#${m.msgId}#${resolvedUserId}` })),
+          { projectionExpression: "#sk, reaction", expressionAttributeNames: { "#sk": "sk" } },
+        ),
+        batchGetItems(
+          TABLES.RealTimeChat,
+          messages.map((m) => ({ roomId: roomPk, sk: `VOTE#${m.msgId}#${resolvedUserId}` })),
+          { projectionExpression: "#sk, vote", expressionAttributeNames: { "#sk": "sk" } },
+        ),
+      ]);
+
+      if (likeResult.status === "fulfilled") {
+        const bySk = new Map(likeResult.value.map((it) => [it.sk as string, it]));
+        messages = messages.map((m) => ({
           ...m,
-          userReaction: likeChecks[i].Items?.[0]?.reaction ?? null,
+          userReaction: bySk.get(`LIKE#${m.msgId}#${resolvedUserId}`)?.reaction ?? null,
         }));
-      } catch (likeErr) {
-        console.warn("Failed to hydrate userReaction:", likeErr);
+      } else {
+        console.warn("Failed to hydrate userReaction:", likeResult.reason);
       }
 
-      try {
-        const voteChecks = await Promise.all(
-          messages.map((m) =>
-            docClient.send(new GetCommand({
-              TableName: TABLES.RealTimeChat,
-              Key: { roomId: `ROOM#${cleanRoomId}`, sk: `VOTE#${m.msgId}#${resolvedUserId}` },
-            }))
-          )
-        );
-        messages = messages.map((m, i) => ({
+      if (voteResult.status === "fulfilled") {
+        const bySk = new Map(voteResult.value.map((it) => [it.sk as string, it]));
+        messages = messages.map((m) => ({
           ...m,
-          userVote: voteChecks[i].Item?.vote ?? null,
+          userVote: bySk.get(`VOTE#${m.msgId}#${resolvedUserId}`)?.vote ?? null,
         }));
-      } catch (voteErr) {
-        console.warn("Failed to hydrate userVote:", voteErr);
+      } else {
+        console.warn("Failed to hydrate userVote:", voteResult.reason);
       }
     }
 
