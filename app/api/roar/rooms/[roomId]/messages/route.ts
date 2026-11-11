@@ -281,22 +281,30 @@ export async function GET(
     let messages: any[] = [];
     const seenMsgIds = new Set<string>();
 
-    // 1. Query DynamoDB RealTimeChat table across both candidates
+    // 1. Query DynamoDB RealTimeChat table across both candidates (in parallel)
     try {
       const candidates = [`ROOM#${cleanRoomId}`, cleanRoomId];
-      for (const cand of candidates) {
-        const qRes = await docClient.send(
-          new QueryCommand({
-            TableName: TABLES.RealTimeChat,
-            KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
-            ExpressionAttributeValues: {
-              ":r": cand,
-              ":mPrefix": "MSG#",
-            },
-            ScanIndexForward: false,
-            Limit: limit,
-          })
-        );
+      const settled = await Promise.allSettled(
+        candidates.map((cand) =>
+          docClient.send(
+            new QueryCommand({
+              TableName: TABLES.RealTimeChat,
+              KeyConditionExpression: "roomId = :r AND begins_with(sk, :mPrefix)",
+              ExpressionAttributeValues: {
+                ":r": cand,
+                ":mPrefix": "MSG#",
+              },
+              ScanIndexForward: false,
+              Limit: limit,
+            })
+          )
+        )
+      );
+      // Merge in candidate order so de-duplication priority matches the old sequential loop.
+      // On the first failed query, keep what was merged so far and stop (same as before).
+      for (const result of settled) {
+        if (result.status === "rejected") throw result.reason;
+        const qRes = result.value;
         if (qRes.Items && qRes.Items.length > 0) {
           for (const item of qRes.Items) {
             const mId = extractMsgId(item, cleanRoomId);
