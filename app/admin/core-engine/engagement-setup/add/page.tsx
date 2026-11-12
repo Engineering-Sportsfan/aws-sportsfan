@@ -412,8 +412,14 @@ function AddEngagementContent() {
             if (eng.type) setEngType(String(eng.type) as EngType);
             if (eng.loopId) setLoopId(String(eng.loopId));
             setEngQuestion(String(eng.title || ""));
-            setEngTimer(Number(eng.timerMinutes) || 4);
-            setPostLock(String(eng.postLock || ""));
+            const loadedType = String(eng.type || "");
+            if (loadedType === "express" || loadedType === "follow" || loadedType === "match_result") {
+              setEngTimer("");
+              setPostLock("");
+            } else {
+              setEngTimer(Number(eng.timerMinutes) || 4);
+              setPostLock(String(eng.postLock || ""));
+            }
             const rawSched = Number(eng.scheduledStartTime || eng.startTime || 0);
             if (eng.isScheduled || eng.status === "scheduled" || rawSched > Date.now()) {
               setScheduleMode("scheduled");

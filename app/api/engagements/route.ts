@@ -86,8 +86,8 @@ export async function GET(req: NextRequest) {
                 outcomeNotes: it.outcomeNotes || null,
                 resolvedAt: it.resolvedAt || null,
                 resolvedBy: it.resolvedBy || null,
-                timerMinutes: it.timerMinutes || it.durationMinutes || 4,
-                durationMinutes: it.durationMinutes || it.timerMinutes || 4,
+                timerMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.timerMinutes || it.durationMinutes || 4),
+                durationMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.durationMinutes || it.timerMinutes || 4),
                 memeType: it.memeType || it.memeData?.memeType,
                 options: it.options || it.memeData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options || it.pollData?.options || it.predictionData?.options,
                 imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
@@ -106,10 +106,12 @@ export async function GET(req: NextRequest) {
                 isScheduled: Boolean(it.isScheduled),
                 notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
                 expiresAt:
-                  it.expiresAt ||
-                  (it.createdAt && (it.timerMinutes || it.durationMinutes)
-                    ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
-                    : null),
+                  (it.type === "follow" || it.type === "match_result")
+                    ? null
+                    : (it.expiresAt ||
+                        (it.createdAt && (it.timerMinutes || it.durationMinutes)
+                          ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
+                          : null)),
                 category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
                 source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
                 isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
@@ -274,8 +276,8 @@ export async function GET(req: NextRequest) {
               outcomeNotes: it.outcomeNotes || null,
               resolvedAt: it.resolvedAt || null,
               resolvedBy: it.resolvedBy || null,
-              timerMinutes: it.timerMinutes || 4,
-              durationMinutes: it.durationMinutes || 4,
+              timerMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.timerMinutes || 4),
+              durationMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.durationMinutes || 4),
               options: it.options || it.pollData?.options || it.predictionData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options,
               likes: Number(it.likes) || 0,
               shares: Number(it.shares) || 0,
@@ -289,7 +291,7 @@ export async function GET(req: NextRequest) {
               postingTime: it.postingTime ?? it.scheduledStartTime ?? it.startTime ?? undefined,
               isScheduled: Boolean(it.isScheduled),
               notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
-              expiresAt: it.expiresAt || null,
+              expiresAt: (it.type === "follow" || it.type === "match_result") ? null : (it.expiresAt || null),
               category: it.category || "match_moment",
               source: it.source || "match_moment",
               isMatchMoment: true,
@@ -351,8 +353,8 @@ export async function GET(req: NextRequest) {
               outcomeNotes: it.outcomeNotes || null,
               resolvedAt: it.resolvedAt || null,
               resolvedBy: it.resolvedBy || null,
-              timerMinutes: it.timerMinutes || it.durationMinutes || 4,
-              durationMinutes: it.durationMinutes || it.timerMinutes || 4,
+              timerMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.timerMinutes || it.durationMinutes || 4),
+              durationMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.durationMinutes || it.timerMinutes || 4),
               memeType: it.memeType || it.memeData?.memeType,
               options: it.options || it.memeData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options || it.pollData?.options || it.predictionData?.options,
               imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
@@ -371,10 +373,12 @@ export async function GET(req: NextRequest) {
               isScheduled: Boolean(it.isScheduled),
               notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
               expiresAt:
-                it.expiresAt ||
-                (it.createdAt && (it.timerMinutes || it.durationMinutes)
-                  ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
-                  : null),
+                (it.type === "follow" || it.type === "match_result")
+                  ? null
+                  : (it.expiresAt ||
+                      (it.createdAt && (it.timerMinutes || it.durationMinutes)
+                        ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
+                        : null)),
               category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
               source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
               isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
@@ -841,13 +845,11 @@ export async function POST(req: NextRequest) {
     const predDurationMins = Number(predictionData?.durationMinutes || predictionData?.timerMinutes || matchMomentDurationMins || 4);
     const quizDurationMins = Number(quizData?.durationMinutes || quizData?.timerMinutes || 600);
 
-    const computedExpiresAt =
-      expiresAt ||
-      (type === "follow"
-        ? Number(body.followData?.matchStartMs || body.matchStartMs || 0) || null
-        : type === "match_result"
-          ? null
-          : type === "poll"
+    const isNoTimerType = type === "follow" || type === "match_result";
+    const computedExpiresAt = isNoTimerType
+      ? null
+      : expiresAt ||
+        (type === "poll"
           ? pollData?.expiresAt || timerAnchorMs + pollDurationMins * 60 * 1000
           : type === "prediction"
             ? predictionData?.expiresAt || timerAnchorMs + predDurationMins * 60 * 1000
@@ -1259,8 +1261,7 @@ export async function POST(req: NextRequest) {
       outcomeNotes: body.outcomeNotes || existingEngagement?.outcomeNotes || null,
       resolvedAt: body.resolvedAt || existingEngagement?.resolvedAt || null,
       resolvedBy: body.resolvedBy || existingEngagement?.resolvedBy || null,
-      timerMinutes: matchMomentDurationMins,
-      durationMinutes: matchMomentDurationMins,
+      ...(isNoTimerType ? {} : { timerMinutes: matchMomentDurationMins, durationMinutes: matchMomentDurationMins }),
       likes: Number(likes) || Number(existingEngagement?.likes) || 0,
       shares: Number(shares) || Number(existingEngagement?.shares) || 0,
       totalEngaged: Number(totalEngaged) || Number(existingEngagement?.totalEngaged) || 0,

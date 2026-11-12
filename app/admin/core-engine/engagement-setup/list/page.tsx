@@ -543,16 +543,18 @@ function EngagementListContent() {
                       </span>
                     )}
 
-                    {/* Timer badge */}
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-                        isExpired
-                          ? "bg-slate-500/20 text-slate-300"
-                          : "bg-emerald-500/20 text-emerald-400 animate-pulse"
-                      }`}
-                    >
-                      <Clock size={11} /> {remainingText}
-                    </span>
+                    {/* Timer badge (not shown for Follow or Match Result cards) */}
+                    {!isFollowCard && !isMatchResultCard && (
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
+                          isExpired
+                            ? "bg-slate-500/20 text-slate-300"
+                            : "bg-emerald-500/20 text-emerald-400 animate-pulse"
+                        }`}
+                      >
+                        <Clock size={11} /> {remainingText}
+                      </span>
+                    )}
 
                     {/* Settled / Express / Follow Status */}
                     {isExpressTextOnly ? (

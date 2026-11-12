@@ -1040,7 +1040,7 @@ export default function EngagementCard({
                         </span>
 
                         {/* Running Timer */}
-                        {item.type !== "match_result" && (
+                        {item.type !== "follow" && item.type !== "match_result" && (
                             <span className="text-[9px] font-mono font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 flex items-center gap-1 ml-auto">
                                 <Clock size={10} className="text-amber-400" />
                                 <span>{runningTimer} remaining</span>
@@ -1164,7 +1164,7 @@ export default function EngagementCard({
                     <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${theme.badgeBg}`}>
                         {theme.icon} {theme.label}
                     </span>
-                    {item.type !== "match_result" && (
+                    {item.type !== "follow" && item.type !== "match_result" && (
                         <span className="text-[9px] font-mono font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 flex items-center gap-1">
                             <Clock size={10} className="text-amber-400" />
                             <span>{runningTimer} remaining</span>
