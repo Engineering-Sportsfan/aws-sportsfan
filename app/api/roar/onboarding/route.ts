@@ -345,6 +345,7 @@ export async function GET(req: NextRequest) {
     sports: data?.sports ?? [],
     followEntities: data?.followEntities ?? [],
     engagementPrefs: data?.engagementPrefs ?? [],
+    profileSetup: Array.isArray(data?.profileSetup) ? data.profileSetup : [],
     requestedSport: data?.requestedSport ?? null,
     onboardingCompleted: data?.onboardingCompleted ?? false,
   });
@@ -358,10 +359,11 @@ export async function POST(req: NextRequest) {
   if (!resolved) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
   const body = await req.json();
-  const { sports, followEntities, engagementPrefs, requestedSport } = body as {
+  const { sports, followEntities, engagementPrefs, profileSetup, requestedSport } = body as {
     sports?: string[];
     followEntities?: string[];
     engagementPrefs?: string[];
+    profileSetup?: string[];
     requestedSport?: string;
   };
 
@@ -377,6 +379,10 @@ export async function POST(req: NextRequest) {
     onboardingCompletedAt: Date.now(),
     email: user.email,
   };
+  // Only write profileSetup when sent, so a POST without it never wipes saved step-4 data
+  if (Array.isArray(profileSetup)) {
+    updates.profileSetup = profileSetup.filter((v): v is string => typeof v === "string");
+  }
 
   // 1. Update in DynamoDB first
   try {
@@ -438,10 +444,11 @@ export async function PATCH(req: NextRequest) {
   if (!resolved) return NextResponse.json({ error: "User profile not found" }, { status: 404 });
 
   const body = await req.json();
-  const { sports, followEntities, engagementPrefs, requestedSport } = body as {
+  const { sports, followEntities, engagementPrefs, profileSetup, requestedSport } = body as {
     sports?: string[];
     followEntities?: string[];
     engagementPrefs?: string[];
+    profileSetup?: string[];
     requestedSport?: string;
   };
 
@@ -450,6 +457,9 @@ export async function PATCH(req: NextRequest) {
   if (sports !== undefined) updates.sports = sports;
   if (followEntities !== undefined) updates.followEntities = followEntities;
   if (engagementPrefs !== undefined) updates.engagementPrefs = engagementPrefs;
+  if (Array.isArray(profileSetup)) {
+    updates.profileSetup = profileSetup.filter((v): v is string => typeof v === "string");
+  }
   if (requestedSport !== undefined) {
     const cleanSport = typeof requestedSport === "string" ? requestedSport.trim() : null;
     updates.requestedSport = cleanSport;
@@ -533,6 +543,7 @@ export async function PATCH(req: NextRequest) {
     sports: finalData?.sports ?? [],
     followEntities: finalData?.followEntities ?? [],
     engagementPrefs: finalData?.engagementPrefs ?? [],
+    profileSetup: Array.isArray(finalData?.profileSetup) ? finalData.profileSetup : [],
     requestedSport: finalData?.requestedSport ?? null,
     onboardingCompleted: finalData?.onboardingCompleted ?? false,
   });

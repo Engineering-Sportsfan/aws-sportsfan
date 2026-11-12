@@ -37,6 +37,7 @@ export async function POST(
     }
 
     const res = await fetch(`${config.baseUrl}/athlete-review-queue/${id}/resolve`, {
+      signal: AbortSignal.timeout(30000),
       method: "POST",
       headers: {
         "Content-Type": "application/json",

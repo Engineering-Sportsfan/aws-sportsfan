@@ -329,6 +329,7 @@ export async function GET(req: NextRequest) {
     }
 
     const res = await fetch(latestUrl, {
+      signal: AbortSignal.timeout(10000),
       next: { revalidate: 300 }, // Cache for 5 minutes
     });
 

@@ -114,6 +114,7 @@ export async function POST(req: NextRequest) {
       if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
         try {
           await fetch('https://app.posthog.com/capture/', {
+            signal: AbortSignal.timeout(5000),
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

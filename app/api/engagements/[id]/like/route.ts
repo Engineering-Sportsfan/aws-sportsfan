@@ -9,6 +9,7 @@ import { dispatchFlipArenaNotification } from "@/lib/notifications";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
 import { getCandidateTableNames } from "@/lib/dualWrite";
+import { withReactionKeys } from "@/lib/engagementReactions";
 
 export const dynamic = "force-dynamic";
 
@@ -148,7 +149,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         await docClient.send(
           new PutCommand({
             TableName: TABLES.SocialAndContent,
-            Item: {
+            Item: withReactionKeys({
               contentId: `ENGAGEMENT#${cleanId}`,
               sk: `LIKE#${userId}`,
               entityId: "LIKE#ENGAGEMENT",
@@ -160,7 +161,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
               likedAt: now,
               createdAt: now,
-            },
+            }, { userId, action: "like", at: now, engagement: item, matchIdHint: resolvedMatchId }),
           })
         );
       } catch (dynPutErr) {

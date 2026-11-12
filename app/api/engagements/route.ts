@@ -10,8 +10,21 @@ import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
 import { dispatchFlipArenaContentDropNotification } from "@/lib/notifications";
 import cloudinary from "@/lib/cloudinary";
-import { applyEngagementStats, findUserVote, getEngagementStats, primaryOptions } from "@/lib/engagementSocial";
+import { primaryOptions } from "@/lib/engagementSocial";
 import { findEngagementById } from "@/lib/engagementPersistence";
+import { cacheService } from "@/lib/cacheService";
+import {
+  LIST_CACHE_TTL_SECONDS,
+  getUserInteractions,
+  hydratePublicStats,
+  isGsiEnabled,
+  isMissingIndexError,
+  parseBefore,
+  parseListLimit,
+  queryEngagementIndex,
+  sourcePartitionsFor,
+  withEngagementGsiKeys,
+} from "@/lib/engagementList";
 import { parseMatchStartMs } from "@/lib/matchMomentTimeline";
 
 export const dynamic = "force-dynamic";
@@ -24,17 +37,47 @@ export async function GET(req: NextRequest) {
     const type = searchParams.get("type") as EngagementType | null; // fan_battle | quiz | poll | prediction
     const status = searchParams.get("status"); // active | inactive | all
     const sport = searchParams.get("sport"); // cricket | football | etc
-    const limit = parseInt(searchParams.get("limit") || "50", 10);
+    // Pagination: `limit` (default 15, max 50) and `before` (createdAt ms; only items older than it, newest first).
+    const limit = parseListLimit(searchParams.get("limit"));
+    const before = parseBefore(searchParams.get("before"));
+    const includeAllEnvs = searchParams.get("allEnvs") === "true";
+    // GSI mode is opt-in (ENGAGEMENTS_GSI_ENABLED=true) and only for lists the index can answer completely.
+    // allEnvs / matchId requests keep the legacy path. Without the flag (or if the index is missing) the Scan path runs.
+    const gsiRequested = isGsiEnabled() && !includeAllEnvs && !searchParams.get("matchId");
 
+    const buildBase = async (useGsi: boolean) => {
     const itemsMap = new Map<string, EngagementItem>();
+    const tsById = new Map<string, number>();
+    const partitions = sourcePartitionsFor({
+      source: searchParams.get("source"),
+      category: searchParams.get("category"),
+      excludeFlipArena: searchParams.get("excludeFlipArena") === "true",
+      excludeMatchMoments: searchParams.get("excludeMatchMoments") === "true",
+    });
+    const gsiRows = Math.min(100, limit * 2 + 1);
+
+    // One round = one fetch of the source rows (Scan in legacy mode, one GSI Query page per partition in GSI mode).
+    const loadRound = async (cursor: number | null): Promise<{ exhausted: boolean; nextCursor: number | null }> => {
+    let exhausted = true;
+    let nextCursor: number | null = null;
+    const noteGsi = (r: { exhausted: boolean; cursorTs: number | null }) => {
+      if (r.exhausted) return;
+      exhausted = false;
+      if (r.cursorTs != null) nextCursor = nextCursor == null ? r.cursorTs : Math.min(nextCursor, r.cursorTs);
+    };
 
     // 1. Fetch from DynamoDB SocialAndContent table (with candidate table fallback)
-    const candidateTables = getCandidateTableNames(TABLES.SocialAndContent);
+    const candidateTables = useGsi ? [TABLES.SocialAndContent] : getCandidateTableNames(TABLES.SocialAndContent);
     for (const table of candidateTables) {
       try {
         // Read every page: Limit is applied BEFORE the filter, so a single 100-row page returned a
         // different, incomplete set of engagements on each call.
         const scanItems: any[] = [];
+        if (useGsi) {
+          const r = await queryEngagementIndex(table, partitions, cursor, gsiRows);
+          scanItems.push(...r.items);
+          noteGsi(r);
+        } else {
         let scanKey: Record<string, any> | undefined;
         do {
           const page = await docClient.send(
@@ -51,6 +94,7 @@ export async function GET(req: NextRequest) {
           scanItems.push(...(page.Items || []));
           scanKey = page.LastEvaluatedKey;
         } while (scanKey);
+        }
         const scanRes = { Items: scanItems };
 
         if (scanRes.Items && scanRes.Items.length > 0) {
@@ -135,6 +179,7 @@ export async function GET(req: NextRequest) {
           break; // Active environment table only
         }
       } catch (dynErr: any) {
+        if (useGsi && isMissingIndexError(dynErr)) throw dynErr; // -> caller falls back to the Scan path
         const isTableMissing =
           dynErr?.name === "ResourceNotFoundException" ||
           dynErr?.message?.includes("Cannot do operations on a non-existent table") ||
@@ -146,7 +191,7 @@ export async function GET(req: NextRequest) {
     }
 
     // 1b. Fetch match loops from MatchMoments table (MatchMoments-dev, MatchMoments-release, MatchMoments)
-    const matchMomentTables = getCandidateTableNames(TABLES.MatchMoments);
+    const matchMomentTables = useGsi ? [TABLES.MatchMoments] : getCandidateTableNames(TABLES.MatchMoments);
     const rawSearchMatchId = searchParams.get("matchId");
     const cleanSearchMatchId = rawSearchMatchId ? rawSearchMatchId.replace(/^MATCH#/, "") : null;
     for (const table of matchMomentTables) {
@@ -173,6 +218,10 @@ export async function GET(req: NextRequest) {
           } catch (e) {
             loopItems = [];
           }
+        } else if (useGsi) {
+          const r = await queryEngagementIndex(table, partitions, cursor, gsiRows);
+          loopItems.push(...r.items);
+          noteGsi(r);
         } else {
           let sKey: Record<string, any> | undefined;
           do {
@@ -320,12 +369,14 @@ export async function GET(req: NextRequest) {
           break; // Active environment table only
         }
       } catch (mmErr: any) {
+        if (useGsi && isMissingIndexError(mmErr)) throw mmErr; // -> caller falls back to the Scan path
         // Continue to next candidate table
       }
     }
 
     // 2. Fetch from Firestore 'engagements' collection and merge
-    if (db) {
+    // (Skipped in GSI mode: DynamoDB is dual-written and a full Firestore collection read is what we are removing.)
+    if (db && !useGsi) {
       try {
         const snap = await db.collection(getFirestoreCollection("engagements")).get();
         for (const doc of snap.docs) {
@@ -410,6 +461,12 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    return { exhausted, nextCursor };
+    };
+
+    // Sort + filter everything loaded so far. `floor` (GSI mode, more rows remain) drops rows at/below the oldest
+    // fetched timestamp, because older rows from the other source may not have been fetched yet.
+    const finalize = (floor: number | null): EngagementItem[] => {
     let items = Array.from(itemsMap.values());
 
     // Helper to resolve the latest numeric timestamp for sorting
@@ -545,52 +602,43 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    if (limit > 0) {
-      items = items.slice(0, limit);
+    if (before != null) items = items.filter(i => getItemTimestamp(i) < before);
+    if (floor != null) items = items.filter(i => getItemTimestamp(i) > floor);
+    for (const i of items) tsById.set(String(i.id), getItemTimestamp(i));
+    return items;
+    };
+
+    // Fetch rounds. Legacy mode: one round (everything). GSI mode: keep paging the index until the filtered
+    // list holds limit+1 items (so we know whether there is a next page) or the index is exhausted.
+    const MAX_ROUNDS = 5;
+    let page: EngagementItem[] = [];
+    let moreInIndex = false;
+    let floor: number | null = null;
+    let cursor: number | null = before;
+    for (let round = 0; ; round++) {
+      const r = await loadRound(cursor);
+      moreInIndex = !r.exhausted;
+      floor = useGsi && moreInIndex ? r.nextCursor : null;
+      page = finalize(floor);
+      if (!useGsi || page.length > limit || r.exhausted || r.nextCursor == null || round >= MAX_ROUNDS - 1) break;
+      cursor = r.nextCursor;
     }
 
-    // 3. Hydrate user interactions (userLiked, userVoted, userVote) matching candidate IDs
-    const targetUserId = searchParams.get("userId");
-    const candidateIds = Array.from(
-      new Set(
-        targetUserId
-          ? [targetUserId, targetUserId.includes("@") ? targetUserId.replace(/[@.]/g, "_") : null].filter(Boolean)
-          : [authUser?.userId, authUser?.email].filter(Boolean)
-      )
-    ) as string[];
+    const hasMore = page.length > limit || (useGsi && moreInIndex);
+    const returned = page.slice(0, limit);
+    const lastItem = returned[returned.length - 1];
+    const nextBefore = hasMore ? (lastItem ? tsById.get(String(lastItem.id)) ?? null : floor) : null;
 
-    // One query per engagement gives the real likes / shares / comments / vote counts AND this user's
-    // like + vote, so the numbers are identical on every refresh whichever stored copy was read.
-    if (items.length > 0) {
-      items = await Promise.all(
-        items.map(async (it) => {
-          try {
-            const stats = await getEngagementStats(String(it.id));
-            applyEngagementStats(it, stats);
-            if (candidateIds.length === 0) return it;
-            const userVote = findUserVote(stats, candidateIds);
-            return {
-              ...it,
-              userLiked: candidateIds.some((uid) => stats.userLikes.has(uid)),
-              userVoted: userVote !== null,
-              userVote,
-              ...(it.type === "follow"
-                ? {
-                    userFollowing: candidateIds.some((uid) => stats.userFollows.has(uid)),
-                    userReminded: candidateIds.some((uid) => stats.userReminds.has(uid)),
-                  }
-                : {}),
-            };
-          } catch (hydrationErr) {
-            console.warn("Engagements stats hydration notice:", hydrationErr);
-            return it;
-          }
-        })
-      );
+    // Public stats (likes/shares/comments/votes) only for the items on this page, in small parallel chunks.
+    await hydratePublicStats(returned);
+    for (const it of returned) {
+      delete (it as any).engSource;
+      delete (it as any).engCreatedAt;
     }
 
     // Check if any scheduled engagement has just become live and needs notification
-    for (const it of items) {
+    const nowMs = Date.now();
+    for (const it of returned) {
       const itStartMs =
         Number((it as any).scheduledStartTime) ||
         Number((it as any).startTime) ||
@@ -614,13 +662,13 @@ export async function GET(req: NextRequest) {
               creatorId: it.creatorId,
               creatorName: it.creatorName,
             });
-            await dualWrite("engagements", it.id, TABLES.SocialAndContent, {
+            await dualWrite("engagements", it.id, TABLES.SocialAndContent, withEngagementGsiKeys({
               contentId: `ENGAGEMENT#${it.id}`,
               sk: "ENGAGEMENT#META",
               entityId: `ENGAGEMENT#${it.type.toUpperCase()}`,
               ...it,
               notifiedLive: true,
-            });
+            }));
           } catch (e) {
             console.warn("[GET /api/engagements] Scheduled live notify notice:", e);
           }
@@ -628,11 +676,83 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      engagements: items,
-      total: items.length,
-    });
+    return { items: returned, hasMore, nextBefore };
+    };
+
+    // ── Base list: user-independent, cached 5s (Upstash, in-memory fallback) ─────────────────────────
+    type BaseList = { items: EngagementItem[]; hasMore: boolean; nextBefore: number | null };
+    const cacheKey = "engagements:list:v1:" + JSON.stringify([
+      searchParams.get("source") || "",
+      searchParams.get("category") || "",
+      searchParams.get("excludeFlipArena") || "",
+      searchParams.get("excludeMatchMoments") || "",
+      type || "",
+      status || "",
+      sport || "",
+      searchParams.get("matchId") || "",
+      includeAllEnvs,
+      limit,
+      before ?? "",
+    ]);
+    let base = await cacheService.get<BaseList>(cacheKey);
+    if (!base) {
+      try {
+        base = await buildBase(gsiRequested);
+      } catch (err) {
+        if (gsiRequested && isMissingIndexError(err)) {
+          console.warn("[GET /api/engagements] EngagementsBySource GSI missing; falling back to Scan:", (err as Error)?.message);
+          base = await buildBase(false);
+        } else {
+          throw err;
+        }
+      }
+      await cacheService.set(cacheKey, base, LIST_CACHE_TTL_SECONDS);
+    }
+
+    // ── Per-user fields (userLiked / userVoted / userVote), merged on top of the shared base ──────────
+    const targetUserId = searchParams.get("userId");
+    const candidateIds = Array.from(
+      new Set(
+        targetUserId
+          ? [targetUserId, targetUserId.includes("@") ? targetUserId.replace(/[@.]/g, "_") : null].filter(Boolean)
+          : [authUser?.userId, authUser?.email].filter(Boolean)
+      )
+    ) as string[];
+
+    let items: EngagementItem[] = base.items;
+    if (candidateIds.length > 0 && items.length > 0) {
+      const quizIds = new Set(items.filter((i) => i.type === "quiz").map((i) => String(i.id)));
+      const mine = await getUserInteractions(items.map((i) => String(i.id)), quizIds, candidateIds);
+      items = items.map((it) => {
+        const u = mine.get(String(it.id));
+        return {
+          ...it,
+          userLiked: u?.liked ?? false,
+          userVoted: (u?.vote ?? null) !== null,
+          userVote: u?.vote ?? null,
+          ...(it.type === "follow"
+            ? { userFollowing: u?.following ?? false, userReminded: u?.reminded ?? false }
+            : {}),
+        };
+      });
+    }
+
+    // Per-user responses stay private. The anonymous list is identical for everyone, so a CDN may hold it briefly
+    // (Vary keeps an authenticated request from being served the anonymous copy).
+    const headers: Record<string, string> =
+      candidateIds.length === 0
+        ? { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10", Vary: "Authorization, Cookie" }
+        : { "Cache-Control": "private, no-store" };
+
+    return NextResponse.json(
+      {
+        success: true,
+        engagements: items,
+        total: items.length,
+        pagination: { hasMore: base.hasMore, nextBefore: base.nextBefore },
+      },
+      { headers }
+    );
   } catch (error: unknown) {
     console.error("GET /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to fetch engagements";
@@ -1319,12 +1439,12 @@ export async function POST(req: NextRequest) {
     };
 
     // DynamoDB Item for SocialAndContent table
-    const dynamoItem = {
+    const dynamoItem = withEngagementGsiKeys({
       contentId: `ENGAGEMENT#${id}`,
       sk: "ENGAGEMENT#META",
       entityId: `ENGAGEMENT#${type.toUpperCase()}`,
       ...newEngagement,
-    };
+    });
 
     // Dual Write to DynamoDB + Firestore
     await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
@@ -1334,12 +1454,12 @@ export async function POST(req: NextRequest) {
       try {
         await dualWrite({
           tableName: TABLES.MatchMoments,
-          dynamoItem: {
+          dynamoItem: withEngagementGsiKeys({
             entityId: `MATCH#${newEngagement.matchId || "GLOBAL"}`,
             sk: `LOOP#${newEngagement.loopId || id}`,
             contentId: `ENGAGEMENT#${id}`,
             ...newEngagement,
-          },
+          }),
           collectionName: "match_moments_engagements",
           docId: `${newEngagement.matchId || "GLOBAL"}_${newEngagement.loopId || id}`,
           firestoreData: newEngagement,

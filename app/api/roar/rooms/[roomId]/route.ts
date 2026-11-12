@@ -4,11 +4,39 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
-import { GetCommand, DeleteCommand, UpdateCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, DeleteCommand, UpdateCommand, PutCommand, ScanCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { ChatRoom } from "@/app/models/ChatRoom";
 import cloudinary from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
+
+// Engagements for a match: a key Query on MatchMoments (entityId = MATCH#<id>, sk = LOOP#...), which the
+// engagement POST dual-writes whenever matchId is set. The old SocialAndContent Scan (kept only as a fallback if the
+// Query fails) applied `Limit: 50` before its filter, so it read 50 arbitrary rows and usually missed the match.
+async function fetchRoomEngagementRows(matchId: string): Promise<any[]> {
+  try {
+    const res = await docClient.send(
+      new QueryCommand({
+        TableName: TABLES.MatchMoments,
+        KeyConditionExpression: "entityId = :e AND begins_with(sk, :p)",
+        ExpressionAttributeValues: { ":e": `MATCH#${String(matchId).replace(/^MATCH#/, "")}`, ":p": "LOOP#" },
+        Limit: 50,
+      })
+    );
+    return res.Items || [];
+  } catch (err) {
+    console.warn("[Room GET] MatchMoments Query failed, falling back to Scan:", err);
+    const res = await docClient.send(
+      new ScanCommand({
+        TableName: TABLES.SocialAndContent,
+        FilterExpression: "(begins_with(contentId, :engPrefix) OR begins_with(entityId, :engPrefix)) AND matchId = :mId",
+        ExpressionAttributeValues: { ":engPrefix": "ENGAGEMENT#", ":mId": matchId },
+        Limit: 50,
+      })
+    );
+    return res.Items || [];
+  }
+}
 
 export async function GET(
   req: NextRequest,
@@ -106,17 +134,7 @@ export async function GET(
     let roomEngagements: any[] = [];
     if (room.matchId) {
       try {
-        const engRes = await docClient.send(
-          new ScanCommand({
-            TableName: TABLES.SocialAndContent,
-            FilterExpression: "(begins_with(contentId, :engPrefix) OR begins_with(entityId, :engPrefix)) AND matchId = :mId",
-            ExpressionAttributeValues: {
-              ":engPrefix": "ENGAGEMENT#",
-              ":mId": room.matchId,
-            },
-            Limit: 50,
-          })
-        );
+        const engRes = { Items: await fetchRoomEngagementRows(room.matchId) };
         if (engRes.Items && engRes.Items.length > 0) {
           roomEngagements = engRes.Items.map((it: any) => ({
             id: it.id || String(it.contentId || "").replace(/^ENGAGEMENT#/, ""),

@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
     url.searchParams.set("sport", sport);
 
     const res = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(60000),
       method: "POST",
       headers: { "x-api-key": config.apiKey },
     });
