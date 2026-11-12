@@ -48,6 +48,13 @@ interface EngagementItem {
   type: string;
   title: string;
   subtitle?: string;
+  inputPlaceholder?: string;
+  expressData?: {
+    placeholder?: string;
+    responseMode?: string;
+    totalResponses?: number;
+  };
+  totalResponses?: number;
   options: OptionItem[];
   timerMinutes?: number;
   durationMinutes?: number;
@@ -476,6 +483,7 @@ function EngagementListContent() {
         <div className="space-y-3">
           {filteredEngagements.map((eng) => {
             const { isExpired, remainingText } = getTimerStatus(eng);
+            const isExpressTextOnly = eng.type === "express" && (!Array.isArray(eng.options) || eng.options.length === 0);
             const isSettled = eng.status === "settled" || Boolean(eng.winningChoiceId || eng.outcomeWinningChoiceId);
             const winningOpt = eng.options?.find(
               (o) => o.id === (eng.winningChoiceId || eng.outcomeWinningChoiceId)
@@ -505,7 +513,11 @@ function EngagementListContent() {
                     </span>
 
                     {/* Settled Status */}
-                    {isSettled ? (
+                    {isExpressTextOnly ? (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                        ✍️ Open Input Box ({Number(eng.totalResponses ?? eng.totalVotes ?? 0)} responses)
+                      </span>
+                    ) : isSettled ? (
                       <span className="text-[10px] font-black px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
                         ✅ Settled: {winningOpt?.text || eng.winningChoiceId}
                       </span>
@@ -522,6 +534,11 @@ function EngagementListContent() {
 
                   {/* Options pills */}
                   <div className="flex items-center gap-2 flex-wrap">
+                    {isExpressTextOnly && (
+                      <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-pink-500/10 text-pink-200 border border-pink-500/25">
+                        ✍️ Open Fan Text Input (No Options) — &ldquo;{eng.inputPlaceholder || eng.expressData?.placeholder || "Write your thoughts..."}&rdquo;
+                      </span>
+                    )}
                     {eng.options?.map((opt, i) => {
                       const isWin = opt.id === (eng.winningChoiceId || eng.outcomeWinningChoiceId);
                       return (
@@ -543,14 +560,16 @@ function EngagementListContent() {
 
                 {/* Right Actions */}
                 <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  {/* Reveal / Settle Outcome CTA */}
-                  <button
-                    onClick={() => handleOpenSettleModal(eng)}
-                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-95 text-black text-xs font-black transition-all flex items-center gap-1 shadow-sm"
-                  >
-                    <Trophy size={13} />
-                    <span>{isSettled ? "Edit Outcome" : "Reveal Visible Outcome"}</span>
-                  </button>
+                  {/* Reveal / Settle Outcome CTA (not applicable to open-text Express engagements) */}
+                  {!isExpressTextOnly && (
+                    <button
+                      onClick={() => handleOpenSettleModal(eng)}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-95 text-black text-xs font-black transition-all flex items-center gap-1 shadow-sm"
+                    >
+                      <Trophy size={13} />
+                      <span>{isSettled ? "Edit Outcome" : "Reveal Visible Outcome"}</span>
+                    </button>
+                  )}
 
                   {/* Recognition CTA */}
                   <Link

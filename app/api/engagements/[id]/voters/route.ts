@@ -312,6 +312,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           )
         : allEnrichedVoters;
 
+    if (type === "express") {
+      filteredVoters.sort((a, b) => Number(b.votedAt || 0) - Number(a.votedAt || 0));
+    }
+
     return NextResponse.json({
       success: true,
       engagementId: id,

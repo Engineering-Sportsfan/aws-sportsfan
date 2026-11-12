@@ -71,7 +71,7 @@ const ENGAGEMENT_TYPES: { type: EngType; label: string; icon: React.ComponentTyp
     label: "Express",
     icon: Zap,
     color: "#ec4899",
-    desc: "Fast-reaction 4-choice pulse question",
+    desc: "Open fan input box — fans write their reaction freely (no options)",
   },
   {
     type: "debate",
@@ -90,7 +90,8 @@ const ENGAGEMENT_TYPES: { type: EngType; label: string; icon: React.ComponentTyp
 ];
 
 const blankOptionsFor = (type: EngType | ""): OptionItem[] => {
-  const count = type === "express" || type === "question" ? 4 : 2;
+  if (type === "express") return [];
+  const count = type === "question" ? 4 : 2;
   return Array.from({ length: count }, (_, i) => ({ id: String(i + 1), text: "" }));
 };
 
@@ -197,7 +198,9 @@ function AddEngagementContent() {
             setEngQuestion(String(eng.title || ""));
             setEngTimer(Number(eng.timerMinutes) || 4);
             setPostLock(String(eng.postLock || ""));
-            if (Array.isArray(eng.options) && eng.options.length > 0) {
+            if (String(eng.type) === "express") {
+              setEngOptions([]);
+            } else if (Array.isArray(eng.options) && eng.options.length > 0) {
               setEngOptions(eng.options.map((o: Record<string, unknown>, idx: number) => ({ id: String(o.id || idx + 1), text: String(o.text || "") })));
             }
             if (eng.correctOptionId) {
@@ -259,7 +262,7 @@ function AddEngagementContent() {
       setSubmitResult({ success: false, message: "Question / Prompt is required" });
       return;
     }
-    if (engOptions.some((o) => !o.text.trim())) {
+    if (engType !== "express" && engOptions.some((o) => !o.text.trim())) {
       setSubmitResult({ success: false, message: "All option fields must have text" });
       return;
     }
@@ -280,10 +283,27 @@ function AddEngagementContent() {
       type: engType,
       sport: "cricket",
       status: resolveStatus || "active",
-      timerMinutes: Number(engTimer) || 4,
-      options: engOptions.map((o) => ({ id: o.id, text: o.text.trim() })),
+      ...(engType !== "express" ? { timerMinutes: Number(engTimer) || 4 } : {}),
+      options:
+        engType === "express"
+          ? []
+          : engOptions.map((o) => ({ id: o.id, text: o.text.trim() })),
+      ...(engType === "express"
+        ? {
+            inputPlaceholder: "Write your thoughts...",
+            expressData: {
+              prompt: engQuestion.trim(),
+              question: engQuestion.trim(),
+              responseMode: "text",
+              placeholder: "Write your thoughts...",
+              options: [],
+              totalVotes: 0,
+              totalResponses: 0,
+            },
+          }
+        : {}),
       correctOptionId: engType === "question" ? correctOptionId : undefined,
-      postLock: postLock.trim(),
+      ...(engType !== "express" ? { postLock: postLock.trim() } : {}),
       coinStake: 10,
       loopId: loopId.trim() || `LOOP-${activeMoment?.overs || activeMoment?.timingLabel || Date.now()}`,
       momentId: selectedMomentId,
@@ -485,11 +505,11 @@ function AddEngagementContent() {
           </div>
         </div>
 
-        {/* Step 3: Question & Choices */}
+        {/* Step 3: Prompt & Choices / Express Input */}
         <div className="p-6 rounded-2xl bg-[#111625] border border-white/10 space-y-5">
           <div className="border-b border-white/5 pb-3 flex items-center justify-between">
             <h3 className="text-xs font-black uppercase tracking-wider text-purple-400 flex items-center gap-2">
-              <span>✍️</span> Prompt & Fan Options
+              <span>✍️</span> {engType === "express" ? "Express Prompt" : "Prompt & Fan Options"}
             </h3>
             {engType === "question" && (
               <span className="text-[11px] text-emerald-400 font-bold">
@@ -500,102 +520,110 @@ function AddEngagementContent() {
 
           <div>
             <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-              Question / Prompt *
+              {engType === "express" ? "Express Prompt *" : "Question / Prompt *"}
             </label>
             <textarea
               rows={2}
               required
               value={engQuestion}
               onChange={(e) => setEngQuestion(e.target.value)}
-              placeholder="e.g. Will India score 180+ runs in 20 overs?"
+              placeholder={
+                engType === "express"
+                  ? "e.g. What's your instant reaction right now? Write in your own words!"
+                  : "e.g. Will India score 180+ runs in 20 overs?"
+              }
               className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
             />
           </div>
 
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-                Options / Choices ({engOptions.length})
-              </label>
-              <button
-                type="button"
-                onClick={handleAddOption}
-                className="text-[11px] text-cyan-400 hover:underline font-bold flex items-center gap-1"
-              >
-                <Plus size={12} /> Add Option
-              </button>
-            </div>
+          {engType !== "express" && (
+            <>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                    Options / Choices ({engOptions.length})
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAddOption}
+                    className="text-[11px] text-cyan-400 hover:underline font-bold flex items-center gap-1"
+                  >
+                    <Plus size={12} /> Add Option
+                  </button>
+                </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {engOptions.map((opt, idx) => (
-                <div
-                  key={opt.id}
-                  className="p-3 rounded-xl bg-[#0a0d17] border border-white/10 flex items-center gap-2"
-                >
-                  {engType === "question" && (
-                    <input
-                      type="radio"
-                      name="correctOption"
-                      checked={correctOptionId === opt.id}
-                      onChange={() => setCorrectOptionId(opt.id)}
-                      title="Mark as correct answer"
-                      className="cursor-pointer text-emerald-500 focus:ring-emerald-500"
-                    />
-                  )}
-                  <span className="w-6 h-6 rounded-md bg-white/5 text-gray-400 text-xs font-bold flex items-center justify-center shrink-0">
-                    {idx + 1}
-                  </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {engOptions.map((opt, idx) => (
+                    <div
+                      key={opt.id}
+                      className="p-3 rounded-xl bg-[#0a0d17] border border-white/10 flex items-center gap-2"
+                    >
+                      {engType === "question" && (
+                        <input
+                          type="radio"
+                          name="correctOption"
+                          checked={correctOptionId === opt.id}
+                          onChange={() => setCorrectOptionId(opt.id)}
+                          title="Mark as correct answer"
+                          className="cursor-pointer text-emerald-500 focus:ring-emerald-500"
+                        />
+                      )}
+                      <span className="w-6 h-6 rounded-md bg-white/5 text-gray-400 text-xs font-bold flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </span>
+                      <input
+                        type="text"
+                        required
+                        value={opt.text}
+                        onChange={(e) => handleOptionTextChange(opt.id, e.target.value)}
+                        placeholder={`Option ${idx + 1} text`}
+                        className="w-full bg-transparent border-none text-xs text-white focus:outline-none"
+                      />
+                      {engOptions.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveOption(opt.id)}
+                          className="text-gray-500 hover:text-red-400 p-1"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-white/5">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                    Countdown Timer (Minutes)
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={engTimer}
+                    onChange={(e) => setEngTimer(e.target.value === "" ? "" : Number(e.target.value))}
+                    placeholder="e.g. 4"
+                    className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                    Post Lock Over / Boundary
+                  </label>
                   <input
                     type="text"
-                    required
-                    value={opt.text}
-                    onChange={(e) => handleOptionTextChange(opt.id, e.target.value)}
-                    placeholder={`Option ${idx + 1} text`}
-                    className="w-full bg-transparent border-none text-xs text-white focus:outline-none"
+                    value={postLock}
+                    onChange={(e) => setPostLock(e.target.value)}
+                    placeholder="e.g. End of 12th Over"
+                    className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
                   />
-                  {engOptions.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveOption(opt.id)}
-                      className="text-gray-500 hover:text-red-400 p-1"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
                 </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-white/5">
-            <div>
-              <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                Countdown Timer (Minutes)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={60}
-                value={engTimer}
-                onChange={(e) => setEngTimer(e.target.value === "" ? "" : Number(e.target.value))}
-                placeholder="e.g. 4"
-                className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                Post Lock Over / Boundary
-              </label>
-              <input
-                type="text"
-                value={postLock}
-                onChange={(e) => setPostLock(e.target.value)}
-                placeholder="e.g. End of 12th Over"
-                className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
-              />
-            </div>
-          </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Action Buttons */}

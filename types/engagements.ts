@@ -224,8 +224,11 @@ export interface ExpressOption {
 export interface ExpressPayload {
   question?: string;
   prompt?: string;
+  responseMode?: "text" | "options";
+  placeholder?: string;
   options?: ExpressOption[];
   totalVotes: number;
+  totalResponses?: number;
   durationMinutes?: number;
   timerMinutes?: number;
   expiresAt?: number;
@@ -269,6 +272,7 @@ export interface EngagementItem {
   memeData?: MemePayload;
   debateData?: DebatePayload;
   expressData?: ExpressPayload;
+  inputPlaceholder?: string;
   questionData?: QuestionPayload;
   memeType?: "single" | "dual" | string;
   options?: any[];

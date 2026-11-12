@@ -17,6 +17,7 @@ import {
     Coins,
     ChevronDown,
     ChevronUp,
+    Send,
 } from "lucide-react";
 import axios from "axios";
 import type { EngagementItem } from "@/types/engagements";
@@ -126,6 +127,7 @@ export default function EngagementCard({
     });
 
     const [isVoting, setIsVoting] = useState(false);
+    const [expressInput, setExpressInput] = useState<string>(() => (item.userVote ? String(item.userVote) : ""));
 
     // Likes state with localStorage persistence
     const [likes, setLikes] = useState<number>(Number(item.likes) || 0);
@@ -239,6 +241,7 @@ export default function EngagementCard({
                 `/api/engagements/${encodeURIComponent(item.id)}/vote`,
                 {
                     selectedOptionId: optionId,
+                    ...(item.type === "express" ? { responseText: optionId } : {}),
                     userId: currentUserId,
                     userName: currentUserName,
                     userAvatar: currentUserAvatar,
@@ -449,7 +452,79 @@ export default function EngagementCard({
     };
 
     // ─────────────────────────────────────────────────────────────
-    // RENDER: Poll / Debate / Express Body
+    // RENDER: Express Open-Text Input Body (No Options)
+    // ─────────────────────────────────────────────────────────────
+    const renderExpress = () => {
+        const placeholder =
+            String(
+                item.inputPlaceholder ||
+                item.expressData?.placeholder ||
+                "Write your thoughts..."
+            ).trim() || "Write your thoughts...";
+        const totalResponses = Number(
+            liveVoteData?.totalResponses ??
+            liveVoteData?.totalVotes ??
+            item.expressData?.totalResponses ??
+            item.totalVotes ??
+            0
+        ) + (!liveVoteData && userVoted ? 1 : 0);
+
+        const submitExpress = () => {
+            const clean = expressInput.trim();
+            if (!clean || isVoting) return;
+            handleVote(clean);
+        };
+
+        return (
+            <div className="flex flex-col gap-1.5 mt-1">
+                {!userVoted ? (
+                    <div className="flex items-end gap-1.5">
+                        <textarea
+                            rows={2}
+                            maxLength={280}
+                            value={expressInput}
+                            disabled={isVoting}
+                            onChange={(e) => setExpressInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    submitExpress();
+                                }
+                            }}
+                            placeholder={placeholder}
+                            className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 focus:bg-white/10 border border-white/15 focus:border-cyan-400/60 outline-none text-xs text-white placeholder:text-white/40 resize-none transition-all disabled:opacity-50"
+                        />
+                        <button
+                            type="button"
+                            disabled={isVoting || !expressInput.trim()}
+                            onClick={submitExpress}
+                            className="shrink-0 h-9 px-3 rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:bg-white/10 disabled:text-white/30 text-black text-xs font-extrabold inline-flex items-center gap-1 transition-all"
+                        >
+                            <Send size={12} />
+                            <span>Send</span>
+                        </button>
+                    </div>
+                ) : (
+                    <div className="rounded-lg p-2.5 bg-cyan-500/10 border border-cyan-400/30">
+                        <div className="flex items-center justify-between text-[10px] font-bold text-cyan-300 mb-1">
+                            <span className="inline-flex items-center gap-1">
+                                <CheckCircle2 size={11} /> Your take
+                            </span>
+                            <span className="text-white/50">
+                                {totalResponses} {totalResponses === 1 ? "response" : "responses"}
+                            </span>
+                        </div>
+                        {selectedOptionId && (
+                            <p className="text-xs text-white break-words">&ldquo;{selectedOptionId}&rdquo;</p>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // RENDER: Poll / Debate Body
     // ─────────────────────────────────────────────────────────────
     const renderPoll = () => {
         const rawOptions =
@@ -786,7 +861,8 @@ export default function EngagementCard({
                 {/* ── Interactive Options ── */}
                 <div className="my-1.5">
                     {item.type === "prediction" && renderPrediction()}
-                    {(item.type === "debate" || item.type === "poll" || item.type === "express") && renderPoll()}
+                    {(item.type === "debate" || item.type === "poll") && renderPoll()}
+                    {item.type === "express" && renderExpress()}
                     {(item.type === "quiz" || item.type === "question") && renderQuiz()}
                     {item.type === "fan_battle" && renderFanBattle()}
                     {item.type === "meme" && renderMeme()}
@@ -905,7 +981,8 @@ export default function EngagementCard({
 
             {/* ── INTERACTIVE BODY ── */}
             {item.type === "prediction" && renderPrediction()}
-            {(item.type === "debate" || item.type === "poll" || item.type === "express") && renderPoll()}
+            {(item.type === "debate" || item.type === "poll") && renderPoll()}
+            {item.type === "express" && renderExpress()}
             {(item.type === "quiz" || item.type === "question") && renderQuiz()}
             {item.type === "fan_battle" && renderFanBattle()}
             {item.type === "meme" && renderMeme()}

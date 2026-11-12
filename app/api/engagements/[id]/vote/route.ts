@@ -358,10 +358,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await req.json();
-    const { selectedOptionId, questionId, userId: inputUserId, userName, userAvatar, changeVote, previousOptionId } = body;
+    const { questionId, userId: inputUserId, userName, userAvatar, changeVote, previousOptionId } = body;
+    const rawSelection = body.selectedOptionId ?? body.responseText ?? body.text;
+    const selectedOptionId = typeof rawSelection === "string" ? rawSelection.trim() : rawSelection;
 
     if (!selectedOptionId) {
-      return NextResponse.json({ error: "selectedOptionId is required" }, { status: 400 });
+      return NextResponse.json({ error: "selectedOptionId or responseText is required" }, { status: 400 });
     }
 
     // Try to get authenticated user or fallback to input ID / client identifier
@@ -703,7 +705,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             await docClient.send(new UpdateCommand({
               TableName: TABLES.SocialAndContent,
               Key: { contentId: `ENGAGEMENT#${id}`, sk: ownVoteSk },
-              UpdateExpression: "SET selectedOptionId = :opt, previousOptionId = :prev, voteChangedAt = :now, updatedAt = :now",
+              UpdateExpression: "SET selectedOptionId = :opt, responseText = :opt, previousOptionId = :prev, voteChangedAt = :now, updatedAt = :now",
               ConditionExpression: "attribute_exists(contentId)",
               ExpressionAttributeValues: {
                 ":opt": selectedOptionId,
@@ -725,7 +727,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
                 contentId: `USER_VOTE#${ownUid}`,
                 sk: questionId ? `ENGAGEMENT#${id}#${questionId}` : `ENGAGEMENT#${id}`,
               },
-              UpdateExpression: "SET selectedOptionId = :opt, voteChangedAt = :now, updatedAt = :now",
+              UpdateExpression: "SET selectedOptionId = :opt, responseText = :opt, voteChangedAt = :now, updatedAt = :now",
               ConditionExpression: "attribute_exists(contentId)",
               ExpressionAttributeValues: { ":opt": selectedOptionId, ":now": changeNow },
             })).catch(() => { });
@@ -745,8 +747,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               type: changeItem.type,
               changedVote: true,
               selectedOptionId,
+              responseText: selectedOptionId,
               options: primaryOptions(changeItem),
               totalVotes: Number(changeItem.totalVotes) || 0,
+              totalResponses: Number(changeItem.totalResponses ?? changeItem.totalVotes ?? 0),
               totalEngaged: Number(changeItem.totalEngaged) || 0,
               isFirstEngagement: false,
               participationPointsAwarded: 0,
@@ -1039,6 +1043,47 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         totalEngaged: Number(item.totalEngaged) || 0,
         isFirstQuizEngagement: isNewUserEngagement,
         isFirstEngagement: isNewUserEngagement,
+      };
+    }
+
+    // 3.25 Express Open-Text Input Response Handling (no options — fan writes free-text reaction)
+    else if (
+      item.type === "express" &&
+      (item.expressData?.responseMode === "text" ||
+        !Array.isArray(primaryOptions(item)) ||
+        primaryOptions(item)!.length === 0 ||
+        Boolean(body.responseText || body.text))
+    ) {
+      const responseText = String(body.responseText ?? body.text ?? selectedOptionId ?? "")
+        .trim()
+        .slice(0, 500);
+      item.options = [];
+      item.totalResponses = (Number(item.totalResponses) || Number(item.totalVotes) || 0) + 1;
+      item.totalVotes = item.totalResponses;
+      if (item.expressData) {
+        item.expressData.responseMode = "text";
+        item.expressData.options = [];
+        item.expressData.totalResponses = item.totalResponses;
+        item.expressData.totalVotes = item.totalResponses;
+      }
+
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
+
+      responseData = {
+        success: true,
+        type: "express",
+        responseMode: "text",
+        selectedOptionId: responseText,
+        responseText,
+        options: [],
+        totalResponses: item.totalResponses,
+        totalVotes: item.totalResponses,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
       };
     }
 

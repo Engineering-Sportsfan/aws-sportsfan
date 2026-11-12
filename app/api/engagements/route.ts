@@ -76,6 +76,7 @@ export async function GET(req: NextRequest) {
                 memeData: it.memeData,
                 debateData: it.debateData,
                 expressData: it.expressData,
+                inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
                 questionData: it.questionData,
                 postLock: it.postLock ?? it.questionData?.postLock ?? "",
                 winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
@@ -256,6 +257,7 @@ export async function GET(req: NextRequest) {
               memeData: it.memeData,
               debateData: it.debateData,
               expressData: it.expressData,
+              inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
               questionData: it.questionData,
               postLock: it.postLock ?? it.questionData?.postLock ?? "",
               winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
@@ -325,6 +327,7 @@ export async function GET(req: NextRequest) {
               memeData: it.memeData,
               debateData: it.debateData,
               expressData: it.expressData,
+              inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
               questionData: it.questionData,
               postLock: it.postLock ?? it.questionData?.postLock ?? "",
               winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
@@ -850,22 +853,37 @@ export async function POST(req: NextRequest) {
           }
         : undefined;
 
+    const rawExpressOptions =
+      Array.isArray(body.expressData?.options) && body.expressData.options.length > 0
+        ? body.expressData.options
+        : Array.isArray(body.options) && body.options.length > 0
+        ? body.options.map((opt: any, idx: number) => ({
+            id: opt.id || String(idx + 1),
+            text: typeof opt === "string" ? opt : opt.text,
+            emoji: opt.emoji || "",
+            votes: Number(opt.votes) || 0,
+          }))
+        : [];
+    const expressResponseMode =
+      body.expressData?.responseMode ||
+      (rawExpressOptions.length > 0 ? "options" : "text");
+    const expressPlaceholderText = String(
+      body.expressData?.placeholder || body.inputPlaceholder || "Write your thoughts..."
+    ).trim();
+
     const formattedExpressData =
-      type === "express" && (body.expressData || body.options || body.title)
+      type === "express" && (body.expressData || body.options || body.title || body.prompt)
         ? {
             question: body.expressData?.question || body.prompt || body.title || "",
-            prompt: body.expressData?.prompt || body.title || "",
-            options: Array.isArray(body.expressData?.options) && body.expressData.options.length > 0
-              ? body.expressData.options
-              : Array.isArray(body.options)
-              ? body.options.map((opt: any, idx: number) => ({
-                  id: opt.id || String(idx + 1),
-                  text: typeof opt === "string" ? opt : opt.text,
-                  emoji: opt.emoji || "",
-                  votes: Number(opt.votes) || 0,
-                }))
-              : [],
+            prompt: body.expressData?.prompt || body.prompt || body.title || "",
+            responseMode: expressResponseMode,
+            placeholder: expressPlaceholderText,
+            options: expressResponseMode === "text" ? [] : rawExpressOptions,
             totalVotes: Number(body.expressData?.totalVotes) || 0,
+            totalResponses:
+              Number(body.expressData?.totalResponses) ||
+              Number(body.expressData?.totalVotes) ||
+              0,
             durationMinutes: matchMomentDurationMins,
             timerMinutes: matchMomentDurationMins,
             expiresAt: computedExpiresAt,
@@ -1085,9 +1103,20 @@ export async function POST(req: NextRequest) {
       memeData: formattedMemeData,
       debateData: formattedDebateData,
       expressData: formattedExpressData,
+      ...(type === "express" && formattedExpressData?.placeholder
+        ? { inputPlaceholder: formattedExpressData.placeholder }
+        : {}),
       questionData: formattedQuestionData,
       postLock: String(body.postLock ?? body.questionData?.postLock ?? "").trim(),
-      options: body.options || formattedDebateData?.options || formattedExpressData?.options || formattedQuestionData?.options || formattedPollData?.options || formattedPredData?.options,
+      options:
+        type === "express" && formattedExpressData?.responseMode === "text"
+          ? []
+          : body.options ||
+            formattedDebateData?.options ||
+            formattedExpressData?.options ||
+            formattedQuestionData?.options ||
+            formattedPollData?.options ||
+            formattedPredData?.options,
       winningChoiceId: body.winningChoiceId || formattedPredData?.winningChoiceId || formattedDebateData?.winningChoiceId || existingEngagement?.winningChoiceId || null,
       outcomeNotes: body.outcomeNotes || existingEngagement?.outcomeNotes || null,
       resolvedAt: body.resolvedAt || existingEngagement?.resolvedAt || null,

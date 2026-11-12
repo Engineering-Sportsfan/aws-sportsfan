@@ -218,6 +218,21 @@ export function applyEngagementStats(item: any, stats: EngagementStats, opts: { 
 
   if (item.type === "quiz" || item.type === "fan_battle" || item.type === "meme") return item;
 
+  if (
+    item.type === "express" &&
+    (item.expressData?.responseMode === "text" || !primaryOptions(item)?.length)
+  ) {
+    item.totalResponses = stats.participations;
+    item.totalVotes = stats.participations;
+    if (item.expressData) {
+      item.expressData.responseMode = "text";
+      item.expressData.options = [];
+      item.expressData.totalResponses = stats.participations;
+      item.expressData.totalVotes = stats.participations;
+    }
+    return item;
+  }
+
   let result: { options: any[]; totalVotes: number } | null = null;
   for (const key of ["pollData", "debateData", "expressData", "questionData", "predictionData"]) {
     const data = item[key];
