@@ -1,5 +1,6 @@
 // lib/engagementPersistence.ts
 
+import { withEngagementGsiKeys } from "@/lib/engagementList";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
@@ -158,7 +159,7 @@ export async function findEngagementById(rawId: string, rawMatchId?: string): Pr
       if (snap.exists) {
         foundItem = { id: snap.id, ...snap.data() };
       } else {
-        const qSnap = await db.collection("match_moments_engagements").doc(cleanId).get();
+        const qSnap = await db.collection(getFirestoreCollection("match_moments_engagements")).doc(cleanId).get();
         if (qSnap.exists) {
           foundItem = { id: qSnap.id, ...qSnap.data() };
         }
@@ -210,12 +211,12 @@ export async function persistEngagementUpdate(
   };
 
   // 1. Dual-write to SocialAndContent
-  const dynamoItem = {
+  const dynamoItem = withEngagementGsiKeys({
     ...fullItem,
     contentId: `ENGAGEMENT#${cleanId}`,
     sk: "ENGAGEMENT#META",
     entityId: `ENGAGEMENT#${String(fullItem.type || "POLL").toUpperCase()}`,
-  };
+  });
 
   await dualWrite("engagements", cleanId, TABLES.SocialAndContent, dynamoItem);
 
@@ -234,12 +235,12 @@ export async function persistEngagementUpdate(
     const cleanMatchId = String(rawMatchId).replace(/^MATCH#/, "").trim();
     const loopSk = matchMomentsRecord?.sk || `LOOP#${fullItem.loopId || cleanId}`;
 
-    const mmDynamoItem = {
+    const mmDynamoItem = withEngagementGsiKeys({
       ...fullItem,
       entityId: `MATCH#${cleanMatchId}`,
       sk: loopSk,
       contentId: `ENGAGEMENT#${cleanId}`,
-    };
+    });
 
     const mmTables = getCandidateTableNames(TABLES.MatchMoments);
     for (const table of mmTables) {
@@ -264,7 +265,7 @@ export async function persistEngagementUpdate(
     if (db) {
       try {
         await db
-          .collection("match_moments_engagements")
+          .collection(getFirestoreCollection("match_moments_engagements"))
           .doc(`${cleanMatchId}_${fullItem.loopId || cleanId}`)
           .set(fullItem, { merge: true });
       } catch {}

@@ -48,6 +48,10 @@ export interface EngagementStats {
   /** sk values present, used to hydrate userLiked / userVote without extra reads */
   userLikes: Set<string>;
   userVotes: Map<string, string>;
+  followCount: number;
+  remindCount: number;
+  userFollows: Set<string>;
+  userReminds: Set<string>;
 }
 
 /**
@@ -74,13 +78,15 @@ export async function getEngagementStats(
     votesByOption: {},
     userLikes: new Set(),
     userVotes: new Map(),
+    followCount: 0,
+    remindCount: 0,
+    userFollows: new Set(),
+    userReminds: new Set(),
   };
 
   const commentMap = new Map<string, any>();
   const explicitSocialLikes = new Set<string>();      // key: `${commentId}#${actorId}`
   const explicitSocialComments = new Set<string>();   // key: `${commentId}`
-  const seenImpressions = new Set<string>();
-  const seenSocialImpressions = new Set<string>();
 
   let key: Record<string, any> | undefined;
   do {
@@ -90,7 +96,7 @@ export async function getEngagementStats(
         KeyConditionExpression: "contentId = :c",
         ExpressionAttributeValues: { ":c": `ENGAGEMENT#${engagementId}` },
         ProjectionExpression:
-          "sk, selectedOptionId, questionId, userId, parentId, authorUid, likedBy, actorUserId, targetCommentId, targetAuthorUid, commentId, id",
+          "sk, selectedOptionId, questionId, userId, parentId, authorUid, likedBy, actorUserId, targetCommentId, targetAuthorUid, commentId, id, impressionCount, isFollowing, isReminded",
         ConsistentRead: Boolean(opts.consistent),
         ExclusiveStartKey: key,
       })
@@ -104,17 +110,26 @@ export async function getEngagementStats(
       } else if (sk.startsWith("SHARE#")) {
         stats.shares++;
       } else if (sk.startsWith("IMPRESSION#") || sk.startsWith("VIEW#")) {
-        const uid = String(it.userId || sk.replace(/^(IMPRESSION|VIEW)#/, "")).trim().toLowerCase();
-        if (uid && !seenImpressions.has(uid)) {
-          seenImpressions.add(uid);
-          stats.impressions++;
-        }
-      } else if (sk.startsWith("VOTE#") && it.selectedOptionId != null) {
+        stats.impressions += Math.max(1, Number(it.impressionCount || 1));
+      } else if (sk.startsWith("VOTE#") && (it.selectedOptionId != null || it.isFollowing || it.isReminded)) {
+        const uidKey = sk.slice(5);
         stats.participations++;
-        stats.userVotes.set(sk.slice(5), String(it.selectedOptionId));
-        if (!it.questionId) {
-          const opt = String(it.selectedOptionId).trim().toLowerCase();
-          stats.votesByOption[opt] = (stats.votesByOption[opt] || 0) + 1;
+        if (it.selectedOptionId != null) {
+          stats.userVotes.set(uidKey, String(it.selectedOptionId));
+        }
+        const optLower = String(it.selectedOptionId || "").trim().toLowerCase();
+        const didFollow = Boolean(it.isFollowing) || optLower.split(",").map((s) => s.trim()).includes("follow");
+        const didRemind = Boolean(it.isReminded) || optLower.split(",").map((s) => s.trim()).includes("remind");
+        if (didFollow) {
+          stats.followCount++;
+          stats.userFollows.add(uidKey);
+        }
+        if (didRemind) {
+          stats.remindCount++;
+          stats.userReminds.add(uidKey);
+        }
+        if (!it.questionId && it.selectedOptionId != null) {
+          stats.votesByOption[optLower] = (stats.votesByOption[optLower] || 0) + 1;
         }
       } else if (sk.startsWith("COMMENT#")) {
         stats.commentsCount++;
@@ -130,11 +145,7 @@ export async function getEngagementStats(
         const cId = String(it.commentId || sk.slice("SOCIAL_COMMENT#".length)).trim();
         if (cId) explicitSocialComments.add(cId);
       } else if (sk.startsWith("SOCIAL_IMPRESSION#")) {
-        const impKey = sk.slice("SOCIAL_IMPRESSION#".length).toLowerCase();
-        if (impKey && !seenSocialImpressions.has(impKey)) {
-          seenSocialImpressions.add(impKey);
-          stats.socialImpressions++;
-        }
+        stats.socialImpressions += Math.max(1, Number(it.impressionCount || 1));
       }
     }
     key = r.LastEvaluatedKey;
@@ -227,6 +238,37 @@ export function applyEngagementStats(item: any, stats: EngagementStats, opts: { 
   item.totalSocialResponsesCount = stats.totalSocialResponses;
 
   if (item.type === "quiz" || item.type === "fan_battle" || item.type === "meme") return item;
+
+  if (item.type === "follow") {
+    item.options = [];
+    item.followData = {
+      ...(item.followData || {}),
+      followCount: stats.followCount,
+      remindCount: stats.remindCount,
+    };
+    item.totalVotes = stats.participations;
+    return item;
+  }
+
+  if (item.type === "match_result") {
+    item.options = [];
+    return item;
+  }
+
+  if (
+    item.type === "express" &&
+    (item.expressData?.responseMode === "text" || !primaryOptions(item)?.length)
+  ) {
+    item.totalResponses = stats.participations;
+    item.totalVotes = stats.participations;
+    if (item.expressData) {
+      item.expressData.responseMode = "text";
+      item.expressData.options = [];
+      item.expressData.totalResponses = stats.participations;
+      item.expressData.totalVotes = stats.participations;
+    }
+    return item;
+  }
 
   let result: { options: any[]; totalVotes: number } | null = null;
   for (const key of ["pollData", "debateData", "expressData", "questionData", "predictionData"]) {

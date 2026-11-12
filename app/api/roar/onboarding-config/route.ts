@@ -6,10 +6,25 @@ import { docClient } from "@/lib/dynamodb";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 
+import cloudinary from "@/lib/cloudinary";
+
 export const dynamic = "force-dynamic";
 
-type ConfigType = "sports" | "engagement" | "followEntities" | "requestedSports";
-const VALID_TYPES: ConfigType[] = ["sports", "engagement", "followEntities", "requestedSports"];
+// If `image` is a base64 data URL, upload it to Cloudinary and swap in the hosted URL.
+async function hostImageIfNeeded<T extends { image?: unknown }>(obj: T): Promise<T> {
+  const v = typeof obj?.image === "string" ? obj.image.trim() : "";
+  if (!v.startsWith("data:image/")) return obj;
+  try {
+    const up = await cloudinary.uploader.upload(v, { folder: "onboarding-config" });
+    return { ...obj, image: up.secure_url };
+  } catch (err) {
+    console.error("[OnboardingConfig] Cloudinary upload failed:", err);
+    return obj; // keep the data URL so the save isn't lost
+  }
+}
+
+type ConfigType = "sports" | "engagement" | "followEntities" | "requestedSports" | "profileSetup";
+const VALID_TYPES: ConfigType[] = ["sports", "engagement", "followEntities", "requestedSports", "profileSetup"];
 
 const DEFAULT_REQUESTED_SPORTS = [
   "Basketball",
@@ -41,6 +56,10 @@ const DEFAULT_QUESTIONS: Record<ConfigType, { question: string; subtitle: string
   requestedSports: {
     question: "Don't see your favorite sports?",
     subtitle: "Please select and we will work hard to get it to you soonest",
+  },
+  profileSetup: {
+    question: "Set up your profile",
+    subtitle: "Pick your teams, loyalties and interests",
   },
 };
 
@@ -291,8 +310,9 @@ export async function POST(req: NextRequest) {
     // ── Handle Bulk Insertion of Multiple Options ───────────────────────
     if (bulkItems && Array.isArray(bulkItems) && bulkItems.length > 0) {
       const createdItems = [];
-      for (const singleItem of bulkItems) {
-        if (!singleItem?.label?.trim()) continue;
+      for (const rawItem of bulkItems) {
+        if (!rawItem?.label?.trim()) continue;
+        const singleItem = await hostImageIfNeeded(rawItem);
         const itemId = `item_${Math.random().toString(36).substring(2, 15)}`;
         const now = Date.now();
         const cat = singleItem.category || singleItem.title || "Sports";
@@ -340,10 +360,14 @@ export async function POST(req: NextRequest) {
 
     const itemId = `item_${Math.random().toString(36).substring(2, 15)}`;
     const now = Date.now();
-    const category = item.category || item.title || (type === "followEntities" ? "Sports" : undefined);
+    const category =
+      item.category ||
+      item.title ||
+      (type === "followEntities" ? "Sports" : type === "profileSetup" ? "My Teams & Sports" : undefined);
 
+    const hostedItem = await hostImageIfNeeded(item);
     const data = {
-      ...item,
+      ...hostedItem,
       id: itemId,
       label: item.label.trim(),
       category: category,
@@ -386,7 +410,8 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
-    const { type, id, updates } = body as { type: ConfigType; id: string; updates: any };
+    const { type, id, updates: rawUpdates } = body as { type: ConfigType; id: string; updates: any };
+    const updates = rawUpdates ? await hostImageIfNeeded(rawUpdates) : rawUpdates;
 
     if (!type || !VALID_TYPES.includes(type)) {
       return NextResponse.json({ error: "Invalid type" }, { status: 400 });

@@ -593,6 +593,11 @@ import { docClient } from "@/lib/dynamodb";
 import { dualWrite, dualDelete, getCandidateTableNames } from "@/lib/dualWrite";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  sortMatchMoments,
+  inferMomentInnings,
+  parsePreMatchOffsetMinutes,
+} from "@/lib/matchMomentTimeline";
 
 export const dynamic = "force-dynamic";
 
@@ -803,16 +808,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const moments = Array.from(momentMap.values());
-
-    // Sort by innings, then over, then newest first
-    moments.sort((a, b) => {
-      if (a.innings !== b.innings) return (a.innings || 1) - (b.innings || 1);
-      const ovA = parseFloat(a.overs || "0");
-      const ovB = parseFloat(b.overs || "0");
-      if (ovA !== ovB) return ovA - ovB;
-      return (b.createdAt || 0) - (a.createdAt || 0);
-    });
+    const moments = sortMatchMoments(Array.from(momentMap.values()));
 
     return NextResponse.json({
       success: true,
@@ -843,6 +839,9 @@ export async function POST(req: NextRequest) {
       stage,
       venue,
       score,
+      timingLabel,
+      preMatchOffset,
+      timelineOrder,
       matchOverTimestamp,
       event,
       matchMoment,
@@ -899,18 +898,39 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const cleanPhase = String(phase || "").trim();
+    const resolvedInnings = inferMomentInnings(cleanPhase, innings);
+    const cleanOvers = String(overs || "").trim();
+    const cleanTimingLabel = String(timingLabel || preMatchOffset || "").trim();
+    const cleanTimestamp = String(matchOverTimestamp || "").trim() || cleanTimingLabel;
+    const parsedOffset =
+      cleanPhase.toLowerCase().includes("pre")
+        ? parsePreMatchOffsetMinutes(cleanTimingLabel || cleanOvers || String(event || ""))
+        : null;
+    const numericTimelineOrder =
+      typeof timelineOrder === "number" && Number.isFinite(timelineOrder)
+        ? timelineOrder
+        : parsedOffset !== null
+        ? parsedOffset
+        : undefined;
+
     const payload = {
       momentId: cleanMomentId,
       matchId: cleanMatchId,
       ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
-      innings: Number(innings) || 1,
-      phase: String(phase || "").trim(),
-      overs: String(overs || "").trim(),
+      innings: resolvedInnings,
+      phase: cleanPhase,
+      overs: cleanOvers,
       format: String(format || "").trim(),
       stage: String(stage || "").trim(),
       venue: String(venue || "").trim(),
       score: String(score || "").trim(),
-      matchOverTimestamp: String(matchOverTimestamp || "").trim(),
+      ...(cleanTimingLabel ? { timingLabel: cleanTimingLabel } : {}),
+      ...(cleanPhase.toLowerCase().includes("pre") && cleanTimingLabel
+        ? { preMatchOffset: cleanTimingLabel }
+        : {}),
+      ...(numericTimelineOrder !== undefined ? { timelineOrder: numericTimelineOrder } : {}),
+      matchOverTimestamp: cleanTimestamp,
       event: String(event).trim(),
       matchMoment: String(matchMoment).trim(),
       description: String(description || "").trim(),

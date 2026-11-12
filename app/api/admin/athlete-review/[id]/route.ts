@@ -23,6 +23,7 @@ export async function GET(
     const { id } = await props.params;
 
     const res = await fetch(`${config.baseUrl}/athlete-review-queue/${id}`, {
+      signal: AbortSignal.timeout(30000),
       cache: "no-store",
       headers: { "x-api-key": config.apiKey },
     });

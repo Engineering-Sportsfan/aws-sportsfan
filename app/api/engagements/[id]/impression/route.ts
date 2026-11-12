@@ -1,11 +1,11 @@
-// app/api/engagements/[id]/impression/route.ts — Engagement Card Impression Tracking (1 unique impression per user per engagement)
+// app/api/engagements/[id]/impression/route.ts — Engagement Card Impression Tracking (non-unique: every view/re-view counts +1)
 import { NextRequest, NextResponse } from "next/server";
-import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { getUser } from "@/lib/getUser";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
-import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
+import { applyEngagementStats, getEngagementStats } from "@/lib/engagementSocial";
 
 export const dynamic = "force-dynamic";
 
@@ -17,25 +17,10 @@ const clean = (id: string) =>
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const cleanId = clean((await params).id);
-    const authUser = await getUser(req).catch(() => null);
-    const userId = authUser?.userId || authUser?.email || req.nextUrl.searchParams.get("userId");
-
-    const impressions = await countRecords(cleanId, "IMPRESSION#").catch(() => 0);
-    let impressed = false;
-    if (userId) {
-      const r = await docClient
-        .send(
-          new GetCommand({
-            TableName: TABLES.SocialAndContent,
-            Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: `IMPRESSION#${userId}` },
-          })
-        )
-        .catch(() => null);
-      impressed = !!r?.Item;
-    }
+    const stats = await getEngagementStats(cleanId, { consistent: true });
 
     return NextResponse.json(
-      { success: true, impressed, impressions },
+      { success: true, impressions: stats.impressions, totalActions: stats.totalActions },
       { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
     );
   } catch (error: unknown) {
@@ -70,36 +55,28 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const resolvedSeriesId = body?.seriesId || parentItem?.seriesId || undefined;
 
     const now = Date.now();
-    let alreadyImpressed = false;
+    const rand = Math.random().toString(36).slice(2, 7);
 
-    try {
-      await docClient.send(
-        new PutCommand({
-          TableName: TABLES.SocialAndContent,
-          Item: {
-            contentId: `ENGAGEMENT#${cleanId}`,
-            sk: `IMPRESSION#${userId}`,
-            entityId: "IMPRESSION#ENGAGEMENT",
-            userId,
-            userName: body?.userName || authUser?.name || undefined,
-            userAvatar: body?.userAvatar || authUser?.avatarUrl || undefined,
-            engagementId: cleanId,
-            ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
-            ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
-            ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
-            viewedAt: now,
-            createdAt: now,
-          },
-          ConditionExpression: "attribute_not_exists(sk)",
-        })
-      );
-    } catch (e: any) {
-      if (e?.name === "ConditionalCheckFailedException") {
-        alreadyImpressed = true;
-      } else {
-        throw e;
-      }
-    }
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLES.SocialAndContent,
+        Item: {
+          contentId: `ENGAGEMENT#${cleanId}`,
+          sk: `IMPRESSION#${userId}#${now}_${rand}`,
+          entityId: "IMPRESSION#ENGAGEMENT",
+          userId,
+          userName: body?.userName || authUser?.name || undefined,
+          userAvatar: body?.userAvatar || authUser?.avatarUrl || undefined,
+          engagementId: cleanId,
+          ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
+          ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
+          ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
+          impressionCount: 1,
+          viewedAt: now,
+          createdAt: now,
+        },
+      })
+    );
 
     const stats = await getEngagementStats(cleanId, { consistent: true });
     if (parentItem) {
@@ -112,7 +89,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       success: true,
-      alreadyImpressed,
       impressions: stats.impressions,
       totalActions: stats.totalActions,
     });

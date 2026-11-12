@@ -14,6 +14,7 @@ import {
   Clock,
 } from "lucide-react";
 import CoreEngineStepper from "../../components/CoreEngineStepper";
+import { sortMatchMoments, formatMomentTimingBadge } from "@/lib/matchMomentTimeline";
 
 interface MatchOption {
   match_id: string;
@@ -54,7 +55,7 @@ function MomentListContent() {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        const res = await fetch("/api/matches?limit=100");
+        const res = await fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const list: MatchOption[] = json.data.map((m: Record<string, unknown>) => ({
@@ -83,7 +84,7 @@ function MomentListContent() {
       const res = await fetch(url);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
-        setMoments(json.data);
+        setMoments(sortMatchMoments(json.data));
       } else {
         setMoments([]);
       }
@@ -247,14 +248,14 @@ function MomentListContent() {
         <div className="space-y-3">
           {filteredMoments.map((m) => (
             <div
-              key={m.momentId}
+              key={`${m.matchId || ""}_${m.momentId}`}
               className="p-4 sm:p-5 rounded-2xl bg-[#111625] border border-white/10 hover:border-white/20 transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-4"
             >
               {/* Left Info */}
               <div className="space-y-1.5 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300">
-                    {m.phase || `Innings ${m.innings}`} · Over {m.overs}
+                    {formatMomentTimingBadge(m)}
                   </span>
                   {m.score && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white/5 text-gray-300 border border-white/5 font-mono">
@@ -318,7 +319,7 @@ function MomentListContent() {
 
                 {/* Delete */}
                 <button
-                  onClick={() => handleDeleteMoment(m.momentId, `Over ${m.overs}`)}
+                  onClick={() => handleDeleteMoment(m.momentId, formatMomentTimingBadge(m))}
                   className="p-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-all border border-red-500/20"
                   title="Delete Moment"
                 >

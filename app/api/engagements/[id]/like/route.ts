@@ -9,6 +9,7 @@ import { dispatchFlipArenaNotification } from "@/lib/notifications";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
 import { getCandidateTableNames } from "@/lib/dualWrite";
+import { withReactionKeys } from "@/lib/engagementReactions";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +70,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // 3. Firestore fallback
     if (!liked && db) {
       try {
-        const snap = await db.collection("engagement_likes").doc(`${userId}_${cleanId}`).get();
+        const snap = await db.collection(getFirestoreCollection("engagement_likes")).doc(`${userId}_${cleanId}`).get();
         if (snap.exists) liked = true;
       } catch {}
     }
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     if (!alreadyLiked && db) {
       try {
-        const snap = await db.collection("engagement_likes").doc(likeDocId).get();
+        const snap = await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).get();
         if (snap.exists) alreadyLiked = true;
       } catch {}
     }
@@ -148,7 +149,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         await docClient.send(
           new PutCommand({
             TableName: TABLES.SocialAndContent,
-            Item: {
+            Item: withReactionKeys({
               contentId: `ENGAGEMENT#${cleanId}`,
               sk: `LIKE#${userId}`,
               entityId: "LIKE#ENGAGEMENT",
@@ -160,7 +161,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
               likedAt: now,
               createdAt: now,
-            },
+            }, { userId, action: "like", at: now, engagement: item, matchIdHint: resolvedMatchId }),
           })
         );
       } catch (dynPutErr) {
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
       if (db) {
         try {
-          await db.collection("engagement_likes").doc(likeDocId).set({
+          await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).set({
             userId,
             engagementId: cleanId,
             createdAt: now,
@@ -249,7 +250,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
       if (db) {
         try {
-          await db.collection("engagement_likes").doc(likeDocId).delete();
+          await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).delete();
         } catch {}
       }
     }
@@ -278,7 +279,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       // Dual-write count to visible_recognitions or match_room_notifications if present
       if (db) {
         try {
-          await db.collection("visible_recognitions").doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
+          await db.collection(getFirestoreCollection("visible_recognitions")).doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
         } catch {}
         try {
           await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });

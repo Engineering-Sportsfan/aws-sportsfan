@@ -189,6 +189,7 @@ export async function POST(
     let answer = "";
     try {
       const aiRes = await fetch(`${PYTHON_AI_URL}/chat`, {
+        signal: AbortSignal.timeout(60000),
         method: "POST",
         headers: {
           "Content-Type": "application/json",

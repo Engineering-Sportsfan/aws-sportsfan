@@ -10,6 +10,7 @@ import { QueryCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { EngagementComment } from "@/types/engagements";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 import { applyEngagementStats, getEngagementStats } from "@/lib/engagementSocial";
+import { withReactionKeys } from "@/lib/engagementReactions";
 
 export const dynamic = "force-dynamic";
 
@@ -295,7 +296,7 @@ export async function POST(
       await docClient.send(
         new PutCommand({
           TableName: TABLES.SocialAndContent,
-          Item: {
+          Item: withReactionKeys({
             contentId: `ENGAGEMENT#${cleanId}`,
             sk: `COMMENT#${commentId}`,
             entityId: `COMMENT#${cleanId}`,
@@ -303,7 +304,7 @@ export async function POST(
             ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
             ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
             ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
-          },
+          }, { userId, action: parentId ? "reply" : "comment", at: now, engagement: found?.item, matchIdHint: resolvedMatchId }),
         })
       );
     } catch (dynErr) {
@@ -418,7 +419,7 @@ export async function POST(
           // Dual-write count to visible_recognitions and match_room_notifications collections
           if (db) {
             try {
-              await db.collection("visible_recognitions").doc(cleanId).set({ commentsCount: total }, { merge: true });
+              await db.collection(getFirestoreCollection("visible_recognitions")).doc(cleanId).set({ commentsCount: total }, { merge: true });
             } catch {}
             try {
               await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ commentsCount: total }, { merge: true });

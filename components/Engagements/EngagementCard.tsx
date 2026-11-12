@@ -17,6 +17,10 @@ import {
     Coins,
     ChevronDown,
     ChevronUp,
+    Send,
+    Bell,
+    Check,
+    ChevronRight,
 } from "lucide-react";
 import axios from "axios";
 import type { EngagementItem } from "@/types/engagements";
@@ -85,6 +89,29 @@ export function useRunningCountdown(
     return timeLeft;
 }
 
+function getFollowCountdown(targetTs?: number | string | null, nowMs: number = Date.now(), explicitStatus?: string) {
+    let targetMs = NaN;
+    if (typeof targetTs === "number") {
+        targetMs = targetTs > 0 && targetTs < 1e11 ? targetTs * 1000 : targetTs;
+    } else if (typeof targetTs === "string" && targetTs.trim()) {
+        const num = Number(targetTs);
+        targetMs = Number.isFinite(num) && num > 0 ? (num < 1e11 ? num * 1000 : num) : new Date(targetTs).getTime();
+    }
+    if (!Number.isFinite(targetMs) || targetMs <= 0) {
+        const isLiveFallback = String(explicitStatus || "").trim().toLowerCase() === "live";
+        return { isLive: isLiveFallback, hasTarget: false, label: isLiveFallback ? "LIVE" : "Soon", statusText: isLiveFallback ? "LIVE" : "Upcoming" };
+    }
+    const diffMs = targetMs - nowMs;
+    if (diffMs <= 0) return { isLive: true, hasTarget: true, label: "LIVE", statusText: "LIVE" };
+    const totalSec = Math.ceil(diffMs / 1000);
+    const hours = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    const mm = String(mins).padStart(2, "0");
+    const ss = String(secs).padStart(2, "0");
+    return { isLive: false, hasTarget: true, label: hours >= 1 ? `${hours}h ${mm}m ${ss}s` : `${mm}m ${ss}s`, statusText: "Upcoming" };
+}
+
 export default function EngagementCard({
     item,
     onInteraction,
@@ -126,6 +153,19 @@ export default function EngagementCard({
     });
 
     const [isVoting, setIsVoting] = useState(false);
+    const [expressInput, setExpressInput] = useState<string>(() => (item.userVote ? String(item.userVote) : ""));
+    const [isFollowing, setIsFollowing] = useState<boolean>(Boolean((item as any).userFollowing));
+    const [isReminded, setIsReminded] = useState<boolean>(Boolean((item as any).userReminded));
+    const [followCount, setFollowCount] = useState<number>(() => Number((item as any).followData?.followCount ?? 0));
+    const [remindCount, setRemindCount] = useState<number>(() => Number((item as any).followData?.remindCount ?? 0));
+    const [followNowMs, setFollowNowMs] = useState<number>(() => Date.now());
+
+    useEffect(() => {
+        if (item.type !== "follow") return;
+        setFollowNowMs(Date.now());
+        const t = setInterval(() => setFollowNowMs(Date.now()), 1000);
+        return () => clearInterval(t);
+    }, [item.type]);
 
     // Likes state with localStorage persistence
     const [likes, setLikes] = useState<number>(Number(item.likes) || 0);
@@ -173,7 +213,11 @@ export default function EngagementCard({
             setSelectedOptionId(item.userVote);
             setUserVoted(true);
         }
-    }, [item.likes, item.shares, item.totalEngaged, item.commentsCount, item.userLiked, item.userVote]);
+        if ((item as any).userFollowing !== undefined) setIsFollowing(Boolean((item as any).userFollowing));
+        if ((item as any).userReminded !== undefined) setIsReminded(Boolean((item as any).userReminded));
+        if ((item as any).followData?.followCount !== undefined) setFollowCount(Number((item as any).followData.followCount) || 0);
+        if ((item as any).followData?.remindCount !== undefined) setRemindCount(Number((item as any).followData.remindCount) || 0);
+    }, [item.likes, item.shares, item.totalEngaged, item.commentsCount, item.userLiked, item.userVote, (item as any).userFollowing, (item as any).userReminded, (item as any).followData?.followCount, (item as any).followData?.remindCount]);
 
     // ── Type Theme Info ──
     const theme = useMemo(() => {
@@ -189,10 +233,24 @@ export default function EngagementCard({
             case "poll":
             case "express":
                 return {
-                    label: item.type === "debate" ? "DEBATE" : "POLL",
-                    icon: "📊",
+                    label: item.type === "debate" ? "DEBATE" : item.type === "express" ? "EXPRESS" : "POLL",
+                    icon: item.type === "express" ? "⚡" : "📊",
                     badgeBg: "bg-blue-500/20 text-blue-400 border border-blue-500/40",
                     accent: "#60a5fa",
+                };
+            case "follow":
+                return {
+                    label: "FOLLOW MATCH",
+                    icon: "🔔",
+                    badgeBg: "bg-purple-500/20 text-purple-300 border border-purple-500/40",
+                    accent: "#a855f7",
+                };
+            case "match_result":
+                return {
+                    label: "MATCH RESULT",
+                    icon: "🏆",
+                    badgeBg: "bg-sky-500/20 text-sky-300 border border-sky-500/40",
+                    accent: "#38bdf8",
                 };
             case "quiz":
             case "question":
@@ -239,6 +297,7 @@ export default function EngagementCard({
                 `/api/engagements/${encodeURIComponent(item.id)}/vote`,
                 {
                     selectedOptionId: optionId,
+                    ...(item.type === "express" ? { responseText: optionId } : {}),
                     userId: currentUserId,
                     userName: currentUserName,
                     userAvatar: currentUserAvatar,
@@ -449,7 +508,272 @@ export default function EngagementCard({
     };
 
     // ─────────────────────────────────────────────────────────────
-    // RENDER: Poll / Debate / Express Body
+    // RENDER: Express Open-Text Input Body (No Options)
+    // ─────────────────────────────────────────────────────────────
+    const renderExpress = () => {
+        const placeholder =
+            String(
+                item.inputPlaceholder ||
+                item.expressData?.placeholder ||
+                "Write your thoughts..."
+            ).trim() || "Write your thoughts...";
+        const totalResponses = Number(
+            liveVoteData?.totalResponses ??
+            liveVoteData?.totalVotes ??
+            item.expressData?.totalResponses ??
+            item.totalVotes ??
+            0
+        ) + (!liveVoteData && userVoted ? 1 : 0);
+
+        const submitExpress = () => {
+            const clean = expressInput.trim();
+            if (!clean || isVoting) return;
+            handleVote(clean);
+        };
+
+        return (
+            <div className="flex flex-col gap-1.5 mt-1">
+                {!userVoted ? (
+                    <div className="flex items-end gap-1.5">
+                        <textarea
+                            rows={2}
+                            maxLength={280}
+                            value={expressInput}
+                            disabled={isVoting}
+                            onChange={(e) => setExpressInput(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    submitExpress();
+                                }
+                            }}
+                            placeholder={placeholder}
+                            className="flex-1 min-w-0 px-3 py-2 rounded-lg bg-white/5 focus:bg-white/10 border border-white/15 focus:border-cyan-400/60 outline-none text-xs text-white placeholder:text-white/40 resize-none transition-all disabled:opacity-50"
+                        />
+                        <button
+                            type="button"
+                            disabled={isVoting || !expressInput.trim()}
+                            onClick={submitExpress}
+                            className="shrink-0 h-9 px-3 rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:bg-white/10 disabled:text-white/30 text-black text-xs font-extrabold inline-flex items-center gap-1 transition-all"
+                        >
+                            <Send size={12} />
+                            <span>Send</span>
+                        </button>
+                    </div>
+                ) : (
+                    <div className="rounded-lg p-2.5 bg-cyan-500/10 border border-cyan-400/30">
+                        <div className="flex items-center justify-between text-[10px] font-bold text-cyan-300 mb-1">
+                            <span className="inline-flex items-center gap-1">
+                                <CheckCircle2 size={11} /> Your take
+                            </span>
+                            <span className="text-white/50">
+                                {totalResponses} {totalResponses === 1 ? "response" : "responses"}
+                            </span>
+                        </div>
+                        {selectedOptionId && (
+                            <p className="text-xs text-white break-words">&ldquo;{selectedOptionId}&rdquo;</p>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // RENDER: Upcoming Match Follow / Remind Me Card
+    // ─────────────────────────────────────────────────────────────
+    const renderFollow = () => {
+        const fd = (item as any).followData || {};
+        const team1Code = fd.team1Code || "T1";
+        const team2Code = fd.team2Code || "T2";
+        const team1Flag = fd.team1Flag || "🏏";
+        const team2Flag = fd.team2Flag || "🏏";
+        const headline = fd.team1Code && fd.team2Code ? `${team1Code} vs ${team2Code}` : item.title;
+        const countdown = getFollowCountdown(
+            fd.matchStartTime || fd.matchStartMs || fd.targetStartMs || (item as any).matchStartMs || (item as any).matchStartTime,
+            followNowMs,
+            fd.statusLabel
+        );
+
+        const toggleAction = async (action: "follow" | "remind") => {
+            if (isVoting) return;
+            const next = action === "follow" ? !isFollowing : !isReminded;
+            setIsVoting(true);
+            if (action === "follow") {
+                setIsFollowing(next);
+                setFollowCount((c) => Math.max(0, c + (next ? 1 : -1)));
+            } else {
+                setIsReminded(next);
+                setRemindCount((c) => Math.max(0, c + (next ? 1 : -1)));
+            }
+            try {
+                const res = await axios.post(`/api/engagements/${item.id}/vote`, {
+                    actionType: action,
+                    active: next,
+                    selectedOptionId: action,
+                    userId: currentUserId,
+                    userName: currentUserName,
+                    userAvatar: currentUserAvatar,
+                    matchId: item.matchId,
+                    momentId: item.momentId || item.loopId,
+                });
+                if (typeof res.data?.isFollowing === "boolean") setIsFollowing(res.data.isFollowing);
+                if (typeof res.data?.isReminded === "boolean") setIsReminded(res.data.isReminded);
+                if (res.data?.followCount !== undefined) setFollowCount(Number(res.data.followCount) || 0);
+                if (res.data?.remindCount !== undefined) setRemindCount(Number(res.data.remindCount) || 0);
+            } catch { /* ignore */ } finally {
+                setIsVoting(false);
+            }
+        };
+
+        const renderFlag = (flag?: string, nameOrCode?: string) => {
+            const raw = String(flag || "").trim();
+            if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("/") || raw.startsWith("data:")) {
+                return <img src={raw} alt={nameOrCode || "Flag"} className="w-full h-full object-cover" />;
+            }
+            if (raw) return <span className="text-xl leading-none">{raw}</span>;
+            return <span className="text-[10px] font-black text-white/80">{String(nameOrCode || "🏏").slice(0, 3).toUpperCase()}</span>;
+        };
+
+        return (
+            <div className="rounded-xl border border-white/15 bg-gradient-to-b from-[#161026] via-[#110d1f] to-[#0b0914] overflow-hidden shadow-lg mt-1">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-black/25">
+                    {countdown.isLive ? (
+                        <span className="text-[11px] font-black text-rose-400 border-b-2 border-rose-500 pb-0.5 inline-flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                            LIVE
+                        </span>
+                    ) : (
+                        <span className="text-[11px] font-bold text-white border-b-2 border-purple-500 pb-0.5">{countdown.statusText}</span>
+                    )}
+                    {countdown.isLive ? (
+                        <span className="text-[11px] font-black text-emerald-400 inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            Live Now
+                        </span>
+                    ) : (
+                        <span className="text-[11px] font-semibold text-white/80 flex items-center gap-0.5 tabular-nums">
+                            {countdown.label} <ChevronRight size={12} />
+                        </span>
+                    )}
+                </div>
+                <div className="px-3 py-3 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                        <div className="w-10 h-7 rounded bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center">
+                            {renderFlag(team1Flag, fd.team1Name || team1Code)}
+                        </div>
+                        <div className="text-center flex-1 min-w-0">
+                            <div className="text-sm font-extrabold text-white truncate">{headline}</div>
+                            <div className="text-[9px] uppercase tracking-widest text-white/70 truncate">{fd.matchLabel || "T20 INTERNATIONAL"}</div>
+                            <div className="text-[10px] text-white/80 truncate">{fd.matchTimeLabel || "Upcoming"}</div>
+                        </div>
+                        <div className="w-10 h-7 rounded bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center">
+                            {renderFlag(team2Flag, fd.team2Name || team2Code)}
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            onClick={() => toggleAction("follow")}
+                            className={`h-8 rounded-lg px-2 text-xs font-bold inline-flex items-center justify-center gap-1 ${isFollowing ? "bg-[#7c3aed]/20 border border-[#8b5cf6] text-white" : "bg-white/5 border border-white/20 text-white/80"}`}
+                        >
+                            <span>{isFollowing ? "Following" : "Follow"}</span>
+                            {followCount > 0 && <span className="text-[10px]">({followCount})</span>}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => toggleAction("remind")}
+                            className={`h-8 rounded-lg px-2 text-xs font-bold inline-flex items-center justify-center gap-1 ${isReminded ? "bg-[#7c3aed]/20 border border-[#8b5cf6] text-white" : "bg-white/5 border border-white/20 text-white/80"}`}
+                        >
+                            {isReminded ? <Check size={12} /> : <Bell size={12} />}
+                            <span>{isReminded ? "Reminded" : "Remind Me"}</span>
+                            {remindCount > 0 && <span className="text-[10px]">({remindCount})</span>}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // RENDER: Final Result (Match Snapshot) & Top Performer (POTM)
+    // ─────────────────────────────────────────────────────────────
+    const renderMatchResult = () => {
+        const mr: any = (item as any).matchResultData || {};
+        const showSnapshot =
+            mr.showSnapshot !== false &&
+            Boolean(mr.team1Score || mr.team2Score || mr.team1Name || mr.team2Name);
+        const showTopPerformer =
+            mr.showTopPerformer !== false &&
+            Boolean(mr.playerName || mr.playerStats);
+        const renderFlag = (flag?: string, name?: string) => {
+            const raw = String(flag || "").trim();
+            if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("/") || raw.startsWith("data:")) {
+                return <img src={raw} alt={name || "Flag"} className="w-full h-full object-cover" />;
+            }
+            if (raw) return <span className="text-xl leading-none">{raw}</span>;
+            return <span className="text-[10px] font-black text-white/80">{String(name || "T").slice(0, 3).toUpperCase()}</span>;
+        };
+        const initials = String(mr.playerName || "PM")
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((w: string) => w[0]?.toUpperCase() || "")
+            .join("") || "PM";
+
+        return (
+            <div className="space-y-2 mt-1">
+                {showSnapshot && (
+                    <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg space-y-2.5">
+                        <div className="text-sm font-bold text-white">{mr.snapshotHeading || "Match Snapshot"}</div>
+                        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-10 h-7 rounded-sm bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
+                                    {renderFlag(mr.team1Flag, mr.team1Name || mr.team1Code)}
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="text-[11px] text-white/75 truncate">{mr.team1Name || mr.team1Code || "Team 1"}</div>
+                                    <div className="text-sm font-extrabold text-white tabular-nums truncate">{mr.team1Score || "-"}</div>
+                                </div>
+                            </div>
+                            <div className="h-8 w-px bg-white/15" />
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-10 h-7 rounded-sm bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
+                                    {renderFlag(mr.team2Flag, mr.team2Name || mr.team2Code)}
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="text-[11px] text-white/75 truncate">{mr.team2Name || mr.team2Code || "Team 2"}</div>
+                                    <div className="text-sm font-extrabold text-white tabular-nums truncate">{mr.team2Score || "-"}</div>
+                                </div>
+                            </div>
+                        </div>
+                        {mr.resultSummary && (
+                            <div className="text-[11px] font-semibold text-emerald-400 pt-1 border-t border-white/5">{mr.resultSummary}</div>
+                        )}
+                    </div>
+                )}
+                {showTopPerformer && (
+                    <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg flex items-center gap-3.5">
+                        <div className="w-14 h-14 rounded-xl bg-gradient-to-b from-[#0284c7] to-[#1e3a8a] border border-sky-400/30 overflow-hidden shrink-0 flex items-center justify-center text-white font-black text-sm">
+                            {mr.playerImageUrl ? (
+                                <img src={mr.playerImageUrl} alt={mr.playerName || "Top Performer"} className="w-full h-full object-cover object-top" />
+                            ) : (
+                                <span>{initials}</span>
+                            )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <div className="text-[11px] font-semibold text-[#60a5fa]">{mr.performerLabel || "Top Performer"}</div>
+                            <div className="text-base font-extrabold text-white truncate">{mr.playerName}</div>
+                            {mr.playerStats && <div className="text-xs text-white/80 truncate">{mr.playerStats}</div>}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // ─────────────────────────────────────────────────────────────
+    // RENDER: Poll / Debate Body
     // ─────────────────────────────────────────────────────────────
     const renderPoll = () => {
         const rawOptions =
@@ -766,18 +1090,22 @@ export default function EngagementCard({
                         </span>
 
                         {/* Running Timer */}
-                        <span className="text-[9px] font-mono font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 flex items-center gap-1 ml-auto">
-                            <Clock size={10} className="text-amber-400" />
-                            <span>{runningTimer} remaining</span>
-                        </span>
+                        {item.type !== "follow" && item.type !== "match_result" && (
+                            <span className="text-[9px] font-mono font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 flex items-center gap-1 ml-auto">
+                                <Clock size={10} className="text-amber-400" />
+                                <span>{runningTimer} remaining</span>
+                            </span>
+                        )}
                     </div>
                 </div>
 
                 {/* ── Post Content / Title ── */}
-                <p className="leading-snug text-white font-medium my-1" style={{ fontSize: 10 }}>
-                    {item.title}
-                </p>
-                {item.subtitle && item.subtitle !== item.title && (
+                {item.type !== "follow" && item.type !== "match_result" && (
+                    <p className="leading-snug text-white font-medium my-1" style={{ fontSize: 10 }}>
+                        {item.title}
+                    </p>
+                )}
+                {item.type !== "match_result" && item.subtitle && item.subtitle !== item.title && (
                     <p className="text-[10px] text-white/60 mb-2 leading-relaxed">
                         {item.subtitle}
                     </p>
@@ -786,7 +1114,10 @@ export default function EngagementCard({
                 {/* ── Interactive Options ── */}
                 <div className="my-1.5">
                     {item.type === "prediction" && renderPrediction()}
-                    {(item.type === "debate" || item.type === "poll" || item.type === "express") && renderPoll()}
+                    {(item.type === "debate" || item.type === "poll") && renderPoll()}
+                    {item.type === "express" && renderExpress()}
+                    {item.type === "follow" && renderFollow()}
+                    {item.type === "match_result" && renderMatchResult()}
                     {(item.type === "quiz" || item.type === "question") && renderQuiz()}
                     {item.type === "fan_battle" && renderFanBattle()}
                     {item.type === "meme" && renderMeme()}
@@ -883,10 +1214,12 @@ export default function EngagementCard({
                     <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${theme.badgeBg}`}>
                         {theme.icon} {theme.label}
                     </span>
-                    <span className="text-[9px] font-mono font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 flex items-center gap-1">
-                        <Clock size={10} className="text-amber-400" />
-                        <span>{runningTimer} remaining</span>
-                    </span>
+                    {item.type !== "follow" && item.type !== "match_result" && (
+                        <span className="text-[9px] font-mono font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 flex items-center gap-1">
+                            <Clock size={10} className="text-amber-400" />
+                            <span>{runningTimer} remaining</span>
+                        </span>
+                    )}
                 </div>
                 {item.sport && (
                     <span className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">
@@ -896,16 +1229,21 @@ export default function EngagementCard({
             </div>
 
             {/* ── TITLE ── */}
-            <h3 className="text-sm font-bold text-white mt-1.5 leading-snug">
-                {item.title}
-            </h3>
-            {item.subtitle && item.subtitle !== item.title && (
+            {item.type !== "follow" && item.type !== "match_result" && (
+                <h3 className="text-sm font-bold text-white mt-1.5 leading-snug">
+                    {item.title}
+                </h3>
+            )}
+            {item.type !== "match_result" && item.subtitle && item.subtitle !== item.title && (
                 <p className="text-xs text-white/60 mt-0.5 line-clamp-2">{item.subtitle}</p>
             )}
 
             {/* ── INTERACTIVE BODY ── */}
             {item.type === "prediction" && renderPrediction()}
-            {(item.type === "debate" || item.type === "poll" || item.type === "express") && renderPoll()}
+            {(item.type === "debate" || item.type === "poll") && renderPoll()}
+            {item.type === "express" && renderExpress()}
+            {item.type === "follow" && renderFollow()}
+            {item.type === "match_result" && renderMatchResult()}
             {(item.type === "quiz" || item.type === "question") && renderQuiz()}
             {item.type === "fan_battle" && renderFanBattle()}
             {item.type === "meme" && renderMeme()}

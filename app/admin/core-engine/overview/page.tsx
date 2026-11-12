@@ -23,6 +23,7 @@ import {
   Check,
 } from "lucide-react";
 import CoreEngineStepper from "../components/CoreEngineStepper";
+import { sortMatchMoments, formatMomentOptionLabel, formatMomentTimingBadge } from "@/lib/matchMomentTimeline";
 
 interface MatchOption {
   match_id: string;
@@ -39,10 +40,16 @@ interface MatchMomentItem {
   momentId: string;
   matchId: string;
   innings?: number;
+  phase?: string;
   overs: string;
   score: string;
   event: string;
   matchMoment?: string;
+  timingLabel?: string;
+  preMatchOffset?: string;
+  timelineOrder?: number;
+  matchOverTimestamp?: string;
+  createdAt?: number;
 }
 
 interface EngagementOptionItem {
@@ -196,10 +203,10 @@ function OverviewContent() {
     setLoading(true);
     try {
       const [mRes, momRes, engRes, recRes] = await Promise.allSettled([
-        fetch(`/api/matches?limit=1000&_t=${Date.now()}`).then((r) => r.json()),
+        fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`).then((r) => r.json()),
         fetch(`/api/match-moments?_t=${Date.now()}`).then((r) => r.json()),
-        fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&allEnvs=true&limit=500&_t=${Date.now()}`).then((r) => r.json()),
-        fetch(`/api/visible-recognition?allEnvs=true&_t=${Date.now()}`).then((r) => r.json()),
+        fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&includeScheduled=true&limit=1000&_t=${Date.now()}`).then((r) => r.json()),
+        fetch(`/api/visible-recognition?_t=${Date.now()}`).then((r) => r.json()),
       ]);
 
       const loadedMatches: MatchOption[] =
@@ -335,7 +342,7 @@ function OverviewContent() {
       const compKey = getMomentCompositeKey(m.matchId, m.momentId);
       if (!deduped.has(compKey)) deduped.set(compKey, m);
     }
-    return Array.from(deduped.values());
+    return sortMatchMoments(Array.from(deduped.values()));
   }, [moments, selectedMatchId]);
 
   useEffect(() => {
@@ -843,7 +850,7 @@ function OverviewContent() {
                 const mLabel = !selectedMatchId ? matchLabelByKey.get(normalizeMatchKey(m.matchId)) : "";
                 return (
                   <option key={compKey} value={compKey}>
-                    {mLabel ? `[${mLabel}] ` : ""}Over {m.overs} {m.score ? `(${m.score})` : ""} — {m.event || m.matchMoment || m.momentId}
+                    {formatMomentOptionLabel(m, mLabel)}
                   </option>
                 );
               })}
@@ -904,7 +911,7 @@ function OverviewContent() {
             )}
             {activeMoment && (
               <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold">
-                Moment: Over {activeMoment.overs} ({activeMoment.event || activeMoment.score})
+                Moment: {formatMomentTimingBadge(activeMoment)} ({activeMoment.event || activeMoment.score})
               </span>
             )}
             {activeEngagement && (
@@ -1046,7 +1053,7 @@ function OverviewContent() {
                       <tr key={eng.id} className="hover:bg-white/[0.02]">
                         <td className="py-2 px-2.5 font-semibold text-white max-w-[260px] truncate">{eng.title}</td>
                         <td className="py-2 px-2.5 text-amber-300 text-[11px]">
-                          {linkedMom ? `Over ${linkedMom.overs}` : eng.momentId || "—"}
+                          {linkedMom ? formatMomentTimingBadge(linkedMom) : eng.momentId || "—"}
                         </td>
                         <td className="py-2 px-2.5 text-right font-mono text-gray-200">{st.participations}</td>
                         <td className="py-2 px-2.5 text-right font-mono text-gray-200">{st.likes}</td>
@@ -1385,7 +1392,7 @@ function OverviewContent() {
                       <td className="py-3 px-3 text-gray-400">
                         {linkedMoment ? (
                           <span className="text-amber-400 text-[11px] font-medium">
-                            Over {linkedMoment.overs} — {linkedMoment.event || linkedMoment.momentId}
+                            {formatMomentTimingBadge(linkedMoment)} — {linkedMoment.event || linkedMoment.momentId}
                           </span>
                         ) : eng.momentId ? (
                           <span className="text-amber-400 font-mono text-[11px]">{eng.momentId}</span>

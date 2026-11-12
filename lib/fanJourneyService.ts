@@ -600,10 +600,8 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
         const seenVotes = new Set<string>();
         const seenLikes = new Set<string>();
         const seenShares = new Set<string>();
-        const seenImpressions = new Set<string>();
         const seenSocialLikes = new Set<string>();
         const seenSocialComments = new Set<string>();
-        const seenSocialImpressions = new Set<string>();
 
         for (const it of childItems) {
           const sk = String(it.sk || "");
@@ -650,11 +648,11 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
           } else if (sk.startsWith("IMPRESSION#") || sk.startsWith("VIEW#")) {
             const rawUid = String(it.userId || sk.replace(/^(IMPRESSION|VIEW)#/, "").split("#")[0]);
             const p = getOrCreateParticipant(rawUid, it.userName, it.userAvatar);
-            if (!p || seenImpressions.has(p.userId.toLowerCase())) continue;
-            seenImpressions.add(p.userId.toLowerCase());
-            p.impressions += 1;
-            p.totalInteractions += 1;
-            addMomentTouch(p, momentId, 1);
+            if (!p) continue;
+            const count = Math.max(1, Number(it.impressionCount || 1));
+            p.impressions += count;
+            p.totalInteractions += count;
+            addMomentTouch(p, momentId, count);
           } else if (sk.startsWith("SOCIAL_LIKE#")) {
             const rest = sk.slice("SOCIAL_LIKE#".length);
             const hashIdx = rest.lastIndexOf("#");
@@ -682,17 +680,13 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
             p.socialComments += 1;
             p.totalInteractions += 1;
           } else if (sk.startsWith("SOCIAL_IMPRESSION#")) {
-            const rest = sk.slice("SOCIAL_IMPRESSION#".length);
-            const hashIdx = rest.lastIndexOf("#");
-            const targetCommentId = String(it.targetCommentId || (hashIdx >= 0 ? rest.slice(0, hashIdx) : rest)).trim();
-            const rawUid = String(it.actorUserId || it.userId || (hashIdx >= 0 ? rest.slice(hashIdx + 1) : ""));
+            const parts = sk.slice("SOCIAL_IMPRESSION#".length).split("#");
+            const rawUid = String(it.actorUserId || it.userId || parts[1] || "");
             const p = getOrCreateParticipant(rawUid, it.actorUserName || it.userName);
             if (!p) continue;
-            const dKey = `${targetCommentId}#${p.userId.toLowerCase()}`;
-            if (seenSocialImpressions.has(dKey)) continue;
-            seenSocialImpressions.add(dKey);
-            p.socialImpressions += 1;
-            p.totalInteractions += 1;
+            const count = Math.max(1, Number(it.impressionCount || 1));
+            p.socialImpressions += count;
+            p.totalInteractions += count;
           }
         }
 

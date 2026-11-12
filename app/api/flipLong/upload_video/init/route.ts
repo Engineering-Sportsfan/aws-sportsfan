@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
         };
 
         const initRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true', {
+            signal: AbortSignal.timeout(15000),
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,

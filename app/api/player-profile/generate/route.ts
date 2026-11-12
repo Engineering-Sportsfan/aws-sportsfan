@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
     let data: any = {};
     try {
       const res = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(55000),
         method: "POST",
         headers: { "x-api-key": config.apiKey },
       });
