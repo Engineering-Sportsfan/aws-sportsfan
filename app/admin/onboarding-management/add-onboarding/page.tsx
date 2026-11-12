@@ -23,7 +23,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-type ConfigType = "sports" | "followEntities" | "engagement" | "requestedSports";
+type ConfigType = "sports" | "followEntities" | "engagement" | "requestedSports" | "profileSetup";
 type TabType = ConfigType | "completed";
 
 type ConfigItem = {
@@ -110,7 +110,19 @@ const DEFAULT_QUESTIONS: Record<ConfigType, { question: string; subtitle: string
     stepNumber: 2,
     stepLabel: "Requested Sports",
   },
+  profileSetup: {
+    question: "Set up your profile",
+    subtitle: "Pick your teams, loyalties and interests",
+    stepNumber: 4,
+    stepLabel: "Profile Setup",
+  },
 };
+
+const PROFILE_SECTIONS = [
+  { key: "My Teams & Sports", hint: "Round icons with a caption, e.g. Inida Cricket, Man Utd Football", showImage: true },
+  { key: "My Loyalties", hint: "Short chips, e.g. Team India, Man Utd, Alcaraz, Verstappen", showImage: false },
+  { key: "My Interests", hint: "Short chips, e.g. Live match chat, Match polls, Transfer news", showImage: false },
+] as const;
 
 const DEFAULT_TITLES = ["Sports", "Teams", "Athletes", "Competitions"];
 
@@ -764,7 +776,7 @@ export default function OnboardingConfigAdmin() {
             <span className="p-1.5 rounded-lg bg-orange-500/20 text-orange-400 border border-orange-500/30">
               <Sparkles className="w-5 h-5" />
             </span>
-            <h1 className="text-2xl font-black text-gray-50 tracking-tight">ROAR Onboarding Management</h1>
+            <h1 className="text-2xl font-black text-gray-50 tracking-tight">Onboarding Management</h1>
           </div>
           <p className="text-xs text-gray-400 mt-1">
             Configure fan onboarding screens, track selections, and view fans who completed onboarding.
@@ -800,6 +812,7 @@ export default function OnboardingConfigAdmin() {
             { key: "sports", label: "Sports (Step 1)" },
             { key: "followEntities", label: "What do you follow? (Step 2)" },
             { key: "engagement", label: "How do you like your sports? (Step 3)" },
+            { key: "profileSetup", label: "Profile Setup (Step 4)" },
             { key: "completed", label: "Onboarding Completed", count: completedUsers.length },
           ] as { key: TabType; label: string; count?: number }[]
         ).map((t) => {
@@ -1438,7 +1451,7 @@ export default function OnboardingConfigAdmin() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-1 text-xs font-bold uppercase tracking-wider rounded-md bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                    Step {DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1} of 3
+                    Step {DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1} of 4
                   </span>
                   <h2 className="text-lg font-bold text-gray-100 flex items-center gap-2">
                     Step Question & Prompt
@@ -1529,8 +1542,9 @@ export default function OnboardingConfigAdmin() {
 
               <div className="bg-gradient-to-b from-gray-900 to-gray-950 rounded-lg p-3.5 border border-gray-800 space-y-2.5">
                 <div className="flex items-center justify-between text-[11px] text-gray-400 font-semibold tracking-wider uppercase">
-                  <span>Step {DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1} of 3</span>
+                  <span>Step {DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1} of 4</span>
                   <div className="flex gap-1">
+                    <span className={`w-3 h-1 rounded-full ${(DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1) >= 4 ? "bg-orange-500" : "bg-gray-700"}`}></span>
                     <span className={`w-3 h-1 rounded-full ${(DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1) >= 1 ? "bg-orange-500" : "bg-gray-700"}`}></span>
                     <span className={`w-3 h-1 rounded-full ${(DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1) >= 2 ? "bg-orange-500" : "bg-gray-700"}`}></span>
                     <span className={`w-3 h-1 rounded-full ${(DEFAULT_QUESTIONS[tab as ConfigType]?.stepNumber || 1) >= 3 ? "bg-orange-500" : "bg-gray-700"}`}></span>
@@ -1603,11 +1617,13 @@ export default function OnboardingConfigAdmin() {
               {tab === "sports" && "Step 1 Options: Selectable Sports"}
               {tab === "followEntities" && "Step 2 Configuration: Titles & Multiple Options"}
               {tab === "engagement" && "Step 3 Options: Engagement Modes"}
+              {tab === "profileSetup" && "Step 4 Options: Teams & Sports, Loyalties, Interests"}
             </h3>
             <p className="text-xs text-gray-500">
               {tab === "sports" && `Configure the sports cards fans can choose from (${items.length} total)`}
               {tab === "followEntities" && `Configure categories (Titles) and the multiple options fans can pick under each`}
               {tab === "engagement" && `Configure play modes and feature preferences (${items.length} total)`}
+              {tab === "profileSetup" && `Configure the three profile sections fans fill in (${items.length} options total)`}
             </p>
           </div>
         </div>
@@ -2454,6 +2470,139 @@ export default function OnboardingConfigAdmin() {
           </div>
         </>
       )}
+
+      {/* ---------------- PROFILE SETUP (STEP 4) ---------------- */}
+      {!loading && tab === "profileSetup" && (
+        <div className="space-y-6">
+          {PROFILE_SECTIONS.map((section) => {
+            const sectionItems = items.filter((it) => (it.category || it.title) === section.key);
+            const isEditingHere = editing && editing.category === section.key;
+            return (
+              <div key={section.key} className="border border-gray-700 bg-gray-900 rounded-2xl p-5 shadow-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <h4 className="text-base font-bold text-gray-100">{section.key}</h4>
+                  <button
+                    onClick={() =>
+                      setEditing({
+                        label: "",
+                        subtitle: "",
+                        image: "",
+                        category: section.key,
+                        title: section.key,
+                        active: true,
+                        order: sectionItems.length,
+                      })
+                    }
+                    className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-500 text-white text-xs font-medium cursor-pointer"
+                  >
+                    + Add
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mb-3">{section.hint}</p>
+
+                {isEditingHere && (
+                  <div className="border border-gray-700 rounded-xl p-4 mb-4 bg-gray-950 space-y-3 max-w-md">
+                    <div>
+                      <label className={labelClass}>Label</label>
+                      <input
+                        className={inputClass}
+                        placeholder={section.key === "My Teams & Sports" ? "e.g. Man Utd" : "e.g. Match polls"}
+                        value={editing.label || ""}
+                        onChange={(e) => setEditing({ ...editing, label: e.target.value })}
+                      />
+                    </div>
+                    {section.showImage && (
+                      <>
+                        <div>
+                          <label className={labelClass}>Caption (second line, optional)</label>
+                          <input
+                            className={inputClass}
+                            placeholder="e.g. Football"
+                            value={editing.subtitle || ""}
+                            onChange={(e) => setEditing({ ...editing, subtitle: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label className={labelClass}>Icon / logo</label>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="text-xs text-gray-300"
+                            onChange={(e) => handleIconUpload(e.target.files?.[0] ?? null)}
+                          />
+                          {editing.image && (
+                            <img src={editing.image} alt="" className="mt-2 w-12 h-12 rounded-full object-cover border border-gray-600" />
+                          )}
+                        </div>
+                      </>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={saveFlat}
+                        className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium cursor-pointer"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setEditing(null)}
+                        className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-100 text-sm font-medium cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {sectionItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between border border-gray-700 rounded-lg px-4 py-2.5 bg-gray-950"
+                    >
+                      <div className="flex items-center gap-3">
+                        {section.showImage && (
+                          item.image ? (
+                            <img src={item.image} alt="" className="w-8 h-8 rounded-full object-cover border border-gray-600" />
+                          ) : (
+                            <span className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-xs text-gray-500">—</span>
+                          )
+                        )}
+                        <div>
+                          <p className="font-medium text-gray-100 text-sm">
+                            {item.label} {!item.active && <span className="text-xs text-red-400">(inactive)</span>}
+                          </p>
+                          {(item as any).subtitle && <p className="text-xs text-gray-500">{(item as any).subtitle}</p>}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => toggleActive("profileSetup", item)}
+                          className="text-xs px-3 py-1.5 rounded bg-gray-800 text-gray-200 border border-gray-600 hover:bg-gray-700 cursor-pointer"
+                        >
+                          {item.active ? "Deactivate" : "Activate"}
+                        </button>
+                        <button
+                          onClick={() => setEditing(item)}
+                          className="text-xs px-3 py-1.5 rounded bg-blue-900 text-blue-200 border border-blue-700 hover:bg-blue-800 cursor-pointer"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => remove("profileSetup", item.id)}
+                          className="text-xs px-3 py-1.5 rounded bg-red-900 text-red-200 border border-red-700 hover:bg-red-800 cursor-pointer"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {sectionItems.length === 0 && <p className="text-sm text-gray-500">No options yet.</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
-}
+}

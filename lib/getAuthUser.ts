@@ -9,8 +9,14 @@ export interface AuthUser {
 }
 
 export async function getAuthUser(req: NextRequest): Promise<AuthUser | null> {
+  // Fail closed: never verify tokens against a guessable default secret.
+  // Resolved at call time (not import time) so `next build` still works without the variable.
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured; refusing to verify tokens with a default secret");
+  }
+
   try {
-    const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
     // 1. Try httpOnly cookie
     const cookieToken = req.cookies.get("token")?.value;

@@ -122,7 +122,9 @@ export async function GET(req: NextRequest) {
     }
 
     // Fallback: If no outcome reveals found yet in DynamoDB, scan candidate tables for recent reveals
-    if (outcomeRevealsList.length === 0) {
+    // Skipped when a matchId was given: the Query above already answered for that match, and this Scan (Limit 25 is applied
+    // before the filter) returns arbitrary reveals from other matches.
+    if (outcomeRevealsList.length === 0 && !cleanMatchId) {
       for (const tbl of candidateTables) {
         try {
           const scanRes = await docClient.send(

@@ -3,6 +3,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+import { cacheService } from "@/lib/cacheService";
 import { ScanCommand, PutCommand, UpdateCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -19,17 +20,25 @@ export async function GET(req: NextRequest) {
 
     // 1. Try fetching from DynamoDB first
     try {
-      const res = await docClient.send(new ScanCommand({
-        TableName: TABLES.SportsData,
-        FilterExpression: "sk = :m OR begins_with(sk, :mPrefix)",
-        ExpressionAttributeValues: { 
-          ":m": "MATCH#META",
-          ":mPrefix": "MATCH#"
-        }
-      }));
+      // Full-table Scan of SportsData: cache the result for 30s so a busy match window does one Scan, not one per request.
+      // (Admin edits below show up within 30s.) A sparse GSI would remove the Scan entirely.
+      const MATCHES_CACHE_KEY = "roar:matches:dynamo:v1";
+      let dynItems = await cacheService.get<any[]>(MATCHES_CACHE_KEY);
+      if (!dynItems) {
+        const res = await docClient.send(new ScanCommand({
+          TableName: TABLES.SportsData,
+          FilterExpression: "sk = :m OR begins_with(sk, :mPrefix)",
+          ExpressionAttributeValues: { 
+            ":m": "MATCH#META",
+            ":mPrefix": "MATCH#"
+          }
+        }));
+        dynItems = res.Items || [];
+        await cacheService.set(MATCHES_CACHE_KEY, dynItems, 30);
+      }
 
-      if (res.Items && res.Items.length > 0) {
-        for (const item of res.Items) {
+      if (dynItems.length > 0) {
+        for (const item of dynItems) {
           const rawId = item.entityId || item.pk || item.id || item.matchId || "";
           const cleanId = String(rawId).replace(/^(MATCH#|WATCHALONG_MATCH#)/, "") || item.id || `m_${Date.now()}`;
           matchesMap.set(cleanId, {
