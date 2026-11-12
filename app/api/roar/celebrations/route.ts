@@ -5,6 +5,7 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { getCandidateTableNames } from "@/lib/dualWrite";
+import { getUserMatchPlayerSummary } from "@/lib/matchPlayerSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export async function GET(req: NextRequest) {
   const roomId = searchParams.get("roomId");
   const userId = searchParams.get("userId");
   const username = searchParams.get("username");
+  const email = searchParams.get("email");
 
   const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : "";
 
@@ -236,6 +238,21 @@ export async function GET(req: NextRequest) {
     filteredRecognitions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
     outcomeRevealsList.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 
+    // Fetch personalized Match Player Summary ONLY for the requesting user (when match is completed)
+    let userMatchSummary = null;
+    if (cleanMatchId && (userId || username || email)) {
+      try {
+        userMatchSummary = await getUserMatchPlayerSummary({
+          matchId: cleanMatchId,
+          userId,
+          username,
+          email,
+        });
+      } catch (summaryErr) {
+        console.warn("[celebrations] Player summary lookup notice:", summaryErr);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       matchId: cleanMatchId,
@@ -243,6 +260,7 @@ export async function GET(req: NextRequest) {
       outcomeRevealsCount: outcomeRevealsList.length,
       recognitions: filteredRecognitions,
       outcomeReveals: outcomeRevealsList,
+      userMatchSummary,
     }, {
       headers: {
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",

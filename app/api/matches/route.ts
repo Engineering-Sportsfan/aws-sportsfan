@@ -376,11 +376,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
-import { validateMatchCreate } from "@/lib/validations/matchValidation";
+import { validateMatchCreate, validateMatchUpdate } from "@/lib/validations/matchValidation";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { getCoreEngineReferencedMatchIds, cleanMatchId, hasValidMatchTeams, normalizeMatchKey } from "@/lib/coreEngineScope";
+import { generateAndPersistMatchPlayerSummaries } from "@/lib/matchPlayerSummary";
 import { ScanCommand, GetCommand, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -797,7 +798,115 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, match_id: match.match_id, data: matchPayload }, { status: 201 });
+  let playerSummariesGenerated = 0;
+  if (String(matchPayload.status || "").trim().toLowerCase() === "completed") {
+    try {
+      const summaryResult = await generateAndPersistMatchPlayerSummaries(match.match_id, matchPayload);
+      playerSummariesGenerated = summaryResult.generatedCount;
+    } catch (summaryErr) {
+      console.warn(`[matches POST ${match.match_id}] Match player summary dispatch notice:`, summaryErr);
+    }
+  }
+
+  return NextResponse.json(
+    {
+      success: true,
+      match_id: match.match_id,
+      data: matchPayload,
+      playerSummariesGenerated,
+    },
+    { status: 201 }
+  );
+}
+
+// ─── PUT /api/matches (Update existing match — used by Admin Edit Match form)
+export async function PUT(req: NextRequest) {
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const rawId = cleanMatchId(body?.match_id || body?.id || "");
+  if (!rawId) {
+    return NextResponse.json({ success: false, error: "match_id is required" }, { status: 400 });
+  }
+
+  const validation = validateMatchUpdate(body);
+  if (!validation.success) {
+    return NextResponse.json({ success: false, errors: validation.errors }, { status: 422 });
+  }
+
+  let existingData: any = null;
+  for (const table of getCandidateTableNames(TABLES.MatchMoments)) {
+    try {
+      const getRes = await docClient.send(
+        new GetCommand({
+          TableName: table,
+          Key: { entityId: `MATCH#${rawId}`, sk: "MATCH#META" },
+        })
+      );
+      if (getRes.Item) {
+        existingData = getRes.Item;
+        break;
+      }
+    } catch {
+      // next table
+    }
+  }
+
+  if (!existingData && db) {
+    try {
+      const snap = await db.collection(getFirestoreCollection("matches")).doc(rawId).get();
+      if (snap.exists) existingData = snap.data();
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!existingData) {
+    return NextResponse.json({ success: false, error: `Match ${rawId} not found` }, { status: 404 });
+  }
+
+  const now = Date.now();
+  const updatedMatch = {
+    ...existingData,
+    ...validation.data,
+    match_id: rawId,
+    updatedAt: now,
+  };
+
+  await dualWrite({
+    tableName: TABLES.MatchMoments,
+    dynamoItem: {
+      entityId: `MATCH#${rawId}`,
+      sk: "MATCH#META",
+      ...updatedMatch,
+    },
+    firestoreRef: db ? db.collection(getFirestoreCollection("matches")).doc(rawId) : null,
+    firestoreData: {
+      ...validation.data,
+      updated_at: FieldValue.serverTimestamp(),
+    },
+  });
+
+  let playerSummariesGenerated = 0;
+  if (String(updatedMatch.status || "").trim().toLowerCase() === "completed") {
+    try {
+      const summaryResult = await generateAndPersistMatchPlayerSummaries(rawId, updatedMatch);
+      playerSummariesGenerated = summaryResult.generatedCount;
+    } catch (summaryErr) {
+      console.warn(`[matches PUT ${rawId}] Match player summary dispatch notice:`, summaryErr);
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    match_id: rawId,
+    data: updatedMatch,
+    playerSummariesGenerated,
+  });
 }
 
 // ─── DELETE /api/matches (Fallback by query params: ?match_id=... or ?id=...)

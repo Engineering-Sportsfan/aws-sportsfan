@@ -183,7 +183,23 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     },
   });
 
-  return NextResponse.json({ success: true, match_id: id, data: updatedMatch });
+  let playerSummariesGenerated = 0;
+  if (String(updatedMatch.status || "").trim().toLowerCase() === "completed") {
+    try {
+      const { generateAndPersistMatchPlayerSummaries } = await import("@/lib/matchPlayerSummary");
+      const summaryResult = await generateAndPersistMatchPlayerSummaries(id, updatedMatch);
+      playerSummariesGenerated = summaryResult.generatedCount;
+    } catch (summaryErr) {
+      console.warn(`[matches PATCH ${id}] Match player summary dispatch notice:`, summaryErr);
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    match_id: id,
+    data: updatedMatch,
+    playerSummariesGenerated,
+  });
 }
 
 // ─── DELETE /api/matches/[id] ─────────────────────────────────────────────────

@@ -154,7 +154,7 @@ export default function EngagementsManagementPage() {
   async function fetchEngagements() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/engagements?type=${typeFilter}&excludeMatchMoments=true`);
+      const res = await fetch(`/api/engagements?type=${typeFilter}&excludeMatchMoments=true&includeScheduled=true`);
       const data = await res.json();
       const getItemTimestamp = (it: any) => {
         const raw =

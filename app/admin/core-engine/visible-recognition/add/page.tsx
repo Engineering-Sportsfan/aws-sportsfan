@@ -220,7 +220,7 @@ function AddRecognitionContent() {
 
     const fetchMomentEngagements = async () => {
       try {
-        const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=1000&_t=${Date.now()}`);
+        const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&includeScheduled=true&limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         const rawList = Array.isArray(json.engagements)
           ? json.engagements

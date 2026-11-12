@@ -1,6 +1,6 @@
 // types/engagements.ts — Type definitions for Fan Battles, Quizzes, Polls, Predictions, and Meme Arena
-export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "question" | "debate" | "express";
-export type EngagementStatus = "active" | "inactive" | "expired" | "settled" | "resolved" | "pending" | "open";
+export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "question" | "debate" | "express" | "follow" | "match_result";
+export type EngagementStatus = "active" | "inactive" | "expired" | "settled" | "resolved" | "pending" | "open" | "scheduled";
 
 // ─── 1. Fan Battle ─────────────────────────────────────────────────────────
 export interface Competitor {
@@ -251,6 +251,42 @@ export interface QuestionPayload {
 }
 
 // ─── Universal Engagement Entity ──────────────────────────────────────────
+export interface FollowPayload {
+  team1Name?: string;
+  team1Code?: string;
+  team1Flag?: string;
+  team2Name?: string;
+  team2Code?: string;
+  team2Flag?: string;
+  matchLabel?: string;
+  matchTimeLabel?: string;
+  matchStartMs?: number;
+  statusLabel?: string;
+  followCount?: number;
+  remindCount?: number;
+}
+
+// ─── 10. Post-Match Final Result & Player of the Match ─────────────────────
+export interface MatchResultPayload {
+  showSnapshot?: boolean;
+  snapshotHeading?: string;
+  team1Name?: string;
+  team1Code?: string;
+  team1Flag?: string;
+  team1Score?: string;
+  team2Name?: string;
+  team2Code?: string;
+  team2Flag?: string;
+  team2Score?: string;
+  resultSummary?: string;
+  showTopPerformer?: boolean;
+  performerLabel?: string;
+  playerName?: string;
+  playerStats?: string;
+  playerImageUrl?: string;
+  mode?: "combined" | "final_result" | "player_of_the_match";
+}
+
 export interface EngagementItem {
   id: string;
   type: EngagementType;
@@ -274,12 +310,23 @@ export interface EngagementItem {
   expressData?: ExpressPayload;
   inputPlaceholder?: string;
   questionData?: QuestionPayload;
+  followData?: FollowPayload;
+  matchResultData?: MatchResultPayload;
   memeType?: "single" | "dual" | string;
   options?: any[];
   imageUrlA?: string;
   imageUrlB?: string;
   labelA?: string;
   labelB?: string;
+
+  // Scheduling fields (used for scheduled pre-match / match-moment drops)
+  startTime?: number | string | null;
+  scheduledStartTime?: number | string | null;
+  postingTime?: number | string | null;
+  isScheduled?: boolean;
+  notifiedLive?: boolean;
+  userFollowing?: boolean;
+  userReminded?: boolean;
 
   // Outcome resolution fields (for Prediction, Debate, Quiz)
   winningChoiceId?: string | null;
@@ -334,8 +381,6 @@ export interface EngagementItem {
   createdAt: number;
   updatedAt: number;
   expiresAt?: number | null;
-  startTime?: number | null;
-  scheduledStartTime?: number | null;
 }
 
 // ─── User Vote / Answer Record ─────────────────────────────────────────────

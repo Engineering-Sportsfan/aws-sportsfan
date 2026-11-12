@@ -48,6 +48,10 @@ export interface EngagementStats {
   /** sk values present, used to hydrate userLiked / userVote without extra reads */
   userLikes: Set<string>;
   userVotes: Map<string, string>;
+  followCount: number;
+  remindCount: number;
+  userFollows: Set<string>;
+  userReminds: Set<string>;
 }
 
 /**
@@ -74,6 +78,10 @@ export async function getEngagementStats(
     votesByOption: {},
     userLikes: new Set(),
     userVotes: new Map(),
+    followCount: 0,
+    remindCount: 0,
+    userFollows: new Set(),
+    userReminds: new Set(),
   };
 
   const commentMap = new Map<string, any>();
@@ -88,7 +96,7 @@ export async function getEngagementStats(
         KeyConditionExpression: "contentId = :c",
         ExpressionAttributeValues: { ":c": `ENGAGEMENT#${engagementId}` },
         ProjectionExpression:
-          "sk, selectedOptionId, questionId, userId, parentId, authorUid, likedBy, actorUserId, targetCommentId, targetAuthorUid, commentId, id, impressionCount",
+          "sk, selectedOptionId, questionId, userId, parentId, authorUid, likedBy, actorUserId, targetCommentId, targetAuthorUid, commentId, id, impressionCount, isFollowing, isReminded",
         ConsistentRead: Boolean(opts.consistent),
         ExclusiveStartKey: key,
       })
@@ -103,12 +111,25 @@ export async function getEngagementStats(
         stats.shares++;
       } else if (sk.startsWith("IMPRESSION#") || sk.startsWith("VIEW#")) {
         stats.impressions += Math.max(1, Number(it.impressionCount || 1));
-      } else if (sk.startsWith("VOTE#") && it.selectedOptionId != null) {
+      } else if (sk.startsWith("VOTE#") && (it.selectedOptionId != null || it.isFollowing || it.isReminded)) {
+        const uidKey = sk.slice(5);
         stats.participations++;
-        stats.userVotes.set(sk.slice(5), String(it.selectedOptionId));
-        if (!it.questionId) {
-          const opt = String(it.selectedOptionId).trim().toLowerCase();
-          stats.votesByOption[opt] = (stats.votesByOption[opt] || 0) + 1;
+        if (it.selectedOptionId != null) {
+          stats.userVotes.set(uidKey, String(it.selectedOptionId));
+        }
+        const optLower = String(it.selectedOptionId || "").trim().toLowerCase();
+        const didFollow = Boolean(it.isFollowing) || optLower.split(",").map((s) => s.trim()).includes("follow");
+        const didRemind = Boolean(it.isReminded) || optLower.split(",").map((s) => s.trim()).includes("remind");
+        if (didFollow) {
+          stats.followCount++;
+          stats.userFollows.add(uidKey);
+        }
+        if (didRemind) {
+          stats.remindCount++;
+          stats.userReminds.add(uidKey);
+        }
+        if (!it.questionId && it.selectedOptionId != null) {
+          stats.votesByOption[optLower] = (stats.votesByOption[optLower] || 0) + 1;
         }
       } else if (sk.startsWith("COMMENT#")) {
         stats.commentsCount++;
@@ -217,6 +238,22 @@ export function applyEngagementStats(item: any, stats: EngagementStats, opts: { 
   item.totalSocialResponsesCount = stats.totalSocialResponses;
 
   if (item.type === "quiz" || item.type === "fan_battle" || item.type === "meme") return item;
+
+  if (item.type === "follow") {
+    item.options = [];
+    item.followData = {
+      ...(item.followData || {}),
+      followCount: stats.followCount,
+      remindCount: stats.remindCount,
+    };
+    item.totalVotes = stats.participations;
+    return item;
+  }
+
+  if (item.type === "match_result") {
+    item.options = [];
+    return item;
+  }
 
   if (
     item.type === "express" &&

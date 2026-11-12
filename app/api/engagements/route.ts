@@ -78,6 +78,8 @@ export async function GET(req: NextRequest) {
                 expressData: it.expressData,
                 inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
                 questionData: it.questionData,
+                followData: it.followData || undefined,
+                matchResultData: it.matchResultData || undefined,
                 postLock: it.postLock ?? it.questionData?.postLock ?? "",
                 winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
                 outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
@@ -98,6 +100,11 @@ export async function GET(req: NextRequest) {
                 totalEngaged: Number(it.totalEngaged) || 0,
                 createdAt: it.createdAt || Date.now(),
                 updatedAt: it.updatedAt || Date.now(),
+                startTime: it.startTime ?? it.scheduledStartTime ?? it.postingTime ?? undefined,
+                scheduledStartTime: it.scheduledStartTime ?? it.startTime ?? it.postingTime ?? undefined,
+                postingTime: it.postingTime ?? it.scheduledStartTime ?? it.startTime ?? undefined,
+                isScheduled: Boolean(it.isScheduled),
+                notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
                 expiresAt:
                   it.expiresAt ||
                   (it.createdAt && (it.timerMinutes || it.durationMinutes)
@@ -259,6 +266,8 @@ export async function GET(req: NextRequest) {
               expressData: it.expressData,
               inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
               questionData: it.questionData,
+              followData: it.followData || undefined,
+              matchResultData: it.matchResultData || undefined,
               postLock: it.postLock ?? it.questionData?.postLock ?? "",
               winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
               outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
@@ -275,6 +284,11 @@ export async function GET(req: NextRequest) {
               commentsCount: Number(it.commentsCount) || 0,
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
+              startTime: it.startTime ?? it.scheduledStartTime ?? it.postingTime ?? undefined,
+              scheduledStartTime: it.scheduledStartTime ?? it.startTime ?? it.postingTime ?? undefined,
+              postingTime: it.postingTime ?? it.scheduledStartTime ?? it.startTime ?? undefined,
+              isScheduled: Boolean(it.isScheduled),
+              notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
               expiresAt: it.expiresAt || null,
               category: it.category || "match_moment",
               source: it.source || "match_moment",
@@ -329,6 +343,8 @@ export async function GET(req: NextRequest) {
               expressData: it.expressData,
               inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
               questionData: it.questionData,
+              followData: it.followData || undefined,
+              matchResultData: it.matchResultData || undefined,
               postLock: it.postLock ?? it.questionData?.postLock ?? "",
               winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
               outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
@@ -349,6 +365,11 @@ export async function GET(req: NextRequest) {
               totalEngaged: Number(it.totalEngaged) || 0,
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
+              startTime: it.startTime ?? it.scheduledStartTime ?? it.postingTime ?? undefined,
+              scheduledStartTime: it.scheduledStartTime ?? it.startTime ?? it.postingTime ?? undefined,
+              postingTime: it.postingTime ?? it.scheduledStartTime ?? it.startTime ?? undefined,
+              isScheduled: Boolean(it.isScheduled),
+              notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
               expiresAt:
                 it.expiresAt ||
                 (it.createdAt && (it.timerMinutes || it.durationMinutes)
@@ -407,6 +428,46 @@ export async function GET(req: NextRequest) {
 
     // Apply Filters
     const nowMs = Date.now();
+    const includeScheduled = searchParams.get("includeScheduled") === "true";
+
+    const getScheduledMs = (it: any): number => {
+      const raw =
+        it.scheduledStartTime ??
+        it.startTime ??
+        it.postingTime ??
+        it.quizData?.scheduledStartTime ??
+        it.pollData?.scheduledStartTime ??
+        it.predictionData?.scheduledStartTime ??
+        it.fanBattleData?.scheduledStartTime ??
+        0;
+      if (!raw) return 0;
+      if (typeof raw === "number") return raw;
+      const parsed = new Date(raw).getTime();
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Normalize effective status (scheduled items whose launch time has arrived become active)
+    // and gate future-scheduled items unless admin explicitly requests includeScheduled=true.
+    items = items
+      .map((i) => {
+        const schedMs = getScheduledMs(i);
+        const rawStatus = String(i.status || "active").toLowerCase();
+        const isWaitingSchedule =
+          (rawStatus === "scheduled" || Boolean((i as any).isScheduled)) && schedMs > nowMs;
+        if (!isWaitingSchedule && rawStatus === "scheduled") {
+          return { ...i, status: "active" as any };
+        }
+        return i;
+      })
+      .filter((i) => {
+        if (includeScheduled || status === "scheduled" || status === "all") return true;
+        const schedMs = getScheduledMs(i);
+        const rawStatus = String(i.status || "active").toLowerCase();
+        if (rawStatus === "scheduled") return false;
+        if (Boolean((i as any).isScheduled) && schedMs > nowMs) return false;
+        return true;
+      });
+
     if (type && type !== ("all" as any)) {
       items = items.filter(i => (i.type || "").toLowerCase() === type.toLowerCase());
     }
@@ -466,8 +527,8 @@ export async function GET(req: NextRequest) {
     if (shouldExcludeMatchMoments) {
       items = items.filter(i => {
         if (i.isMatchMoment === true || (i as any).category === "match_moment" || (i as any).source === "match_moment") return false;
-        if (i.type === "debate" || i.type === "express" || i.type === "question") return false;
-        if (Boolean(i.debateData || i.expressData || i.questionData)) return false;
+        if (i.type === "debate" || i.type === "express" || i.type === "question" || i.type === "follow" || i.type === "match_result") return false;
+        if (Boolean(i.debateData || i.expressData || i.questionData || (i as any).followData || (i as any).matchResultData)) return false;
         if (Array.isArray(i.tags) && i.tags.some(t => t.toUpperCase().includes("MATCH MOMENT") || t.toUpperCase().includes("4-MIN"))) return false;
         return true;
       });
@@ -502,6 +563,12 @@ export async function GET(req: NextRequest) {
               userLiked: candidateIds.some((uid) => stats.userLikes.has(uid)),
               userVoted: userVote !== null,
               userVote,
+              ...(it.type === "follow"
+                ? {
+                    userFollowing: candidateIds.some((uid) => stats.userFollows.has(uid)),
+                    userReminded: candidateIds.some((uid) => stats.userReminds.has(uid)),
+                  }
+                : {}),
             };
           } catch (hydrationErr) {
             console.warn("Engagements stats hydration notice:", hydrationErr);
@@ -725,9 +792,33 @@ export async function POST(req: NextRequest) {
       else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 +10 SXP", "⚡ 4-MIN LIVE"];
       else if (type === "debate") computedTags = ["⚖️ DEBATE", "🔥 LIVE VERDICT"];
       else if (type === "express") computedTags = ["⚡ EXPRESS", "🚀 PULSE"];
+      else if (type === "follow") computedTags = ["🔔 FOLLOW", "📅 UPCOMING MATCH"];
+      else if (type === "match_result") computedTags = ["🏆 MATCH RESULT", "⭐ TOP PERFORMER"];
       else if (type === "meme") computedTags = ["🔥 MEME ARENA", "😂 VIRAL"];
       else computedTags = ["⚡ MATCH MOMENT", "🔥 LIVE"];
     }
+
+    const rawScheduledTimeEarly =
+      (body as any).startTime ||
+      (body as any).scheduledStartTime ||
+      (body as any).postingTime ||
+      quizData?.startTime ||
+      quizData?.scheduledStartTime ||
+      quizData?.postingTime ||
+      pollData?.startTime ||
+      pollData?.scheduledStartTime ||
+      predictionData?.startTime ||
+      predictionData?.scheduledStartTime ||
+      fanBattleData?.startTime ||
+      fanBattleData?.scheduledStartTime;
+
+    const scheduledMsEarly = rawScheduledTimeEarly
+      ? typeof rawScheduledTimeEarly === "number"
+        ? rawScheduledTimeEarly
+        : new Date(rawScheduledTimeEarly).getTime()
+      : now;
+    const isScheduledFutureEarly = Boolean(scheduledMsEarly && !isNaN(scheduledMsEarly) && scheduledMsEarly > now + 30000);
+    const timerAnchorMs = isScheduledFutureEarly ? scheduledMsEarly : now;
 
     // Default timer: standard 4 minutes for all live match moments
     const matchMomentDurationMins = Number(
@@ -752,19 +843,23 @@ export async function POST(req: NextRequest) {
 
     const computedExpiresAt =
       expiresAt ||
-      (type === "poll"
-        ? pollData?.expiresAt || now + pollDurationMins * 60 * 1000
-        : type === "prediction"
-          ? predictionData?.expiresAt || now + predDurationMins * 60 * 1000
-          : type === "debate"
-            ? (body.debateData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
-            : type === "express"
-              ? (body.expressData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
-              : type === "question"
-                ? (body.questionData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
-                : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
-                  ? quizData?.expiresAt || now + quizDurationMins * 60 * 1000
-                  : now + matchMomentDurationMins * 60 * 1000);
+      (type === "follow"
+        ? Number(body.followData?.matchStartMs || body.matchStartMs || 0) || null
+        : type === "match_result"
+          ? null
+          : type === "poll"
+          ? pollData?.expiresAt || timerAnchorMs + pollDurationMins * 60 * 1000
+          : type === "prediction"
+            ? predictionData?.expiresAt || timerAnchorMs + predDurationMins * 60 * 1000
+            : type === "debate"
+              ? (body.debateData?.expiresAt || timerAnchorMs + matchMomentDurationMins * 60 * 1000)
+              : type === "express"
+                ? (body.expressData?.expiresAt || timerAnchorMs + matchMomentDurationMins * 60 * 1000)
+                : type === "question"
+                  ? (body.questionData?.expiresAt || timerAnchorMs + matchMomentDurationMins * 60 * 1000)
+                  : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
+                    ? quizData?.expiresAt || timerAnchorMs + quizDurationMins * 60 * 1000
+                    : timerAnchorMs + matchMomentDurationMins * 60 * 1000);
 
     const formattedQuizData =
       type === "quiz" && quizData
@@ -1091,7 +1186,7 @@ export async function POST(req: NextRequest) {
       subtitle: subtitle || (isMeme ? formattedMemeData?.caption || formattedMemeData?.description || "" : ""),
       tags: computedTags,
       sport: (sport || "cricket").toLowerCase(),
-      status: status || (isFutureScheduled ? "scheduled" : "active"),
+      status: isFutureScheduled ? "scheduled" : (status === "scheduled" ? "active" : (status || "active")),
       creatorId: creatorId || undefined,
       creatorEmail: creatorEmail || undefined,
       creatorName: creatorName || undefined,
@@ -1103,13 +1198,56 @@ export async function POST(req: NextRequest) {
       memeData: formattedMemeData,
       debateData: formattedDebateData,
       expressData: formattedExpressData,
+      ...(type === "follow"
+        ? {
+            followData: {
+              ...(body.followData || {}),
+              team1Name: String(body.followData?.team1Name || body.team1Name || "").trim(),
+              team1Code: String(body.followData?.team1Code || body.team1Code || "").trim().toUpperCase(),
+              team1Flag: String(body.followData?.team1Flag || body.team1Flag || "").trim(),
+              team2Name: String(body.followData?.team2Name || body.team2Name || "").trim(),
+              team2Code: String(body.followData?.team2Code || body.team2Code || "").trim().toUpperCase(),
+              team2Flag: String(body.followData?.team2Flag || body.team2Flag || "").trim(),
+              matchLabel: String(body.followData?.matchLabel || body.matchLabel || "T20 INTERNATIONAL").trim(),
+              matchTimeLabel: String(body.followData?.matchTimeLabel || body.matchTimeLabel || "Upcoming").trim(),
+              matchStartMs: Number(body.followData?.matchStartMs || body.matchStartMs || 0) || undefined,
+              statusLabel: String(body.followData?.statusLabel || "Upcoming").trim(),
+              followCount: Number(body.followData?.followCount || existingEngagement?.followData?.followCount) || 0,
+              remindCount: Number(body.followData?.remindCount || existingEngagement?.followData?.remindCount) || 0,
+            },
+          }
+        : {}),
+      ...(type === "match_result"
+        ? {
+            matchResultData: {
+              ...(body.matchResultData || {}),
+              showSnapshot: body.matchResultData?.showSnapshot !== false,
+              snapshotHeading: String(body.matchResultData?.snapshotHeading || "Match Snapshot").trim(),
+              team1Name: String(body.matchResultData?.team1Name || body.team1Name || "").trim(),
+              team1Code: String(body.matchResultData?.team1Code || body.team1Code || "").trim().toUpperCase(),
+              team1Flag: String(body.matchResultData?.team1Flag || body.team1Flag || "").trim(),
+              team1Score: String(body.matchResultData?.team1Score || body.team1Score || "").trim(),
+              team2Name: String(body.matchResultData?.team2Name || body.team2Name || "").trim(),
+              team2Code: String(body.matchResultData?.team2Code || body.team2Code || "").trim().toUpperCase(),
+              team2Flag: String(body.matchResultData?.team2Flag || body.team2Flag || "").trim(),
+              team2Score: String(body.matchResultData?.team2Score || body.team2Score || "").trim(),
+              resultSummary: String(body.matchResultData?.resultSummary || "").trim(),
+              showTopPerformer: body.matchResultData?.showTopPerformer !== false,
+              performerLabel: String(body.matchResultData?.performerLabel || "Top Performer").trim(),
+              playerName: String(body.matchResultData?.playerName || "").trim(),
+              playerStats: String(body.matchResultData?.playerStats || "").trim(),
+              playerImageUrl: String(body.matchResultData?.playerImageUrl || "").trim(),
+              mode: body.matchResultData?.mode || "combined",
+            },
+          }
+        : {}),
       ...(type === "express" && formattedExpressData?.placeholder
         ? { inputPlaceholder: formattedExpressData.placeholder }
         : {}),
       questionData: formattedQuestionData,
       postLock: String(body.postLock ?? body.questionData?.postLock ?? "").trim(),
       options:
-        type === "express" && formattedExpressData?.responseMode === "text"
+        (type === "express" && formattedExpressData?.responseMode === "text") || type === "follow" || type === "match_result"
           ? []
           : body.options ||
             formattedDebateData?.options ||
@@ -1135,9 +1273,9 @@ export async function POST(req: NextRequest) {
       createdAt: now,
       updatedAt: now,
       expiresAt: computedExpiresAt,
-      category: body.category || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : (type === "fan_battle" || type === "meme" ? "fliparena" : undefined)),
-      source: body.source || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : "fliparena"),
-      isMatchMoment: body.isMatchMoment !== undefined ? Boolean(body.isMatchMoment) : Boolean(formattedDebateData || formattedExpressData || formattedQuestionData || (type !== "meme" && type !== "fan_battle" && matchMomentDurationMins === 4)),
+      category: body.category || (body.isMatchMoment || body.matchId || body.momentId || body.loopId || formattedDebateData || formattedExpressData || formattedQuestionData || type === "follow" || type === "match_result" ? (type === "fan_battle" || type === "meme" ? "fliparena" : "match_moment") : (type === "fan_battle" || type === "meme" ? "fliparena" : undefined)),
+      source: body.source || (body.isMatchMoment || body.matchId || body.momentId || body.loopId || formattedDebateData || formattedExpressData || formattedQuestionData || type === "follow" || type === "match_result" ? (type === "fan_battle" || type === "meme" ? "fliparena" : "match_moment") : "fliparena"),
+      isMatchMoment: body.isMatchMoment !== undefined ? Boolean(body.isMatchMoment) : Boolean((type !== "meme" && type !== "fan_battle") && (body.matchId || body.momentId || body.loopId || formattedDebateData || formattedExpressData || formattedQuestionData || type === "follow" || type === "match_result" || matchMomentDurationMins === 4)),
       ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
       matchId: body.matchId || undefined,
       momentId: body.momentId || body.loopId || undefined,

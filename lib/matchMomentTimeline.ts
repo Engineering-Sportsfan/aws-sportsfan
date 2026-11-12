@@ -379,3 +379,49 @@ export function formatMomentOptionLabel(m: any, matchPrefix?: string): string {
   return `${prefix}[${badge}]${score} — ${headline}`;
 }
 
+/** True when a moment belongs to the Pre-Match window (Match Discovery T–48h through National Anthems T–5m). */
+export function isPreMatchMoment(m: any): boolean {
+  if (!m) return false;
+  return getMomentTimelineRank(m).bucket === 0;
+}
+
+/** True when a moment belongs to Post Match (Final result / Match Result / Player of the Match). */
+export function isPostMatchMoment(m: any): boolean {
+  if (!m) return false;
+  return getMomentTimelineRank(m).bucket === 4;
+}
+
+/** Identifies whether a moment is specifically Final result or Player of the Match. */
+export function getPostMatchMomentKind(m: any): "final_result" | "player_of_the_match" | null {
+  if (!m) return null;
+  const text = `${m?.timingLabel || ""} ${m?.matchOverTimestamp || ""} ${m?.event || ""} ${m?.matchMoment || ""} ${m?.phase || ""}`.toLowerCase();
+  if (text.includes("player of the match") || /\bpotm\b/.test(text)) {
+    return "player_of_the_match";
+  }
+  if (text.includes("final result") || (text.includes("match result") && !text.includes("over"))) {
+    return "final_result";
+  }
+  return isPostMatchMoment(m) ? "final_result" : null;
+}
+
+/** Negative offset in milliseconds relative to match start for Pre-Match moments (e.g. T–48h => -48h, T–5m => -5m). */
+export function parsePreMatchOffsetMs(m: any): number | null {
+  const raw = String(m?.timingLabel || m?.preMatchOffset || m?.matchOverTimestamp || m?.event || m?.matchMoment || "")
+    .replace(/[\u2013\u2014]/g, "-")
+    .trim();
+  const match = raw.match(/T\s*-\s*(\d+(?:\.\d+)?)\s*([hm])/i);
+  if (!match) return null;
+  const val = parseFloat(match[1]);
+  if (!Number.isFinite(val)) return null;
+  const unit = match[2].toLowerCase();
+  return -(unit === "h" ? val * 3600 * 1000 : val * 60 * 1000);
+}
+
+/** Suggested launch timestamp (ms) when attaching an engagement to a Pre-Match moment. */
+export function computePreMatchScheduledTimeMs(moment: any, matchStartMs?: number | null): number | null {
+  if (!matchStartMs || !Number.isFinite(matchStartMs)) return null;
+  const offset = parsePreMatchOffsetMs(moment);
+  if (offset === null) return null;
+  return matchStartMs + offset;
+}
+
