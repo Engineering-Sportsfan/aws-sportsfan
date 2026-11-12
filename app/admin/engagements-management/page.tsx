@@ -154,7 +154,7 @@ export default function EngagementsManagementPage() {
   async function fetchEngagements() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/engagements?type=${typeFilter}&excludeMatchMoments=true`);
+      const res = await fetch(`/api/engagements?type=${typeFilter}&excludeMatchMoments=true&includeScheduled=true`);
       const data = await res.json();
       const getItemTimestamp = (it: any) => {
         const raw =
@@ -183,7 +183,9 @@ export default function EngagementsManagementPage() {
         it.type === "debate" ||
         it.type === "express" ||
         it.type === "question" ||
-        Boolean(it.debateData || it.expressData || it.questionData) ||
+        it.type === "follow" ||
+        it.type === "match_result" ||
+        Boolean(it.debateData || it.expressData || it.questionData || it.followData || it.matchResultData) ||
         Boolean(it.tags && it.tags.some((t: string) => t.toUpperCase().includes("MATCH MOMENT") || t.toUpperCase().includes("4-MIN")));
 
       const list: EngagementItem[] = Array.isArray(data.engagements)

@@ -8,6 +8,7 @@ import { parseExcelBuffer, parseInningsSheet } from "../../../../lib/ingestion/e
 import type { MatchCreateInput, InningsCreateInput } from "../../../../lib/validations/matchValidation";
 import { docClient } from "@/lib/dynamodb";
 import { BatchWriteCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ async function fetchExistingMatchIds(matchIds: string[]): Promise<Set<string>> {
     try {
       const getRes = await docClient.send(
         new GetCommand({
-          TableName: "SportsData",
+          TableName: TABLES.SportsData,
           Key: { entityId: `MATCH#${mId}`, sk: "MATCH#META" },
         })
       );
@@ -35,7 +36,7 @@ async function fetchExistingMatchIds(matchIds: string[]): Promise<Set<string>> {
   for (let i = 0; i < matchIds.length; i += CHUNK_SIZE) {
     const chunk = matchIds.slice(i, i + CHUNK_SIZE);
     try {
-      const snap = await db.collection("matches").where("match_id", "in", chunk).select("match_id").get();
+      const snap = await db.collection(getFirestoreCollection("matches")).where("match_id", "in", chunk).select("match_id").get();
       snap.docs.forEach((d) => existing.add(d.data().match_id));
     } catch (err) {
       console.error("[DEDUP] Matches chunk query failed:", err);
@@ -183,7 +184,7 @@ export async function POST(req: NextRequest) {
     });
 
     // 2. Prepare Firestore Match Doc
-    const docRef = db.collection("matches").doc(match.match_id);
+    const docRef = db.collection(getFirestoreCollection("matches")).doc(match.match_id);
     batch.set(docRef, {
       ...match,
       created_at: FieldValue.serverTimestamp(),
@@ -227,7 +228,7 @@ export async function POST(req: NextRequest) {
       await docClient.send(
         new BatchWriteCommand({
           RequestItems: {
-            SportsData: chunk,
+            [TABLES.SportsData]: chunk,
           },
         })
       );

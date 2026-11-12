@@ -10,6 +10,7 @@ import {
   ArrowRight,
   RefreshCw,
   Zap,
+  CheckCircle2,
 } from "lucide-react";
 import CoreEngineStepper from "../../components/CoreEngineStepper";
 
@@ -39,11 +40,12 @@ function MatchListContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "live" | "upcoming" | "completed">("all");
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [completingId, setCompletingId] = useState<string | null>(null);
 
   const fetchMatches = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/matches?limit=100");
+      const res = await fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
         const list: MatchItem[] = json.data.map((m: Record<string, unknown>) => ({
@@ -97,6 +99,37 @@ function MatchListContent() {
       }
     } catch (err: unknown) {
       setFeedback({ type: "error", text: (err as Error).message || "Network error deleting match" });
+    }
+  };
+
+  const handleCompleteMatch = async (matchId: string, matchTitle?: string) => {
+    if (!confirm(`Mark "${matchTitle || matchId}" as completed and send personalized Player Summary chat posts to all active fans?`)) {
+      return;
+    }
+    setCompletingId(matchId);
+    try {
+      const res = await fetch(`/api/matches/${encodeURIComponent(matchId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "completed" }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setMatches((prev) =>
+          prev.map((m) => (m.match_id === matchId ? { ...m, status: "completed" } : m))
+        );
+        const sentCount = Number(json.playerSummariesGenerated || 0);
+        setFeedback({
+          type: "success",
+          text: `Match marked completed. ${sentCount} personalized Player Summary chat post${sentCount === 1 ? "" : "s"} prepared for active users.`,
+        });
+      } else {
+        setFeedback({ type: "error", text: json.error || "Failed to mark match completed" });
+      }
+    } catch (err: unknown) {
+      setFeedback({ type: "error", text: (err as Error).message || "Network error updating match" });
+    } finally {
+      setCompletingId(null);
     }
   };
 
@@ -330,6 +363,18 @@ function MatchListContent() {
                       <ArrowRight size={12} />
                     </button>
                   </Link>
+
+                  {!isCompleted && (
+                    <button
+                      onClick={() => handleCompleteMatch(m.match_id, `${m.team1} vs ${m.team2}`)}
+                      disabled={completingId === m.match_id}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 disabled:opacity-50 text-emerald-300 text-xs font-bold transition-all border border-emerald-500/30 flex items-center gap-1"
+                      title="Mark Completed & Send Player Summaries"
+                    >
+                      <CheckCircle2 size={13} />
+                      <span>{completingId === m.match_id ? "Completing..." : "Mark Complete"}</span>
+                    </button>
+                  )}
 
                   {/* Edit */}
                   <Link href={`/admin/core-engine/matches/add?editId=${m.match_id}`}>

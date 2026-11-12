@@ -56,9 +56,9 @@ function CoreEngineDashboardContent() {
     setLoading(true);
     try {
       const [matchesRes, momentsRes, engRes, recRes] = await Promise.allSettled([
-        fetch("/api/matches?limit=100").then((r) => r.json()),
+        fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`).then((r) => r.json()),
         fetch(`/api/match-moments?_t=${Date.now()}`).then((r) => r.json()),
-        fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=100&_t=${Date.now()}`).then((r) => r.json()),
+        fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=1000&_t=${Date.now()}`).then((r) => r.json()),
         fetch(`/api/visible-recognition?_t=${Date.now()}`).then((r) => r.json()),
       ]);
 

@@ -15,6 +15,7 @@ import {
   User,
 } from "lucide-react";
 import CoreEngineStepper from "../../components/CoreEngineStepper";
+import { sortMatchMoments, formatMomentOptionLabel } from "@/lib/matchMomentTimeline";
 
 interface MatchOption {
   match_id: string;
@@ -163,7 +164,7 @@ function AddRecognitionContent() {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        const res = await fetch("/api/matches?limit=100");
+        const res = await fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const list = json.data.map((m: Record<string, unknown>) => ({
@@ -188,7 +189,7 @@ function AddRecognitionContent() {
         const res = await fetch(`/api/match-moments?matchId=${encodeURIComponent(selectedMatchId)}&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          setMoments(json.data);
+          setMoments(sortMatchMoments(json.data));
         } else {
           setMoments([]);
         }
@@ -219,7 +220,7 @@ function AddRecognitionContent() {
 
     const fetchMomentEngagements = async () => {
       try {
-        const res = await fetch(`/api/engagements?limit=300&_t=${Date.now()}`);
+        const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&includeScheduled=true&limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         const rawList = Array.isArray(json.engagements)
           ? json.engagements
@@ -473,7 +474,7 @@ function AddRecognitionContent() {
                 <option value="">-- Choose Moment --</option>
                 {moments.map((m) => (
                   <option key={m.momentId} value={m.momentId}>
-                    Over {m.overs}{m.score ? ` (${m.score})` : ""} - {m.event || "Over"}
+                    {formatMomentOptionLabel(m)}
                   </option>
                 ))}
               </select>

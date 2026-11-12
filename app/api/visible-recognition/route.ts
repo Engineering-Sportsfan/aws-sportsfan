@@ -57,7 +57,6 @@ export async function GET(req: NextRequest) {
   const rawMomentId = searchParams.get("momentId");
   const rawEngagementId = searchParams.get("engagementId");
   const targetUserId = searchParams.get("targetUserId");
-  const includeAllEnvs = searchParams.get("allEnvs") === "true";
 
   const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH[#-]/i, "") : null;
   const cleanMomentId = rawMomentId ? rawMomentId.trim().replace(/^MOMENT[#-]/i, "") : null;
@@ -146,20 +145,22 @@ export async function GET(req: NextRequest) {
           }
         }
       } else {
-        // No matchId: Scan for all recognitions across MatchMoments
+        // No matchId: Scan for all recognitions across active MatchMoments table with full pagination
         for (const tbl of candidateTables) {
           try {
-            const scanRes = await docClient.send(
-              new ScanCommand({
-                TableName: tbl,
-                FilterExpression: "begins_with(sk, :skPrefix)",
-                ExpressionAttributeValues: {
-                  ":skPrefix": "RECOGNITION#",
-                },
-                Limit: 200,
-              })
-            );
-            if (scanRes.Items && scanRes.Items.length > 0) {
+            let lastKey: Record<string, any> | undefined;
+            do {
+              const scanRes = await docClient.send(
+                new ScanCommand({
+                  TableName: tbl,
+                  FilterExpression: "begins_with(sk, :skPrefix)",
+                  ExpressionAttributeValues: {
+                    ":skPrefix": "RECOGNITION#",
+                  },
+                  ExclusiveStartKey: lastKey,
+                })
+              );
+              if (scanRes.Items && scanRes.Items.length > 0) {
                 for (const item of scanRes.Items) {
                   const key = String(item.recognitionId || item.id || item.sk || Math.random());
                   if (!recMap.has(key)) {
@@ -169,8 +170,9 @@ export async function GET(req: NextRequest) {
                     });
                   }
                 }
-                if (!includeAllEnvs) break;
               }
+              lastKey = scanRes.LastEvaluatedKey;
+            } while (lastKey);
           } catch {
             continue;
           }
@@ -180,7 +182,7 @@ export async function GET(req: NextRequest) {
       console.warn("[visible-recognition GET] MatchMoments notice:", dynErr);
     }
 
-    // 2. Query SportsData table
+    // 2. Query active environment SportsData table
     if (cleanMatchId && matchKeyCandidates.length > 0) {
       try {
         let skPrefix = "RECOGNITION#";
@@ -192,7 +194,7 @@ export async function GET(req: NextRequest) {
           try {
             const queryRes = await docClient.send(
               new QueryCommand({
-                TableName: "SportsData",
+                TableName: TABLES.SportsData,
                 KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
                 ExpressionAttributeValues: {
                   ":eId": mKey,

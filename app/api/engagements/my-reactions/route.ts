@@ -6,6 +6,7 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { getUser } from "@/lib/getUser";
+import { db } from "@/lib/firebaseAdmin";
 import { batchGetItems } from "@/lib/dynamodbBatch";
 import { cacheService } from "@/lib/cacheService";
 import {
@@ -26,6 +27,7 @@ interface Reaction {
   id: string;
   engagementId: string;
   action: ReactionAction;
+  targetType: "engagement" | "recognition";
   title: string;
   text: string;
   createdAt: number;
@@ -107,6 +109,7 @@ export async function GET(req: NextRequest) {
 
     // 3. Hydrate engagement titles (+ image) with one BatchGetItem.
     const titles = new Map<string, { title: string; imageUrl?: string }>();
+    const recognitionIds = new Set<string>();
     const ids = Array.from(new Set(merged.map((r) => r.engagementId)));
     if (ids.length > 0) {
       try {
@@ -134,6 +137,26 @@ export async function GET(req: NextRequest) {
       } catch (err) {
         console.warn("[my-reactions] title hydration notice:", err);
       }
+
+      // Ids with no engagement row are visible recognitions: their Firestore doc is named after the recognition id.
+      const missing = ids.filter((id) => !titles.has(id));
+      if (missing.length > 0 && db) {
+        try {
+          const refs = missing.map((id) => db.collection("visible_recognitions").doc(id));
+          const docs = await db.getAll(...refs);
+          for (const d of docs) {
+            if (!d.exists) continue;
+            const r = d.data() || {};
+            recognitionIds.add(d.id);
+            titles.set(d.id, {
+              title: String(r.headline || r.message || "Recognition"),
+              ...(r.mediaUrl ? { imageUrl: String(r.mediaUrl) } : {}),
+            });
+          }
+        } catch (err) {
+          console.warn("[my-reactions] recognition hydration notice:", err);
+        }
+      }
     }
 
     const reactions: Reaction[] = merged.map((r) => {
@@ -142,6 +165,7 @@ export async function GET(req: NextRequest) {
         id: r.id,
         engagementId: r.engagementId,
         action: r.action,
+        targetType: recognitionIds.has(r.engagementId) ? ("recognition" as const) : ("engagement" as const),
         title: meta?.title || "",
         text: r.text,
         createdAt: r.createdAt,

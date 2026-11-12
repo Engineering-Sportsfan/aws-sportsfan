@@ -5,7 +5,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { validateMatchUpdate } from "@/lib/validations/matchValidation";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -67,7 +67,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
     // 2. Fallback to Firestore
     if (!matchData) {
-      const doc = await db.collection("matches").doc(id).get();
+      const doc = await db.collection(getFirestoreCollection("matches")).doc(id).get();
       if (!doc.exists) {
         return NextResponse.json({ success: false, error: `Match ${id} not found` }, { status: 404 });
       }
@@ -75,7 +75,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
       // Fetch innings subcollection
       try {
-        const inningsSnap = await db.collection("matches").doc(id).collection("innings").orderBy("innings_no").get();
+        const inningsSnap = await db.collection(getFirestoreCollection("matches")).doc(id).collection("innings").orderBy("innings_no").get();
         innings = inningsSnap.docs.map((d) => d.data());
       } catch {}
     }
@@ -155,7 +155,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   if (!existingData) {
     try {
-      const snap = await db.collection("matches").doc(id).get();
+      const snap = await db.collection(getFirestoreCollection("matches")).doc(id).get();
       if (snap.exists) existingData = snap.data();
     } catch {}
   }
@@ -176,14 +176,30 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       sk: "MATCH#META",
       ...updatedMatch,
     },
-    firestoreRef: db.collection("matches").doc(id),
+    firestoreRef: db.collection(getFirestoreCollection("matches")).doc(id),
     firestoreData: {
       ...validation.data,
       updated_at: FieldValue.serverTimestamp(),
     },
   });
 
-  return NextResponse.json({ success: true, match_id: id, data: updatedMatch });
+  let playerSummariesGenerated = 0;
+  if (String(updatedMatch.status || "").trim().toLowerCase() === "completed") {
+    try {
+      const { generateAndPersistMatchPlayerSummaries } = await import("@/lib/matchPlayerSummary");
+      const summaryResult = await generateAndPersistMatchPlayerSummaries(id, updatedMatch);
+      playerSummariesGenerated = summaryResult.generatedCount;
+    } catch (summaryErr) {
+      console.warn(`[matches PATCH ${id}] Match player summary dispatch notice:`, summaryErr);
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    match_id: id,
+    data: updatedMatch,
+    playerSummariesGenerated,
+  });
 }
 
 // ─── DELETE /api/matches/[id] ─────────────────────────────────────────────────
@@ -224,7 +240,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   // 2. Delete from Firestore matches collection
   try {
-    const docRef = db.collection("matches").doc(id);
+    const docRef = db.collection(getFirestoreCollection("matches")).doc(id);
     const inningsSnap = await docRef.collection("innings").get();
     const batch = db.batch();
     inningsSnap.docs.forEach((d) => batch.delete(d.ref));

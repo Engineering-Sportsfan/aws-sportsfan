@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import CoreEngineStepper from "../../components/CoreEngineStepper";
+import { sortMatchMoments, formatMomentOptionLabel } from "@/lib/matchMomentTimeline";
 
 interface MatchOption {
   match_id: string;
@@ -47,6 +48,43 @@ interface EngagementItem {
   type: string;
   title: string;
   subtitle?: string;
+  inputPlaceholder?: string;
+  expressData?: {
+    placeholder?: string;
+    responseMode?: string;
+    totalResponses?: number;
+  };
+  followData?: {
+    team1Name?: string;
+    team1Code?: string;
+    team1Flag?: string;
+    team2Name?: string;
+    team2Code?: string;
+    team2Flag?: string;
+    matchLabel?: string;
+    matchTimeLabel?: string;
+    matchStartTime?: string | number | null;
+    followCount?: number;
+    remindCount?: number;
+  };
+  matchResultData?: {
+    showSnapshot?: boolean;
+    team1Name?: string;
+    team1Code?: string;
+    team1Score?: string;
+    team2Name?: string;
+    team2Code?: string;
+    team2Score?: string;
+    resultSummary?: string;
+    showTopPerformer?: boolean;
+    performerLabel?: string;
+    playerName?: string;
+    playerStats?: string;
+  };
+  startTime?: string | number;
+  scheduledStartTime?: string | number;
+  isScheduled?: boolean;
+  totalResponses?: number;
   options: OptionItem[];
   timerMinutes?: number;
   durationMinutes?: number;
@@ -98,7 +136,7 @@ function EngagementListContent() {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        const res = await fetch("/api/matches?limit=100");
+        const res = await fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const list: MatchOption[] = json.data.map((m: Record<string, unknown>) => ({
@@ -123,7 +161,7 @@ function EngagementListContent() {
         const res = await fetch(`/api/match-moments?matchId=${encodeURIComponent(selectedMatchId)}&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          setMoments(json.data);
+          setMoments(sortMatchMoments(json.data));
         } else {
           setMoments([]);
         }
@@ -138,7 +176,7 @@ function EngagementListContent() {
   const fetchEngagements = useCallback(async () => {
     setLoading(true);
     try {
-      let url = `/api/engagements?excludeFlipArena=true&source=match_moment&limit=200&_t=${Date.now()}`;
+      let url = `/api/engagements?excludeFlipArena=true&source=match_moment&includeScheduled=true&limit=1000&_t=${Date.now()}`;
       if (selectedMatchId) {
         url += `&matchId=${encodeURIComponent(selectedMatchId)}`;
       }
@@ -279,11 +317,16 @@ function EngagementListContent() {
   };
 
   const filteredEngagements = useMemo(() => {
+    const cleanSelMoment = selectedMomentId.replace(/^MOMENT#/i, "").trim();
     return engagements.filter((e) => {
-      if (selectedMomentId && e.momentId && e.momentId !== selectedMomentId) return false;
+      if (cleanSelMoment && e.momentId) {
+        const cleanEngMoment = String(e.momentId).replace(/^MOMENT#/i, "").trim();
+        if (cleanEngMoment !== cleanSelMoment) return false;
+      }
       if (typeFilter !== "all" && e.type !== typeFilter) return false;
       if (statusFilter !== "all") {
         if (statusFilter === "settled" && e.status !== "settled") return false;
+        if (statusFilter === "scheduled" && e.status !== "scheduled") return false;
         if (statusFilter === "active" && e.status === "settled") return false;
       }
       if (searchQuery) {
@@ -398,7 +441,7 @@ function EngagementListContent() {
             <option value="">-- All Moments --</option>
             {moments.map((m) => (
               <option key={m.momentId} value={m.momentId}>
-                Over {m.overs}{m.score ? ` (${m.score})` : ""} - {m.event || "Over"}
+                {formatMomentOptionLabel(m)}
               </option>
             ))}
           </select>
@@ -419,6 +462,8 @@ function EngagementListContent() {
             <option value="express">Express</option>
             <option value="debate">Debate</option>
             <option value="question">Trivia</option>
+            <option value="follow">Follow</option>
+            <option value="match_result">Result / POTM</option>
           </select>
         </div>
 
@@ -433,6 +478,7 @@ function EngagementListContent() {
           >
             <option value="all">All Statuses</option>
             <option value="active">Active Only</option>
+            <option value="scheduled">Scheduled Only</option>
             <option value="settled">Settled Only</option>
           </select>
         </div>
@@ -475,6 +521,12 @@ function EngagementListContent() {
         <div className="space-y-3">
           {filteredEngagements.map((eng) => {
             const { isExpired, remainingText } = getTimerStatus(eng);
+            const isExpressTextOnly = eng.type === "express" && (!Array.isArray(eng.options) || eng.options.length === 0);
+            const isFollowCard = eng.type === "follow";
+            const isMatchResultCard = eng.type === "match_result";
+            const rawSched = eng.scheduledStartTime || eng.startTime;
+            const schedMs = rawSched ? (typeof rawSched === "number" ? rawSched : new Date(rawSched).getTime()) : 0;
+            const isScheduledFuture = Boolean((eng.status === "scheduled" || eng.isScheduled) && Number.isFinite(schedMs) && schedMs > Date.now());
             const isSettled = eng.status === "settled" || Boolean(eng.winningChoiceId || eng.outcomeWinningChoiceId);
             const winningOpt = eng.options?.find(
               (o) => o.id === (eng.winningChoiceId || eng.outcomeWinningChoiceId)
@@ -492,19 +544,40 @@ function EngagementListContent() {
                       {eng.type}
                     </span>
 
-                    {/* Timer badge */}
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-                        isExpired
-                          ? "bg-slate-500/20 text-slate-300"
-                          : "bg-emerald-500/20 text-emerald-400 animate-pulse"
-                      }`}
-                    >
-                      <Clock size={11} /> {remainingText}
-                    </span>
+                    {/* Scheduled Launch Badge */}
+                    {isScheduledFuture && (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        🕒 Scheduled: {new Date(schedMs).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                      </span>
+                    )}
 
-                    {/* Settled Status */}
-                    {isSettled ? (
+                    {/* Timer badge (not shown for Follow or Match Result cards) */}
+                    {!isFollowCard && !isMatchResultCard && (
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
+                          isExpired
+                            ? "bg-slate-500/20 text-slate-300"
+                            : "bg-emerald-500/20 text-emerald-400 animate-pulse"
+                        }`}
+                      >
+                        <Clock size={11} /> {remainingText}
+                      </span>
+                    )}
+
+                    {/* Settled / Express / Follow Status */}
+                    {isExpressTextOnly ? (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                        ✍️ Open Input Box ({Number(eng.totalResponses ?? eng.totalVotes ?? 0)} responses)
+                      </span>
+                    ) : isFollowCard ? (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        🔔 Follow Card ({Number(eng.followData?.followCount ?? eng.totalVotes ?? 0)} following · {Number(eng.followData?.remindCount ?? 0)} reminds)
+                      </span>
+                    ) : isMatchResultCard ? (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                        🏆 Final Result / Top Performer Card
+                      </span>
+                    ) : isSettled ? (
                       <span className="text-[10px] font-black px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
                         ✅ Settled: {winningOpt?.text || eng.winningChoiceId}
                       </span>
@@ -521,6 +594,22 @@ function EngagementListContent() {
 
                   {/* Options pills */}
                   <div className="flex items-center gap-2 flex-wrap">
+                    {isExpressTextOnly && (
+                      <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-pink-500/10 text-pink-200 border border-pink-500/25">
+                        ✍️ Open Fan Text Input (No Options) — &ldquo;{eng.inputPlaceholder || eng.expressData?.placeholder || "Write your thoughts..."}&rdquo;
+                      </span>
+                    )}
+                    {isFollowCard && (
+                      <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-purple-500/10 text-purple-200 border border-purple-500/25">
+                        🔔 {eng.followData?.team1Flag || "🏏"} {eng.followData?.team1Code || "TBD"} vs {eng.followData?.team2Flag || "🏏"} {eng.followData?.team2Code || "TBD"} · {eng.followData?.matchLabel || "T20 INTERNATIONAL"} · {eng.followData?.matchTimeLabel || "Upcoming"}
+                      </span>
+                    )}
+                    {isMatchResultCard && (
+                      <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-sky-500/10 text-sky-200 border border-sky-500/25">
+                        🏆 {eng.matchResultData?.team1Name || eng.matchResultData?.team1Code || "Team 1"} {eng.matchResultData?.team1Score || ""} vs {eng.matchResultData?.team2Name || eng.matchResultData?.team2Code || "Team 2"} {eng.matchResultData?.team2Score || ""}
+                        {eng.matchResultData?.playerName ? ` · ⭐ ${eng.matchResultData.playerName}${eng.matchResultData.playerStats ? ` (${eng.matchResultData.playerStats})` : ""}` : ""}
+                      </span>
+                    )}
                     {eng.options?.map((opt, i) => {
                       const isWin = opt.id === (eng.winningChoiceId || eng.outcomeWinningChoiceId);
                       return (
@@ -542,14 +631,16 @@ function EngagementListContent() {
 
                 {/* Right Actions */}
                 <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  {/* Reveal / Settle Outcome CTA */}
-                  <button
-                    onClick={() => handleOpenSettleModal(eng)}
-                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-95 text-black text-xs font-black transition-all flex items-center gap-1 shadow-sm"
-                  >
-                    <Trophy size={13} />
-                    <span>{isSettled ? "Edit Outcome" : "Reveal Visible Outcome"}</span>
-                  </button>
+                  {/* Reveal / Settle Outcome CTA (not applicable to open-text Express, Follow, or Match Result cards) */}
+                  {!isExpressTextOnly && !isFollowCard && !isMatchResultCard && (
+                    <button
+                      onClick={() => handleOpenSettleModal(eng)}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-95 text-black text-xs font-black transition-all flex items-center gap-1 shadow-sm"
+                    >
+                      <Trophy size={13} />
+                      <span>{isSettled ? "Edit Outcome" : "Reveal Visible Outcome"}</span>
+                    </button>
+                  )}
 
                   {/* Recognition CTA */}
                   <Link

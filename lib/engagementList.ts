@@ -127,9 +127,9 @@ export async function getUserInteractions(
   itemIds: string[],
   quizIds: Set<string>,
   candidateIds: string[]
-): Promise<Map<string, { liked: boolean; vote: string | null }>> {
-  const out = new Map<string, { liked: boolean; vote: string | null }>();
-  for (const id of itemIds) out.set(id, { liked: false, vote: null });
+): Promise<Map<string, { liked: boolean; vote: string | null; following: boolean; reminded: boolean }>> {
+  const out = new Map<string, { liked: boolean; vote: string | null; following: boolean; reminded: boolean }>();
+  for (const id of itemIds) out.set(id, { liked: false, vote: null, following: false, reminded: false });
   if (itemIds.length === 0 || candidateIds.length === 0) return out;
 
   const keys: Record<string, any>[] = [];
@@ -142,7 +142,7 @@ export async function getUserInteractions(
 
   try {
     const rows = await batchGetItems(TABLES.SocialAndContent, keys, {
-      projectionExpression: "contentId, sk, selectedOptionId",
+      projectionExpression: "contentId, sk, selectedOptionId, isFollowing, isReminded",
     });
     for (const r of rows) {
       const id = String(r.contentId || "").replace(/^ENGAGEMENT#/, "");
@@ -150,7 +150,13 @@ export async function getUserInteractions(
       if (!entry) continue;
       const sk = String(r.sk || "");
       if (sk.startsWith("LIKE#")) entry.liked = true;
-      else if (sk.startsWith("VOTE#") && r.selectedOptionId != null && entry.vote === null) entry.vote = String(r.selectedOptionId);
+      else if (sk.startsWith("VOTE#")) {
+        // Same follow/remind rule as getEngagementStats: explicit flag, or "follow"/"remind" inside selectedOptionId.
+        const opts = String(r.selectedOptionId || "").toLowerCase().split(",").map((s) => s.trim());
+        if (r.selectedOptionId != null && entry.vote === null) entry.vote = String(r.selectedOptionId);
+        if (r.isFollowing || opts.includes("follow")) entry.following = true;
+        if (r.isReminded || opts.includes("remind")) entry.reminded = true;
+      }
     }
   } catch (err) {
     console.warn("Engagements per-user BatchGet notice:", err);

@@ -10,7 +10,7 @@ import { getUser } from "@/lib/getUser";
 import { awardEngagementPoints } from "@/lib/engagementPoints";
 import { dispatchFlipArenaContentDropNotification } from "@/lib/notifications";
 import cloudinary from "@/lib/cloudinary";
-import { applyEngagementStats, findUserVote, getEngagementStats, primaryOptions } from "@/lib/engagementSocial";
+import { primaryOptions } from "@/lib/engagementSocial";
 import { findEngagementById } from "@/lib/engagementPersistence";
 import { cacheService } from "@/lib/cacheService";
 import {
@@ -25,6 +25,7 @@ import {
   sourcePartitionsFor,
   withEngagementGsiKeys,
 } from "@/lib/engagementList";
+import { parseMatchStartMs } from "@/lib/matchMomentTimeline";
 
 export const dynamic = "force-dynamic";
 
@@ -120,15 +121,18 @@ export async function GET(req: NextRequest) {
                 memeData: it.memeData,
                 debateData: it.debateData,
                 expressData: it.expressData,
+                inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
                 questionData: it.questionData,
+                followData: it.followData || undefined,
+                matchResultData: it.matchResultData || undefined,
                 postLock: it.postLock ?? it.questionData?.postLock ?? "",
                 winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
                 outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
                 outcomeNotes: it.outcomeNotes || null,
                 resolvedAt: it.resolvedAt || null,
                 resolvedBy: it.resolvedBy || null,
-                timerMinutes: it.timerMinutes || it.durationMinutes || 4,
-                durationMinutes: it.durationMinutes || it.timerMinutes || 4,
+                timerMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.timerMinutes || it.durationMinutes || 4),
+                durationMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.durationMinutes || it.timerMinutes || 4),
                 memeType: it.memeType || it.memeData?.memeType,
                 options: it.options || it.memeData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options || it.pollData?.options || it.predictionData?.options,
                 imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
@@ -137,17 +141,25 @@ export async function GET(req: NextRequest) {
                 labelB: it.labelB || it.memeData?.labelB,
                 likes: Number(it.likes) || 0,
                 shares: Number(it.shares) || 0,
+                impressions: Number(it.impressions ?? it.impressionsCount) || 0,
                 totalEngaged: Number(it.totalEngaged) || 0,
                 createdAt: it.createdAt || Date.now(),
                 updatedAt: it.updatedAt || Date.now(),
+                startTime: it.startTime ?? it.scheduledStartTime ?? it.postingTime ?? undefined,
+                scheduledStartTime: it.scheduledStartTime ?? it.startTime ?? it.postingTime ?? undefined,
+                postingTime: it.postingTime ?? it.scheduledStartTime ?? it.startTime ?? undefined,
+                isScheduled: Boolean(it.isScheduled),
+                notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
                 expiresAt:
-                  it.expiresAt ||
-                  (it.createdAt && (it.timerMinutes || it.durationMinutes)
-                    ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
-                    : null),
+                  (it.type === "follow" || it.type === "match_result")
+                    ? null
+                    : (it.expiresAt ||
+                        (it.createdAt && (it.timerMinutes || it.durationMinutes)
+                          ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
+                          : null)),
                 category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
                 source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
-                isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+                isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.followData || it.matchResultData || it.type === "follow" || it.type === "match_result" || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
                 matchId: it.matchId || undefined,
                 momentId: it.momentId || it.loopId || undefined,
                 loopId: it.loopId || it.momentId || undefined,
@@ -164,9 +176,7 @@ export async function GET(req: NextRequest) {
               });
             }
           }
-          if (!includeAllEnvs) {
-            break; // Default single-env mode stops after active table
-          }
+          break; // Active environment table only
         }
       } catch (dynErr: any) {
         if (useGsi && isMissingIndexError(dynErr)) throw dynErr; // -> caller falls back to the Scan path
@@ -283,7 +293,13 @@ export async function GET(req: NextRequest) {
                   predictionData: it.predictionData || existing.predictionData,
                   debateData: it.debateData || existing.debateData,
                   fanBattleData: it.fanBattleData || existing.fanBattleData,
+                  expressData: it.expressData || existing.expressData,
+                  questionData: it.questionData || existing.questionData,
+                  followData: it.followData || existing.followData,
+                  matchResultData: it.matchResultData || existing.matchResultData,
+                  type: existing.type || it.type || "poll",
                   options: it.options || existing.options,
+                  momentId: it.momentId || existing.momentId,
                   matchId: it.matchId || (typeof it.entityId === "string" ? it.entityId.replace(/^MATCH#/, "") : existing.matchId),
                   isMatchMoment: true,
                 });
@@ -306,23 +322,32 @@ export async function GET(req: NextRequest) {
               memeData: it.memeData,
               debateData: it.debateData,
               expressData: it.expressData,
+              inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
               questionData: it.questionData,
+              followData: it.followData || undefined,
+              matchResultData: it.matchResultData || undefined,
               postLock: it.postLock ?? it.questionData?.postLock ?? "",
               winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
               outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
               outcomeNotes: it.outcomeNotes || null,
               resolvedAt: it.resolvedAt || null,
               resolvedBy: it.resolvedBy || null,
-              timerMinutes: it.timerMinutes || 4,
-              durationMinutes: it.durationMinutes || 4,
+              timerMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.timerMinutes || 4),
+              durationMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.durationMinutes || 4),
               options: it.options || it.pollData?.options || it.predictionData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options,
               likes: Number(it.likes) || 0,
               shares: Number(it.shares) || 0,
+              impressions: Number(it.impressions) || 0,
               totalEngaged: Number(it.totalEngaged) || 0,
               commentsCount: Number(it.commentsCount) || 0,
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
-              expiresAt: it.expiresAt || null,
+              startTime: it.startTime ?? it.scheduledStartTime ?? it.postingTime ?? undefined,
+              scheduledStartTime: it.scheduledStartTime ?? it.startTime ?? it.postingTime ?? undefined,
+              postingTime: it.postingTime ?? it.scheduledStartTime ?? it.startTime ?? undefined,
+              isScheduled: Boolean(it.isScheduled),
+              notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
+              expiresAt: (it.type === "follow" || it.type === "match_result") ? null : (it.expiresAt || null),
               category: it.category || "match_moment",
               source: it.source || "match_moment",
               isMatchMoment: true,
@@ -341,9 +366,7 @@ export async function GET(req: NextRequest) {
               creatorAvatar: it.creatorAvatar || undefined,
             });
           }
-          if (!includeAllEnvs) {
-            break;
-          }
+          break; // Active environment table only
         }
       } catch (mmErr: any) {
         if (useGsi && isMissingIndexError(mmErr)) throw mmErr; // -> caller falls back to the Scan path
@@ -378,15 +401,18 @@ export async function GET(req: NextRequest) {
               memeData: it.memeData,
               debateData: it.debateData,
               expressData: it.expressData,
+              inputPlaceholder: it.inputPlaceholder || it.expressData?.placeholder || undefined,
               questionData: it.questionData,
+              followData: it.followData || undefined,
+              matchResultData: it.matchResultData || undefined,
               postLock: it.postLock ?? it.questionData?.postLock ?? "",
               winningChoiceId: it.winningChoiceId || it.outcomeWinningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
               outcomeWinningChoiceId: it.outcomeWinningChoiceId || it.winningChoiceId || it.predictionData?.winningChoiceId || it.debateData?.winningChoiceId || null,
               outcomeNotes: it.outcomeNotes || null,
               resolvedAt: it.resolvedAt || null,
               resolvedBy: it.resolvedBy || null,
-              timerMinutes: it.timerMinutes || it.durationMinutes || 4,
-              durationMinutes: it.durationMinutes || it.timerMinutes || 4,
+              timerMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.timerMinutes || it.durationMinutes || 4),
+              durationMinutes: (it.type === "follow" || it.type === "match_result") ? undefined : (it.durationMinutes || it.timerMinutes || 4),
               memeType: it.memeType || it.memeData?.memeType,
               options: it.options || it.memeData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options || it.pollData?.options || it.predictionData?.options,
               imageUrlA: it.imageUrlA || it.memeData?.imageUrlA,
@@ -395,17 +421,25 @@ export async function GET(req: NextRequest) {
               labelB: it.labelB || it.memeData?.labelB,
               likes: Number(it.likes) || 0,
               shares: Number(it.shares) || 0,
+              impressions: Number(it.impressions) || 0,
               totalEngaged: Number(it.totalEngaged) || 0,
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
+              startTime: it.startTime ?? it.scheduledStartTime ?? it.postingTime ?? undefined,
+              scheduledStartTime: it.scheduledStartTime ?? it.startTime ?? it.postingTime ?? undefined,
+              postingTime: it.postingTime ?? it.scheduledStartTime ?? it.startTime ?? undefined,
+              isScheduled: Boolean(it.isScheduled),
+              notifiedLive: it.notifiedLive !== undefined ? Boolean(it.notifiedLive) : undefined,
               expiresAt:
-                it.expiresAt ||
-                (it.createdAt && (it.timerMinutes || it.durationMinutes)
-                  ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
-                  : null),
+                (it.type === "follow" || it.type === "match_result")
+                  ? null
+                  : (it.expiresAt ||
+                      (it.createdAt && (it.timerMinutes || it.durationMinutes)
+                        ? Number(it.createdAt) + Number(it.timerMinutes || it.durationMinutes || 4) * 60 * 1000
+                        : null)),
               category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
               source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
-              isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+              isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.followData || it.matchResultData || it.type === "follow" || it.type === "match_result" || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
               matchId: it.matchId || undefined,
               momentId: it.momentId || it.loopId || undefined,
               loopId: it.loopId || it.momentId || undefined,
@@ -462,6 +496,46 @@ export async function GET(req: NextRequest) {
 
     // Apply Filters
     const nowMs = Date.now();
+    const includeScheduled = searchParams.get("includeScheduled") === "true";
+
+    const getScheduledMs = (it: any): number => {
+      const raw =
+        it.scheduledStartTime ??
+        it.startTime ??
+        it.postingTime ??
+        it.quizData?.scheduledStartTime ??
+        it.pollData?.scheduledStartTime ??
+        it.predictionData?.scheduledStartTime ??
+        it.fanBattleData?.scheduledStartTime ??
+        0;
+      if (!raw) return 0;
+      if (typeof raw === "number") return raw;
+      const parsed = new Date(raw).getTime();
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Normalize effective status (scheduled items whose launch time has arrived become active)
+    // and gate future-scheduled items unless admin explicitly requests includeScheduled=true.
+    items = items
+      .map((i) => {
+        const schedMs = getScheduledMs(i);
+        const rawStatus = String(i.status || "active").toLowerCase();
+        const isWaitingSchedule =
+          (rawStatus === "scheduled" || Boolean((i as any).isScheduled)) && schedMs > nowMs;
+        if (!isWaitingSchedule && rawStatus === "scheduled") {
+          return { ...i, status: "active" as any };
+        }
+        return i;
+      })
+      .filter((i) => {
+        if (includeScheduled || status === "scheduled" || status === "all") return true;
+        const schedMs = getScheduledMs(i);
+        const rawStatus = String(i.status || "active").toLowerCase();
+        if (rawStatus === "scheduled") return false;
+        if (Boolean((i as any).isScheduled) && schedMs > nowMs) return false;
+        return true;
+      });
+
     if (type && type !== ("all" as any)) {
       items = items.filter(i => (i.type || "").toLowerCase() === type.toLowerCase());
     }
@@ -521,8 +595,8 @@ export async function GET(req: NextRequest) {
     if (shouldExcludeMatchMoments) {
       items = items.filter(i => {
         if (i.isMatchMoment === true || (i as any).category === "match_moment" || (i as any).source === "match_moment") return false;
-        if (i.type === "debate" || i.type === "express" || i.type === "question") return false;
-        if (Boolean(i.debateData || i.expressData || i.questionData)) return false;
+        if (i.type === "debate" || i.type === "express" || i.type === "question" || i.type === "follow" || i.type === "match_result") return false;
+        if (Boolean(i.debateData || i.expressData || i.questionData || (i as any).followData || (i as any).matchResultData)) return false;
         if (Array.isArray(i.tags) && i.tags.some(t => t.toUpperCase().includes("MATCH MOMENT") || t.toUpperCase().includes("4-MIN"))) return false;
         return true;
       });
@@ -651,7 +725,15 @@ export async function GET(req: NextRequest) {
       const mine = await getUserInteractions(items.map((i) => String(i.id)), quizIds, candidateIds);
       items = items.map((it) => {
         const u = mine.get(String(it.id));
-        return { ...it, userLiked: u?.liked ?? false, userVoted: (u?.vote ?? null) !== null, userVote: u?.vote ?? null };
+        return {
+          ...it,
+          userLiked: u?.liked ?? false,
+          userVoted: (u?.vote ?? null) !== null,
+          userVote: u?.vote ?? null,
+          ...(it.type === "follow"
+            ? { userFollowing: u?.following ?? false, userReminded: u?.reminded ?? false }
+            : {}),
+        };
       });
     }
 
@@ -841,9 +923,33 @@ export async function POST(req: NextRequest) {
       else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 +10 SXP", "⚡ 4-MIN LIVE"];
       else if (type === "debate") computedTags = ["⚖️ DEBATE", "🔥 LIVE VERDICT"];
       else if (type === "express") computedTags = ["⚡ EXPRESS", "🚀 PULSE"];
+      else if (type === "follow") computedTags = ["🔔 FOLLOW", "📅 UPCOMING MATCH"];
+      else if (type === "match_result") computedTags = ["🏆 MATCH RESULT", "⭐ TOP PERFORMER"];
       else if (type === "meme") computedTags = ["🔥 MEME ARENA", "😂 VIRAL"];
       else computedTags = ["⚡ MATCH MOMENT", "🔥 LIVE"];
     }
+
+    const rawScheduledTimeEarly =
+      (body as any).startTime ||
+      (body as any).scheduledStartTime ||
+      (body as any).postingTime ||
+      quizData?.startTime ||
+      quizData?.scheduledStartTime ||
+      quizData?.postingTime ||
+      pollData?.startTime ||
+      pollData?.scheduledStartTime ||
+      predictionData?.startTime ||
+      predictionData?.scheduledStartTime ||
+      fanBattleData?.startTime ||
+      fanBattleData?.scheduledStartTime;
+
+    const scheduledMsEarly = rawScheduledTimeEarly
+      ? typeof rawScheduledTimeEarly === "number"
+        ? rawScheduledTimeEarly
+        : new Date(rawScheduledTimeEarly).getTime()
+      : now;
+    const isScheduledFutureEarly = Boolean(scheduledMsEarly && !isNaN(scheduledMsEarly) && scheduledMsEarly > now + 30000);
+    const timerAnchorMs = isScheduledFutureEarly ? scheduledMsEarly : now;
 
     // Default timer: standard 4 minutes for all live match moments
     const matchMomentDurationMins = Number(
@@ -866,21 +972,23 @@ export async function POST(req: NextRequest) {
     const predDurationMins = Number(predictionData?.durationMinutes || predictionData?.timerMinutes || matchMomentDurationMins || 4);
     const quizDurationMins = Number(quizData?.durationMinutes || quizData?.timerMinutes || 600);
 
-    const computedExpiresAt =
-      expiresAt ||
-      (type === "poll"
-        ? pollData?.expiresAt || now + pollDurationMins * 60 * 1000
-        : type === "prediction"
-          ? predictionData?.expiresAt || now + predDurationMins * 60 * 1000
-          : type === "debate"
-            ? (body.debateData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
-            : type === "express"
-              ? (body.expressData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
-              : type === "question"
-                ? (body.questionData?.expiresAt || now + matchMomentDurationMins * 60 * 1000)
-                : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
-                  ? quizData?.expiresAt || now + quizDurationMins * 60 * 1000
-                  : now + matchMomentDurationMins * 60 * 1000);
+    const isNoTimerType = type === "follow" || type === "match_result";
+    const computedExpiresAt = isNoTimerType
+      ? null
+      : expiresAt ||
+        (type === "poll"
+          ? pollData?.expiresAt || timerAnchorMs + pollDurationMins * 60 * 1000
+          : type === "prediction"
+            ? predictionData?.expiresAt || timerAnchorMs + predDurationMins * 60 * 1000
+            : type === "debate"
+              ? (body.debateData?.expiresAt || timerAnchorMs + matchMomentDurationMins * 60 * 1000)
+              : type === "express"
+                ? (body.expressData?.expiresAt || timerAnchorMs + matchMomentDurationMins * 60 * 1000)
+                : type === "question"
+                  ? (body.questionData?.expiresAt || timerAnchorMs + matchMomentDurationMins * 60 * 1000)
+                  : type === "quiz" && (quizData?.durationMinutes || quizData?.timerMinutes || quizData?.expiresAt)
+                    ? quizData?.expiresAt || timerAnchorMs + quizDurationMins * 60 * 1000
+                    : timerAnchorMs + matchMomentDurationMins * 60 * 1000);
 
     const formattedQuizData =
       type === "quiz" && quizData
@@ -969,22 +1077,37 @@ export async function POST(req: NextRequest) {
           }
         : undefined;
 
+    const rawExpressOptions =
+      Array.isArray(body.expressData?.options) && body.expressData.options.length > 0
+        ? body.expressData.options
+        : Array.isArray(body.options) && body.options.length > 0
+        ? body.options.map((opt: any, idx: number) => ({
+            id: opt.id || String(idx + 1),
+            text: typeof opt === "string" ? opt : opt.text,
+            emoji: opt.emoji || "",
+            votes: Number(opt.votes) || 0,
+          }))
+        : [];
+    const expressResponseMode =
+      body.expressData?.responseMode ||
+      (rawExpressOptions.length > 0 ? "options" : "text");
+    const expressPlaceholderText = String(
+      body.expressData?.placeholder || body.inputPlaceholder || "Write your thoughts..."
+    ).trim();
+
     const formattedExpressData =
-      type === "express" && (body.expressData || body.options || body.title)
+      type === "express" && (body.expressData || body.options || body.title || body.prompt)
         ? {
             question: body.expressData?.question || body.prompt || body.title || "",
-            prompt: body.expressData?.prompt || body.title || "",
-            options: Array.isArray(body.expressData?.options) && body.expressData.options.length > 0
-              ? body.expressData.options
-              : Array.isArray(body.options)
-              ? body.options.map((opt: any, idx: number) => ({
-                  id: opt.id || String(idx + 1),
-                  text: typeof opt === "string" ? opt : opt.text,
-                  emoji: opt.emoji || "",
-                  votes: Number(opt.votes) || 0,
-                }))
-              : [],
+            prompt: body.expressData?.prompt || body.prompt || body.title || "",
+            responseMode: expressResponseMode,
+            placeholder: expressPlaceholderText,
+            options: expressResponseMode === "text" ? [] : rawExpressOptions,
             totalVotes: Number(body.expressData?.totalVotes) || 0,
+            totalResponses:
+              Number(body.expressData?.totalResponses) ||
+              Number(body.expressData?.totalVotes) ||
+              0,
             durationMinutes: matchMomentDurationMins,
             timerMinutes: matchMomentDurationMins,
             expiresAt: computedExpiresAt,
@@ -1149,11 +1272,30 @@ export async function POST(req: NextRequest) {
     let resolvedSeriesId = String(body.seriesId || existingEngagement?.seriesId || "").trim();
     const resolvedMatchIdStr = String(body.matchId || existingEngagement?.matchId || "").replace(/^MATCH#/i, "").trim();
     const resolvedMomentIdStr = String(body.momentId || body.loopId || existingEngagement?.momentId || "").replace(/^MOMENT#/i, "").trim();
-    if (!resolvedSeriesId && resolvedMatchIdStr) {
+    const rawFollowStartInput =
+      body.followData?.matchStartMs ??
+      body.followData?.matchStartTime ??
+      body.matchStartMs ??
+      body.matchStartTime ??
+      existingEngagement?.followData?.matchStartMs;
+    const parseTimestampMs = (raw: unknown): number | undefined => {
+      if (raw === undefined || raw === null || raw === "") return undefined;
+      if (typeof raw === "number") {
+        if (!Number.isFinite(raw) || raw <= 0) return undefined;
+        return raw < 1e11 ? raw * 1000 : raw;
+      }
+      const num = Number(raw);
+      if (Number.isFinite(num) && num > 0) return num < 1e11 ? num * 1000 : num;
+      const parsed = new Date(String(raw)).getTime();
+      return !Number.isNaN(parsed) && parsed > 0 ? parsed : undefined;
+    };
+    let resolvedFollowStartMs = parseTimestampMs(rawFollowStartInput);
+
+    if ((!resolvedSeriesId || (type === "follow" && !resolvedFollowStartMs)) && resolvedMatchIdStr) {
       const mmTables = Array.from(new Set([TABLES.MatchMoments, TABLES.SportsData]));
       for (const tbl of mmTables) {
         try {
-          if (resolvedMomentIdStr) {
+          if (!resolvedSeriesId && resolvedMomentIdStr) {
             const momRes = await docClient.send(
               new GetCommand({
                 TableName: tbl,
@@ -1162,7 +1304,6 @@ export async function POST(req: NextRequest) {
             );
             if (momRes.Item?.seriesId) {
               resolvedSeriesId = String(momRes.Item.seriesId).trim();
-              break;
             }
           }
           const matchRes = await docClient.send(
@@ -1171,10 +1312,14 @@ export async function POST(req: NextRequest) {
               Key: { entityId: `MATCH#${resolvedMatchIdStr}`, sk: "MATCH#META" },
             })
           );
-          if (matchRes.Item?.seriesId) {
+          if (matchRes.Item?.seriesId && !resolvedSeriesId) {
             resolvedSeriesId = String(matchRes.Item.seriesId).trim();
-            break;
           }
+          if (type === "follow" && !resolvedFollowStartMs && matchRes.Item) {
+            const parsedFromMatch = parseMatchStartMs(matchRes.Item.date, matchRes.Item.time);
+            if (parsedFromMatch) resolvedFollowStartMs = parsedFromMatch;
+          }
+          if (resolvedSeriesId && (type !== "follow" || resolvedFollowStartMs)) break;
         } catch {}
       }
     }
@@ -1192,7 +1337,7 @@ export async function POST(req: NextRequest) {
       subtitle: subtitle || (isMeme ? formattedMemeData?.caption || formattedMemeData?.description || "" : ""),
       tags: computedTags,
       sport: (sport || "cricket").toLowerCase(),
-      status: status || (isFutureScheduled ? "scheduled" : "active"),
+      status: isFutureScheduled ? "scheduled" : (status === "scheduled" ? "active" : (status || "active")),
       creatorId: creatorId || undefined,
       creatorEmail: creatorEmail || undefined,
       creatorName: creatorName || undefined,
@@ -1204,15 +1349,68 @@ export async function POST(req: NextRequest) {
       memeData: formattedMemeData,
       debateData: formattedDebateData,
       expressData: formattedExpressData,
+      ...(type === "follow"
+        ? {
+            followData: {
+              ...(body.followData || {}),
+              team1Name: String(body.followData?.team1Name || body.team1Name || "").trim(),
+              team1Code: String(body.followData?.team1Code || body.team1Code || "").trim().toUpperCase(),
+              team1Flag: String(body.followData?.team1Flag || body.team1Flag || "").trim(),
+              team2Name: String(body.followData?.team2Name || body.team2Name || "").trim(),
+              team2Code: String(body.followData?.team2Code || body.team2Code || "").trim().toUpperCase(),
+              team2Flag: String(body.followData?.team2Flag || body.team2Flag || "").trim(),
+              matchLabel: String(body.followData?.matchLabel || body.matchLabel || "T20 INTERNATIONAL").trim(),
+              matchTimeLabel: String(body.followData?.matchTimeLabel || body.matchTimeLabel || "Upcoming").trim(),
+              matchStartMs: resolvedFollowStartMs,
+              statusLabel: String(body.followData?.statusLabel || "Upcoming").trim(),
+              followCount: Number(body.followData?.followCount || existingEngagement?.followData?.followCount) || 0,
+              remindCount: Number(body.followData?.remindCount || existingEngagement?.followData?.remindCount) || 0,
+            },
+          }
+        : {}),
+      ...(type === "match_result"
+        ? {
+            matchResultData: {
+              ...(body.matchResultData || {}),
+              showSnapshot: body.matchResultData?.showSnapshot !== false,
+              snapshotHeading: String(body.matchResultData?.snapshotHeading || "Match Snapshot").trim(),
+              team1Name: String(body.matchResultData?.team1Name || body.team1Name || "").trim(),
+              team1Code: String(body.matchResultData?.team1Code || body.team1Code || "").trim().toUpperCase(),
+              team1Flag: String(body.matchResultData?.team1Flag || body.team1Flag || "").trim(),
+              team1Score: String(body.matchResultData?.team1Score || body.team1Score || "").trim(),
+              team2Name: String(body.matchResultData?.team2Name || body.team2Name || "").trim(),
+              team2Code: String(body.matchResultData?.team2Code || body.team2Code || "").trim().toUpperCase(),
+              team2Flag: String(body.matchResultData?.team2Flag || body.team2Flag || "").trim(),
+              team2Score: String(body.matchResultData?.team2Score || body.team2Score || "").trim(),
+              resultSummary: String(body.matchResultData?.resultSummary || "").trim(),
+              showTopPerformer: body.matchResultData?.showTopPerformer !== false,
+              performerLabel: String(body.matchResultData?.performerLabel || "Top Performer").trim(),
+              playerName: String(body.matchResultData?.playerName || "").trim(),
+              playerStats: String(body.matchResultData?.playerStats || "").trim(),
+              playerImageUrl: String(body.matchResultData?.playerImageUrl || "").trim(),
+              mode: body.matchResultData?.mode || "combined",
+            },
+          }
+        : {}),
+      ...(type === "express" && formattedExpressData?.placeholder
+        ? { inputPlaceholder: formattedExpressData.placeholder }
+        : {}),
       questionData: formattedQuestionData,
       postLock: String(body.postLock ?? body.questionData?.postLock ?? "").trim(),
-      options: body.options || formattedDebateData?.options || formattedExpressData?.options || formattedQuestionData?.options || formattedPollData?.options || formattedPredData?.options,
+      options:
+        (type === "express" && formattedExpressData?.responseMode === "text") || type === "follow" || type === "match_result"
+          ? []
+          : body.options ||
+            formattedDebateData?.options ||
+            formattedExpressData?.options ||
+            formattedQuestionData?.options ||
+            formattedPollData?.options ||
+            formattedPredData?.options,
       winningChoiceId: body.winningChoiceId || formattedPredData?.winningChoiceId || formattedDebateData?.winningChoiceId || existingEngagement?.winningChoiceId || null,
       outcomeNotes: body.outcomeNotes || existingEngagement?.outcomeNotes || null,
       resolvedAt: body.resolvedAt || existingEngagement?.resolvedAt || null,
       resolvedBy: body.resolvedBy || existingEngagement?.resolvedBy || null,
-      timerMinutes: matchMomentDurationMins,
-      durationMinutes: matchMomentDurationMins,
+      ...(isNoTimerType ? {} : { timerMinutes: matchMomentDurationMins, durationMinutes: matchMomentDurationMins }),
       likes: Number(likes) || Number(existingEngagement?.likes) || 0,
       shares: Number(shares) || Number(existingEngagement?.shares) || 0,
       totalEngaged: Number(totalEngaged) || Number(existingEngagement?.totalEngaged) || 0,
@@ -1225,9 +1423,9 @@ export async function POST(req: NextRequest) {
       createdAt: now,
       updatedAt: now,
       expiresAt: computedExpiresAt,
-      category: body.category || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : (type === "fan_battle" || type === "meme" ? "fliparena" : undefined)),
-      source: body.source || (body.isMatchMoment || formattedDebateData || formattedExpressData || formattedQuestionData ? "match_moment" : "fliparena"),
-      isMatchMoment: body.isMatchMoment !== undefined ? Boolean(body.isMatchMoment) : Boolean(formattedDebateData || formattedExpressData || formattedQuestionData || (type !== "meme" && type !== "fan_battle" && matchMomentDurationMins === 4)),
+      category: body.category || (body.isMatchMoment || body.matchId || body.momentId || body.loopId || formattedDebateData || formattedExpressData || formattedQuestionData || type === "follow" || type === "match_result" ? (type === "fan_battle" || type === "meme" ? "fliparena" : "match_moment") : (type === "fan_battle" || type === "meme" ? "fliparena" : undefined)),
+      source: body.source || (body.isMatchMoment || body.matchId || body.momentId || body.loopId || formattedDebateData || formattedExpressData || formattedQuestionData || type === "follow" || type === "match_result" ? (type === "fan_battle" || type === "meme" ? "fliparena" : "match_moment") : "fliparena"),
+      isMatchMoment: body.isMatchMoment !== undefined ? Boolean(body.isMatchMoment) : Boolean((type !== "meme" && type !== "fan_battle") && (body.matchId || body.momentId || body.loopId || formattedDebateData || formattedExpressData || formattedQuestionData || type === "follow" || type === "match_result" || matchMomentDurationMins === 4)),
       ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
       matchId: body.matchId || undefined,
       momentId: body.momentId || body.loopId || undefined,
@@ -1409,12 +1607,13 @@ export async function DELETE(req: NextRequest) {
     // 3. Delete from Firestore match_moments_engagements collection if present
     try {
       if (db) {
-        const snap = await db.collection("match_moments_engagements").where("id", "==", cleanId).get();
+        const col = getFirestoreCollection("match_moments_engagements");
+        const snap = await db.collection(col).where("id", "==", cleanId).get();
         for (const doc of snap.docs) {
           await doc.ref.delete();
         }
         if (cleanMatchId) {
-          await db.collection("match_moments_engagements").doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
+          await db.collection(col).doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
         }
       }
     } catch {}

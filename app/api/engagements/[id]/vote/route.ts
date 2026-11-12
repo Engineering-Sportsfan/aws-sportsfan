@@ -358,10 +358,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
     const body = await req.json();
-    const { selectedOptionId, questionId, userId: inputUserId, userName, userAvatar, changeVote, previousOptionId } = body;
+    const { questionId, userId: inputUserId, userName, userAvatar, changeVote, previousOptionId } = body;
+    const rawSelection = body.selectedOptionId ?? body.responseText ?? body.text ?? body.actionType;
+    const selectedOptionId = typeof rawSelection === "string" ? rawSelection.trim() : rawSelection;
 
     if (!selectedOptionId) {
-      return NextResponse.json({ error: "selectedOptionId is required" }, { status: 400 });
+      return NextResponse.json({ error: "selectedOptionId or responseText is required" }, { status: 400 });
     }
 
     // Try to get authenticated user or fallback to input ID / client identifier
@@ -625,6 +627,68 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         });
       }
 
+      // ─── Toggle Follow / Remind Me state on existing Follow engagement ─────
+      if (existingVote.type === "follow" || body.actionType === "follow" || body.actionType === "remind") {
+        const action = String(body.actionType || selectedOptionId || "follow").toLowerCase();
+        const prevTokens = String(existingVote.selectedOptionId || "").toLowerCase().split(",").map((s) => s.trim());
+        const prevFollow = Boolean(existingVote.isFollowing) || prevTokens.includes("follow");
+        const prevRemind = Boolean(existingVote.isReminded) || prevTokens.includes("remind");
+
+        const nextFollow = action === "follow" ? (typeof body.active === "boolean" ? body.active : !prevFollow) : prevFollow;
+        const nextRemind = action === "remind" ? (typeof body.active === "boolean" ? body.active : !prevRemind) : prevRemind;
+        const combinedSelection = [nextFollow ? "follow" : null, nextRemind ? "remind" : null].filter(Boolean).join(",") || "none";
+        const toggleNow = Date.now();
+
+        let ownVoteSk: string | null = null;
+        for (const uid of candidateIds) {
+          const sk = `VOTE#${uid}`;
+          try {
+            const r = await docClient.send(new GetCommand({
+              TableName: TABLES.SocialAndContent,
+              Key: { contentId: `ENGAGEMENT#${id}`, sk },
+            }));
+            if (r.Item) { ownVoteSk = sk; break; }
+          } catch { }
+        }
+
+        if (ownVoteSk) {
+          await docClient.send(new UpdateCommand({
+            TableName: TABLES.SocialAndContent,
+            Key: { contentId: `ENGAGEMENT#${id}`, sk: ownVoteSk },
+            UpdateExpression: "SET selectedOptionId = :opt, isFollowing = :flw, isReminded = :rmd, updatedAt = :now",
+            ConditionExpression: "attribute_exists(contentId)",
+            ExpressionAttributeValues: {
+              ":opt": combinedSelection,
+              ":flw": nextFollow,
+              ":rmd": nextRemind,
+              ":now": toggleNow,
+            },
+          })).catch(() => { });
+
+          const followCleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+          const followFound = await findEngagementById(followCleanId, body.matchId || req.nextUrl.searchParams.get("matchId") || undefined);
+          const followItem: any = followFound?.item;
+          if (followItem) {
+            applyEngagementStats(followItem, await getEngagementStats(followCleanId, { consistent: true }), { exactVotes: true });
+            await persistEngagementUpdate(followCleanId, followItem, followFound?.matchMomentsRecord);
+          }
+
+          return NextResponse.json({
+            success: true,
+            type: "follow",
+            selectedOptionId: combinedSelection,
+            isFollowing: nextFollow,
+            isReminded: nextRemind,
+            followCount: Number(followItem?.followData?.followCount) || 0,
+            remindCount: Number(followItem?.followData?.remindCount) || 0,
+            totalEngaged: Number(followItem?.totalEngaged) || 0,
+            isFirstEngagement: false,
+            participationPointsAwarded: 0,
+            pointsAwarded: 0,
+          });
+        }
+      }
+
       // ─── Change an existing vote (edit, not a second vote) ───────────────────
       if (changeVote === true) {
         // Exact key match on the user's own VOTE# record, never begins_with
@@ -703,7 +767,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             await docClient.send(new UpdateCommand({
               TableName: TABLES.SocialAndContent,
               Key: { contentId: `ENGAGEMENT#${id}`, sk: ownVoteSk },
-              UpdateExpression: "SET selectedOptionId = :opt, previousOptionId = :prev, voteChangedAt = :now, updatedAt = :now",
+              UpdateExpression: "SET selectedOptionId = :opt, responseText = :opt, previousOptionId = :prev, voteChangedAt = :now, updatedAt = :now",
               ConditionExpression: "attribute_exists(contentId)",
               ExpressionAttributeValues: {
                 ":opt": selectedOptionId,
@@ -725,12 +789,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
                 contentId: `USER_VOTE#${ownUid}`,
                 sk: questionId ? `ENGAGEMENT#${id}#${questionId}` : `ENGAGEMENT#${id}`,
               },
-              UpdateExpression: "SET selectedOptionId = :opt, voteChangedAt = :now, updatedAt = :now",
+              UpdateExpression: "SET selectedOptionId = :opt, responseText = :opt, voteChangedAt = :now, updatedAt = :now",
               ConditionExpression: "attribute_exists(contentId)",
               ExpressionAttributeValues: { ":opt": selectedOptionId, ":now": changeNow },
             })).catch(() => { });
             if (db) {
-              await db.collection("user_engagements")
+              await db.collection(getFirestoreCollection("user_engagements"))
                 .doc(questionId ? `${ownUid}_${id}_${questionId}` : `${ownUid}_${id}`)
                 .set({ selectedOptionId, voteChangedAt: changeNow, updatedAt: changeNow }, { merge: true })
                 .catch(() => { });
@@ -745,8 +809,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               type: changeItem.type,
               changedVote: true,
               selectedOptionId,
+              responseText: selectedOptionId,
               options: primaryOptions(changeItem),
               totalVotes: Number(changeItem.totalVotes) || 0,
+              totalResponses: Number(changeItem.totalResponses ?? changeItem.totalVotes ?? 0),
               totalEngaged: Number(changeItem.totalEngaged) || 0,
               isFirstEngagement: false,
               participationPointsAwarded: 0,
@@ -1042,6 +1108,78 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       };
     }
 
+    // 3.25 Express Open-Text Input Response Handling (no options — fan writes free-text reaction)
+    else if (
+      item.type === "express" &&
+      (item.expressData?.responseMode === "text" ||
+        !Array.isArray(primaryOptions(item)) ||
+        primaryOptions(item)!.length === 0 ||
+        Boolean(body.responseText || body.text))
+    ) {
+      const responseText = String(body.responseText ?? body.text ?? selectedOptionId ?? "")
+        .trim()
+        .slice(0, 500);
+      item.options = [];
+      item.totalResponses = (Number(item.totalResponses) || Number(item.totalVotes) || 0) + 1;
+      item.totalVotes = item.totalResponses;
+      if (item.expressData) {
+        item.expressData.responseMode = "text";
+        item.expressData.options = [];
+        item.expressData.totalResponses = item.totalResponses;
+        item.expressData.totalVotes = item.totalResponses;
+      }
+
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
+
+        responseData = {
+        success: true,
+        type: "express",
+        responseMode: "text",
+        selectedOptionId: responseText,
+        responseText,
+        options: [],
+        totalResponses: item.totalResponses,
+        totalVotes: item.totalResponses,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
+      };
+    }
+
+    // 3.26 Follow / Remind Me Match Card Handling
+    else if (item.type === "follow") {
+      const action = String(body.actionType || selectedOptionId || "follow").toLowerCase();
+      const isFollowing = action === "follow";
+      const isReminded = action === "remind";
+      item.options = [];
+      item.followData = {
+        ...(item.followData || {}),
+        followCount: (Number(item.followData?.followCount) || 0) + (isFollowing ? 1 : 0),
+        remindCount: (Number(item.followData?.remindCount) || 0) + (isReminded ? 1 : 0),
+      };
+      if (isNewUserEngagement) {
+        item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
+      }
+
+      responseData = {
+        success: true,
+        type: "follow",
+        selectedOptionId: action,
+        isFollowing,
+        isReminded,
+        options: [],
+        followCount: item.followData.followCount,
+        remindCount: item.followData.remindCount,
+        totalEngaged: Number(item.totalEngaged) || 0,
+        isFirstEngagement: isNewUserEngagement,
+        participationPointsAwarded: 2,
+        pointsAwarded: 2,
+      };
+    }
+
     // 3.3 Poll / Debate / Express / Question Vote Handling
     else if (
       item.type === "poll" ||
@@ -1306,6 +1444,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // so two votes landing at the same time can't overwrite each other's count.
     try {
       applyEngagementStats(item, await getEngagementStats(cleanId, { consistent: true }));
+      if (item.type === "follow") {
+        responseData.followCount = Number(item.followData?.followCount) || 0;
+        responseData.remindCount = Number(item.followData?.remindCount) || 0;
+      }
       const recounted = primaryOptions(item);
       if (Array.isArray(responseData.options) && recounted) {
         responseData.options = recounted;
@@ -1355,7 +1497,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // C. Save user vote record to Firestore
     if (db) {
       try {
-        await db.collection("user_engagements").doc(firestoreVoteDocId).set(userRecord);
+        await db.collection(getFirestoreCollection("user_engagements")).doc(firestoreVoteDocId).set(userRecord);
         if (questionId) {
           await db.collection(getFirestoreCollection("user_engagements")).doc(`${userId}_${id}`).set({
             userId,
@@ -1468,9 +1610,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         await Promise.all([
           db.collection(colName).doc(userId).set(incData, { merge: true }),
           db.collection(colName).doc(`${userId}_${id}`).set({ ...incData, quizId: id }, { merge: true }),
-          colName !== "quiz_leaderboard"
-            ? db.collection("quiz_leaderboard").doc(userId).set(incData, { merge: true })
-            : Promise.resolve(),
         ]);
       } catch (lbFbErr) {
         console.warn("Firestore quiz leaderboard update notice:", lbFbErr);

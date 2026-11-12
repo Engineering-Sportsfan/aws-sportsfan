@@ -12,8 +12,17 @@ import {
   Sparkles,
   CheckCircle2,
   AlertCircle,
+  Clock,
 } from "lucide-react";
 import { MATCH_MOMENTS_LIBRARY, MatchMomentTemplate } from "@/lib/data/matchMomentsData";
+import {
+  PRE_MATCH_TIMING_PRESETS,
+  INNINGS_BREAK_PRESETS,
+  POST_MATCH_TIMING_PRESETS,
+  IN_PLAY_CHECKPOINT_PRESETS,
+  inferMomentInnings,
+  MomentPresetOption,
+} from "@/lib/matchMomentTimeline";
 import CoreEngineStepper from "../../components/CoreEngineStepper";
 
 interface MatchOption {
@@ -35,6 +44,9 @@ interface MatchMomentItem {
   phase?: string;
   overs: string;
   score: string;
+  timingLabel?: string;
+  preMatchOffset?: string;
+  timelineOrder?: number;
   matchOverTimestamp: string;
   event: string;
   matchMoment: string;
@@ -50,15 +62,24 @@ const PHASE_OPTIONS = [
   "Post Match",
 ];
 
-const OVERS_PATTERN = /^\d{1,3}(\.[0-6])?$/;
+const OVERS_PATTERN = /^\d{1,3}(\.[0-6])?(\s*overs?)?$/i;
 
-const getCurrentISTTime = (): string =>
-  `${new Date().toLocaleTimeString("en-GB", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })} IST`;
+const isValidInPlayOverOrCheckpoint = (value: string): boolean => {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (OVERS_PATTERN.test(trimmed)) return true;
+  const lower = trimmed.toLowerCase();
+  return (
+    lower.includes("powerplay") ||
+    lower.includes("end of 1st innings") ||
+    lower.includes("end of 2nd innings") ||
+    lower.includes("match result") ||
+    lower.includes("final result") ||
+    lower.includes("player of the match") ||
+    lower.includes("innings break") ||
+    lower.includes("timeout")
+  );
+};
 
 const getNextMomentId = (teamCode: string, existing: MatchMomentItem[]): string => {
   const prefix = `MM-${teamCode || "MOM"}-`;
@@ -94,9 +115,15 @@ function AddMomentContent() {
   // Form Fields - starts empty for admin to enter
   const [momentId, setMomentId] = useState<string>("");
   const [phase, setPhase] = useState<string>("");
-  const innings: 1 | 2 = phase === "2nd Innings" || phase === "Post Match" ? 2 : 1;
+  const [timeoutInnings, setTimeoutInnings] = useState<1 | 2>(1);
+  const innings = phase === "Strategic Timeout" ? timeoutInnings : inferMomentInnings(phase);
+  const isPreMatch = phase === "Pre Match";
+  const isInningsBreak = phase === "Innings Break";
+  const isPostMatch = phase === "Post Match";
+  const requiresOverOrCheckpoint = !isPreMatch && !isInningsBreak && !isPostMatch;
   const [overs, setOvers] = useState<string>("");
   const [score, setScore] = useState<string>("");
+  const [timingLabel, setTimingLabel] = useState<string>("");
   const [matchOverTimestamp, setMatchOverTimestamp] = useState<string>("");
   const [event, setEvent] = useState<string>("");
   const [matchMoment, setMatchMoment] = useState<string>("");
@@ -113,7 +140,7 @@ function AddMomentContent() {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        const res = await fetch("/api/matches?limit=100");
+        const res = await fetch(`/api/matches?limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const list: MatchOption[] = json.data.map((m: Record<string, unknown>) => ({
@@ -169,9 +196,22 @@ function AddMomentContent() {
           if (m) {
             setMomentId(m.momentId);
             if (m.matchId) setSelectedMatchId(m.matchId);
-            setPhase(m.phase || (Number(m.innings) === 2 ? "2nd Innings" : "1st Innings"));
+            const resolvedPhase =
+              m.phase ||
+              (Number(m.innings) === 0
+                ? "Pre Match"
+                : Number(m.innings) === 3
+                ? "Post Match"
+                : Number(m.innings) === 2
+                ? "2nd Innings"
+                : "1st Innings");
+            setPhase(resolvedPhase);
+            if (resolvedPhase === "Strategic Timeout" && Number(m.innings) === 2) {
+              setTimeoutInnings(2);
+            }
             setOvers(m.overs || "");
             setScore(m.score || "");
+            setTimingLabel(m.timingLabel || m.preMatchOffset || "");
             setMatchOverTimestamp(m.matchOverTimestamp || "");
             setEvent(m.event || "");
             setMatchMoment(m.matchMoment || "");
@@ -191,10 +231,28 @@ function AddMomentContent() {
     setDescription(tpl.promptTemplate || "");
   };
 
+  const handleApplyTimelinePreset = (preset: MomentPresetOption) => {
+    setPhase(preset.phase);
+    if (preset.phase === "Pre Match") {
+      setTimingLabel(preset.timingLabel);
+      setOvers("");
+    } else if (preset.phase === "Innings Break" || preset.phase === "Post Match") {
+      setTimingLabel(preset.timingLabel);
+      setOvers(preset.defaultOvers || "");
+    } else {
+      setOvers(preset.defaultOvers || preset.timingLabel);
+      setTimingLabel("");
+    }
+    setEvent(preset.label);
+    setMatchMoment(preset.defaultAnchor);
+  };
+
   const handleResetForm = () => {
     setPhase("");
+    setTimeoutInnings(1);
     setOvers("");
     setScore("");
+    setTimingLabel("");
     setMatchOverTimestamp("");
     setEvent("");
     setMatchMoment("");
@@ -208,10 +266,18 @@ function AddMomentContent() {
       setSubmitResult({ success: false, message: "Please select a match" });
       return;
     }
-    if (!overs.trim() || !OVERS_PATTERN.test(overs.trim())) {
+    if (isPreMatch && !timingLabel.trim() && !matchOverTimestamp.trim()) {
       setSubmitResult({
         success: false,
-        message: "Please enter a valid cricket over like 10, 10.2, or 13.6 (balls 0-6)",
+        message: "Please select or enter a Pre-Match timing offset (e.g. T–48h, T–60m, Toss time)",
+      });
+      return;
+    }
+    if (requiresOverOrCheckpoint && !isValidInPlayOverOrCheckpoint(overs)) {
+      setSubmitResult({
+        success: false,
+        message:
+          "Please enter a valid cricket over (e.g. 10.2, 14.0 over, 20 overs) or checkpoint (e.g. Powerplay end, End of 1st innings, Match Result)",
       });
       return;
     }
@@ -226,8 +292,11 @@ function AddMomentContent() {
     // Auto-generate unique moment ID behind the scenes without troubling the admin
     const t1 = activeMatch?.team1_short || activeMatch?.team1?.slice(0, 3) || "MOM";
     const t2 = activeMatch?.team2_short || activeMatch?.team2?.slice(0, 3) || "MOM";
-    const teamCode = (innings === 1 ? t1 : t2).toUpperCase();
+    const teamCode = (
+      innings === 0 ? "PRE" : innings === 3 ? "POST" : innings === 1 ? t1 : t2
+    ).toUpperCase();
     const finalMomentId = momentId.trim() || getNextMomentId(teamCode, existingMoments);
+    const cleanTiming = timingLabel.trim() || matchOverTimestamp.trim();
 
     const payload = {
       momentId: finalMomentId,
@@ -236,7 +305,9 @@ function AddMomentContent() {
       phase: phase || (innings === 2 ? "2nd Innings" : "1st Innings"),
       overs: overs.trim(),
       score: score.trim(),
-      matchOverTimestamp: matchOverTimestamp.trim() || getCurrentISTTime(),
+      ...(cleanTiming ? { timingLabel: cleanTiming } : {}),
+      ...(isPreMatch && cleanTiming ? { preMatchOffset: cleanTiming } : {}),
+      matchOverTimestamp: matchOverTimestamp.trim() || (isPreMatch ? cleanTiming : ""),
       event: event.trim(),
       matchMoment: matchMoment.trim() || event.trim(),
       description: description.trim(),
@@ -349,7 +420,7 @@ function AddMomentContent() {
         <div className="flex items-center gap-2 flex-wrap">
           {MATCH_MOMENTS_LIBRARY.slice(0, 7).map((tpl) => (
             <button
-              key={tpl.id}
+              key={tpl.templateId}
               type="button"
               onClick={() => handleApplyPresetTemplate(tpl)}
               className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[11px] font-bold transition-all"
@@ -357,6 +428,54 @@ function AddMomentContent() {
               ⚡ {tpl.sportsMoment}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Match Lifecycle & Pre-Match Timeline Presets (Creatable Anytime) */}
+      <div className="p-4 rounded-2xl bg-[#111625] border border-cyan-500/20 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+            <Clock size={14} /> Pre-Match, Checkpoint &amp; Post-Match Stage Presets
+          </span>
+          <span className="text-[11px] text-gray-400">
+            Creatable anytime — sorted automatically top-to-bottom in selectors
+          </span>
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-300/80 mr-1">
+              Pre Match:
+            </span>
+            {PRE_MATCH_TIMING_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => handleApplyTimelinePreset(preset)}
+                className="px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-200 text-[11px] font-bold transition-all"
+              >
+                {preset.label} · {preset.timingLabel}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80 mr-1">
+              In-Play / Break / Post:
+            </span>
+            {[
+              ...IN_PLAY_CHECKPOINT_PRESETS,
+              ...INNINGS_BREAK_PRESETS,
+              ...POST_MATCH_TIMING_PRESETS,
+            ].map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => handleApplyTimelinePreset(preset)}
+                className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-200 text-[11px] font-bold transition-all"
+              >
+                {preset.label} ({preset.phase})
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -406,20 +525,81 @@ function AddMomentContent() {
               </select>
             </div>
 
-            <div>
-              <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                Over (Cricket Decimal) *
-              </label>
-              <input
-                type="text"
-                required
-                value={overs}
-                onChange={(e) => setOvers(e.target.value)}
-                placeholder="e.g. 10.2 or 13.6"
-                className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
-              />
-              <span className="text-[10px] text-gray-500 block mt-1">Balls must be 0-6 after dot</span>
-            </div>
+            {phase === "Strategic Timeout" && (
+              <div>
+                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                  Timeout Innings
+                </label>
+                <div className="flex gap-2">
+                  {([1, 2] as const).map((inn) => (
+                    <button
+                      key={inn}
+                      type="button"
+                      onClick={() => setTimeoutInnings(inn)}
+                      className={`flex-1 py-2 rounded-xl border text-xs font-bold transition-all ${
+                        timeoutInnings === inn
+                          ? "bg-amber-500/20 border-amber-500 text-amber-300"
+                          : "bg-[#0a0d17] border-white/10 text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      {inn === 1 ? "1st Innings" : "2nd Innings"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {isPreMatch ? (
+              <div>
+                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                  Pre-Match Timing Offset *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={timingLabel}
+                  onChange={(e) => setTimingLabel(e.target.value)}
+                  placeholder="e.g. T–48h, T–60m, T–30m, T–5m"
+                  className="w-full bg-[#0a0d17] border border-cyan-500/30 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono"
+                />
+                <span className="text-[10px] text-gray-500 block mt-1">
+                  Use any T–offset (e.g. T–48h, T–24h to Start-of-match, T–60m, T–5m) — no over required
+                </span>
+              </div>
+            ) : isInningsBreak || isPostMatch ? (
+              <div>
+                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                  Stage / Timing Label (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={timingLabel}
+                  onChange={(e) => setTimingLabel(e.target.value)}
+                  placeholder={isInningsBreak ? "e.g. End of 1st innings" : "e.g. Final result or Player of the Match"}
+                  className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                />
+                <span className="text-[10px] text-gray-500 block mt-1">
+                  Sorted {isInningsBreak ? "between 1st and 2nd innings" : "at the end after 2nd innings"}
+                </span>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                  Over or Checkpoint *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={overs}
+                  onChange={(e) => setOvers(e.target.value)}
+                  placeholder="e.g. 10.2, Powerplay end, 20 overs"
+                  className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
+                />
+                <span className="text-[10px] text-gray-500 block mt-1">
+                  Balls 0–6 after dot (e.g. 14.0 over), or Powerplay end / End of 1st innings / Match Result
+                </span>
+              </div>
+            )}
 
             <div>
               <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
@@ -429,20 +609,20 @@ function AddMomentContent() {
                 type="text"
                 value={score}
                 onChange={(e) => setScore(e.target.value)}
-                placeholder="e.g. 142/3"
+                placeholder={isPreMatch || isPostMatch ? "Optional (e.g. Pre-Match or 184/6)" : "e.g. 142/3"}
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
               />
             </div>
 
             <div>
               <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                Match Clock / Timestamp
+                Timing Note / Display Label (Optional)
               </label>
               <input
                 type="text"
                 value={matchOverTimestamp}
                 onChange={(e) => setMatchOverTimestamp(e.target.value)}
-                placeholder="e.g. 19:42 IST"
+                placeholder={isPreMatch ? "e.g. 24 Oct 2026 (optional)" : "Optional label (no forced clock time)"}
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
               />
             </div>

@@ -26,14 +26,26 @@ export function isMatchMomentEngagement(item: any): boolean {
 }
 
 /**
+ * Which likes/comments count as "reactions":
+ *  - match-moment engagements, and
+ *  - visible recognitions / outcome reveals. These use the same like/comment routes but have no engagement row
+ *    (findEngagementById returns null), and the fan app always sends their matchId, so "no engagement + a
+ *    matchId" identifies them.
+ */
+export function isTrackedReactionTarget(engagement: any, matchIdHint?: string): boolean {
+  if (engagement) return isMatchMomentEngagement(engagement);
+  return Boolean(matchIdHint && String(matchIdHint).trim());
+}
+
+/**
  * Adds the sparse-GSI key attributes to a like / comment / reply row about to be written.
- * Returns the row unchanged unless the parent engagement is a match moment.
+ * Returns the row unchanged unless the target is a tracked reaction target (see above).
  */
 export function withReactionKeys<T extends Record<string, any>>(
   row: T,
-  opts: { userId: string; action: ReactionAction; at: number; engagement: any }
+  opts: { userId: string; action: ReactionAction; at: number; engagement: any; matchIdHint?: string }
 ): T & { reactorKey?: string; reactedAt?: number } {
-  if (!opts.userId || !isMatchMomentEngagement(opts.engagement)) return row;
+  if (!opts.userId || !isTrackedReactionTarget(opts.engagement, opts.matchIdHint)) return row;
   return { ...row, reactorKey: reactorKeyOf(opts.userId, opts.action), reactedAt: opts.at };
 }
 
