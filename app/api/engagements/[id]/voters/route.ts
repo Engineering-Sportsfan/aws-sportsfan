@@ -95,7 +95,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // 3. Fallback: Query Firestore user_engagements collection
     if (db && rawVotesList.length === 0) {
       try {
-        const snap = await db.collection("user_engagements").where("engagementId", "==", id).get();
+        const snap = await db.collection(getFirestoreCollection("user_engagements")).where("engagementId", "==", id).get();
         for (const doc of snap.docs) {
           const item = doc.data();
           if (!item.selectedOptionId) continue; 

@@ -43,7 +43,7 @@ function MatchListContent() {
   const fetchMatches = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/matches?limit=100");
+      const res = await fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
         const list: MatchItem[] = json.data.map((m: Record<string, unknown>) => ({

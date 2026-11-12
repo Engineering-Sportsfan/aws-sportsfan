@@ -66,13 +66,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         continue;
       }
 
+      const rand = Math.random().toString(36).slice(2, 7);
       try {
         await docClient.send(
           new PutCommand({
             TableName: TABLES.SocialAndContent,
             Item: {
               contentId: `ENGAGEMENT#${cleanEngId}`,
-              sk: `SOCIAL_IMPRESSION#${cid}#${actorUserId}`,
+              sk: `SOCIAL_IMPRESSION#${cid}#${actorUserId}#${now}_${rand}`,
               entityId: "SOCIAL_RESPONSE#IMPRESSION",
               responseType: "impression",
               actorUserId,
@@ -82,16 +83,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
               ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
               ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
+              impressionCount: 1,
               createdAt: now,
             },
-            ConditionExpression: "attribute_not_exists(sk)",
           })
         );
         newlyRecorded++;
       } catch (e: any) {
-        if (e?.name !== "ConditionalCheckFailedException") {
-          console.warn("social impression put notice:", e);
-        }
+        console.warn("social impression put notice:", e);
       }
     }
 

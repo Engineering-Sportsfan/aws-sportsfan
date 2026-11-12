@@ -24,7 +24,6 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status"); // active | inactive | all
     const sport = searchParams.get("sport"); // cricket | football | etc
     const limit = parseInt(searchParams.get("limit") || "50", 10);
-    const includeAllEnvs = searchParams.get("allEnvs") === "true";
 
     const itemsMap = new Map<string, EngagementItem>();
 
@@ -94,6 +93,7 @@ export async function GET(req: NextRequest) {
                 labelB: it.labelB || it.memeData?.labelB,
                 likes: Number(it.likes) || 0,
                 shares: Number(it.shares) || 0,
+                impressions: Number(it.impressions ?? it.impressionsCount) || 0,
                 totalEngaged: Number(it.totalEngaged) || 0,
                 createdAt: it.createdAt || Date.now(),
                 updatedAt: it.updatedAt || Date.now(),
@@ -121,9 +121,7 @@ export async function GET(req: NextRequest) {
               });
             }
           }
-          if (!includeAllEnvs) {
-            break; // Default single-env mode stops after active table
-          }
+          break; // Active environment table only
         }
       } catch (dynErr: any) {
         const isTableMissing =
@@ -270,6 +268,7 @@ export async function GET(req: NextRequest) {
               options: it.options || it.pollData?.options || it.predictionData?.options || it.debateData?.options || it.expressData?.options || it.questionData?.options,
               likes: Number(it.likes) || 0,
               shares: Number(it.shares) || 0,
+              impressions: Number(it.impressions) || 0,
               totalEngaged: Number(it.totalEngaged) || 0,
               commentsCount: Number(it.commentsCount) || 0,
               createdAt: it.createdAt || Date.now(),
@@ -293,9 +292,7 @@ export async function GET(req: NextRequest) {
               creatorAvatar: it.creatorAvatar || undefined,
             });
           }
-          if (!includeAllEnvs) {
-            break;
-          }
+          break; // Active environment table only
         }
       } catch (mmErr: any) {
         // Continue to next candidate table
@@ -345,6 +342,7 @@ export async function GET(req: NextRequest) {
               labelB: it.labelB || it.memeData?.labelB,
               likes: Number(it.likes) || 0,
               shares: Number(it.shares) || 0,
+              impressions: Number(it.impressions) || 0,
               totalEngaged: Number(it.totalEngaged) || 0,
               createdAt: it.createdAt || Date.now(),
               updatedAt: it.updatedAt || Date.now(),
@@ -1292,12 +1290,13 @@ export async function DELETE(req: NextRequest) {
     // 3. Delete from Firestore match_moments_engagements collection if present
     try {
       if (db) {
-        const snap = await db.collection("match_moments_engagements").where("id", "==", cleanId).get();
+        const col = getFirestoreCollection("match_moments_engagements");
+        const snap = await db.collection(col).where("id", "==", cleanId).get();
         for (const doc of snap.docs) {
           await doc.ref.delete();
         }
         if (cleanMatchId) {
-          await db.collection("match_moments_engagements").doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
+          await db.collection(col).doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
         }
       }
     } catch {}

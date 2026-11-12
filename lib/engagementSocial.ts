@@ -79,8 +79,6 @@ export async function getEngagementStats(
   const commentMap = new Map<string, any>();
   const explicitSocialLikes = new Set<string>();      // key: `${commentId}#${actorId}`
   const explicitSocialComments = new Set<string>();   // key: `${commentId}`
-  const seenImpressions = new Set<string>();
-  const seenSocialImpressions = new Set<string>();
 
   let key: Record<string, any> | undefined;
   do {
@@ -90,7 +88,7 @@ export async function getEngagementStats(
         KeyConditionExpression: "contentId = :c",
         ExpressionAttributeValues: { ":c": `ENGAGEMENT#${engagementId}` },
         ProjectionExpression:
-          "sk, selectedOptionId, questionId, userId, parentId, authorUid, likedBy, actorUserId, targetCommentId, targetAuthorUid, commentId, id",
+          "sk, selectedOptionId, questionId, userId, parentId, authorUid, likedBy, actorUserId, targetCommentId, targetAuthorUid, commentId, id, impressionCount",
         ConsistentRead: Boolean(opts.consistent),
         ExclusiveStartKey: key,
       })
@@ -104,11 +102,7 @@ export async function getEngagementStats(
       } else if (sk.startsWith("SHARE#")) {
         stats.shares++;
       } else if (sk.startsWith("IMPRESSION#") || sk.startsWith("VIEW#")) {
-        const uid = String(it.userId || sk.replace(/^(IMPRESSION|VIEW)#/, "")).trim().toLowerCase();
-        if (uid && !seenImpressions.has(uid)) {
-          seenImpressions.add(uid);
-          stats.impressions++;
-        }
+        stats.impressions += Math.max(1, Number(it.impressionCount || 1));
       } else if (sk.startsWith("VOTE#") && it.selectedOptionId != null) {
         stats.participations++;
         stats.userVotes.set(sk.slice(5), String(it.selectedOptionId));
@@ -130,11 +124,7 @@ export async function getEngagementStats(
         const cId = String(it.commentId || sk.slice("SOCIAL_COMMENT#".length)).trim();
         if (cId) explicitSocialComments.add(cId);
       } else if (sk.startsWith("SOCIAL_IMPRESSION#")) {
-        const impKey = sk.slice("SOCIAL_IMPRESSION#".length).toLowerCase();
-        if (impKey && !seenSocialImpressions.has(impKey)) {
-          seenSocialImpressions.add(impKey);
-          stats.socialImpressions++;
-        }
+        stats.socialImpressions += Math.max(1, Number(it.impressionCount || 1));
       }
     }
     key = r.LastEvaluatedKey;

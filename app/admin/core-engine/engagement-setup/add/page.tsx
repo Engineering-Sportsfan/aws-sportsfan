@@ -20,6 +20,7 @@ import {
   Scale,
 } from "lucide-react";
 import CoreEngineStepper from "../../components/CoreEngineStepper";
+import { sortMatchMoments, formatMomentOptionLabel, formatMomentTimingBadge } from "@/lib/matchMomentTimeline";
 
 interface MatchOption {
   match_id: string;
@@ -35,8 +36,12 @@ interface MatchMomentItem {
   phase?: string;
   overs: string;
   score: string;
+  timingLabel?: string;
+  preMatchOffset?: string;
+  matchOverTimestamp?: string;
   event: string;
   matchMoment: string;
+  createdAt?: number;
 }
 
 interface OptionItem {
@@ -122,7 +127,7 @@ function AddEngagementContent() {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        const res = await fetch("/api/matches?limit=100");
+        const res = await fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const list: MatchOption[] = json.data.map((m: Record<string, unknown>) => ({
@@ -148,7 +153,7 @@ function AddEngagementContent() {
         const res = await fetch(`/api/match-moments?matchId=${encodeURIComponent(selectedMatchId)}&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          setMoments(json.data);
+          setMoments(sortMatchMoments(json.data));
         } else {
           setMoments([]);
         }
@@ -180,7 +185,7 @@ function AddEngagementContent() {
     if (!editId) return;
     const loadEngagement = async () => {
       try {
-        const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=200&_t=${Date.now()}`);
+        const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.engagements)) {
           const eng = json.engagements.find((e: Record<string, unknown>) => e.id === editId || e.loopId === editId);
@@ -269,7 +274,9 @@ function AddEngagementContent() {
     const payload: Record<string, unknown> = {
       id: editId || undefined,
       title: engQuestion.trim(),
-      subtitle: `${activeMatch?.team1 || ""} vs ${activeMatch?.team2 || ""} · Over ${activeMoment?.overs || "Live"}`,
+      subtitle: `${activeMatch?.team1 || ""} vs ${activeMatch?.team2 || ""} · ${
+        activeMoment ? formatMomentTimingBadge(activeMoment) : "Live"
+      }`,
       type: engType,
       sport: "cricket",
       status: resolveStatus || "active",
@@ -278,10 +285,10 @@ function AddEngagementContent() {
       correctOptionId: engType === "question" ? correctOptionId : undefined,
       postLock: postLock.trim(),
       coinStake: 10,
-      loopId: loopId.trim() || `LOOP-${activeMoment?.overs || Date.now()}`,
+      loopId: loopId.trim() || `LOOP-${activeMoment?.overs || activeMoment?.timingLabel || Date.now()}`,
       momentId: selectedMomentId,
       matchId: selectedMatchId,
-      innings: activeMoment?.innings || 1,
+      innings: activeMoment?.innings ?? 1,
       overNumber: activeMoment?.overs || "",
       scoreState: activeMoment?.score || "",
       anchorTrigger: activeMoment?.matchMoment || activeMoment?.event || "",
@@ -431,7 +438,7 @@ function AddEngagementContent() {
                 <option value="">-- Choose a Moment --</option>
                 {moments.map((m) => (
                   <option key={m.momentId} value={m.momentId}>
-                    Over {m.overs}{m.score ? ` (${m.score})` : ""} - {m.event || m.matchMoment || "Play Moment"}
+                    {formatMomentOptionLabel(m)}
                   </option>
                 ))}
               </select>

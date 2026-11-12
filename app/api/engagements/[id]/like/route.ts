@@ -69,7 +69,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // 3. Firestore fallback
     if (!liked && db) {
       try {
-        const snap = await db.collection("engagement_likes").doc(`${userId}_${cleanId}`).get();
+        const snap = await db.collection(getFirestoreCollection("engagement_likes")).doc(`${userId}_${cleanId}`).get();
         if (snap.exists) liked = true;
       } catch {}
     }
@@ -126,7 +126,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     if (!alreadyLiked && db) {
       try {
-        const snap = await db.collection("engagement_likes").doc(likeDocId).get();
+        const snap = await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).get();
         if (snap.exists) alreadyLiked = true;
       } catch {}
     }
@@ -184,7 +184,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
       if (db) {
         try {
-          await db.collection("engagement_likes").doc(likeDocId).set({
+          await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).set({
             userId,
             engagementId: cleanId,
             createdAt: now,
@@ -249,7 +249,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
       if (db) {
         try {
-          await db.collection("engagement_likes").doc(likeDocId).delete();
+          await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).delete();
         } catch {}
       }
     }
@@ -278,7 +278,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       // Dual-write count to visible_recognitions or match_room_notifications if present
       if (db) {
         try {
-          await db.collection("visible_recognitions").doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
+          await db.collection(getFirestoreCollection("visible_recognitions")).doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
         } catch {}
         try {
           await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });

@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import CoreEngineStepper from "../../components/CoreEngineStepper";
+import { sortMatchMoments, formatMomentOptionLabel } from "@/lib/matchMomentTimeline";
 
 interface MatchOption {
   match_id: string;
@@ -98,7 +99,7 @@ function EngagementListContent() {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        const res = await fetch("/api/matches?limit=100");
+        const res = await fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const list: MatchOption[] = json.data.map((m: Record<string, unknown>) => ({
@@ -123,7 +124,7 @@ function EngagementListContent() {
         const res = await fetch(`/api/match-moments?matchId=${encodeURIComponent(selectedMatchId)}&_t=${Date.now()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          setMoments(json.data);
+          setMoments(sortMatchMoments(json.data));
         } else {
           setMoments([]);
         }
@@ -138,7 +139,7 @@ function EngagementListContent() {
   const fetchEngagements = useCallback(async () => {
     setLoading(true);
     try {
-      let url = `/api/engagements?excludeFlipArena=true&source=match_moment&limit=200&_t=${Date.now()}`;
+      let url = `/api/engagements?excludeFlipArena=true&source=match_moment&limit=1000&_t=${Date.now()}`;
       if (selectedMatchId) {
         url += `&matchId=${encodeURIComponent(selectedMatchId)}`;
       }
@@ -398,7 +399,7 @@ function EngagementListContent() {
             <option value="">-- All Moments --</option>
             {moments.map((m) => (
               <option key={m.momentId} value={m.momentId}>
-                Over {m.overs}{m.score ? ` (${m.score})` : ""} - {m.event || "Over"}
+                {formatMomentOptionLabel(m)}
               </option>
             ))}
           </select>

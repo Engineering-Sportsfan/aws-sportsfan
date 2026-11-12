@@ -176,12 +176,13 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     // 3. Delete from Firestore match_moments_engagements collection if exists
     try {
       if (db) {
-        const snap = await db.collection("match_moments_engagements").where("id", "==", cleanId).get();
+        const col = getFirestoreCollection("match_moments_engagements");
+        const snap = await db.collection(col).where("id", "==", cleanId).get();
         for (const doc of snap.docs) {
           await doc.ref.delete();
         }
         if (cleanMatchId) {
-          await db.collection("match_moments_engagements").doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
+          await db.collection(col).doc(`${cleanMatchId}_${cleanId}`).delete().catch(() => {});
         }
       }
     } catch {}

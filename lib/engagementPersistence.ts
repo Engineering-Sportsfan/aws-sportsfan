@@ -158,7 +158,7 @@ export async function findEngagementById(rawId: string, rawMatchId?: string): Pr
       if (snap.exists) {
         foundItem = { id: snap.id, ...snap.data() };
       } else {
-        const qSnap = await db.collection("match_moments_engagements").doc(cleanId).get();
+        const qSnap = await db.collection(getFirestoreCollection("match_moments_engagements")).doc(cleanId).get();
         if (qSnap.exists) {
           foundItem = { id: qSnap.id, ...qSnap.data() };
         }
@@ -264,7 +264,7 @@ export async function persistEngagementUpdate(
     if (db) {
       try {
         await db
-          .collection("match_moments_engagements")
+          .collection(getFirestoreCollection("match_moments_engagements"))
           .doc(`${cleanMatchId}_${fullItem.loopId || cleanId}`)
           .set(fullItem, { merge: true });
       } catch {}

@@ -730,7 +730,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               ExpressionAttributeValues: { ":opt": selectedOptionId, ":now": changeNow },
             })).catch(() => { });
             if (db) {
-              await db.collection("user_engagements")
+              await db.collection(getFirestoreCollection("user_engagements"))
                 .doc(questionId ? `${ownUid}_${id}_${questionId}` : `${ownUid}_${id}`)
                 .set({ selectedOptionId, voteChangedAt: changeNow, updatedAt: changeNow }, { merge: true })
                 .catch(() => { });
@@ -1355,7 +1355,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // C. Save user vote record to Firestore
     if (db) {
       try {
-        await db.collection("user_engagements").doc(firestoreVoteDocId).set(userRecord);
+        await db.collection(getFirestoreCollection("user_engagements")).doc(firestoreVoteDocId).set(userRecord);
         if (questionId) {
           await db.collection(getFirestoreCollection("user_engagements")).doc(`${userId}_${id}`).set({
             userId,
@@ -1468,9 +1468,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         await Promise.all([
           db.collection(colName).doc(userId).set(incData, { merge: true }),
           db.collection(colName).doc(`${userId}_${id}`).set({ ...incData, quizId: id }, { merge: true }),
-          colName !== "quiz_leaderboard"
-            ? db.collection("quiz_leaderboard").doc(userId).set(incData, { merge: true })
-            : Promise.resolve(),
         ]);
       } catch (lbFbErr) {
         console.warn("Firestore quiz leaderboard update notice:", lbFbErr);

@@ -418,7 +418,7 @@ export async function POST(
           // Dual-write count to visible_recognitions and match_room_notifications collections
           if (db) {
             try {
-              await db.collection("visible_recognitions").doc(cleanId).set({ commentsCount: total }, { merge: true });
+              await db.collection(getFirestoreCollection("visible_recognitions")).doc(cleanId).set({ commentsCount: total }, { merge: true });
             } catch {}
             try {
               await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ commentsCount: total }, { merge: true });

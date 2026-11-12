@@ -274,7 +274,7 @@
 //   }
 
 //   if (!exists) {
-//     const existing = await db.collection("matches").doc(match.match_id).get();
+//     const existing = await db.collection(getFirestoreCollection("matches")).doc(match.match_id).get();
 //     if (existing.exists) exists = true;
 //   }
 
@@ -300,7 +300,7 @@
 //       sk: "MATCH#META",
 //       ...matchPayload,
 //     },
-//     firestoreRef: db.collection("matches").doc(match.match_id),
+//     firestoreRef: db.collection(getFirestoreCollection("matches")).doc(match.match_id),
 //     firestoreData: {
 //       ...matchPayload,
 //       created_at: FieldValue.serverTimestamp(),
@@ -379,7 +379,8 @@ import { FieldValue } from "firebase-admin/firestore";
 import { validateMatchCreate } from "@/lib/validations/matchValidation";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
-import { TABLES } from "@/lib/tableNames";
+import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
+import { getCoreEngineReferencedMatchIds, cleanMatchId, hasValidMatchTeams, normalizeMatchKey } from "@/lib/coreEngineScope";
 import { ScanCommand, GetCommand, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
@@ -461,7 +462,8 @@ export async function GET(req: NextRequest) {
     // 2. Also fetch from Firestore for any matches not in DynamoDB
     if (db) {
       try {
-        let query: FirebaseFirestore.Query = db.collection("matches").orderBy("date", "desc");
+        const matchesCol = getFirestoreCollection("matches");
+        let query: FirebaseFirestore.Query = db.collection(matchesCol).orderBy("date", "desc");
 
         if (tournament) query = query.where("tournament", "==", tournament);
         if (gender) query = query.where("gender", "==", gender);
@@ -469,7 +471,7 @@ export async function GET(req: NextRequest) {
         if (season) query = query.where("season", "==", parseInt(season, 10));
 
         if (after) {
-          const cursorDoc = await db.collection("matches").doc(after).get();
+          const cursorDoc = await db.collection(matchesCol).doc(after).get();
           if (cursorDoc.exists) query = query.startAfter(cursorDoc);
         }
 
@@ -489,13 +491,123 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    matches = matches.filter((m: any) => hasValidMatchTeams(m));
+
     // Optional Core Engine filter + prioritize Core Engine matches before historical archives
     if (coreOnly) {
-      matches = matches.filter(
-        (m: any) =>
-          m.isCoreEngineMatch ||
-          String(m.match_id || "").toUpperCase().startsWith("MATCH-")
-      );
+      const { matchMetaById, referencedHintsById, coreMatchIds } = await getCoreEngineReferencedMatchIds(docClient);
+      const matchesCol = getFirestoreCollection("matches");
+
+      const coreRefKeys = new Set(Array.from(coreMatchIds).map((id) => normalizeMatchKey(id)));
+      const metaByKey = new Map<string, any>();
+      for (const [cid, mmMeta] of matchMetaById.entries()) {
+        const k = normalizeMatchKey(cid);
+        if (k && !metaByKey.has(k)) metaByKey.set(k, mmMeta);
+      }
+
+      const coreByKey = new Map<string, any>();
+      for (const m of matches) {
+        const cid = cleanMatchId(m.match_id || m.id);
+        const k = normalizeMatchKey(cid);
+        if (!cid || !k) continue;
+        const isCore =
+          Boolean(m.isCoreEngineMatch) ||
+          cid.toUpperCase().startsWith("MATCH-") ||
+          metaByKey.has(k) ||
+          coreRefKeys.has(k);
+        if (isCore) {
+          const mmMeta = metaByKey.get(k);
+          const mergedId = mmMeta?.match_id || cid;
+          const prev = coreByKey.get(k);
+          const candidate = mmMeta
+            ? { ...m, ...mmMeta, id: mergedId, match_id: mergedId, isCoreEngineMatch: true }
+            : { ...m, id: mergedId, match_id: mergedId };
+          if (!prev || String(candidate.match_id).toUpperCase().startsWith("MATCH-")) {
+            coreByKey.set(k, candidate);
+          }
+        }
+      }
+
+      for (const [k, mmMeta] of metaByKey.entries()) {
+        if (!coreByKey.has(k) && hasValidMatchTeams(mmMeta)) {
+          coreByKey.set(k, mmMeta);
+        }
+      }
+
+      const missingCoreIds = Array.from(coreMatchIds).filter((cid) => !coreByKey.has(normalizeMatchKey(cid)));
+      if (missingCoreIds.length > 0) {
+        await Promise.all(
+          missingCoreIds.map(async (cid) => {
+            const k = normalizeMatchKey(cid);
+            const lookupIds = Array.from(
+              new Set([cid, cid.toUpperCase().startsWith("MATCH-") ? cid.slice(6) : `MATCH-${cid}`])
+            );
+            let hydrated: any = null;
+            for (const lid of lookupIds) {
+              if (hydrated) break;
+              try {
+                const mmRes = await docClient.send(
+                  new GetCommand({
+                    TableName: TABLES.MatchMoments,
+                    Key: { entityId: `MATCH#${lid}`, sk: "MATCH#META" },
+                  })
+                );
+                if (mmRes.Item) hydrated = mmRes.Item;
+              } catch {}
+            }
+
+            for (const lid of lookupIds) {
+              if (hydrated) break;
+              try {
+                const sdRes = await docClient.send(
+                  new GetCommand({
+                    TableName: TABLES.SportsData,
+                    Key: { entityId: `MATCH#${lid}`, sk: "MATCH#META" },
+                  })
+                );
+                if (sdRes.Item) hydrated = sdRes.Item;
+              } catch {}
+            }
+
+            if (!hydrated && db) {
+              for (const lid of lookupIds) {
+                if (hydrated) break;
+                try {
+                  const fsDoc = await db.collection(matchesCol).doc(lid).get();
+                  if (fsDoc.exists) hydrated = fsDoc.data();
+                } catch {}
+              }
+            }
+
+            const hint = referencedHintsById.get(cid);
+            const canonicalCid = hydrated?.match_id || cid;
+            if (hydrated && hasValidMatchTeams({ ...hydrated, isCoreEngineMatch: true })) {
+              coreByKey.set(k, {
+                ...hydrated,
+                id: canonicalCid,
+                match_id: canonicalCid,
+                isCoreEngineMatch: true,
+              });
+            } else {
+              coreByKey.set(k, {
+                id: canonicalCid,
+                match_id: canonicalCid,
+                title: hint?.title || canonicalCid,
+                sport: hint?.sport || "cricket",
+                tournament: hint?.tournament || hint?.seriesId || undefined,
+                home_team: hint?.home_team || hint?.teamA,
+                away_team: hint?.away_team || hint?.teamB,
+                status: hint?.status || "live",
+                matchDate: hint?.matchDate,
+                isCoreEngineMatch: true,
+                synthesizedFromRef: true,
+              });
+            }
+          })
+        );
+      }
+
+      matches = Array.from(coreByKey.values()).filter((m: any) => hasValidMatchTeams(m));
     }
 
     matches.sort((a: any, b: any) => {
@@ -618,7 +730,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!exists) {
-    const existing = await db.collection("matches").doc(match.match_id).get();
+    const existing = await db.collection(getFirestoreCollection("matches")).doc(match.match_id).get();
     if (existing.exists) exists = true;
   }
 
@@ -648,7 +760,7 @@ export async function POST(req: NextRequest) {
       sk: "MATCH#META",
       ...matchPayload,
     },
-    firestoreRef: db.collection("matches").doc(match.match_id),
+    firestoreRef: db.collection(getFirestoreCollection("matches")).doc(match.match_id),
     firestoreData: {
       ...matchPayload,
       created_at: FieldValue.serverTimestamp(),
@@ -729,7 +841,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const docRef = db.collection("matches").doc(matchId);
+    const docRef = db.collection(getFirestoreCollection("matches")).doc(matchId);
     const inningsSnap = await docRef.collection("innings").get();
     const batch = db.batch();
     inningsSnap.docs.forEach((d) => batch.delete(d.ref));

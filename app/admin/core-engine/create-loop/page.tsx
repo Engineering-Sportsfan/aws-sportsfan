@@ -17,6 +17,11 @@ import {
   RefreshCw,
 } from "lucide-react";
 import CoreEngineStepper from "../components/CoreEngineStepper";
+import {
+  sortMatchMoments,
+  formatMomentOptionLabel,
+  formatMomentTimingBadge,
+} from "@/lib/matchMomentTimeline";
 
 interface MatchOption {
   match_id: string;
@@ -94,7 +99,7 @@ function CreateLoopContent() {
   // Load matches
   const fetchMatches = useCallback(async () => {
     try {
-      const res = await fetch("/api/matches?limit=100");
+      const res = await fetch(`/api/matches?coreOnly=true&limit=1000&_t=${Date.now()}`);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
         const list: MatchOption[] = json.data.map((m: Record<string, unknown>) => ({
@@ -128,12 +133,11 @@ function CreateLoopContent() {
       setMoments([]);
       return;
     }
-    setLoadingMoments(true);
     try {
       const res = await fetch(`/api/match-moments?matchId=${encodeURIComponent(selectedMatchId)}&_t=${Date.now()}`);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
-        setMoments(json.data);
+        setMoments(sortMatchMoments(json.data));
       } else {
         setMoments([]);
       }
@@ -150,7 +154,7 @@ function CreateLoopContent() {
   const fetchEngagements = useCallback(async () => {
     if (!selectedMatchId) return;
     try {
-      const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=100&_t=${Date.now()}`);
+      const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&limit=1000&_t=${Date.now()}`);
       const json = await res.json();
       if (json.success && Array.isArray(json.engagements)) {
         const filtered = json.engagements.filter(
@@ -351,7 +355,7 @@ function CreateLoopContent() {
             </option>
             {moments.map((m) => (
               <option key={m.momentId} value={m.momentId}>
-                Over {m.overs}{m.score ? ` (${m.score})` : ""} - {m.event || m.matchMoment}
+                {formatMomentOptionLabel(m)}
               </option>
             ))}
           </select>
@@ -516,7 +520,7 @@ function CreateLoopContent() {
                     >
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300">
-                          Over {m.overs}
+                          {formatMomentTimingBadge(m)}
                         </span>
                         <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 text-gray-300 font-bold">
                           {m.phase || `Innings ${m.innings}`}

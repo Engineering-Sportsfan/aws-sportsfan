@@ -353,7 +353,7 @@ async function fetchEngagementChildren(engagementId: string) {
     if (!hasDynLikes) {
       try {
         const likeSnap = await db
-          .collection("engagement_likes")
+          .collection(getFirestoreCollection("engagement_likes"))
           .where("engagementId", "==", cleanEngId)
           .get();
         likeSnap.forEach((doc) => fsLikes.push({ docId: doc.id, ...doc.data() }));
@@ -416,10 +416,8 @@ async function handleOverviewRequest(req: NextRequest, body: {
       const seenLikes = new Set<string>();
       const seenShares = new Set<string>();
       const seenVotes = new Set<string>();
-      const seenImpressions = new Set<string>();
       const seenSocialLikes = new Set<string>();
       const seenSocialComments = new Set<string>();
-      const seenSocialImpressions = new Set<string>();
       const participants = new Set<string>();
       const commentMap = new Map<string, any>();
 
@@ -515,12 +513,12 @@ async function handleOverviewRequest(req: NextRequest, body: {
         } else if (sk.startsWith("IMPRESSION#") || sk.startsWith("VIEW#")) {
           const rawUid = item.userId || sk.replace(/^(IMPRESSION|VIEW)#/, "").split("#")[0];
           const profile = resolve(rawUid, item.userName, item.userAvatar);
-          if (!profile || seenImpressions.has(profile.userId)) continue;
-          seenImpressions.add(profile.userId);
+          if (!profile) continue;
 
+          const count = Math.max(1, Number(item.impressionCount || 1));
           const m = getOrInitUserEngagement(profile, engId);
-          m.impressions += 1;
-          totals.impressions += 1;
+          m.impressions += count;
+          totals.impressions += count;
           participants.add(profile.userId);
         } else if (sk.startsWith("SOCIAL_LIKE#")) {
           const rest = sk.slice("SOCIAL_LIKE#".length);
@@ -549,19 +547,15 @@ async function handleOverviewRequest(req: NextRequest, body: {
           totals.socialComments += 1;
           participants.add(profile.userId);
         } else if (sk.startsWith("SOCIAL_IMPRESSION#")) {
-          const rest = sk.slice("SOCIAL_IMPRESSION#".length);
-          const hashIdx = rest.lastIndexOf("#");
-          const cId = String(item.targetCommentId || (hashIdx >= 0 ? rest.slice(0, hashIdx) : rest)).trim();
-          const rawUid = item.actorUserId || item.userId || (hashIdx >= 0 ? rest.slice(hashIdx + 1) : "");
+          const parts = sk.slice("SOCIAL_IMPRESSION#".length).split("#");
+          const rawUid = item.actorUserId || item.userId || parts[1] || "";
           const profile = resolve(rawUid, item.actorUserName || item.userName);
           if (!profile) continue;
-          const dedupeKey = `${cId}#${profile.userId}`;
-          if (seenSocialImpressions.has(dedupeKey)) continue;
-          seenSocialImpressions.add(dedupeKey);
 
+          const count = Math.max(1, Number(item.impressionCount || 1));
           const m = getOrInitUserEngagement(profile, engId);
-          m.socialImpressions += 1;
-          totals.socialImpressions += 1;
+          m.socialImpressions += count;
+          totals.socialImpressions += count;
           participants.add(profile.userId);
         } else if (sk.startsWith("USER#")) {
           // Do not register passive USER# markers without actual interactions (VOTE/LIKE/COMMENT/SHARE/IMPRESSION/SOCIAL)
