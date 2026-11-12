@@ -317,11 +317,16 @@ function EngagementListContent() {
   };
 
   const filteredEngagements = useMemo(() => {
+    const cleanSelMoment = selectedMomentId.replace(/^MOMENT#/i, "").trim();
     return engagements.filter((e) => {
-      if (selectedMomentId && e.momentId && e.momentId !== selectedMomentId) return false;
+      if (cleanSelMoment && e.momentId) {
+        const cleanEngMoment = String(e.momentId).replace(/^MOMENT#/i, "").trim();
+        if (cleanEngMoment !== cleanSelMoment) return false;
+      }
       if (typeFilter !== "all" && e.type !== typeFilter) return false;
       if (statusFilter !== "all") {
         if (statusFilter === "settled" && e.status !== "settled") return false;
+        if (statusFilter === "scheduled" && e.status !== "scheduled") return false;
         if (statusFilter === "active" && e.status === "settled") return false;
       }
       if (searchQuery) {
@@ -457,6 +462,8 @@ function EngagementListContent() {
             <option value="express">Express</option>
             <option value="debate">Debate</option>
             <option value="question">Trivia</option>
+            <option value="follow">Follow</option>
+            <option value="match_result">Result / POTM</option>
           </select>
         </div>
 
@@ -471,6 +478,7 @@ function EngagementListContent() {
           >
             <option value="all">All Statuses</option>
             <option value="active">Active Only</option>
+            <option value="scheduled">Scheduled Only</option>
             <option value="settled">Settled Only</option>
           </select>
         </div>

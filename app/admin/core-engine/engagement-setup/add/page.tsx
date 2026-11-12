@@ -684,7 +684,11 @@ function AddEngagementContent() {
       correctOptionId: engType === "question" ? correctOptionId : undefined,
       ...(engType !== "express" && engType !== "follow" && engType !== "match_result" ? { postLock: postLock.trim() } : {}),
       coinStake: 10,
-      loopId: loopId.trim() || `LOOP-${activeMoment?.overs || activeMoment?.timingLabel || Date.now()}`,
+      loopId:
+        loopId.trim() ||
+        `LOOP-${String(activeMoment?.overs || activeMoment?.timingLabel || "ENG")
+          .trim()
+          .replace(/\s+/g, "-")}-${Date.now().toString(36)}`,
       momentId: selectedMomentId,
       matchId: selectedMatchId,
       innings: activeMoment?.innings ?? 1,
@@ -781,6 +785,13 @@ function AddEngagementContent() {
           </div>
           {submitResult.success && (
             <div className="flex items-center gap-2">
+              <Link
+                href={`/admin/core-engine/engagement-setup/list${selectedMatchId ? `?matchId=${selectedMatchId}` : ""}`}
+                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1 transition-all border border-white/15"
+              >
+                <List size={13} />
+                <span>View in Engagement List</span>
+              </Link>
               <Link
                 href={`/admin/core-engine/visible-recognition/add?matchId=${selectedMatchId}&momentId=${selectedMomentId}`}
                 className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs flex items-center gap-1 transition-all"
