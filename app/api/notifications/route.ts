@@ -84,6 +84,7 @@ export async function GET(req: NextRequest) {
     let uid = searchParams.get("uid");
     let actualUserIdParam = searchParams.get("actualUserId") || searchParams.get("userId");
     const countOnly = searchParams.get("countOnly") === "true";
+    const category = searchParams.get("category");
 
     if (!email && !uid && !actualUserIdParam) {
       const user = await getUser(req);
@@ -320,6 +321,18 @@ export async function GET(req: NextRequest) {
 
     notifications = Array.from(finalDedupeMap.values());
 
+    if (category) {
+      const targetCategory = category.toLowerCase();
+      notifications = notifications.filter((n) => {
+        const cat = (n.category || "").toLowerCase();
+        const type = (n.notification_type || n.type || "").toLowerCase();
+        if (targetCategory === "roar") {
+          return cat === "roar" || type.startsWith("roar") || type.includes("match_live") || type.includes("heating_up");
+        }
+        return cat === targetCategory || type.startsWith(targetCategory);
+      });
+    }
+
     notifications.sort(
       (a, b) =>
         new Date(b.sent_at || b.createdAt || 0).getTime() -
@@ -389,8 +402,22 @@ export async function POST(req: NextRequest) {
       recipientEmail: targetEmail,
       recipientUid: targetUid,
       ...(body.eventId && { eventId: body.eventId }),
-      ...(body.cta_label && { cta_label: body.cta_label }),
-      ...(body.cta_target && { cta_target: body.cta_target }),
+      ...((body.cta_label || body.ctaLabel || body.cta) && {
+        cta_label: body.cta_label || body.ctaLabel || body.cta,
+        ctaLabel: body.cta_label || body.ctaLabel || body.cta,
+      }),
+      ...((body.cta_target || body.ctaTarget) && {
+        cta_target: body.cta_target || body.ctaTarget,
+        ctaTarget: body.cta_target || body.ctaTarget,
+      }),
+      ...(body.cta && { cta: body.cta }),
+      ...(body.subtitle && { subtitle: body.subtitle }),
+      ...(body.fan && { fan: body.fan }),
+      ...(body.actor_name && { actor_name: body.actor_name }),
+      ...(body.actor_photoURL && { actor_photoURL: body.actor_photoURL }),
+      ...(body.actorPhoto && { actorPhoto: body.actorPhoto }),
+      ...(body.postId && { postId: body.postId }),
+      ...(body.roomId && { roomId: body.roomId }),
     };
 
     const candidateTables = getCandidateTableNames(TABLES.Notifications);

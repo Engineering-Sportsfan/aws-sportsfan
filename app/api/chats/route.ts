@@ -157,35 +157,35 @@ export async function GET(req: NextRequest) {
       console.warn("[chats GET] DynamoDB lookup notice:", dynErr);
     }
 
-    // 2. Firestore Fallback if DynamoDB returned no items
-    if (!fetchedFromDynamo) {
+    // 2. Firestore Fallback if DynamoDB returned no items.
+    // No orderBy: array-contains + orderBy needs a composite index. Sorting and paging happen in memory instead.
+    if (!fetchedFromDynamo && db) {
       try {
-        let query = db
+        let query: FirebaseFirestore.Query = db
           .collection("chats")
-          .where("participantIds", "array-contains", CURRENT_USER_ID)
-          .orderBy("updatedAt", "desc");
+          .where("participantIds", "array-contains", CURRENT_USER_ID);
 
         if (type === "dm" || type === "group") {
-          query = db
-            .collection("chats")
-            .where("participantIds", "array-contains", CURRENT_USER_ID)
-            .where("type", "==", type)
-            .orderBy("updatedAt", "desc");
-        }
-
-        query = query.limit(limit);
-
-        if (lastDocId && lastDocUpdatedAt) {
-          const lastRef = db.collection("chats").doc(lastDocId);
-          const lastDocSnap = await lastRef.get();
-          if (lastDocSnap.exists) query = query.startAfter(lastDocSnap);
+          query = query.where("type", "==", type);
         }
 
         const snapshot = await query.get();
-        chats = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        lastDoc = snapshot.docs[snapshot.docs.length - 1];
-      } catch (fsErr) {
-        console.warn("[chats GET] Firestore fallback notice (missing index ignored):", fsErr);
+        let fsChats: any[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        fsChats.sort((a: any, b: any) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+
+        if (lastDocUpdatedAt) {
+          const lastTs = parseInt(lastDocUpdatedAt);
+          if (!isNaN(lastTs)) {
+            fsChats = fsChats.filter((c: any) => (Number(c.updatedAt) || 0) < lastTs);
+          }
+        }
+
+        chats = fsChats.slice(0, limit);
+        const last = chats[chats.length - 1];
+        lastDoc = last ? snapshot.docs.find((d) => d.id === last.id) : undefined;
+      } catch (fsErr: any) {
+        // Firestore is only a fallback; never let it surface as an error
+        console.info("[chats GET] Firestore fallback skipped:");
       }
     }
 

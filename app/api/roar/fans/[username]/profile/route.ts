@@ -33,20 +33,20 @@ export async function GET(
     let resolvedUserId = "";
     let fetchedUserFromDynamo = false;
 
-    // 1. Try finding user in DynamoDB first by username Scan
+    // 1. Try finding user in DynamoDB first via the username-index GSI (was a Scan with Limit:1, which evaluates a
+    //    single row before filtering and so almost never matched).
     try {
-      const res = await docClient.send(new ScanCommand({
+      const res = await docClient.send(new QueryCommand({
         TableName: TABLES.IdentityAndAccess,
-        FilterExpression: "username = :u AND sk = :s",
-        ExpressionAttributeValues: {
-          ":u": username,
-          ":s": "USER#META"
-        },
-        Limit: 1
+        IndexName: "username-index",
+        KeyConditionExpression: "username = :u",
+        ExpressionAttributeValues: { ":u": username },
+        Limit: 5,
       }));
+      const hit = (res.Items || []).find((i: any) => i.sk === "USER#META") || (res.Items || [])[0];
 
-      if (res.Items && res.Items.length > 0) {
-        userData = res.Items[0];
+      if (hit) {
+        userData = hit;
         resolvedUserId = (userData.entityId as string).replace(/^USER#/, "");
         fetchedUserFromDynamo = true;
       }

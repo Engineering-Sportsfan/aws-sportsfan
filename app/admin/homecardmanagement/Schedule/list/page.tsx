@@ -30,6 +30,11 @@ interface AgendaEventItem {
   order: number;
   date?: string;
   time: string;
+  startDate?: string;
+  startTime?: string;
+  endDate?: string;
+  endTime?: string;
+  isOver24hFinished?: boolean;
   sport: string;
   subEvent: string;
   detail: string;
@@ -153,6 +158,7 @@ function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date())
 
   const nowMs = now.getTime();
   const MATCH_DURATION_MS = 2.5 * 60 * 60 * 1000;
+  const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
   const parsedEvents = events.map((evt, idx) => {
     const rawStatus = (evt.statusType || "").toLowerCase().trim();
@@ -164,12 +170,29 @@ function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date())
     const isExplicitScheduled = rawStatus === "scheduled" || rawLabel === "SCHEDULED";
     const isManual = evt.isManual === true || evt.statusMode === "manual" || (!isAutoMode && (isExplicitCompleted || isExplicitLive || isExplicitUpNext));
 
-    const timestamp = parseEventDateTimeToTimestamp(evt.date, evt.time, now);
+    const startDateStr = evt.startDate || evt.date;
+    const startTimeStr = evt.startTime || evt.time;
+    const startTimestamp = parseEventDateTimeToTimestamp(startDateStr, startTimeStr, now);
+
+    let endTimestamp: number;
+    const hasCustomEnd = Boolean(evt.endDate || evt.endTime);
+    if (hasCustomEnd) {
+      const effectiveEndDate = evt.endDate || startDateStr;
+      const effectiveEndTime = evt.endTime || (evt.endDate && evt.endDate !== startDateStr ? "11:59 PM" : startTimeStr);
+      let parsedEnd = parseEventDateTimeToTimestamp(effectiveEndDate, effectiveEndTime, now);
+      if (parsedEnd <= startTimestamp && effectiveEndDate === startDateStr) {
+        parsedEnd += 24 * 60 * 60 * 1000;
+      }
+      endTimestamp = parsedEnd;
+    } else {
+      endTimestamp = startTimestamp + MATCH_DURATION_MS;
+    }
 
     return {
       evt,
       idx,
-      timestamp,
+      startTimestamp,
+      endTimestamp,
       order: evt.order ?? idx,
       isAutoMode,
       isExplicitCompleted,
@@ -181,8 +204,8 @@ function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date())
   });
 
   parsedEvents.sort((a, b) => {
-    if (a.timestamp !== b.timestamp) {
-      return a.timestamp - b.timestamp;
+    if (a.startTimestamp !== b.startTimestamp) {
+      return a.startTimestamp - b.startTimestamp;
     }
     if (a.order !== undefined && b.order !== undefined && a.order !== b.order) {
       return a.order - b.order;
@@ -190,93 +213,101 @@ function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date())
     return a.idx - b.idx;
   });
 
-  // Step 1: Check if there's an explicit manual LIVE event set by admin
-  let manualLiveIndex = -1;
-  for (let i = 0; i < parsedEvents.length; i++) {
-    if (parsedEvents[i].isExplicitLive && parsedEvents[i].isManual) {
-      manualLiveIndex = i;
-      break;
-    }
-  }
-
-  // Step 2: Identify the latest past/started event and the first upcoming future event
-  let lastStartedIndex = -1;
-  let firstFutureIndex = -1;
-
-  for (let i = 0; i < parsedEvents.length; i++) {
-    if (parsedEvents[i].timestamp <= nowMs) {
-      lastStartedIndex = i;
-    } else if (firstFutureIndex === -1) {
-      firstFutureIndex = i;
-    }
-  }
-
-  // Step 3: Determine which index (if any) is actively LIVE and UP NEXT
-  let activeLiveIndex = -1;
-  let activeUpcomingIndex = -1;
-
-  if (manualLiveIndex !== -1) {
-    activeLiveIndex = manualLiveIndex;
-    activeUpcomingIndex = firstFutureIndex;
-  } else if (lastStartedIndex !== -1) {
-    const latestStartedItem = parsedEvents[lastStartedIndex];
-    const elapsedMs = nowMs - latestStartedItem.timestamp;
-
-    if (latestStartedItem.isExplicitCompleted && latestStartedItem.isManual) {
-      activeLiveIndex = -1;
-      activeUpcomingIndex = firstFutureIndex;
-    } else if (elapsedMs <= MATCH_DURATION_MS) {
-      activeLiveIndex = lastStartedIndex;
-      activeUpcomingIndex = firstFutureIndex;
-    } else {
-      activeLiveIndex = -1;
-      activeUpcomingIndex = firstFutureIndex;
-    }
-  } else {
-    activeLiveIndex = -1;
-    activeUpcomingIndex = 0;
-  }
-
-  // Step 4: Map final dynamic status
-  return parsedEvents.map((item, sortedIdx) => {
+  return parsedEvents.map((item) => {
     const orig = item.evt;
 
-    if (item.isManual) {
-      if (item.isExplicitCompleted) {
-        return { ...orig, statusType: "completed", statusLabel: "COMPLETED", nodeColor: "gray", isManual: true };
-      }
-      if (item.isExplicitLive) {
-        return { ...orig, statusType: "live", statusLabel: "LIVE", nodeColor: "emerald", isManual: true };
-      }
-      if (item.isExplicitUpNext) {
-        return { ...orig, statusType: "up_next", statusLabel: "UP NEXT", nodeColor: "amber", isManual: true };
-      }
-      if (item.isExplicitScheduled) {
-        return { ...orig, statusType: "scheduled", statusLabel: orig.time || "SCHEDULED", nodeColor: "blue", isManual: true };
-      }
+    // 1. Explicit admin "completed"
+    if (item.isExplicitCompleted) {
+      const isFinished = true;
+      const finishedTimestamp = item.endTimestamp <= nowMs ? item.endTimestamp : nowMs;
+      const isOver24hFinished = nowMs - finishedTimestamp > TWENTY_FOUR_HOURS_MS;
+      return {
+        ...orig,
+        statusType: "completed",
+        statusLabel: orig.statusLabel && orig.statusLabel.toUpperCase() === "FINISHED" ? "FINISHED" : "COMPLETED",
+        nodeColor: "gray",
+        isManual: true,
+        isOver24hFinished,
+      };
     }
 
+    // 2. If end date & time has passed, mark as finished
+    if (nowMs >= item.endTimestamp) {
+      const isFinished = true;
+      const finishedTimestamp = item.endTimestamp;
+      const isOver24hFinished = nowMs - finishedTimestamp > TWENTY_FOUR_HOURS_MS;
+      return {
+        ...orig,
+        statusType: "completed",
+        statusLabel: "FINISHED",
+        nodeColor: "gray",
+        isOver24hFinished,
+      };
+    }
+
+    // 3. Explicit admin "live"
+    if (item.isExplicitLive && item.isManual) {
+      return {
+        ...orig,
+        statusType: "live",
+        statusLabel: "LIVE",
+        nodeColor: "emerald",
+        isManual: true,
+        isOver24hFinished: false,
+      };
+    }
+
+    // 3. Explicit admin "up_next"
+    if (item.isExplicitUpNext && item.isManual) {
+      return {
+        ...orig,
+        statusType: "up_next",
+        statusLabel: "UP NEXT",
+        nodeColor: "amber",
+        isManual: true,
+        isOver24hFinished: false,
+      };
+    }
+
+    // 4. Explicit admin "scheduled"
+    if (item.isExplicitScheduled && item.isManual && !item.isAutoMode) {
+      return {
+        ...orig,
+        statusType: "scheduled",
+        statusLabel: orig.statusLabel || orig.time || "SCHEDULED",
+        nodeColor: "blue",
+        isManual: true,
+        isOver24hFinished: false,
+      };
+    }
+
+    // 5. Dynamic Auto Time Resolution
     let computedStatusType: AgendaEventItem["statusType"] = "scheduled";
     let computedLabel = orig.time || "SCHEDULED";
     let computedNodeColor: AgendaEventItem["nodeColor"] = "blue";
+    let isFinished = false;
 
-    if (activeLiveIndex !== -1 && sortedIdx === activeLiveIndex) {
+    if (nowMs < item.startTimestamp) {
+      const timeToStart = item.startTimestamp - nowMs;
+      const isUpNext = timeToStart <= 45 * 60 * 1000;
+      computedStatusType = isUpNext ? "up_next" : "scheduled";
+      computedLabel = isUpNext ? "UP NEXT" : (orig.time || "SCHEDULED");
+      computedNodeColor = isUpNext ? "amber" : "blue";
+      isFinished = false;
+    } else if (nowMs >= item.startTimestamp && nowMs < item.endTimestamp) {
       computedStatusType = "live";
       computedLabel = "LIVE";
       computedNodeColor = "emerald";
-    } else if (item.timestamp <= nowMs) {
+      isFinished = false;
+    } else {
       computedStatusType = "completed";
       computedLabel = "COMPLETED";
       computedNodeColor = "gray";
-    } else if (sortedIdx === activeUpcomingIndex) {
-      computedStatusType = "up_next";
-      computedLabel = "UP NEXT";
-      computedNodeColor = "amber";
-    } else {
-      computedStatusType = "scheduled";
-      computedLabel = orig.time || "SCHEDULED";
-      computedNodeColor = "blue";
+      isFinished = true;
     }
+
+    const finishedTimestamp = item.endTimestamp;
+    const isOver24hFinished = isFinished && (nowMs - finishedTimestamp > TWENTY_FOUR_HOURS_MS);
 
     return {
       ...orig,
@@ -285,6 +316,7 @@ function resolveDynamicAgendaEvents(events: AgendaEventItem[], now = new Date())
       nodeColor: computedNodeColor,
       isManual: false,
       statusMode: item.isAutoMode ? "auto" : undefined,
+      isOver24hFinished,
     };
   });
 }
@@ -353,11 +385,12 @@ export default function ScheduleListPage() {
       await axios.put("/api/welcomemessage", {
         id: event.id,
         time: newTime,
+        startTime: newTime,
       });
 
       // Optimistically update events list
       setEvents((prev) =>
-        prev.map((item) => (item.id === event.id ? { ...item, time: newTime } : item))
+        prev.map((item) => (item.id === event.id ? { ...item, time: newTime, startTime: newTime } : item))
       );
       setInlineTimes((prev) => ({ ...prev, [event.id]: newTime }));
 
@@ -691,12 +724,25 @@ export default function ScheduleListPage() {
                       {/* Direct Inline Time & Date Edit Column */}
                       <td className="p-4 font-bold text-gray-300">
                         <div className="flex flex-col gap-1.5">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-[10px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 font-mono">
                               <Calendar size={10} className="text-purple-400" />
-                              <span>{evt.date || "Today (IST)"}</span>
+                              <span>{evt.startDate || evt.date || "Today (IST)"}</span>
                             </span>
+                            {evt.isOver24hFinished && (
+                              <span
+                                className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-red-950/60 text-red-400 border border-red-500/40 uppercase tracking-wider"
+                                title="Event finished over 24 hours ago and is hidden from the public frontend"
+                              >
+                                Ended &gt;24h
+                              </span>
+                            )}
                           </div>
+                          {(evt.endDate || evt.endTime) && (
+                            <span className="text-[10px] text-gray-400 font-mono">
+                              Ends: {evt.endDate && evt.endDate !== (evt.startDate || evt.date) ? `${evt.endDate} ` : ""}{evt.endTime || ""}
+                            </span>
+                          )}
                           <div className="flex items-center gap-1.5">
                             <div className="relative flex items-center">
                               <input

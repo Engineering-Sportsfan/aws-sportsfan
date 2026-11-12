@@ -136,12 +136,29 @@ function resolveDynamicAgendaEvents(events: any[], now = new Date()): any[] {
     const isExplicitScheduled = rawStatus === "scheduled" || rawLabel === "SCHEDULED";
     const isManual = evt.isManual === true || evt.statusMode === "manual" || (!isAutoMode && (isExplicitCompleted || isExplicitLive || isExplicitUpNext));
 
-    const timestamp = parseEventDateTimeToTimestamp(evt.date, evt.time, now);
+    const startDateStr = evt.startDate || evt.date;
+    const startTimeStr = evt.startTime || evt.time;
+    const startTimestamp = parseEventDateTimeToTimestamp(startDateStr, startTimeStr, now);
+
+    let endTimestamp: number;
+    const hasCustomEnd = Boolean(evt.endDate || evt.endTime);
+    if (hasCustomEnd) {
+      const effectiveEndDate = evt.endDate || startDateStr;
+      const effectiveEndTime = evt.endTime || (evt.endDate && evt.endDate !== startDateStr ? "11:59 PM" : startTimeStr);
+      let parsedEnd = parseEventDateTimeToTimestamp(effectiveEndDate, effectiveEndTime, now);
+      if (parsedEnd <= startTimestamp && effectiveEndDate === startDateStr) {
+        parsedEnd += 24 * 60 * 60 * 1000;
+      }
+      endTimestamp = parsedEnd;
+    } else {
+      endTimestamp = startTimestamp + MATCH_DURATION_MS;
+    }
 
     return {
       evt,
       idx,
-      timestamp,
+      startTimestamp,
+      endTimestamp,
       order: evt.order ?? idx,
       isAutoMode,
       isExplicitCompleted,
@@ -153,8 +170,8 @@ function resolveDynamicAgendaEvents(events: any[], now = new Date()): any[] {
   });
 
   parsedEvents.sort((a, b) => {
-    if (a.timestamp !== b.timestamp) {
-      return a.timestamp - b.timestamp;
+    if (a.startTimestamp !== b.startTimestamp) {
+      return a.startTimestamp - b.startTimestamp;
     }
     if (a.order !== undefined && b.order !== undefined && a.order !== b.order) {
       return a.order - b.order;
@@ -162,55 +179,14 @@ function resolveDynamicAgendaEvents(events: any[], now = new Date()): any[] {
     return a.idx - b.idx;
   });
 
-  let manualLiveIndex = -1;
-  for (let i = 0; i < parsedEvents.length; i++) {
-    if (parsedEvents[i].isExplicitLive && parsedEvents[i].isManual) {
-      manualLiveIndex = i;
-      break;
-    }
-  }
-
-  let lastStartedIndex = -1;
-  let firstFutureIndex = -1;
-
-  for (let i = 0; i < parsedEvents.length; i++) {
-    if (parsedEvents[i].timestamp <= nowMs) {
-      lastStartedIndex = i;
-    } else if (firstFutureIndex === -1) {
-      firstFutureIndex = i;
-    }
-  }
-
-  let activeLiveIndex = -1;
-  let activeUpcomingIndex = -1;
-
-  if (manualLiveIndex !== -1) {
-    activeLiveIndex = manualLiveIndex;
-    activeUpcomingIndex = firstFutureIndex;
-  } else if (lastStartedIndex !== -1) {
-    const latestStartedItem = parsedEvents[lastStartedIndex];
-    const elapsedMs = nowMs - latestStartedItem.timestamp;
-
-    if (latestStartedItem.isExplicitCompleted && latestStartedItem.isManual) {
-      activeLiveIndex = -1;
-      activeUpcomingIndex = firstFutureIndex;
-    } else if (elapsedMs <= MATCH_DURATION_MS) {
-      activeLiveIndex = lastStartedIndex;
-      activeUpcomingIndex = firstFutureIndex;
-    } else {
-      activeLiveIndex = -1;
-      activeUpcomingIndex = firstFutureIndex;
-    }
-  } else {
-    activeLiveIndex = -1;
-    activeUpcomingIndex = 0;
-  }
-
-  return parsedEvents.map((item, index) => {
+  return parsedEvents.map((item) => {
     const orig = item.evt;
 
-    if (item.isExplicitCompleted && item.isManual) {
+    if (item.isExplicitCompleted) {
       return { ...orig, statusType: "completed", isManual: true };
+    }
+    if (nowMs >= item.endTimestamp) {
+      return { ...orig, statusType: "completed", statusLabel: "FINISHED", isManual: false };
     }
     if (item.isExplicitLive && item.isManual) {
       return { ...orig, statusType: "live", isManual: true };
@@ -223,19 +199,23 @@ function resolveDynamicAgendaEvents(events: any[], now = new Date()): any[] {
     }
 
     let computedStatusType = "scheduled";
-    if (activeLiveIndex !== -1 && index === activeLiveIndex) {
+    let computedStatusLabel = orig.time || "SCHEDULED";
+    if (nowMs < item.startTimestamp) {
+      const timeToStart = item.startTimestamp - nowMs;
+      computedStatusType = timeToStart <= 45 * 60 * 1000 ? "up_next" : "scheduled";
+      computedStatusLabel = timeToStart <= 45 * 60 * 1000 ? "UP NEXT" : (orig.time || "SCHEDULED");
+    } else if (nowMs >= item.startTimestamp && nowMs < item.endTimestamp) {
       computedStatusType = "live";
-    } else if (item.timestamp <= nowMs) {
-      computedStatusType = "completed";
-    } else if (index === activeUpcomingIndex) {
-      computedStatusType = "up_next";
+      computedStatusLabel = "LIVE";
     } else {
-      computedStatusType = "scheduled";
+      computedStatusType = "completed";
+      computedStatusLabel = "FINISHED";
     }
 
     return {
       ...orig,
       statusType: computedStatusType,
+      statusLabel: computedStatusLabel,
       isManual: false,
     };
   });

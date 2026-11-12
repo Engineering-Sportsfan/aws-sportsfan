@@ -126,7 +126,7 @@ async function runFlipArenaNotificationTestSuite() {
   const originalSend = docClient.send;
   (docClient as any).send = (cmd: any) => mockDb.send(cmd);
 
-  const { dispatchFlipArenaNotification } = await import("../lib/fliparenaNotifications");
+  const { dispatchFlipArenaNotification } = await import("../lib/notifications");
 
   const authorId = "u_author_777";
   const fanA = "u_fan_alice";
@@ -299,7 +299,7 @@ async function runFlipArenaNotificationTestSuite() {
 
     // ─── TEST 8: 60-Minute Content Drop Notification Aggregation ───────────────
     console.log("\n--- TEST 8: 60-Minute Content Drop Notification Aggregation ---");
-    const { dispatchFlipArenaContentDropNotification, formatContentDropMessage } = await import("../lib/fliparenaNotifications");
+    const { dispatchFlipArenaContentDropNotification, formatContentDropMessage } = await import("../lib/notifications");
 
     // 8.1 Format message tests
     const msg1 = formatContentDropMessage(["quiz"]);

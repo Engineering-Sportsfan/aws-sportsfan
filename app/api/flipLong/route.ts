@@ -6,6 +6,7 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { dualWrite, dualDelete } from "@/lib/dualWrite";
 import { QueryCommand, ScanCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import cloudinary from "@/lib/cloudinary";
+import { notifyFlipLongVideoPublished } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -231,6 +232,19 @@ export async function POST(req: NextRequest) {
 
     // 1. Primary write to RealTimeChat + dual-write to Firestore flipLongVideos
     await dualWrite("flipLongVideos", id, TABLES.RealTimeChat, dynamoItem);
+
+    // Notify all users of new video drop (if not future-scheduled)
+    if (!isScheduled) {
+      notifyFlipLongVideoPublished({
+        videoId: id,
+        videoTitle: title.trim(),
+        authorName: (author && author.trim()) || "SportsFan",
+        authorId: userId,
+        sport,
+      }).catch((notifErr) => {
+        console.warn("Notice sending FlipLong video published notification:", notifErr);
+      });
+    }
 
     return NextResponse.json(
       {

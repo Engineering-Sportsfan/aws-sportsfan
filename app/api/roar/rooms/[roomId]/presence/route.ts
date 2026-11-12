@@ -103,6 +103,67 @@ async function fetchActiveFanRecords(
   return activeRecords;
 }
 
+// Reads the user's pinned post: DynamoDB first, Firestore fallback (errors swallowed → null)
+async function readPinData(
+  roomRef: FirebaseFirestore.DocumentReference,
+  roomId: string,
+  userId: string,
+): Promise<any> {
+  let pinData: any = null;
+  let fetchedPinFromDynamo = false;
+  try {
+    const getPin = await docClient.send(new GetCommand({
+      TableName: TABLES.RealTimeChat,
+      Key: { roomId: `ROOM#${roomId}`, sk: `PIN#${userId}` }
+    }));
+    if (getPin.Item) {
+      pinData = getPin.Item;
+      fetchedPinFromDynamo = true;
+    }
+  } catch (e) {}
+
+  if (!fetchedPinFromDynamo) {
+    try {
+      const pinSnap = await roomRef.collection("userPins").doc(userId).get();
+      if (pinSnap.exists) {
+        pinData = pinSnap.data();
+      }
+    } catch (e) {}
+  }
+  return pinData;
+}
+
+// Reads totalJoinCount: DynamoDB META (both id formats) first, Firestore fallback
+async function readTotalJoinCount(
+  roomRef: FirebaseFirestore.DocumentReference,
+  roomId: string,
+): Promise<number> {
+  let totalJoinCount = 0;
+  let fetchedCountFromDynamo = false;
+  try {
+    const candidates = [`ROOM#${roomId}`, roomId];
+    for (const cand of candidates) {
+      const getMeta = await docClient.send(new GetCommand({
+        TableName: TABLES.RealTimeChat,
+        Key: { roomId: cand, sk: `META#${roomId}` }
+      }));
+      if (getMeta.Item) {
+        totalJoinCount = getMeta.Item.totalJoinCount ?? 0;
+        fetchedCountFromDynamo = true;
+        break;
+      }
+    }
+  } catch (e) {}
+
+  if (!fetchedCountFromDynamo) {
+    try {
+      const roomSnap = await roomRef.get();
+      totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
+    } catch (e) {}
+  }
+  return totalJoinCount;
+}
+
 // POST — join / heartbeat
 export async function POST(
   req: NextRequest,
@@ -114,161 +175,128 @@ export async function POST(
     const user = await getUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const resolved = await resolveUser(user.email, user.userId);
+    const [resolved, roomRef] = await Promise.all([
+      resolveUser(user.email, user.userId),
+      getRoomRef(roomId),
+    ]);
     if (!resolved) {
       return NextResponse.json({ error: "User profile not found" }, { status: 404 });
     }
     const { id: resolvedUserId, snap: userSnap } = resolved;
     const userData = userSnap.data() as { username: string; badge?: string; avatarUrl?: string };
 
-    const roomRef = await getRoomRef(roomId);
-    const pinRef = roomRef.collection("userPins").doc(resolvedUserId);
 
     const now = Date.now();
 
-    // 1. Write presence and check first join in DynamoDB first
-    let isFirstJoin = true;
-    try {
-      const getJoined = await docClient.send(new GetCommand({
-        TableName: TABLES.RealTimeChat,
-        Key: { roomId: `ROOM#${roomId}`, sk: `JOINED#${resolvedUserId}` }
-      }));
-      if (getJoined.Item) {
-        isFirstJoin = false;
-      }
-    } catch (dynErr) {
-      console.warn("[Presence POST] DynamoDB joined check failed:", dynErr);
-    }
-
-    try {
-      // A. Write presence doc
-      await docClient.send(new PutCommand({
-        TableName: TABLES.RealTimeChat,
-        Item: {
-          roomId: `ROOM#${roomId}`,
-          sk: `PRESENCE#${resolvedUserId}`,
-          uid: resolvedUserId,
-          username: userData.username,
-          avatarUrl: userData.avatarUrl ?? null,
-          badge: userData.badge ?? null,
-          joinedAt: now,
-          lastSeenAt: now
+    // 1 + 2. DynamoDB write path and Firestore sync touch different stores, so run them together
+    const syncDynamo = async () => {
+      // 1. Write presence and check first join in DynamoDB first
+      let isFirstJoin = true;
+      try {
+        const getJoined = await docClient.send(new GetCommand({
+          TableName: TABLES.RealTimeChat,
+          Key: { roomId: `ROOM#${roomId}`, sk: `JOINED#${resolvedUserId}` }
+        }));
+        if (getJoined.Item) {
+          isFirstJoin = false;
         }
-      }));
+      } catch (dynErr) {
+        console.warn("[Presence POST] DynamoDB joined check failed:", dynErr);
+      }
 
-      // B. If first join, write joined record and increment totalJoinCount
-      if (isFirstJoin) {
+      try {
+        // A. Write presence doc
         await docClient.send(new PutCommand({
           TableName: TABLES.RealTimeChat,
           Item: {
             roomId: `ROOM#${roomId}`,
-            sk: `JOINED#${resolvedUserId}`,
+            sk: `PRESENCE#${resolvedUserId}`,
             uid: resolvedUserId,
-            firstJoinedAt: now
+            username: userData.username,
+            avatarUrl: userData.avatarUrl ?? null,
+            badge: userData.badge ?? null,
+            joinedAt: now,
+            lastSeenAt: now
           }
         }));
 
-        const candidates = [`ROOM#${roomId}`, roomId];
-        for (const cand of candidates) {
-          try {
-            await docClient.send(new UpdateCommand({
-              TableName: TABLES.RealTimeChat,
-              Key: { roomId: cand, sk: `META#${roomId}` },
-              UpdateExpression: "ADD totalJoinCount :one",
-              ExpressionAttributeValues: { ":one": 1 }
-            }));
-          } catch (e) {}
+        // B. If first join, write joined record and increment totalJoinCount
+        if (isFirstJoin) {
+          await docClient.send(new PutCommand({
+            TableName: TABLES.RealTimeChat,
+            Item: {
+              roomId: `ROOM#${roomId}`,
+              sk: `JOINED#${resolvedUserId}`,
+              uid: resolvedUserId,
+              firstJoinedAt: now
+            }
+          }));
+
+          const candidates = [`ROOM#${roomId}`, roomId];
+          for (const cand of candidates) {
+            try {
+              await docClient.send(new UpdateCommand({
+                TableName: TABLES.RealTimeChat,
+                Key: { roomId: cand, sk: `META#${roomId}` },
+                UpdateExpression: "ADD totalJoinCount :one",
+                ExpressionAttributeValues: { ":one": 1 }
+              }));
+            } catch (e) {}
+          }
         }
+      } catch (dynErr) {
+        console.warn("[Presence POST] DynamoDB write failed:", dynErr);
       }
-    } catch (dynErr) {
-      console.warn("[Presence POST] DynamoDB write failed:", dynErr);
-    }
+    };
 
-    // 2. Sync to Firestore
-    const presenceRef = roomRef.collection("presence").doc(resolvedUserId);
-    const joinedRef = roomRef.collection("joinedUsers").doc(resolvedUserId);
+    const syncFirestore = async () => {
+      // 2. Sync to Firestore
+      const presenceRef = roomRef.collection("presence").doc(resolvedUserId);
+      const joinedRef = roomRef.collection("joinedUsers").doc(resolvedUserId);
 
-    try {
-      await presenceRef.set(
-        {
-          uid: resolvedUserId,
-          username: userData.username,
-          avatarUrl: userData.avatarUrl ?? null,
-          badge: userData.badge ?? null,
-          joinedAt: now,
-          lastSeenAt: now,
-        },
-        { merge: true },
-      );
-
-      const joinedSnap = await joinedRef.get();
-      if (!joinedSnap.exists) {
-        await db.runTransaction(async (tx) => {
-          const roomSnap = await tx.get(roomRef);
-          const prev = roomSnap.exists ? (roomSnap.data()?.totalJoinCount ?? 0) : 0;
-
-          tx.set(joinedRef, {
+      try {
+        await presenceRef.set(
+          {
             uid: resolvedUserId,
-            firstJoinedAt: now,
+            username: userData.username,
+            avatarUrl: userData.avatarUrl ?? null,
+            badge: userData.badge ?? null,
+            joinedAt: now,
+            lastSeenAt: now,
+          },
+          { merge: true },
+        );
+
+        const joinedSnap = await joinedRef.get();
+        if (!joinedSnap.exists) {
+          await db.runTransaction(async (tx) => {
+            const roomSnap = await tx.get(roomRef);
+            const prev = roomSnap.exists ? (roomSnap.data()?.totalJoinCount ?? 0) : 0;
+
+            tx.set(joinedRef, {
+              uid: resolvedUserId,
+              firstJoinedAt: now,
+            });
+
+            if (roomSnap.exists) {
+              tx.set(roomRef, { totalJoinCount: prev + 1 }, { merge: true });
+            }
           });
-
-          if (roomSnap.exists) {
-            tx.set(roomRef, { totalJoinCount: prev + 1 }, { merge: true });
-          }
-        });
-      }
-    } catch (fsErr) {
-      console.warn("[Presence POST] Firestore sync failed:", fsErr);
-    }
-
-    // 3. Fetch active records and pin
-    let pinData: any = null;
-    let fetchedPinFromDynamo = false;
-    try {
-      const getPin = await docClient.send(new GetCommand({
-        TableName: TABLES.RealTimeChat,
-        Key: { roomId: `ROOM#${roomId}`, sk: `PIN#${resolvedUserId}` }
-      }));
-      if (getPin.Item) {
-        pinData = getPin.Item;
-        fetchedPinFromDynamo = true;
-      }
-    } catch (e) {}
-
-    if (!fetchedPinFromDynamo) {
-      try {
-        const pinSnap = await pinRef.get();
-        if (pinSnap.exists) {
-          pinData = pinSnap.data();
         }
-      } catch (e) {}
-    }
-
-    let totalJoinCount = 0;
-    let fetchedCountFromDynamo = false;
-    try {
-      const candidates = [`ROOM#${roomId}`, roomId];
-      for (const cand of candidates) {
-        const getMeta = await docClient.send(new GetCommand({
-          TableName: TABLES.RealTimeChat,
-          Key: { roomId: cand, sk: `META#${roomId}` }
-        }));
-        if (getMeta.Item) {
-          totalJoinCount = getMeta.Item.totalJoinCount ?? 0;
-          fetchedCountFromDynamo = true;
-          break;
-        }
+      } catch (fsErr) {
+        console.warn("[Presence POST] Firestore sync failed:", fsErr);
       }
-    } catch (e) {}
+    };
 
-    if (!fetchedCountFromDynamo) {
-      try {
-        const roomSnap = await roomRef.get();
-        totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
-      } catch (e) {}
-    }
+    await Promise.all([syncDynamo(), syncFirestore()]);
 
-    const activeRecords = await fetchActiveFanRecords(roomRef, roomId, now);
+    // 3. Fetch pin, join count and active records (independent reads, run together;
+    // all writes above have completed so they see this request's own presence/join)
+    const [pinData, totalJoinCount, activeRecords] = await Promise.all([
+      readPinData(roomRef, roomId, resolvedUserId),
+      readTotalJoinCount(roomRef, roomId),
+      fetchActiveFanRecords(roomRef, roomId, now),
+    ]);
     const payload = buildPresencePayload(activeRecords, {
       totalJoinCount,
       pinnedPost: pinData,
@@ -337,60 +365,17 @@ export async function GET(
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const now = Date.now();
-    const resolved = await resolveUser(user.email, user.userId);
-    const roomRef = await getRoomRef(roomId);
+    const [resolved, roomRef] = await Promise.all([
+      resolveUser(user.email, user.userId),
+      getRoomRef(roomId),
+    ]);
 
-    // 1. Get pin doc from DynamoDB first
-    let pinData: any = null;
-    let fetchedPinFromDynamo = false;
-    if (resolved) {
-      try {
-        const getPin = await docClient.send(new GetCommand({
-          TableName: TABLES.RealTimeChat,
-          Key: { roomId: `ROOM#${roomId}`, sk: `PIN#${resolved.id}` }
-        }));
-        if (getPin.Item) {
-          pinData = getPin.Item;
-          fetchedPinFromDynamo = true;
-        }
-      } catch (e) {}
-    }
-
-    if (resolved && !fetchedPinFromDynamo) {
-      try {
-        const pinSnap = await roomRef.collection("userPins").doc(resolved.id).get();
-        if (pinSnap.exists) {
-          pinData = pinSnap.data();
-        }
-      } catch (e) {}
-    }
-
-    // 2. Get totalJoinCount from DynamoDB first
-    let totalJoinCount = 0;
-    let fetchedCountFromDynamo = false;
-    try {
-      const candidates = [`ROOM#${roomId}`, roomId];
-      for (const cand of candidates) {
-        const getMeta = await docClient.send(new GetCommand({
-          TableName: TABLES.RealTimeChat,
-          Key: { roomId: cand, sk: `META#${roomId}` }
-        }));
-        if (getMeta.Item) {
-          totalJoinCount = getMeta.Item.totalJoinCount ?? 0;
-          fetchedCountFromDynamo = true;
-          break;
-        }
-      }
-    } catch (e) {}
-
-    if (!fetchedCountFromDynamo) {
-      try {
-        const roomSnap = await roomRef.get();
-        totalJoinCount = roomSnap.data()?.totalJoinCount ?? 0;
-      } catch (e) {}
-    }
-
-    const activeRecords = await fetchActiveFanRecords(roomRef, roomId, now);
+    // Pin, join count and active fans are independent reads — run them together
+    const [pinData, totalJoinCount, activeRecords] = await Promise.all([
+      resolved ? readPinData(roomRef, roomId, resolved.id) : Promise.resolve(null),
+      readTotalJoinCount(roomRef, roomId),
+      fetchActiveFanRecords(roomRef, roomId, now),
+    ]);
     const payload = buildPresencePayload(activeRecords, {
       totalJoinCount,
       pinnedPost: pinData,

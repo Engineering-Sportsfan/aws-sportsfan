@@ -1,6 +1,6 @@
 import { db } from "@/lib/firebaseAdmin";
 import { docClient } from "@/lib/dynamodb";
-import { getFirestoreCollection } from "@/lib/tableNames";
+import { getFirestoreCollection, getTableName } from "@/lib/tableNames";
 import { PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 
 export interface DualWriteOptions {
@@ -28,22 +28,13 @@ export interface DualDeleteOptions {
  * Supports both object options and 4-argument positional signatures.
  */
 /**
- * Generates candidate table names to gracefully handle environment-suffixed tables
- * (e.g. SocialAndContent-dev, SocialAndContent, SocialAndContent-develop, SocialAndContent-release).
+ * Resolves the strict single DynamoDB table name for the active environment
+ * (e.g. dev -> *-dev, release -> *-release, prod -> base name).
+ * Never mixes dev, release, and prod tables.
  */
 export function getCandidateTableNames(tableName?: string): string[] {
   if (!tableName) return [];
-  const baseName = tableName.replace(/-(dev|develop|release|prod|staging|test)$/i, "");
-  return Array.from(
-    new Set([
-      tableName,
-      baseName,
-      `${baseName}-dev`,
-      `${baseName}-develop`,
-      `${baseName}-release`,
-      `${baseName}-prod`,
-    ])
-  );
+  return [getTableName(tableName)];
 }
 
 /**

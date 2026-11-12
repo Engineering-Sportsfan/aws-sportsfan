@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { Trash2, MessageSquare, X, Eye, EyeOff, Pencil } from "lucide-react";
 import Link from "next/link";
+import EngagementCard from "@/components/Engagements/EngagementCard";
+import type { EngagementItem } from "@/types/engagements";
 
 export default function RoarListPage() {
   const [rooms, setRooms] = useState<any[]>([]);
@@ -12,11 +14,18 @@ export default function RoarListPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
+  // Core Engine Matches for Room Assignment
+  const [matches, setMatches] = useState<any[]>([]);
+  const [updatingMatchRoomId, setUpdatingMatchRoomId] = useState<string | null>(null);
+
   // Messages modal/dialog state
   const [selectedRoom, setSelectedRoom] = useState<any | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [deletingMsgId, setDeletingMsgId] = useState<string | null>(null);
+  const [roomEngagements, setRoomEngagements] = useState<EngagementItem[]>([]);
+  const [loadingEngagements, setLoadingEngagements] = useState(false);
+  const [roomModalTab, setRoomModalTab] = useState<"engagements" | "chat">("engagements");
 
   const fetchRooms = async () => {
     try {
@@ -32,7 +41,35 @@ export default function RoarListPage() {
     }
   };
 
+  const fetchMatches = async () => {
+    try {
+      const res = await fetch("/api/matches?limit=100");
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setMatches(data.data);
+      }
+    } catch (error) {
+      console.warn("Failed to fetch matches for room selector:", error);
+    }
+  };
+
+  const handleAssignMatch = async (roomId: string, matchId: string) => {
+    setUpdatingMatchRoomId(roomId);
+    try {
+      await axios.patch(`/api/roar/rooms/${roomId}`, { matchId });
+      setRooms((prev) =>
+        prev.map((r) => (r.roomId === roomId ? { ...r, matchId } : r))
+      );
+    } catch (error) {
+      console.error("Failed to link match to room", error);
+      alert("Failed to update room match");
+    } finally {
+      setUpdatingMatchRoomId(null);
+    }
+  };
+
   useEffect(() => {
+    fetchMatches();
     fetchRooms();
   }, []);
 
@@ -77,7 +114,11 @@ export default function RoarListPage() {
   const handleOpenMessages = async (room: any) => {
     setSelectedRoom(room);
     setMessages([]);
+    setRoomEngagements([]);
     setLoadingMessages(true);
+    setLoadingEngagements(true);
+    setRoomModalTab(room.matchId ? "engagements" : "chat");
+
     try {
       const res = await axios.get(`/api/roar/rooms/${room.roomId}/messages?limit=100`);
       setMessages(res.data.messages || []);
@@ -85,6 +126,19 @@ export default function RoarListPage() {
       console.error("Failed to fetch room messages", error);
     } finally {
       setLoadingMessages(false);
+    }
+
+    if (room.matchId) {
+      try {
+        const engRes = await axios.get(`/api/engagements?matchId=${room.matchId}`);
+        setRoomEngagements(engRes.data.engagements || engRes.data.items || engRes.data.data || []);
+      } catch (engErr) {
+        console.warn("Failed to fetch room engagements:", engErr);
+      } finally {
+        setLoadingEngagements(false);
+      }
+    } else {
+      setLoadingEngagements(false);
     }
   };
 
@@ -130,7 +184,7 @@ export default function RoarListPage() {
           <table className="w-full min-w-[700px]">
             <thead className="bg-[#1c2330] border-b border-[#21262d]">
               <tr>
-                {["#", "Room Name", "Emoji/Icon", "Active Fans", "Status", "Actions"].map((head) => (
+                {["#", "Room Name", "Linked Match (Core Engine)", "Emoji", "Active Fans", "Status", "Actions"].map((head) => (
                   <th
                     key={head}
                     className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-400"
@@ -144,7 +198,7 @@ export default function RoarListPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-8 text-gray-400">
+                  <td colSpan={7} className="text-center py-8 text-gray-400">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-pink-500"></div>
                       Loading shows...
@@ -153,7 +207,7 @@ export default function RoarListPage() {
                 </tr>
               ) : rooms.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-8 text-gray-400">
+                  <td colSpan={7} className="text-center py-8 text-gray-400">
                     No active shows found. Create your first show room!
                   </td>
                 </tr>
@@ -171,6 +225,47 @@ export default function RoarListPage() {
                     {/* Room Name */}
                     <td className="px-4 py-3 text-sm font-medium text-white">
                       {room.name || "Unnamed Room"}
+                    </td>
+
+                    {/* Linked Match (Core Engine) */}
+                    <td className="px-4 py-3 text-sm">
+                      <div className="flex flex-col gap-1.5 min-w-[240px]">
+                        <div className="relative">
+                          <select
+                            value={room.matchId || ""}
+                            disabled={updatingMatchRoomId === room.roomId}
+                            onChange={(e) => handleAssignMatch(room.roomId, e.target.value)}
+                            className="w-full bg-[#0d1117] border border-[#30363d] rounded-md px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                          >
+                            <option value="">-- No Match Linked --</option>
+                            {matches.map((m) => {
+                              const matchIdVal = m.match_id || m.id;
+                              const team1 = m.team1 || m.team_a || "Team 1";
+                              const team2 = m.team2 || m.team_b || "Team 2";
+                              return (
+                                <option key={matchIdVal} value={matchIdVal}>
+                                  🏏 {team1} vs {team2} ({matchIdVal})
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+
+                        {/* {room.matchId && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono text-[#58a6ff] bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                              {room.matchId}
+                            </span>
+                            <Link
+                              href={`/admin/core-engine/match-moments?matchId=${room.matchId}`}
+                              className="text-[10px] text-gray-400 hover:text-blue-400 underline transition"
+                              title="Go to Match Moments & Engagements for this match"
+                            >
+                              Manage Loops ↗
+                            </Link>
+                          </div>
+                        )} */}
+                      </div>
                     </td>
 
                     {/* Emoji */}
@@ -300,74 +395,165 @@ export default function RoarListPage() {
               </div>
             </div>
 
-            {/* Messages List */}
+            {/* Tabs Switcher: Engagements vs Live Messages */}
+            <div className="flex border-b border-[#21262d] bg-[#161b22] px-4">
+              <button
+                onClick={() => setRoomModalTab("engagements")}
+                className={`py-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition ${
+                  roomModalTab === "engagements"
+                    ? "border-pink-500 text-pink-400"
+                    : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <span>🎯</span>
+                <span>Served Engagements ({roomEngagements.length})</span>
+                {selectedRoom.matchId && (
+                  <span className="text-[10px] bg-pink-500/20 text-pink-300 px-1.5 py-0.5 rounded font-mono">
+                    MATCH #{selectedRoom.matchId.replace(/^MATCH#/, "")}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setRoomModalTab("chat")}
+                className={`py-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition ${
+                  roomModalTab === "chat"
+                    ? "border-blue-500 text-blue-400"
+                    : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <span>💬</span>
+                <span>Room Banter Chat ({messages.length})</span>
+              </button>
+            </div>
+
+            {/* Modal Body Content */}
             <div className="flex-1 overflow-y-auto p-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">
-                Live Chat Messages ({messages.length})
-              </h3>
-
-              {loadingMessages ? (
-                <div className="text-center py-6 text-gray-400">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-pink-500 mx-auto mb-2"></div>
-                  Loading messages...
-                </div>
-              ) : messages.length === 0 ? (
-                <p className="text-center py-6 text-gray-500 text-sm">
-                  No active messages inside this show room.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {messages.map((message) => (
-                    <div
-                      key={message.msgId}
-                      className="bg-[#0d1117] border border-[#21262d] rounded-lg p-3 flex justify-between items-start gap-4"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-semibold text-white">
-                            @{message.authorUsername}
-                          </span>
-                          <span className="text-[10px] bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded">
-                            {message.authorBadge}
-                          </span>
-                          {message.type && (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${message.type === "hot_take" || message.type === "hottake"
-                              ? "bg-red-500/10 text-red-400 border border-red-500/20"
-                              : message.type === "prediction"
-                                ? "bg-orange-500/10 text-orange-400 border border-orange-500/20"
-                                : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                              }`}>
-                              {message.type}
-                            </span>
-                          )}
-                          <span className="text-xs text-gray-500 ml-auto">
-                            {new Date(message.createdAt).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-300">{message.text}</p>
-                        <div className="mt-2 text-xs text-gray-400 flex items-center gap-3">
-                          <span>🔥 {message.fireCount || 0}</span>
-                          <span>🙅‍♂️ {message.noChanceCount || 0}</span>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => handleDeleteMessage(message.msgId)}
-                        disabled={deletingMsgId === message.msgId}
-                        className="p-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition disabled:opacity-50"
-                        title="Delete Message"
+              {roomModalTab === "engagements" ? (
+                <div>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                      Live Engagements Served In This RoAR Room
+                    </h3>
+                    {selectedRoom.matchId ? (
+                      <Link
+                        href="/admin/core-engine/match-moments"
+                        className="text-xs text-pink-400 hover:underline flex items-center gap-1 font-semibold"
                       >
-                        {deletingMsgId === message.msgId ? (
-                          <div className="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <Trash2 size={14} />
-                        )}
-                      </button>
+                        + Create More Loops in Core Engine ↗
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-amber-400">
+                        ⚠️ No match linked to this room yet. Select a match in the table to serve loops!
+                      </span>
+                    )}
+                  </div>
+
+                  {loadingEngagements ? (
+                    <div className="text-center py-10 text-gray-400">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-pink-500 mx-auto mb-2"></div>
+                      Loading match engagements...
                     </div>
-                  ))}
+                  ) : !selectedRoom.matchId ? (
+                    <div className="text-center py-12 bg-[#0d1117] border border-[#21262d] rounded-xl p-6">
+                      <p className="text-base font-bold text-gray-200 mb-2">No Match Linked To This Room</p>
+                      <p className="text-xs text-gray-400 max-w-md mx-auto mb-4">
+                        Link a Core Engine match to this room using the &quot;Linked Match&quot; dropdown in the RoAR Room list. All moments and loops created for that match will automatically be served here.
+                      </p>
+                    </div>
+                  ) : roomEngagements.length === 0 ? (
+                    <div className="text-center py-12 bg-[#0d1117] border border-[#21262d] rounded-xl p-6">
+                      <p className="text-base font-bold text-gray-200 mb-2">No Engagements Created Yet</p>
+                      <p className="text-xs text-gray-400 max-w-md mx-auto mb-4">
+                        Engagements created under Match Moments for Match <strong>#{selectedRoom.matchId}</strong> will show up live right here with fan voting percentages, likes, shares, and threaded banter discussion.
+                      </p>
+                      <Link
+                        href="/admin/core-engine/match-moments"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-xs font-bold transition"
+                      >
+                        Create Engagement Loop Now ↗
+                      </Link>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {roomEngagements.map((item) => (
+                        <div key={item.id} className="relative">
+                          <EngagementCard item={item} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Chat Messages Tab */
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">
+                    Live Chat Messages ({messages.length})
+                  </h3>
+
+                  {loadingMessages ? (
+                    <div className="text-center py-6 text-gray-400">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-pink-500 mx-auto mb-2"></div>
+                      Loading messages...
+                    </div>
+                  ) : messages.length === 0 ? (
+                    <p className="text-center py-6 text-gray-500 text-sm">
+                      No active messages inside this show room.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {messages.map((message) => (
+                        <div
+                          key={message.msgId}
+                          className="bg-[#0d1117] border border-[#21262d] rounded-lg p-3 flex justify-between items-start gap-4"
+                        >
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-sm font-semibold text-white">
+                                @{message.authorUsername}
+                              </span>
+                              <span className="text-[10px] bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded">
+                                {message.authorBadge}
+                              </span>
+                              {message.type && (
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${message.type === "hot_take" || message.type === "hottake"
+                                  ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                                  : message.type === "prediction"
+                                    ? "bg-orange-500/10 text-orange-400 border border-orange-500/20"
+                                    : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                  }`}>
+                                  {message.type}
+                                </span>
+                              )}
+                              <span className="text-xs text-gray-500 ml-auto">
+                                {new Date(message.createdAt).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-300">{message.text}</p>
+                            <div className="mt-2 text-xs text-gray-400 flex items-center gap-3">
+                              <span>🔥 {message.fireCount || 0}</span>
+                              <span>🙅‍♂️ {message.noChanceCount || 0}</span>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => handleDeleteMessage(message.msgId)}
+                            disabled={deletingMsgId === message.msgId}
+                            className="p-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition disabled:opacity-50"
+                            title="Delete Message"
+                          >
+                            {deletingMsgId === message.msgId ? (
+                              <div className="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <Trash2 size={14} />
+                            )}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -3,6 +3,8 @@ import { Firestore, FieldValue } from 'firebase-admin/firestore';
 import { randomUUID } from 'crypto';
 import { docClient } from '@/lib/dynamodb';
 import { GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { dispatchStoreNotification } from '@/lib/notifications';
+import { batchGetItems } from '@/lib/dynamodbBatch';
 
 export class StoreService {
   constructor(
@@ -75,38 +77,39 @@ export class StoreService {
     }
 
     const now = new Date();
-    const finalProducts: any[] = [];
+    // Each product is independent (distinct keys), so process them concurrently;
+    // Promise.all keeps the original ordering.
+    const finalProducts: any[] = await Promise.all(
+      products.map(async (original) => {
+        const product = await this.checkAndCloseAuctionInline(original.id ?? original.entityId?.replace(/^PRODUCT#/, ''), original);
+        const lockExpiresAt = product.lockExpiresAt
+          ? (product.lockExpiresAt.toDate ? product.lockExpiresAt.toDate() : new Date(product.lockExpiresAt))
+          : null;
 
-    for (let product of products) {
-      product = await this.checkAndCloseAuctionInline(product.id ?? product.entityId?.replace(/^PRODUCT#/, ''), product);
-      const lockExpiresAt = product.lockExpiresAt
-        ? (product.lockExpiresAt.toDate ? product.lockExpiresAt.toDate() : new Date(product.lockExpiresAt))
-        : null;
-
-      if ((product.status === 'locked' || product.status === 'reserved') && lockExpiresAt && lockExpiresAt < now) {
-        // Unlock in DynamoDB
-        try {
-          await docClient.send(new UpdateCommand({
-            TableName: 'StoreAndCommerce',
-            Key: { entityId: `PRODUCT#${product.id}`, sk: `PRODUCT#${product.id}` },
-            UpdateExpression: 'SET #st = :av, lockedBy = :nul, lockExpiresAt = :nul',
-            ExpressionAttributeNames: { '#st': 'status' },
-            ExpressionAttributeValues: { ':av': 'available', ':nul': null },
-          }));
-        } catch (dynErr) {
-          console.warn('[StoreService getProducts] DynamoDB unlock failed:', dynErr);
+        if ((product.status === 'locked' || product.status === 'reserved') && lockExpiresAt && lockExpiresAt < now) {
+          // Unlock in DynamoDB
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: 'StoreAndCommerce',
+              Key: { entityId: `PRODUCT#${product.id}`, sk: `PRODUCT#${product.id}` },
+              UpdateExpression: 'SET #st = :av, lockedBy = :nul, lockExpiresAt = :nul',
+              ExpressionAttributeNames: { '#st': 'status' },
+              ExpressionAttributeValues: { ':av': 'available', ':nul': null },
+            }));
+          } catch (dynErr) {
+            console.warn('[StoreService getProducts] DynamoDB unlock failed:', dynErr);
+          }
+          // Sync to Firestore
+          try {
+            await this.db.collection('storeProducts').doc(product.id).update({ status: 'available', lockedBy: null, lockExpiresAt: null });
+          } catch (fsErr) {
+            console.warn('[StoreService getProducts] Firestore unlock failed:', fsErr);
+          }
+          return { ...product, status: 'available', lockedBy: null, lockExpiresAt: null };
         }
-        // Sync to Firestore
-        try {
-          await this.db.collection('storeProducts').doc(product.id).update({ status: 'available', lockedBy: null, lockExpiresAt: null });
-        } catch (fsErr) {
-          console.warn('[StoreService getProducts] Firestore unlock failed:', fsErr);
-        }
-        finalProducts.push({ ...product, status: 'available', lockedBy: null, lockExpiresAt: null });
-      } else {
-        finalProducts.push(product);
-      }
-    }
+        return product;
+      }),
+    );
 
     return finalProducts;
   }
@@ -220,18 +223,14 @@ export class StoreService {
         const appUrl = process.env.NEXTAUTH_URL || "http://localhost:3001";
         
         if (winnerId) {
-          fetch(`${appUrl}/api/notifications/store`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: winnerId,
-              notificationType: "store.auction_won",
-              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
-              variables: {
-                product_name: freshProduct.title || freshProduct.name || "Auction Item"
-              }
-            })
-          }).catch(err => console.warn("[checkAndCloseAuctionInline] Failed to trigger won notification:", err));
+          dispatchStoreNotification({
+            userId: winnerId,
+            notificationType: "store.auction_won",
+            ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+            variables: {
+              product_name: freshProduct.title || freshProduct.name || "Auction Item",
+            },
+          }).catch((err) => console.warn("[checkAndCloseAuctionInline] Failed to trigger won notification:", err));
         }
 
         // Fetch unique bidders to send lost notifications
@@ -271,18 +270,14 @@ export class StoreService {
         }
 
         for (const loserId of bidderIds) {
-          fetch(`${appUrl}/api/notifications/store`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: loserId,
-              notificationType: "store.auction_lost",
-              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
-              variables: {
-                product_name: freshProduct.title || freshProduct.name || "Auction Item"
-              }
-            })
-          }).catch(err => console.warn("[checkAndCloseAuctionInline] Failed to trigger lost notification for:", loserId, err));
+          dispatchStoreNotification({
+            userId: loserId,
+            notificationType: "store.auction_lost",
+            ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+            variables: {
+              product_name: freshProduct.title || freshProduct.name || "Auction Item",
+            },
+          }).catch((err) => console.warn("[checkAndCloseAuctionInline] Failed to trigger lost notification for:", loserId, err));
         }
       } catch (notifErr) {
         console.warn("[checkAndCloseAuctionInline] Notification dispatch failed:", notifErr);
@@ -1314,25 +1309,15 @@ export class StoreService {
           break;
       }
 
-      // Call store notification API directly using fetch on the backend (port 3001)
-      const host = process.env.NEXTAUTH_URL || 'http://localhost:3001';
-      const targetUrl = `${host.replace(/\/$/, '')}/api/notifications/store`;
-
-      fetch(targetUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: userId,
-          notificationType: notifType,
-          category: mappedCategory,
-          title: notifTitle,
-          variables: variables,
-          rewardCoinsEarned: product.rewardCoins || 0,
-          ctaTarget: "/MainModules/AtheleteStore/StoreMyBookings"
-        })
-      }).catch(err => console.warn('[Checkout] Background store notification fetch failed:', err));
+      dispatchStoreNotification({
+        userId: userId,
+        notificationType: notifType,
+        category: mappedCategory,
+        title: notifTitle,
+        variables: variables,
+        rewardCoinsEarned: product.rewardCoins || 0,
+        ctaTarget: "/MainModules/AtheleteStore/StoreMyBookings",
+      }).catch((err) => console.warn('[Checkout] Store notification error:', err));
 
     } catch (notifErr) {
       console.warn('[Checkout] Failed to trigger store notification:', notifErr);
@@ -1950,13 +1935,26 @@ export class StoreService {
 
     if (productIds.length === 0) return [];
 
-    const activeAuctions: any[] = [];
-    for (const id of productIds) {
+    // Fetch all products with one BatchGet (instead of one GetItem per id) …
+    const uniqueIds = Array.from(new Set(productIds));
+    const dynamoProducts = new Map<string, any>();
+    try {
+      const items = await batchGetItems(
+        'StoreAndCommerce',
+        uniqueIds.map((id) => ({ entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` })),
+      );
+      for (const item of items) {
+        dynamoProducts.set((item.entityId as string).replace(/^PRODUCT#/, ''), item);
+      }
+    } catch (dynErr) {
+      // Same as before: a failed DynamoDB read falls through to the Firestore lookup per product.
+    }
+
+    // … then resolve each product concurrently (order preserved; duplicate ids share one result).
+    const resolveOne = async (id: string) => {
       let prod: any = null;
-      try {
-        const res = await docClient.send(new GetCommand({ TableName: 'StoreAndCommerce', Key: { entityId: `PRODUCT#${id}`, sk: `PRODUCT#${id}` } }));
-        if (res.Item) prod = { id, ...res.Item };
-      } catch (dynErr) {}
+      const item = dynamoProducts.get(id);
+      if (item) prod = { id, ...item };
       if (!prod) {
         try {
           const doc = await this.db.collection('storeProducts').doc(id).get();
@@ -1966,10 +1964,15 @@ export class StoreService {
       if (prod) {
         prod = await this.checkAndCloseAuctionInline(id, prod);
         if ((prod.category === 'Auctions' || prod.category === 'auctions') && prod.status === 'active') {
-          activeAuctions.push(prod);
+          return prod;
         }
       }
-    }
+      return null;
+    };
+    const resolvedById = new Map<string, Promise<any>>();
+    for (const id of uniqueIds) resolvedById.set(id, resolveOne(id));
+    const resolved = await Promise.all(productIds.map((id) => resolvedById.get(id)!));
+    const activeAuctions: any[] = resolved.filter((p) => p !== null);
 
     return activeAuctions;
   }

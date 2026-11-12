@@ -38,7 +38,7 @@ async function getRoanuzToken(): Promise<string | null> {
   const cached = cacheService.get<string>("roanuz:token");
   if (cached) return cached;
   try {
-    const res = await axios.post(ROANUZ_AUTH_URL, { api_key: ROANUZ_API_KEY }, { headers: { "Content-Type": "application/json" } });
+    const res = await axios.post(ROANUZ_AUTH_URL, { api_key: ROANUZ_API_KEY }, { headers: { "Content-Type": "application/json" }, timeout: 8000 });
     const data = res.data;
     const token = data?.data?.token || data?.token || null;
     if (token) cacheService.set("roanuz:token", token, 15 * 60); // 15 mins
@@ -54,7 +54,7 @@ async function fetchRoanuzMatchScore(token: string, matchKey: string): Promise<a
   const cached = cacheService.get<any>(cacheKey);
   if (cached) return cached;
   try {
-    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/`, { headers: { "rs-token": token } });
+    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/`, { headers: { "rs-token": token }, timeout: 8000 });
     const match = res.data?.data || res.data;
     cacheService.set(cacheKey, match, 15);
     return match;
@@ -66,7 +66,7 @@ async function fetchBallByBall(token: string, matchKey: string): Promise<any[]> 
   const cached = cacheService.get<any[]>(cacheKey);
   if (cached) return cached;
   try {
-    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/ball-by-ball/`, { headers: { "rs-token": token } });
+    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/ball-by-ball/`, { headers: { "rs-token": token }, timeout: 8000 });
     const balls = res.data?.data?.over?.balls || [];
     cacheService.set(cacheKey, balls, 10);
     return balls;
@@ -78,7 +78,7 @@ async function fetchOverSummary(token: string, matchKey: string): Promise<any[]>
   const cached = cacheService.get<any[]>(cacheKey);
   if (cached) return cached;
   try {
-    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/over-summary/`, { headers: { "rs-token": token } });
+    const res = await axios.get(`${ROANUZ_BASE_URL}/match/${matchKey}/over-summary/`, { headers: { "rs-token": token }, timeout: 8000 });
     const summaries = res.data?.data?.summaries || [];
     cacheService.set(cacheKey, summaries, 30);
     return summaries;
@@ -183,7 +183,7 @@ async function fetchCricketTicker(): Promise<TickerItem[]> {
   let globalCompleted: any[] = [];
   const now = Date.now() / 1000;
   try {
-    const res = await axios.get(`${ROANUZ_BASE_URL}/fixtures/`, { headers: { "rs-token": token } });
+    const res = await axios.get(`${ROANUZ_BASE_URL}/fixtures/`, { headers: { "rs-token": token }, timeout: 8000 });
     const days = res.data?.data?.month?.days || [];
     for (const day of days) {
       for (const m of (day.matches || [])) {
@@ -198,7 +198,7 @@ async function fetchCricketTicker(): Promise<TickerItem[]> {
   let tournaments: any[] = cacheService.get("roanuz:tournaments") || [];
   if (!tournaments.length) {
     try {
-      const res = await axios.get(`${ROANUZ_BASE_URL}/association/icc/featured-tournaments/`, { headers: { "rs-token": token } });
+      const res = await axios.get(`${ROANUZ_BASE_URL}/association/icc/featured-tournaments/`, { headers: { "rs-token": token }, timeout: 8000 });
       tournaments = res.data?.data?.tournaments || [];
       cacheService.set("roanuz:tournaments", tournaments, 60 * 60);
     } catch (e: any) { console.warn("[Roanuz] Tournaments error:", e.message); }
@@ -210,7 +210,7 @@ async function fetchCricketTicker(): Promise<TickerItem[]> {
     let matches = cacheService.get<any[]>(cacheKey) || [];
     if (!matches.length) {
       try {
-        const res = await axios.get(`${ROANUZ_BASE_URL}/tournament/${tKey}/fixtures/`, { headers: { "rs-token": token } });
+        const res = await axios.get(`${ROANUZ_BASE_URL}/tournament/${tKey}/fixtures/`, { headers: { "rs-token": token }, timeout: 8000 });
         matches = res.data?.data?.matches || [];
         cacheService.set(cacheKey, matches, 15 * 60);
       } catch (e: any) { console.warn("[Roanuz] Fixtures error:", e.message); }
@@ -280,6 +280,7 @@ async function getRoanuzFootballToken(): Promise<string | null> {
   if (cached) return cached;
   try {
     const res = await fetch(ROANUZ_FOOTBALL_AUTH_URL, {
+      signal: AbortSignal.timeout(8000),
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

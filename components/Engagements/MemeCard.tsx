@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { EngagementItem, MemeRatingId, MemeRatingChoice } from "@/types/engagements";
+import EngagementCommentsThread from "./EngagementCommentsThread";
 import {
   Flame,
   Share2,
@@ -117,6 +118,8 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
   const [likesCount, setLikesCount] = useState<number>(Number(item.likes) || 0);
   const [sharesCount, setSharesCount] = useState<number>(Number(item.shares) || 0);
   const [showInfo, setShowInfo] = useState(false);
+  const [showComments, setShowComments] = useState(false);
+  const [commentsCount, setCommentsCount] = useState<number>(Number(meme?.commentsCount) || 0);
 
   // Hydrate user vote and likes status
   useEffect(() => {
@@ -978,10 +981,27 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
           </button>
 
           {/* Comments count */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            onClick={() => setShowComments(!showComments)}
+            style={{
+              background: showComments ? "rgba(56, 139, 253, 0.15)" : "none",
+              border: showComments ? "1px solid rgba(56, 139, 253, 0.4)" : "none",
+              borderRadius: 6,
+              color: showComments ? "#58a6ff" : "#8b949e",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 12,
+              fontWeight: 600,
+              padding: "2px 6px",
+              transition: "all .15s ease",
+            }}
+            title="Discuss and banter"
+          >
             <MessageCircle size={15} />
-            <span>{Number(meme?.commentsCount) || 0}</span>
-          </div>
+            <span>{commentsCount}</span>
+          </button>
 
           {/* Share */}
           <button
@@ -1077,6 +1097,13 @@ export default function MemeCard({ item, onVoteSuccess, onSkip }: Props) {
           </button>
         </div>
       )}
+
+      {/* Expandable Threaded Comments Drawer */}
+      <EngagementCommentsThread
+        engagementId={item.id}
+        isOpen={showComments}
+        onCommentsCountChange={setCommentsCount}
+      />
     </div>
   );
 }

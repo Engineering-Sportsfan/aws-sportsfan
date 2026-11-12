@@ -11,7 +11,7 @@ const TournamentEnum = z.enum([
   "mens_t20i",
 ]);
 const GenderEnum = z.enum(["male", "female"]);
-const FormatEnum = z.enum(["T20", "ODI", "Test"]);
+const FormatEnum = z.enum(["T20", "T20I", "ODI", "Test", "T10", "The Hundred", "First-Class", "List A"]).or(z.string().min(1));
 
 // ─── Single player stats schema ───────────────────────────────────────────────
 export const PlayerStatsCreateSchema = z.object({

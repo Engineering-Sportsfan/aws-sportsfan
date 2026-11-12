@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
-import { notifyRoomMessageComment, notifyMentions } from "@/lib/roarNotifyHelpers";
+import { notifyRoomMessageComment, notifyMentions } from "@/lib/notifications";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
@@ -59,41 +59,111 @@ export async function GET(
         Limit: limit
       }));
 
-      comments = (res.Items ?? []).map(item => ({
-        id: (item.sk as string).split("#")[2] || item.commentId,
-        commentId: (item.sk as string).split("#")[2] || item.commentId,
-        ...item
-      }));
+      comments = (res.Items ?? []).map(item => {
+        const reactions = item.reactions && typeof item.reactions === "object" ? item.reactions : {};
+        const reactionUids = Object.entries(reactions)
+          .filter(([_, r]) => r === "heart" || r === "like" || r === true)
+          .map(([uid]) => uid);
+        const likedBy = Array.isArray(item.likedBy) && item.likedBy.length > 0
+          ? Array.from(new Set([...item.likedBy, ...reactionUids]))
+          : reactionUids;
+        const heartCount = Math.max(
+          Number(item.heartCount ?? item.likesCount ?? item.likes ?? 0),
+          likedBy.length
+        );
+        const cid = String(item.commentId || (item.sk as string).split("#").pop() || item.id);
+        return {
+          ...item,
+          id: cid,
+          commentId: cid,
+          likedBy,
+          likes: heartCount,
+          likesCount: heartCount,
+          heartCount,
+        };
+      });
     } catch (dynErr) {
       console.warn("[RoomComments GET] DynamoDB notice:", dynErr);
     }
 
-    // Fallback to Firestore if empty
-    if (comments.length === 0) {
-      try {
-        const snap = await db
-          .collection(getFirestoreCollection("roarRooms"))
-          .doc(cleanRoomId)
-          .collection("messages")
-          .doc(targetMsgId)
-          .collection("comments")
-          .orderBy("createdAt", "desc")
-          .limit(limit)
-          .get();
+    // Always fetch Firestore to merge or fallback so all user reactions and likes are fully synced
+    try {
+      const snap = await db
+        .collection(getFirestoreCollection("roarRooms"))
+        .doc(cleanRoomId)
+        .collection("messages")
+        .doc(targetMsgId)
+        .collection("comments")
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
 
-        comments = snap.docs.map(doc => ({
-          id: doc.id,
-          commentId: doc.id,
-          ...doc.data()
-        }));
-      } catch (fsErr) {
-        console.warn("[RoomComments GET] Firestore notice:", fsErr);
+      if (!snap.empty) {
+        const fsComments = snap.docs.map(doc => {
+          const data = doc.data();
+          const reactions = data.reactions && typeof data.reactions === "object" ? data.reactions : {};
+          const reactionUids = Object.entries(reactions)
+            .filter(([_, r]) => r === "heart" || r === "like" || r === true)
+            .map(([uid]) => uid);
+          const likedBy = Array.isArray(data.likedBy) && data.likedBy.length > 0
+            ? Array.from(new Set([...data.likedBy, ...reactionUids]))
+            : reactionUids;
+          const heartCount = Math.max(
+            Number(data.heartCount ?? data.likesCount ?? data.likes ?? 0),
+            likedBy.length
+          );
+          const cid = String(data.commentId || doc.id);
+          return {
+            ...data,
+            id: cid,
+            commentId: cid,
+            likedBy,
+            likes: heartCount,
+            likesCount: heartCount,
+            heartCount,
+          };
+        });
+
+        if (comments.length === 0) {
+          comments = fsComments;
+        } else {
+          // Merge Firestore confirmed reactions/likes with DynamoDB items
+          const fsMap = new Map<string, any>(fsComments.map(c => [c.id, c]));
+          comments = comments.map((dItem: any) => {
+            const fsItem = fsMap.get(dItem.id);
+            if (!fsItem) return dItem;
+            const combinedLikedBy = Array.from(new Set([...(dItem.likedBy || []), ...(fsItem.likedBy || [])]));
+            const maxCount = Math.max(dItem.heartCount || 0, fsItem.heartCount || 0, combinedLikedBy.length);
+            return {
+              ...dItem,
+              ...fsItem,
+              likedBy: combinedLikedBy,
+              likes: maxCount,
+              likesCount: maxCount,
+              heartCount: maxCount,
+            };
+          });
+
+          // Add any comments from Firestore that were not in DynamoDB
+          const existingIds = new Set(comments.map(c => c.id));
+          for (const fsItem of fsComments) {
+            if (!existingIds.has(fsItem.id)) {
+              comments.push(fsItem);
+            }
+          }
+        }
       }
+    } catch (fsErr) {
+      console.warn("[RoomComments GET] Firestore notice:", fsErr);
     }
 
     comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    return NextResponse.json({ success: true, comments });
+    return NextResponse.json({ success: true, comments }, {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -111,6 +181,7 @@ export async function POST(
     const { roomId, msgId } = await params;
     const body = await req.json();
     const text: string = (body.text ?? "").trim();
+    const parentId: string | null = body.parentId ? String(body.parentId).trim() : null;
     if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
 
     const info = await getUserInfo(user.userId, undefined, user.email);
@@ -137,6 +208,7 @@ export async function POST(
           sk: `COMMENT#${targetMsgId}#${commentId}`,
           commentId,
           text,
+          parentId,
           authorUid: resolvedAuthorId,
           authorEmail: user.email,
           authorUsername: username,
@@ -169,6 +241,7 @@ export async function POST(
         id: commentId,
         commentId,
         text,
+        parentId,
         authorUid: resolvedAuthorId,
         authorEmail: user.email,
         authorUsername: username,
@@ -195,7 +268,13 @@ export async function POST(
     }).catch(() => { });
 
     // Notify post author on reply
-    notifyRoomMessageComment(cleanRoomId, targetMsgId, resolvedAuthorId, user.email, username, text.slice(0, 80)).catch(() => { });
+    notifyRoomMessageComment(cleanRoomId, targetMsgId, resolvedAuthorId, user.email, username, text.slice(0, 80), {
+      authorUid: msgItem.authorUid || msgItem.userId,
+      authorEmail: msgItem.authorEmail || msgItem.email,
+      text: msgItem.text || msgItem.content,
+    }).catch((notifErr) => {
+      console.warn("[RoomComments POST] Notification notice:", notifErr);
+    });
     notifyMentions(text, cleanRoomId, targetMsgId, resolvedAuthorId, username).catch(() => { });
 
     return NextResponse.json({
@@ -204,13 +283,19 @@ export async function POST(
       comment: { 
         id: commentId, 
         commentId, 
+        parentId,
         text, 
         authorUid: resolvedAuthorId, 
         authorUsername: username, 
         authorAvatarUrl: avatarUrl, 
         authorBadge: badge, 
         roomId: cleanRoomId, 
-        createdAt: now 
+        createdAt: now,
+        likes: 0,
+        likesCount: 0,
+        heartCount: 0,
+        likedBy: [],
+        reactions: {}
       },
     });
   } catch (err) {

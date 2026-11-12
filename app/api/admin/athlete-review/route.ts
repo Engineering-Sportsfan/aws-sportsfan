@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
     if (status) url.searchParams.set("status", status);
 
     const res = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(30000),
       cache: "no-store",
       headers: { "x-api-key": config.apiKey },
     });

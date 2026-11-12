@@ -15,18 +15,19 @@ export interface GlobalTierConfigItem {
   maxSXP: number | null; // null for pinnacle tier
   subLevels: number; // e.g. 3 for Spark I, II, III
   badgeColor: string;
+  badgeIconUrl?: string; // Cloudinary secure_url for custom tier badge
   description?: string;
   updatedAt?: number;
 }
 
 const DEFAULT_GLOBAL_TIERS: GlobalTierConfigItem[] = [
-  { id: "TIER_1_SPARK", tierLevel: 1, name: "Spark", minSXP: 0, maxSXP: 999, subLevels: 3, badgeColor: "#FF9800", description: "Entry prestige rank (Spark I, II, III)" },
-  { id: "TIER_2_CHANT", tierLevel: 2, name: "Chant", minSXP: 1000, maxSXP: 3999, subLevels: 3, badgeColor: "#2196F3", description: "Active contributor rank (Chant I, II, III)" },
-  { id: "TIER_3_ROAR", tierLevel: 3, name: "Roar", minSXP: 4000, maxSXP: 11999, subLevels: 3, badgeColor: "#9C27B0", description: "Dedicated room voice (Roar I, II, III)" },
-  { id: "TIER_4_STORM", tierLevel: 4, name: "Storm", minSXP: 12000, maxSXP: 29999, subLevels: 3, badgeColor: "#E91E63", description: "Passionate fan leader (Storm I, II, III)" },
-  { id: "TIER_5_LEGEND", tierLevel: 5, name: "Legend", minSXP: 30000, maxSXP: 74999, subLevels: 3, badgeColor: "#4CAF50", description: "Elite community pillar (Legend I, II, III)" },
-  { id: "TIER_6_ICON", tierLevel: 6, name: "Icon", minSXP: 75000, maxSXP: 149999, subLevels: 3, badgeColor: "#00BCD4", description: "Hall of fame contender (Icon I, II, III)" },
-  { id: "TIER_7_GOAT", tierLevel: 7, name: "GOAT", minSXP: 150000, maxSXP: null, subLevels: 1, badgeColor: "#FFD700", description: "Peak all-time fan status" },
+  { id: "TIER_1_SPARK", tierLevel: 1, name: "Spark", minSXP: 0, maxSXP: 999, subLevels: 3, badgeColor: "#FF9800", badgeIconUrl: "/images/badges/globalspark.png", description: "Entry prestige rank (Spark I, II, III)" },
+  { id: "TIER_2_CHANT", tierLevel: 2, name: "Chant", minSXP: 1000, maxSXP: 3999, subLevels: 3, badgeColor: "#2196F3", badgeIconUrl: "/images/badges/globalchant.png", description: "Active contributor rank (Chant I, II, III)" },
+  { id: "TIER_3_ROAR", tierLevel: 3, name: "Roar", minSXP: 4000, maxSXP: 11999, subLevels: 3, badgeColor: "#9C27B0", badgeIconUrl: "/images/badges/globalroar.png", description: "Dedicated room voice (Roar I, II, III)" },
+  { id: "TIER_4_STORM", tierLevel: 4, name: "Storm", minSXP: 12000, maxSXP: 29999, subLevels: 3, badgeColor: "#E91E63", badgeIconUrl: "/images/badges/globalstorm.png", description: "Passionate fan leader (Storm I, II, III)" },
+  { id: "TIER_5_LEGEND", tierLevel: 5, name: "Legend", minSXP: 30000, maxSXP: 74999, subLevels: 3, badgeColor: "#4CAF50", badgeIconUrl: "/images/badges/globallegend.png", description: "Elite community pillar (Legend I, II, III)" },
+  { id: "TIER_6_ICON", tierLevel: 6, name: "Icon", minSXP: 75000, maxSXP: 149999, subLevels: 3, badgeColor: "#00BCD4", badgeIconUrl: "/images/badges/globalicon.png", description: "Hall of fame contender (Icon I, II, III)" },
+  { id: "TIER_7_GOAT", tierLevel: 7, name: "GOAT", minSXP: 150000, maxSXP: null, subLevels: 1, badgeColor: "#FFD700", badgeIconUrl: "/images/badges/globalgoat.png", description: "Peak all-time fan status" },
 ];
 
 // ─── GET /api/admin/gamification/tiers — List all global tiers ──────────────
@@ -55,6 +56,7 @@ export async function GET() {
               maxSXP: data.maxSXP !== null && data.maxSXP !== undefined ? Number(data.maxSXP) : (existing?.maxSXP ?? null),
               subLevels: Math.max(1, Number(data.subLevels ?? existing?.subLevels ?? 3)),
               badgeColor: data.badgeColor || existing?.badgeColor || "#FF9800",
+              badgeIconUrl: data.badgeIconUrl || existing?.badgeIconUrl || "",
               description: data.description || existing?.description || "",
               updatedAt: data.updatedAt || 0,
             });
@@ -90,6 +92,7 @@ export async function GET() {
             maxSXP: item.maxSXP !== null && item.maxSXP !== undefined ? Number(item.maxSXP) : (existing?.maxSXP ?? null),
             subLevels: Math.max(1, Number(item.subLevels ?? existing?.subLevels ?? 3)),
             badgeColor: item.badgeColor || existing?.badgeColor || "#FF9800",
+            badgeIconUrl: item.badgeIconUrl || existing?.badgeIconUrl || "",
             description: item.description || existing?.description || "",
             updatedAt: item.updatedAt || 0,
           });
@@ -118,6 +121,7 @@ export async function POST(req: NextRequest) {
     const maxSXP = body.maxSXP === null || body.maxSXP === undefined || body.maxSXP === "" ? null : Math.max(minSXP + 1, parseInt(body.maxSXP, 10));
     const subLevels = Math.max(1, Math.min(10, parseInt(body.subLevels, 10) || 3));
     const badgeColor = String(body.badgeColor || "#FF9800").trim();
+    const badgeIconUrl = String(body.badgeIconUrl || "").trim();
     const description = String(body.description || "").trim();
     const now = Date.now();
 
@@ -133,6 +137,7 @@ export async function POST(req: NextRequest) {
       maxSXP,
       subLevels,
       badgeColor,
+      badgeIconUrl: badgeIconUrl || undefined,
       description,
       updatedAt: now,
     };

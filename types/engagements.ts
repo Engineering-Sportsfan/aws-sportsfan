@@ -1,6 +1,6 @@
 // types/engagements.ts — Type definitions for Fan Battles, Quizzes, Polls, Predictions, and Meme Arena
-export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme";
-export type EngagementStatus = "active" | "inactive" | "expired" | "settled";
+export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "question" | "debate" | "express" | "follow" | "match_result";
+export type EngagementStatus = "active" | "inactive" | "expired" | "settled" | "resolved" | "pending" | "open" | "scheduled";
 
 // ─── 1. Fan Battle ─────────────────────────────────────────────────────────
 export interface Competitor {
@@ -191,7 +191,102 @@ export interface MemePayload {
   expiresAt?: number;
 }
 
+// ─── 6. Debate ─────────────────────────────────────────────────────────────
+export interface DebateOption {
+  id: string; // e.g. "1", "2"
+  text: string; // e.g. "Fair Call", "Unfair Call"
+  votes: number;
+}
+
+export interface DebatePayload {
+  question?: string;
+  topic?: string;
+  options: DebateOption[];
+  totalVotes: number;
+  status?: "open" | "locked" | "settled";
+  winningChoiceId?: string | null;
+  verdict?: string;
+  durationMinutes?: number;
+  timerMinutes?: number;
+  expiresAt?: number;
+  startTime?: number;
+  scheduledStartTime?: number;
+}
+
+// ─── 7. Express ────────────────────────────────────────────────────────────
+export interface ExpressOption {
+  id: string;
+  text: string;
+  emoji?: string;
+  votes: number;
+}
+
+export interface ExpressPayload {
+  question?: string;
+  prompt?: string;
+  responseMode?: "text" | "options";
+  placeholder?: string;
+  options?: ExpressOption[];
+  totalVotes: number;
+  totalResponses?: number;
+  durationMinutes?: number;
+  timerMinutes?: number;
+  expiresAt?: number;
+  startTime?: number;
+  scheduledStartTime?: number;
+}
+
+// ─── 8. Question ───────────────────────────────────────────────────────────
+export interface QuestionPayload {
+  question: string;
+  options?: Array<{ id: string; text: string; votes?: number }>;
+  correctOptionId?: string;
+  explanation?: string;
+  pointsReward?: number;
+  durationMinutes?: number;
+  timerMinutes?: number;
+  expiresAt?: number;
+  startTime?: number;
+  scheduledStartTime?: number;
+}
+
 // ─── Universal Engagement Entity ──────────────────────────────────────────
+export interface FollowPayload {
+  team1Name?: string;
+  team1Code?: string;
+  team1Flag?: string;
+  team2Name?: string;
+  team2Code?: string;
+  team2Flag?: string;
+  matchLabel?: string;
+  matchTimeLabel?: string;
+  matchStartMs?: number;
+  statusLabel?: string;
+  followCount?: number;
+  remindCount?: number;
+}
+
+// ─── 10. Post-Match Final Result & Player of the Match ─────────────────────
+export interface MatchResultPayload {
+  showSnapshot?: boolean;
+  snapshotHeading?: string;
+  team1Name?: string;
+  team1Code?: string;
+  team1Flag?: string;
+  team1Score?: string;
+  team2Name?: string;
+  team2Code?: string;
+  team2Flag?: string;
+  team2Score?: string;
+  resultSummary?: string;
+  showTopPerformer?: boolean;
+  performerLabel?: string;
+  playerName?: string;
+  playerStats?: string;
+  playerImageUrl?: string;
+  mode?: "combined" | "final_result" | "player_of_the_match";
+}
+
 export interface EngagementItem {
   id: string;
   type: EngagementType;
@@ -211,6 +306,12 @@ export interface EngagementItem {
   pollData?: PollPayload;
   predictionData?: PredictionPayload;
   memeData?: MemePayload;
+  debateData?: DebatePayload;
+  expressData?: ExpressPayload;
+  inputPlaceholder?: string;
+  questionData?: QuestionPayload;
+  followData?: FollowPayload;
+  matchResultData?: MatchResultPayload;
   memeType?: "single" | "dual" | string;
   options?: any[];
   imageUrlA?: string;
@@ -218,11 +319,59 @@ export interface EngagementItem {
   labelA?: string;
   labelB?: string;
 
+  // Scheduling fields (used for scheduled pre-match / match-moment drops)
+  startTime?: number | string | null;
+  scheduledStartTime?: number | string | null;
+  postingTime?: number | string | null;
+  isScheduled?: boolean;
+  notifiedLive?: boolean;
+  userFollowing?: boolean;
+  userReminded?: boolean;
+
+  // Outcome resolution fields (for Prediction, Debate, Quiz)
+  winningChoiceId?: string | null;
+  outcomeWinningChoiceId?: string | null;
+  outcomeNotes?: string | null;
+  resolvedAt?: number | null;
+  resolvedBy?: string | null;
+  timerMinutes?: number;
+  durationMinutes?: number;
+  category?: string;
+  source?: string;
+  isMatchMoment?: boolean;
+  postLock?: string;
+
+  // Match Moment & Series Linkage fields
+  seriesId?: string; // e.g. "IND-NZ-2026-T20I"
+  matchId?: string; // e.g. "NZ-IND-2026-T20-4TH-T20I"
+  momentId?: string; // e.g. "NZ-01", "NZ-06", "IND-09"
+  loopId?: string; // alias for momentId
+  recognitionId?: string; // 1:1 linked Visible Recognition ID
+  hasRecognition?: boolean;
+  matchPhase?: string; // e.g. "NZ 1st innings", "India chase"
+  anchorTrigger?: string; // e.g. "NZ innings — over 6 end"
+  scoreState?: string; // e.g. "65/1", "80/2"
+  sportsMoment?: string; // e.g. "Powerplay checkpoint"
+  overNumber?: string | number; // e.g. "6", "7.4"
+  innings?: number; // 1 or 2
+
   // Social / Engagement counters
   likes: number;
   likeCount?: number;
   shares: number;
   totalEngaged: number;
+  totalVotes?: number;
+  totalResponses?: number;
+  impressions?: number;
+  impressionsCount?: number;
+  participationsCount?: number;
+  totalActionsCount?: number;
+  actionCommentsCount?: number;
+  commentsCount?: number;
+  socialLikesCount?: number;
+  socialCommentsCount?: number;
+  socialImpressionsCount?: number;
+  totalSocialResponsesCount?: number;
 
   // Hydrated user interaction fields
   userLiked?: boolean;
@@ -232,8 +381,6 @@ export interface EngagementItem {
   createdAt: number;
   updatedAt: number;
   expiresAt?: number | null;
-  startTime?: number | null;
-  scheduledStartTime?: number | null;
 }
 
 // ─── User Vote / Answer Record ─────────────────────────────────────────────
@@ -246,4 +393,20 @@ export interface UserEngagementRecord {
   pointsAwarded?: number;
   coinsStaked?: number;
   timestamp: number;
+}
+
+export interface EngagementComment {
+  id: string;
+  commentId: string;
+  engagementId: string;
+  parentId?: string | null;
+  authorUid: string;
+  authorUsername: string;
+  authorAvatarUrl?: string | null;
+  authorBadge?: string | null;
+  text: string;
+  createdAt: number;
+  likesCount: number;
+  isLiked?: boolean;
+  replies?: EngagementComment[];
 }

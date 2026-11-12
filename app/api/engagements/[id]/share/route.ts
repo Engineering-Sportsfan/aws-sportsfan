@@ -1,82 +1,115 @@
-// app/api/engagements/[id]/share/route.ts — Dynamic Share counter increment
+// app/api/engagements/[id]/share/route.ts — Share counter (one share per user)
 import { NextRequest, NextResponse } from "next/server";
+import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
-import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { getUser } from "@/lib/getUser";
+import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
+import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
 
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
+const clean = (id: string) =>
+  String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+
+// ─── GET: has this user shared + current share count ───
+export async function GET(req: NextRequest, { params }: RouteParams) {
+  const cleanId = clean((await params).id);
+  const authUser = await getUser(req);
+  const userId = authUser?.userId || authUser?.email || req.nextUrl.searchParams.get("userId");
+
+  const shares = await countRecords(cleanId, "SHARE#").catch(() => 0);
+  let shared = false;
+  if (userId) {
+    const r = await docClient
+      .send(
+        new GetCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: `SHARE#${userId}` },
+        })
+      )
+      .catch(() => null);
+    shared = !!r?.Item;
+  }
+  return NextResponse.json({ shared, shares });
+}
+
+// ─── POST: record a share (idempotent per user) ───
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
-    const { id } = await params;
-    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").trim();
-
+    const cleanId = clean((await params).id);
     const body = await req.json().catch(() => ({}));
-    const userId = String(body?.userId || req.nextUrl.searchParams.get("userId") || "").trim();
+    const authUser = await getUser(req);
+    const userId = authUser?.userId || authUser?.email || String(body?.userId || "").trim();
+    const userObj = authUser as { userName?: string; username?: string; name?: string } | null;
+    const userName = String(
+      body?.userName || body?.username || userObj?.userName || userObj?.username || userObj?.name || ""
+    ).trim();
+    const reqMatchId = body?.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
+    const reqMomentId = body?.momentId ? String(body.momentId).trim() : undefined;
+    const reqSeriesId = body?.seriesId ? String(body.seriesId).trim() : undefined;
 
-    let item: any = null;
-    const candidateTables = getCandidateTableNames(TABLES.SocialAndContent);
-    for (const table of candidateTables) {
-      if (item) break;
-      for (const cid of [`ENGAGEMENT#${cleanId}`, cleanId]) {
-        try {
-          const getRes = await docClient.send(
-            new GetCommand({
-              TableName: table,
-              Key: { contentId: cid, sk: "ENGAGEMENT#META" },
-            })
-          );
-          if (getRes.Item) {
-            item = getRes.Item;
-            break;
-          }
-        } catch {}
+    if (!userId) {
+      return NextResponse.json({ error: "userId required" }, { status: 400 });
+    }
+
+    const found = await findEngagementById(cleanId, reqMatchId).catch(() => null);
+    const resolvedMatchId = String(found?.item?.matchId || reqMatchId || "").trim() || undefined;
+    const resolvedMomentId = String(found?.item?.momentId || reqMomentId || "").trim() || undefined;
+    const resolvedSeriesId = String(found?.item?.seriesId || reqSeriesId || "").trim() || undefined;
+
+    const now = Date.now();
+    let alreadyShared = false;
+    try {
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.SocialAndContent,
+          Item: {
+            contentId: `ENGAGEMENT#${cleanId}`,
+            sk: `SHARE#${userId}`,
+            entityId: "SHARE#ENGAGEMENT",
+            userId,
+            ...(userName ? { userName } : {}),
+            engagementId: cleanId,
+            ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
+            ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
+            ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
+            sharedAt: now,
+            createdAt: now,
+          },
+          // one share per user, enforced by the database itself
+          ConditionExpression: "attribute_not_exists(sk)",
+        })
+      );
+    } catch (e: any) {
+      if (e?.name === "ConditionalCheckFailedException") alreadyShared = true;
+      else throw e;
+    }
+
+    const engStats = await getEngagementStats(cleanId, { consistent: true });
+    const shares = engStats.shares || (await countRecords(cleanId, "SHARE#"));
+
+    let totalEngaged = 0;
+    try {
+      if (found?.item) {
+        if (!alreadyShared) found.item.totalEngaged = (Number(found.item.totalEngaged) || 0) + 1;
+        applyEngagementStats(found.item, engStats);
+        found.item.updatedAt = now;
+        totalEngaged = Number(found.item.totalEngaged) || 0;
+        await persistEngagementUpdate(cleanId, found.item, found.matchMomentsRecord);
       }
-    }
-
-    if (!item && db) {
-      try {
-        const snap = await db.collection(getFirestoreCollection("engagements")).doc(cleanId).get();
-        if (snap.exists) item = { id: snap.id, ...snap.data() };
-      } catch {}
-    }
-
-    if (!item) {
-      return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
-    }
-
-    const sharedUsers: string[] = Array.isArray(item.sharedUsers) ? item.sharedUsers : [];
-    const alreadyShared = Boolean(userId && sharedUsers.includes(userId));
-
-    let newShares = Number(item.shares) || 0;
-    if (!alreadyShared) {
-      newShares += 1;
-      if (userId) {
-        sharedUsers.push(userId);
-      }
-      item.shares = newShares;
-      item.sharedUsers = sharedUsers;
-      item.updatedAt = Date.now();
-
-      const dynamoItem = {
-        contentId: `ENGAGEMENT#${cleanId}`,
-        sk: "ENGAGEMENT#META",
-        entityId: `ENGAGEMENT#${String(item.type || "").toUpperCase()}`,
-        ...item,
-        id: cleanId,
-      };
-
-      await dualWrite("engagements", cleanId, TABLES.SocialAndContent, dynamoItem);
+    } catch (e) {
+      console.warn("share mirror notice:", e);
     }
 
     return NextResponse.json({
       success: true,
-      sharesCount: newShares,
-      totalEngaged: Number(item.totalEngaged) || 0,
+      shares,
+      sharesCount: shares,
+      totalEngaged,
       alreadyShared,
     });
   } catch (error: unknown) {

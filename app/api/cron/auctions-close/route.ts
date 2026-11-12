@@ -5,6 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { dualWrite } from "@/lib/dualWrite";
 import { StoreService } from "@/app/api/v2/store/store.service";
 import { ScanCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { dispatchStoreNotification } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -122,18 +123,14 @@ export async function GET(req: NextRequest) {
           
           if (winnerId) {
             console.log(`🏆 Auction [${productId}] won by User [${winnerId}] at ₹${currentBidPaise / 100}.`);
-            fetch(`${origin}/api/notifications/store`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userId: winnerId,
-                notificationType: "store.auction_won",
-                ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
-                variables: {
-                  product_name: product.title || "Auction Item"
-                }
-              })
-            }).catch(err => console.warn("[auctions-close] Failed to trigger won notification:", err));
+            dispatchStoreNotification({
+              userId: winnerId,
+              notificationType: "store.auction_won",
+              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+              variables: {
+                product_name: product.title || "Auction Item",
+              },
+            }).catch((err) => console.warn("[auctions-close] Failed to trigger won notification:", err));
           }
 
           // Fetch all bids to notify users who lost (try DynamoDB first, fallback to Firestore)
@@ -169,18 +166,14 @@ export async function GET(req: NextRequest) {
           }
 
           for (const loserId of bidderIds) {
-            fetch(`${origin}/api/notifications/store`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userId: loserId,
-                notificationType: "store.auction_lost",
-                ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
-                variables: {
-                  product_name: product.title || "Auction Item"
-                }
-              })
-            }).catch(err => console.warn("[auctions-close] Failed to trigger lost notification for:", loserId, err));
+            dispatchStoreNotification({
+              userId: loserId,
+              notificationType: "store.auction_lost",
+              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+              variables: {
+                product_name: product.title || "Auction Item",
+              },
+            }).catch((err) => console.warn("[auctions-close] Failed to trigger lost notification for:", loserId, err));
           }
         } catch (notifErr) {
           console.warn("[auctions-close] Notification dispatch failed:", notifErr);

@@ -64,6 +64,10 @@ function ScheduleForm() {
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Form fields
+  const [startDate, setStartDate] = useState<string>(() => getIndiaDateString());
+  const [startTime, setStartTime] = useState("08:00 AM");
+  const [endDate, setEndDate] = useState<string>("");
+  const [endTime, setEndTime] = useState<string>("");
   const [date, setDate] = useState<string>(() => getIndiaDateString());
   const [time, setTime] = useState("08:00 AM");
   const [sport, setSport] = useState("Badminton");
@@ -169,8 +173,17 @@ function ScheduleForm() {
         const res = await axios.get(`/api/welcomemessage/${editId}`);
         if (res.data.success && res.data.item) {
           const item = res.data.item;
-          setDate(item.date || getIndiaDateString());
-          setTime(item.time || "08:00 AM");
+          const loadedStartDate = item.startDate || item.date || getIndiaDateString();
+          const loadedStartTime = item.startTime || item.time || "08:00 AM";
+          const loadedEndDate = item.endDate || "";
+          const loadedEndTime = item.endTime || "";
+
+          setStartDate(loadedStartDate);
+          setStartTime(loadedStartTime);
+          setEndDate(loadedEndDate);
+          setEndTime(loadedEndTime);
+          setDate(loadedStartDate);
+          setTime(loadedStartTime);
           setSport(item.sport || "Badminton");
           setIcon(item.icon || "🏸");
           setSubEvent(item.subEvent || "");
@@ -209,8 +222,9 @@ function ScheduleForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sport.trim() || !time.trim()) {
-      alert("Please enter sport name and time");
+    const effectiveStartTime = startTime.trim() || time.trim();
+    if (!sport.trim() || !effectiveStartTime) {
+      alert("Please enter sport name and start time");
       return;
     }
 
@@ -230,11 +244,17 @@ function ScheduleForm() {
             ? "UP NEXT"
             : "SCHEDULED");
 
+      const resolvedStartDate = startDate ? startDate.trim() : (date ? date.trim() : getIndiaDateString());
+
       const payload = {
         id: editId || `agenda_${Date.now()}`,
         type: "todays_agenda",
-        date: date ? date.trim() : getIndiaDateString(),
-        time: time.trim(),
+        date: resolvedStartDate,
+        time: effectiveStartTime,
+        startDate: resolvedStartDate,
+        startTime: effectiveStartTime,
+        endDate: endDate.trim() ? endDate.trim() : undefined,
+        endTime: endTime.trim() ? endTime.trim() : undefined,
         sport: sport.trim(),
         icon,
         subEvent: subEvent.trim(),
@@ -247,16 +267,16 @@ function ScheduleForm() {
         venue: venue.trim(),
         order: Number(order || 1),
         active,
-        // Optional CTAs
-        predictId: predictId || undefined,
-        predictTitle: predictTitle || undefined,
-        predictUrl: predictUrl || (predictId ? `/MainModules/FlipArena?engagementId=${predictId}&type=prediction` : undefined),
-        discussPostId: discussPostId || undefined,
-        discussTitle: discussTitle || undefined,
-        discussUrl: discussUrl || (discussPostId ? `/MainModules/FlipLine?postId=${discussPostId}` : undefined),
-        debateRoomId: debateRoomId || undefined,
-        debateTitle: debateTitle || undefined,
-        debateUrl: debateUrl || (debateRoomId ? `/MainModules/WatchAlong?roomId=${debateRoomId}` : undefined),
+        // Optional CTAs (explicit empty strings allow backend to remove deleted CTAs from DynamoDB)
+        predictId: predictId.trim() ? predictId.trim() : "",
+        predictTitle: predictId.trim() && predictTitle.trim() ? predictTitle.trim() : "",
+        predictUrl: predictId.trim() ? (predictUrl || `/MainModules/FlipArena?engagementId=${predictId}&type=prediction`) : "",
+        discussPostId: discussPostId.trim() ? discussPostId.trim() : "",
+        discussTitle: discussPostId.trim() && discussTitle.trim() ? discussTitle.trim() : "",
+        discussUrl: discussPostId.trim() ? (discussUrl || `/MainModules/FlipLine?postId=${discussPostId}`) : "",
+        debateRoomId: debateRoomId.trim() ? debateRoomId.trim() : "",
+        debateTitle: debateRoomId.trim() && debateTitle.trim() ? debateTitle.trim() : "",
+        debateUrl: debateRoomId.trim() ? (debateUrl || `/MainModules/WatchAlong?roomId=${debateRoomId}`) : "",
       };
 
       if (editId) {
@@ -533,13 +553,13 @@ function ScheduleForm() {
           {/* Left 2 Cols: Form */}
           <div className="lg:col-span-2">
             <form onSubmit={handleSubmit} className="p-6 rounded-2xl bg-[#111625] border border-white/10 space-y-6">
-              {/* Row 1: Date, Time & Status Type */}
+              {/* Row 1: Start Date/Time & End Date/Time (Optional) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
                       <Calendar size={13} className="text-purple-400" />
-                      <span>Event Date *</span>
+                      <span>Start Date *</span>
                     </span>
                     <span className="text-[9.5px] text-purple-300 bg-purple-500/10 px-1 py-0.5 rounded border border-purple-500/20">
                       IST
@@ -547,8 +567,11 @@ function ScheduleForm() {
                   </label>
                   <input
                     type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
+                    value={startDate}
+                    onChange={(e) => {
+                      setStartDate(e.target.value);
+                      setDate(e.target.value);
+                    }}
                     required
                     className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors font-mono"
                   />
@@ -565,8 +588,11 @@ function ScheduleForm() {
                     <Clock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input
                       type="text"
-                      value={time}
-                      onChange={(e) => setTime(e.target.value)}
+                      value={startTime}
+                      onChange={(e) => {
+                        setStartTime(e.target.value);
+                        setTime(e.target.value);
+                      }}
                       placeholder="e.g. 08:00 AM"
                       required
                       className="w-full bg-[#090C15] border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors font-mono"
@@ -574,6 +600,49 @@ function ScheduleForm() {
                   </div>
                 </div>
 
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar size={13} className="text-gray-400" />
+                      <span>End Date</span>
+                    </span>
+                    <span className="text-[9.5px] text-gray-400 bg-white/5 px-1 py-0.5 rounded border border-white/10">
+                      Optional
+                    </span>
+                  </label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full bg-[#090C15] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 mb-1.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Clock size={13} className="text-gray-400" />
+                      <span>End Time</span>
+                    </span>
+                    <span className="text-[9.5px] text-gray-400 bg-white/5 px-1 py-0.5 rounded border border-white/10">
+                      Optional
+                    </span>
+                  </label>
+                  <div className="relative">
+                    <Clock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      placeholder="e.g. 10:30 AM"
+                      className="w-full bg-[#090C15] border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Status Mode & Order */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-300 mb-1.5">
                     Status Mode *
@@ -1012,15 +1081,20 @@ function ScheduleForm() {
                   </span>
                 </div>
 
-                <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-gray-400 font-medium">
-                  <div className="flex items-center gap-2">
+                <div className="pt-2 border-t border-white/5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-400 font-medium">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="flex items-center gap-1 text-purple-300 font-bold bg-purple-500/15 border border-purple-500/30 px-2 py-0.5 rounded font-mono">
                       <Calendar size={10} className="text-purple-400" />
-                      <span>{date || getIndiaDateString()}</span>
+                      <span>{startDate || date || getIndiaDateString()}</span>
                     </span>
                     <span className="flex items-center gap-1 text-gray-300 font-mono">
                       <Clock size={11} className="text-purple-400" />
-                      <strong>{time || "08:00 AM"}</strong>
+                      <strong>{startTime || time || "08:00 AM"}</strong>
+                      {(endTime || endDate) && (
+                        <span className="text-gray-400 font-normal">
+                          {" – "}{endDate && endDate !== (startDate || date) ? `${endDate} ` : ""}{endTime || ""}
+                        </span>
+                      )}
                     </span>
                   </div>
                   {venue && (

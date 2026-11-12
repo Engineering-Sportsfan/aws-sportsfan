@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { EngagementItem, QuizQuestion, QuizOption, QuizLeaderboardEntry } from "@/types/engagements";
+import EngagementCommentsThread from "./EngagementCommentsThread";
 
 interface Props {
   item: EngagementItem;
@@ -26,7 +27,7 @@ export default function QuizCard({
     if (item.quizData?.questions && item.quizData.questions.length > 0) {
       return item.quizData.questions;
     }
-    const defaultQuiz = item.quizData || {
+    const defaultQuiz = item.quizData || (item.questionData as any) || {
       question: item.title || "How many Test centuries has Virat Kohli scored?",
       options: [
         { id: "A", text: "27" },
@@ -43,7 +44,7 @@ export default function QuizCard({
       {
         id: "q_1",
         question: defaultQuiz.question || item.title,
-        options: defaultQuiz.options || [
+        options: defaultQuiz.options || (Array.isArray(item.options) && item.options.length > 0 ? item.options : undefined) || [
           { id: "A", text: "Option A" },
           { id: "B", text: "Option B" },
           { id: "C", text: "Option C" },
@@ -89,6 +90,8 @@ export default function QuizCard({
   const [likesCount, setLikesCount] = useState<number>(Number(item.likes) || 0);
   const [sharesCount, setSharesCount] = useState<number>(Number(item.shares) || 0);
   const [totalEngaged, setTotalEngaged] = useState<number>(Number(item.totalEngaged) || 0);
+  const [commentsCount, setCommentsCount] = useState<number>(Number(item.commentsCount) || 0);
+  const [showComments, setShowComments] = useState(false);
 
   // Live Timer State for frequency countdown
   const [now, setNow] = useState<number>(Date.now());
@@ -798,11 +801,38 @@ export default function QuizCard({
           >
             <span>🔗</span> Share {sharesCount > 0 ? `(${sharesCount})` : ""}
           </button>
+          <button
+            onClick={() => setShowComments(!showComments)}
+            style={{
+              background: showComments ? "rgba(56, 139, 253, 0.15)" : "none",
+              border: showComments ? "1px solid rgba(56, 139, 253, 0.4)" : "1px solid transparent",
+              borderRadius: 6,
+              padding: "4px 8px",
+              color: showComments ? "#58a6ff" : "#7d8590",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              transition: "all .15s ease",
+            }}
+            title="Discuss and reply to fans"
+          >
+            <span>💬</span> Banter {commentsCount > 0 ? `(${commentsCount})` : ""}
+          </button>
         </div>
         <div>
           {totalEngaged.toLocaleString()} engaged · ⭐ {totalPointsEarned} pts scored
         </div>
       </div>
+
+      {/* Expandable Threaded Comments Drawer */}
+      <EngagementCommentsThread
+        engagementId={item.id}
+        isOpen={showComments}
+        onCommentsCountChange={setCommentsCount}
+      />
     </div>
   );
 }

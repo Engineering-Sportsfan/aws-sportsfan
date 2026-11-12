@@ -1,38 +1,52 @@
 // app/api/engagements/[id]/like/route.ts — Dynamic Like / Unlike toggle for Fan Battles, Quizzes, Polls, Predictions
-// Aligned with api/roar/rooms/messages and api/roar/posts/[postId]/like architecture
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
-import { dualWrite } from "@/lib/dualWrite";
-import { GetCommand, UpdateCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getUser } from "@/lib/getUser";
-import { dispatchFlipArenaNotification } from "@/lib/fliparenaNotifications";
+import { dispatchFlipArenaNotification } from "@/lib/notifications";
+import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
+import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
+import { getCandidateTableNames } from "@/lib/dualWrite";
+import { withReactionKeys } from "@/lib/engagementReactions";
 
 export const dynamic = "force-dynamic";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-// ─── GET /api/engagements/[id]/like — Check if user liked this engagement ────
+// ─── GET /api/engagements/[id]/like — Check if user liked + current like count ──
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
+    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
     const { searchParams } = new URL(req.url);
     const authUser = await getUser(req);
     const userId = authUser?.userId || authUser?.email || searchParams.get("userId");
 
+    const matchIdParam = searchParams.get("matchId") || undefined;
+
+    // Count real like records; fall back to the stored counter if the query fails
+    let likes = 0;
+    try {
+      likes = await countRecords(cleanId, "LIKE#");
+    } catch {
+      const found = await findEngagementById(cleanId, matchIdParam).catch(() => null);
+      likes = Math.max(0, Number(found?.item?.likes ?? found?.item?.likeCount ?? 0));
+    }
+
     if (!userId) {
-      return NextResponse.json({ liked: false });
+      return NextResponse.json({ liked: false, likes });
     }
 
     let liked = false;
 
-    // 1. Check standardized DynamoDB key: contentId = ENGAGEMENT#{id}, sk = LIKE#{userId} (Matches api/roar pattern)
+    // 1. Standardized key: contentId = ENGAGEMENT#{cleanId}, sk = LIKE#{userId}
     try {
       const getLike = await docClient.send(
         new GetCommand({
           TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${userId}` },
+          Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: `LIKE#${userId}` },
         })
       );
       if (getLike.Item) liked = true;
@@ -40,28 +54,30 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       console.warn("DynamoDB like check notice:", dynErr);
     }
 
-    // 2. Check legacy DynamoDB key: contentId = LIKE#{userId}, sk = ENGAGEMENT#{id} (Backwards compatibility)
+    // 2. Legacy key: contentId = LIKE#{userId}, sk = ENGAGEMENT#{cleanId}
     if (!liked) {
       try {
         const legacyLike = await docClient.send(
           new GetCommand({
             TableName: TABLES.SocialAndContent,
-            Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${id}` },
+            Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${cleanId}` },
           })
         );
         if (legacyLike.Item) liked = true;
       } catch {}
     }
 
-    // 3. Fallback to Firestore engagement_likes collection
+    // 3. Firestore fallback
     if (!liked && db) {
       try {
-        const snap = await db.collection("engagement_likes").doc(`${userId}_${id}`).get();
+        const snap = await db.collection(getFirestoreCollection("engagement_likes")).doc(`${userId}_${cleanId}`).get();
         if (snap.exists) liked = true;
       } catch {}
     }
 
-    return NextResponse.json({ liked });
+    return NextResponse.json({ liked, likes }, {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate" },
+    });
   } catch (error: unknown) {
     console.error("GET /api/engagements/[id]/like error:", error);
     return NextResponse.json({ liked: false });
@@ -72,6 +88,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
     const { id } = await params;
+    const cleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
     const body = await req.json().catch(() => ({}));
     const authUser = await getUser(req);
     const userId =
@@ -82,37 +99,35 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       `anon_${req.headers.get("x-forwarded-for") || "client"}`;
 
     const now = Date.now();
-    const likeDocId = `${userId}_${id}`;
+    const likeDocId = `${userId}_${cleanId}`;
 
-    // 1. Check if user already liked this item (Standardized DynamoDB query)
+    // 1. Check if user already liked this item
     let alreadyLiked = false;
     try {
       const getLike = await docClient.send(
         new GetCommand({
           TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${userId}` },
+          Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: `LIKE#${userId}` },
         })
       );
       if (getLike.Item) alreadyLiked = true;
     } catch {}
 
-    // Check legacy DynamoDB key shape
     if (!alreadyLiked) {
       try {
         const legacyLike = await docClient.send(
           new GetCommand({
             TableName: TABLES.SocialAndContent,
-            Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${id}` },
+            Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${cleanId}` },
           })
         );
         if (legacyLike.Item) alreadyLiked = true;
       } catch {}
     }
 
-    // Check Firestore fallback
     if (!alreadyLiked && db) {
       try {
-        const snap = await db.collection("engagement_likes").doc(likeDocId).get();
+        const snap = await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).get();
         if (snap.exists) alreadyLiked = true;
       } catch {}
     }
@@ -120,76 +135,48 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const nextLikedState = !alreadyLiked;
     const delta = nextLikedState ? 1 : -1;
 
-    // 2. Fetch and update engagement item likes
-    let item: any = null;
-    try {
-      const getRes = await docClient.send(
-        new GetCommand({
-          TableName: TABLES.SocialAndContent,
-          Key: { contentId: `ENGAGEMENT#${id}`, sk: "ENGAGEMENT#META" },
-        })
-      );
-      if (getRes.Item) item = getRes.Item;
-    } catch {}
+    // 2. Find engagement item across SocialAndContent and MatchMoments (optional for recognitions/outcomes)
+    const matchId = body?.matchId || req.nextUrl.searchParams.get("matchId") || undefined;
+    const found = await findEngagementById(cleanId, matchId).catch(() => null);
+    const item = found?.item || null;
+    const resolvedMatchId = item?.matchId || matchId || undefined;
+    const resolvedMomentId = body?.momentId || item?.momentId || undefined;
+    const resolvedSeriesId = body?.seriesId || item?.seriesId || undefined;
 
-    if (!item && db) {
-      const snap = await db.collection(getFirestoreCollection("engagements")).doc(id).get();
-      if (snap.exists) item = { id: snap.id, ...snap.data() };
-    }
-
-    if (!item) {
-      return NextResponse.json({ error: "Engagement not found" }, { status: 404 });
-    }
-
-    const currentLikes = Math.max(0, Number(item.likes ?? item.likeCount ?? 0));
-    const newLikesCount = Math.max(0, currentLikes + delta);
-
-    // Update item likes & likeCount attributes
-    item.likes = newLikesCount;
-    item.likeCount = newLikesCount;
-    item.updatedAt = now;
-
-    const dynamoItem = {
-      contentId: `ENGAGEMENT#${id}`,
-      sk: "ENGAGEMENT#META",
-      entityId: `ENGAGEMENT#${String(item.type || "").toUpperCase()}`,
-      ...item,
-    };
-
-    await dualWrite("engagements", id, TABLES.SocialAndContent, dynamoItem);
-
-    // 3. Save or remove the user's like record (Standardized like pattern)
+    // 3. Save or remove the user's like record FIRST (these records are the source of truth)
     if (nextLikedState) {
-      // Standardized write: contentId = ENGAGEMENT#{id}, sk = LIKE#{userId} (Matches api/roar pattern)
       try {
         await docClient.send(
           new PutCommand({
             TableName: TABLES.SocialAndContent,
-            Item: {
-              contentId: `ENGAGEMENT#${id}`,
+            Item: withReactionKeys({
+              contentId: `ENGAGEMENT#${cleanId}`,
               sk: `LIKE#${userId}`,
               entityId: "LIKE#ENGAGEMENT",
               userId,
-              engagementId: id,
+              userName: body?.userName || authUser?.name || undefined,
+              engagementId: cleanId,
+              ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
+              ...(resolvedMomentId ? { momentId: resolvedMomentId } : {}),
+              ...(resolvedSeriesId ? { seriesId: resolvedSeriesId } : {}),
               likedAt: now,
               createdAt: now,
-            },
+            }, { userId, action: "like", at: now, engagement: item, matchIdHint: resolvedMatchId }),
           })
         );
       } catch (dynPutErr) {
         console.warn("DynamoDB standard like put notice:", dynPutErr);
       }
 
-      // Legacy key write for backwards compatibility
       try {
         await docClient.send(
           new PutCommand({
             TableName: TABLES.SocialAndContent,
             Item: {
               contentId: `LIKE#${userId}`,
-              sk: `ENGAGEMENT#${id}`,
+              sk: `ENGAGEMENT#${cleanId}`,
               userId,
-              engagementId: id,
+              engagementId: cleanId,
               createdAt: now,
             },
           })
@@ -198,21 +185,22 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
       if (db) {
         try {
-          await db.collection("engagement_likes").doc(likeDocId).set({
+          await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).set({
             userId,
-            engagementId: id,
+            engagementId: cleanId,
             createdAt: now,
           });
         } catch {}
       }
 
-      // 4. Dispatch FlipArena Notification to Creator (Async / Non-blocking)
-      const recipientId =
+      // 4. Dispatch FlipArena Notification to Creator (Async)
+      const recipientId = item ? (
         item.creatorId ||
         item.creatorEmail ||
         item.userId ||
         item.authorId ||
-        item.createdBy;
+        item.createdBy
+      ) : null;
 
       if (recipientId && String(recipientId) !== String(userId)) {
         const actorName =
@@ -232,7 +220,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           actorName,
           actorAvatar,
           recipientId: String(recipientId),
-          engagementId: id,
+          engagementId: cleanId,
           engagementType: item.type || "quiz",
           engagementTitle: item.title || item.memeData?.title || item.subtitle || "Engagement",
         }).catch((notifErr) => {
@@ -240,40 +228,106 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         });
       }
     } else {
-      // Standardized delete: contentId = ENGAGEMENT#{id}, sk = LIKE#{userId}
       try {
         await docClient.send(
           new DeleteCommand({
             TableName: TABLES.SocialAndContent,
-            Key: { contentId: `ENGAGEMENT#${id}`, sk: `LIKE#${userId}` },
+            Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: `LIKE#${userId}` },
           })
         );
       } catch (dynDelErr) {
         console.warn("DynamoDB standard like delete notice:", dynDelErr);
       }
 
-      // Legacy key delete
       try {
         await docClient.send(
           new DeleteCommand({
             TableName: TABLES.SocialAndContent,
-            Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${id}` },
+            Key: { contentId: `LIKE#${userId}`, sk: `ENGAGEMENT#${cleanId}` },
           })
         );
       } catch {}
 
       if (db) {
         try {
-          await db.collection("engagement_likes").doc(likeDocId).delete();
+          await db.collection(getFirestoreCollection("engagement_likes")).doc(likeDocId).delete();
         } catch {}
       }
+    }
+
+    // 5. Count the real records, then mirror all separated action/social counts onto the engagement item
+    const engStats = await getEngagementStats(cleanId, { consistent: true }).catch(() => null);
+    const likesCount = engStats ? engStats.likes : await countRecords(cleanId, "LIKE#");
+    let totalEngaged = likesCount;
+
+    if (item) {
+      if (engStats) {
+        applyEngagementStats(item, engStats);
+      } else {
+        item.likes = likesCount;
+        item.likeCount = likesCount;
+      }
+      item.totalEngaged = Math.max(0, (Number(item.totalEngaged) || 0) + delta);
+      item.updatedAt = now;
+      totalEngaged = Number(item.totalEngaged) || 0;
+      try {
+        await persistEngagementUpdate(cleanId, item, found?.matchMomentsRecord);
+      } catch (e) {
+        console.warn("like mirror notice:", e);
+      }
+    } else {
+      // Dual-write count to visible_recognitions or match_room_notifications if present
+      if (db) {
+        try {
+          await db.collection(getFirestoreCollection("visible_recognitions")).doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
+        } catch {}
+        try {
+          await db.collection(getFirestoreCollection("match_room_notifications")).doc(cleanId).set({ likes: likesCount, likesCount }, { merge: true });
+        } catch {}
+      }
+
+      // Also mirror count to MatchMoments table (for recognitions and outcome reveals)
+      if (matchId) {
+        const cleanM = String(matchId).replace(/^MATCH#/, "");
+        for (const tbl of getCandidateTableNames("MatchMoments")) {
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${cleanM}`, sk: `RECOGNITION#${cleanId}` },
+              UpdateExpression: "SET likes = :l, likesCount = :l",
+              ExpressionAttributeValues: { ":l": likesCount },
+            }));
+          } catch {}
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: tbl,
+              Key: { entityId: `MATCH#${cleanM}`, sk: `REVEAL#${cleanId}` },
+              UpdateExpression: "SET likes = :l, likesCount = :l",
+              ExpressionAttributeValues: { ":l": likesCount },
+            }));
+          } catch {}
+        }
+      }
+
+      // Also mirror count to SocialAndContent META row
+      try {
+        await docClient.send(new UpdateCommand({
+          TableName: TABLES.SocialAndContent,
+          Key: { contentId: `ENGAGEMENT#${cleanId}`, sk: "META" },
+          UpdateExpression: "SET likes = :l, likesCount = :l",
+          ExpressionAttributeValues: { ":l": likesCount },
+        }));
+      } catch {}
     }
 
     return NextResponse.json({
       success: true,
       liked: nextLikedState,
-      likesCount: newLikesCount,
-      likes: newLikesCount,
+      likesCount,
+      likes: likesCount,
+      totalEngaged,
+    }, {
+      headers: { "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate" },
     });
   } catch (error: unknown) {
     console.error("POST /api/engagements/[id]/like error:", error);

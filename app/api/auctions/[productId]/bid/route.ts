@@ -6,6 +6,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { docClient } from '@/lib/dynamodb';
 import { dualWrite } from '@/lib/dualWrite';
 import { GetCommand, UpdateCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { dispatchStoreNotification } from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -340,18 +341,14 @@ export async function POST(
         }
 
         for (const outbidUserId of result.outbidUserIds) {
-          fetch(`${origin}/api/notifications/store`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: outbidUserId,
-              notificationType: "store.auction_outbid",
-              ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
-              variables: {
-                product_name: productTitle
-              }
-            })
-          }).catch((err) => console.warn("[bid outbid notify] fetch error:", err));
+          dispatchStoreNotification({
+            userId: outbidUserId,
+            notificationType: "store.auction_outbid",
+            ctaTarget: "/MainModules/AtheleteStore/StoreAuctions",
+            variables: {
+              product_name: productTitle,
+            },
+          }).catch((err) => console.warn("[bid outbid notify] error:", err));
         }
       }
 

@@ -3,7 +3,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getUser } from "@/lib/getUser";
 import { getUserInfo } from "@/lib/userPoints";
-import {  notifyRoomMessageReaction } from "@/lib/roarNotifyHelpers";
+import { notifyPostReaction, notifyRoomMessageReaction } from "@/lib/notifications";
 import { awardRoarPointsByReason } from "@/lib/roarPoints";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
@@ -290,11 +290,13 @@ export async function POST(
       }).catch(() => { });
     }
 
-    if (roomId) {
-      notifyRoomMessageReaction(roomId, postId, userId, reaction).catch(() => { });
-    } else {
-      // notifyPostReaction(postId, userId, reaction).catch(() => { });
-    }
+    notifyPostReaction(postId, userId, reaction, roomId, user.email, {
+      authorUid: postOwnerId,
+      authorEmail: data.authorEmail,
+      text: data.text || data.statement || data.quizQuestion || data.title,
+    }).catch((notifErr) => {
+      console.warn("[LikeSection] Reaction notification notice:", notifErr);
+    });
 
     return NextResponse.json({
       success: true,

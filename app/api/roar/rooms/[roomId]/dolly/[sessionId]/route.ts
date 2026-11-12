@@ -188,6 +188,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
     let answer = "";
     try {
       const aiRes = await fetch(`${PYTHON_AI_URL}/chat`, {
+        signal: AbortSignal.timeout(60000),
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": process.env.PYTHON_AI_KEY ?? "" },
         body: JSON.stringify({
