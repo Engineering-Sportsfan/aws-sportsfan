@@ -417,6 +417,48 @@ export function parsePreMatchOffsetMs(m: any): number | null {
   return -(unit === "h" ? val * 3600 * 1000 : val * 60 * 1000);
 }
 
+/** Parse a match date + time string pair (e.g. "24 Oct 2026" + "7:30 PM", "2026-11-12" + "19:30", or DD/MM/YYYY) into epoch ms. */
+export function parseMatchStartMs(date?: string | null, time?: string | null): number | null {
+  const rawDate = String(date || "").trim();
+  if (!rawDate) return null;
+
+  let normalizedDate = rawDate;
+  const dmyMatch = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmyMatch) {
+    const [, dd, mm, yyyy] = dmyMatch;
+    normalizedDate = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  }
+
+  let normalizedTime = String(time || "19:30")
+    .replace(/\b(IST|UTC|GMT)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalizedTime) normalizedTime = "19:30";
+
+  const amPmMatch = normalizedTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (amPmMatch && /^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+    let h = parseInt(amPmMatch[1], 10);
+    const min = amPmMatch[2];
+    const mer = amPmMatch[3].toUpperCase();
+    if (mer === "PM" && h < 12) h += 12;
+    if (mer === "AM" && h === 12) h = 0;
+    const isoParsed = new Date(`${normalizedDate}T${String(h).padStart(2, "0")}:${min}:00`).getTime();
+    if (!Number.isNaN(isoParsed) && isoParsed > 0) return isoParsed;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) && /^\d{1,2}:\d{2}(:\d{2})?$/.test(normalizedTime)) {
+    const [hh, mm] = normalizedTime.split(":");
+    const isoParsed = new Date(`${normalizedDate}T${hh.padStart(2, "0")}:${mm.padStart(2, "0")}:00`).getTime();
+    if (!Number.isNaN(isoParsed) && isoParsed > 0) return isoParsed;
+  }
+
+  const parsedCombined = new Date(`${normalizedDate} ${normalizedTime}`).getTime();
+  if (!Number.isNaN(parsedCombined) && parsedCombined > 0) return parsedCombined;
+
+  const parsedDateOnly = new Date(normalizedDate).getTime();
+  return !Number.isNaN(parsedDateOnly) && parsedDateOnly > 0 ? parsedDateOnly : null;
+}
+
 /** Suggested launch timestamp (ms) when attaching an engagement to a Pre-Match moment. */
 export function computePreMatchScheduledTimeMs(moment: any, matchStartMs?: number | null): number | null {
   if (!matchStartMs || !Number.isFinite(matchStartMs)) return null;

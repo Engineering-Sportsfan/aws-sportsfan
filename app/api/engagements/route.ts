@@ -12,6 +12,7 @@ import { dispatchFlipArenaContentDropNotification } from "@/lib/notifications";
 import cloudinary from "@/lib/cloudinary";
 import { applyEngagementStats, findUserVote, getEngagementStats, primaryOptions } from "@/lib/engagementSocial";
 import { findEngagementById } from "@/lib/engagementPersistence";
+import { parseMatchStartMs } from "@/lib/matchMomentTimeline";
 
 export const dynamic = "force-dynamic";
 
@@ -1151,11 +1152,30 @@ export async function POST(req: NextRequest) {
     let resolvedSeriesId = String(body.seriesId || existingEngagement?.seriesId || "").trim();
     const resolvedMatchIdStr = String(body.matchId || existingEngagement?.matchId || "").replace(/^MATCH#/i, "").trim();
     const resolvedMomentIdStr = String(body.momentId || body.loopId || existingEngagement?.momentId || "").replace(/^MOMENT#/i, "").trim();
-    if (!resolvedSeriesId && resolvedMatchIdStr) {
+    const rawFollowStartInput =
+      body.followData?.matchStartMs ??
+      body.followData?.matchStartTime ??
+      body.matchStartMs ??
+      body.matchStartTime ??
+      existingEngagement?.followData?.matchStartMs;
+    const parseTimestampMs = (raw: unknown): number | undefined => {
+      if (raw === undefined || raw === null || raw === "") return undefined;
+      if (typeof raw === "number") {
+        if (!Number.isFinite(raw) || raw <= 0) return undefined;
+        return raw < 1e11 ? raw * 1000 : raw;
+      }
+      const num = Number(raw);
+      if (Number.isFinite(num) && num > 0) return num < 1e11 ? num * 1000 : num;
+      const parsed = new Date(String(raw)).getTime();
+      return !Number.isNaN(parsed) && parsed > 0 ? parsed : undefined;
+    };
+    let resolvedFollowStartMs = parseTimestampMs(rawFollowStartInput);
+
+    if ((!resolvedSeriesId || (type === "follow" && !resolvedFollowStartMs)) && resolvedMatchIdStr) {
       const mmTables = Array.from(new Set([TABLES.MatchMoments, TABLES.SportsData]));
       for (const tbl of mmTables) {
         try {
-          if (resolvedMomentIdStr) {
+          if (!resolvedSeriesId && resolvedMomentIdStr) {
             const momRes = await docClient.send(
               new GetCommand({
                 TableName: tbl,
@@ -1164,7 +1184,6 @@ export async function POST(req: NextRequest) {
             );
             if (momRes.Item?.seriesId) {
               resolvedSeriesId = String(momRes.Item.seriesId).trim();
-              break;
             }
           }
           const matchRes = await docClient.send(
@@ -1173,10 +1192,14 @@ export async function POST(req: NextRequest) {
               Key: { entityId: `MATCH#${resolvedMatchIdStr}`, sk: "MATCH#META" },
             })
           );
-          if (matchRes.Item?.seriesId) {
+          if (matchRes.Item?.seriesId && !resolvedSeriesId) {
             resolvedSeriesId = String(matchRes.Item.seriesId).trim();
-            break;
           }
+          if (type === "follow" && !resolvedFollowStartMs && matchRes.Item) {
+            const parsedFromMatch = parseMatchStartMs(matchRes.Item.date, matchRes.Item.time);
+            if (parsedFromMatch) resolvedFollowStartMs = parsedFromMatch;
+          }
+          if (resolvedSeriesId && (type !== "follow" || resolvedFollowStartMs)) break;
         } catch {}
       }
     }
@@ -1218,7 +1241,7 @@ export async function POST(req: NextRequest) {
               team2Flag: String(body.followData?.team2Flag || body.team2Flag || "").trim(),
               matchLabel: String(body.followData?.matchLabel || body.matchLabel || "T20 INTERNATIONAL").trim(),
               matchTimeLabel: String(body.followData?.matchTimeLabel || body.matchTimeLabel || "Upcoming").trim(),
-              matchStartMs: Number(body.followData?.matchStartMs || body.matchStartMs || 0) || undefined,
+              matchStartMs: resolvedFollowStartMs,
               statusLabel: String(body.followData?.statusLabel || "Upcoming").trim(),
               followCount: Number(body.followData?.followCount || existingEngagement?.followData?.followCount) || 0,
               remindCount: Number(body.followData?.remindCount || existingEngagement?.followData?.remindCount) || 0,

@@ -89,6 +89,29 @@ export function useRunningCountdown(
     return timeLeft;
 }
 
+function getFollowCountdown(targetTs?: number | string | null, nowMs: number = Date.now(), explicitStatus?: string) {
+    let targetMs = NaN;
+    if (typeof targetTs === "number") {
+        targetMs = targetTs > 0 && targetTs < 1e11 ? targetTs * 1000 : targetTs;
+    } else if (typeof targetTs === "string" && targetTs.trim()) {
+        const num = Number(targetTs);
+        targetMs = Number.isFinite(num) && num > 0 ? (num < 1e11 ? num * 1000 : num) : new Date(targetTs).getTime();
+    }
+    if (!Number.isFinite(targetMs) || targetMs <= 0) {
+        const isLiveFallback = String(explicitStatus || "").trim().toLowerCase() === "live";
+        return { isLive: isLiveFallback, hasTarget: false, label: isLiveFallback ? "LIVE" : "Soon", statusText: isLiveFallback ? "LIVE" : "Upcoming" };
+    }
+    const diffMs = targetMs - nowMs;
+    if (diffMs <= 0) return { isLive: true, hasTarget: true, label: "LIVE", statusText: "LIVE" };
+    const totalSec = Math.ceil(diffMs / 1000);
+    const hours = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    const mm = String(mins).padStart(2, "0");
+    const ss = String(secs).padStart(2, "0");
+    return { isLive: false, hasTarget: true, label: hours >= 1 ? `${hours}h ${mm}m ${ss}s` : `${mm}m ${ss}s`, statusText: "Upcoming" };
+}
+
 export default function EngagementCard({
     item,
     onInteraction,
@@ -135,6 +158,14 @@ export default function EngagementCard({
     const [isReminded, setIsReminded] = useState<boolean>(Boolean((item as any).userReminded));
     const [followCount, setFollowCount] = useState<number>(() => Number((item as any).followData?.followCount ?? 0));
     const [remindCount, setRemindCount] = useState<number>(() => Number((item as any).followData?.remindCount ?? 0));
+    const [followNowMs, setFollowNowMs] = useState<number>(() => Date.now());
+
+    useEffect(() => {
+        if (item.type !== "follow") return;
+        setFollowNowMs(Date.now());
+        const t = setInterval(() => setFollowNowMs(Date.now()), 1000);
+        return () => clearInterval(t);
+    }, [item.type]);
 
     // Likes state with localStorage persistence
     const [likes, setLikes] = useState<number>(Number(item.likes) || 0);
@@ -558,6 +589,11 @@ export default function EngagementCard({
         const team1Flag = fd.team1Flag || "🏏";
         const team2Flag = fd.team2Flag || "🏏";
         const headline = fd.team1Code && fd.team2Code ? `${team1Code} vs ${team2Code}` : item.title;
+        const countdown = getFollowCountdown(
+            fd.matchStartTime || fd.matchStartMs || fd.targetStartMs || (item as any).matchStartMs || (item as any).matchStartTime,
+            followNowMs,
+            fd.statusLabel
+        );
 
         const toggleAction = async (action: "follow" | "remind") => {
             if (isVoting) return;
@@ -602,10 +638,24 @@ export default function EngagementCard({
         return (
             <div className="rounded-xl border border-white/15 bg-gradient-to-b from-[#161026] via-[#110d1f] to-[#0b0914] overflow-hidden shadow-lg mt-1">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-black/25">
-                    <span className="text-[11px] font-bold text-white border-b-2 border-purple-500 pb-0.5">Upcoming</span>
-                    <span className="text-[11px] font-semibold text-white/80 flex items-center gap-0.5">
-                        {fd.matchTimeLabel || "Upcoming"} <ChevronRight size={12} />
-                    </span>
+                    {countdown.isLive ? (
+                        <span className="text-[11px] font-black text-rose-400 border-b-2 border-rose-500 pb-0.5 inline-flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                            LIVE
+                        </span>
+                    ) : (
+                        <span className="text-[11px] font-bold text-white border-b-2 border-purple-500 pb-0.5">{countdown.statusText}</span>
+                    )}
+                    {countdown.isLive ? (
+                        <span className="text-[11px] font-black text-emerald-400 inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            Live Now
+                        </span>
+                    ) : (
+                        <span className="text-[11px] font-semibold text-white/80 flex items-center gap-0.5 tabular-nums">
+                            {countdown.label} <ChevronRight size={12} />
+                        </span>
+                    )}
                 </div>
                 <div className="px-3 py-3 space-y-2.5">
                     <div className="flex items-center justify-between gap-2">

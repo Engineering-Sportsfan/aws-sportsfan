@@ -31,6 +31,7 @@ import {
   isPreMatchMoment,
   computePreMatchScheduledTimeMs,
   getPostMatchMomentKind,
+  parseMatchStartMs,
 } from "@/lib/matchMomentTimeline";
 
 interface MatchOption {
@@ -116,13 +117,7 @@ function formatDatetimeLocal(ms: number): string {
 
 function computeMatchStartMs(match?: MatchOption | null): number | null {
   if (!match?.date) return null;
-  const dateStr = String(match.date).trim();
-  const timeStr = String(match.time || "19:30").trim();
-  // Try combined ISO / date string parse
-  const parsedCombined = new Date(`${dateStr} ${timeStr}`).getTime();
-  if (!isNaN(parsedCombined) && parsedCombined > 0) return parsedCombined;
-  const parsedDateOnly = new Date(dateStr).getTime();
-  return !isNaN(parsedDateOnly) && parsedDateOnly > 0 ? parsedDateOnly : null;
+  return parseMatchStartMs(match.date, match.time);
 }
 
 function formatMatchTimeDisplay(match?: MatchOption | null, startMs?: number | null): string {
@@ -255,6 +250,14 @@ function AddEngagementContent() {
   const [followMatchLabel, setFollowMatchLabel] = useState<string>("T20 INTERNATIONAL");
   const [followMatchTimeLabel, setFollowMatchTimeLabel] = useState<string>("");
   const [followMatchStartMs, setFollowMatchStartMs] = useState<number | null>(null);
+  const [followPreviewNowMs, setFollowPreviewNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    if (engType !== "follow") return;
+    setFollowPreviewNowMs(Date.now());
+    const timer = setInterval(() => setFollowPreviewNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [engType]);
 
   // Final Result / Player of the Match (Match Snapshot & Top Performer) fields
   const [resultShowSnapshot, setResultShowSnapshot] = useState<boolean>(true);
@@ -1036,6 +1039,31 @@ function AddEngagementContent() {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                  Countdown Target (Match Start Date &amp; Time)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={followMatchStartMs ? formatDatetimeLocal(followMatchStartMs) : ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (!raw) {
+                      setFollowMatchStartMs(null);
+                      return;
+                    }
+                    const parsed = new Date(raw).getTime();
+                    if (!Number.isNaN(parsed) && parsed > 0) {
+                      setFollowMatchStartMs(parsed);
+                    }
+                  }}
+                  className="w-full sm:max-w-xs bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Frontend Follow card runs a live reverse countdown to this time and switches to LIVE at 0.
+                </p>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="grid grid-cols-3 gap-2">
                   <div>
@@ -1093,15 +1121,35 @@ function AddEngagementContent() {
               </div>
 
               {/* Frontend Follow Card Preview */}
+              {(() => {
+                const diffMs = followMatchStartMs ? followMatchStartMs - followPreviewNowMs : null;
+                const isFollowLive = diffMs !== null && diffMs <= 0;
+                const countdownPreview = (() => {
+                  if (diffMs === null) return "Soon ›";
+                  if (diffMs <= 0) return "LIVE";
+                  const totalSec = Math.ceil(diffMs / 1000);
+                  const h = Math.floor(totalSec / 3600);
+                  const m = Math.floor((totalSec % 3600) / 60);
+                  const s = totalSec % 60;
+                  const mm = String(m).padStart(2, "0");
+                  const ss = String(s).padStart(2, "0");
+                  return h >= 1 ? `${h}h ${mm}m ${ss}s ›` : `${mm}m ${ss}s ›`;
+                })();
+                return (
               <div className="max-w-sm rounded-2xl bg-[#070612] border border-purple-500/30 overflow-hidden shadow-lg">
                 <div className="flex items-center justify-between px-3.5 py-2 border-b border-white/10 text-xs">
-                  <span className="font-bold text-white pb-1 border-b-2 border-purple-500">
-                    Upcoming
-                  </span>
-                  <span className="text-[11px] font-semibold text-white/75">
-                    {followMatchStartMs && followMatchStartMs > Date.now()
-                      ? `${Math.floor((followMatchStartMs - Date.now()) / 3600000)}h ${Math.floor(((followMatchStartMs - Date.now()) % 3600000) / 60000)}m ›`
-                      : "Upcoming ›"}
+                  {isFollowLive ? (
+                    <span className="font-black text-rose-400 pb-1 border-b-2 border-rose-500 inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                      LIVE
+                    </span>
+                  ) : (
+                    <span className="font-bold text-white pb-1 border-b-2 border-purple-500">
+                      Upcoming
+                    </span>
+                  )}
+                  <span className={`text-[11px] font-semibold tabular-nums ${isFollowLive ? "text-emerald-400 font-black" : "text-white/75"}`}>
+                    {countdownPreview}
                   </span>
                 </div>
                 <div className="p-3.5 space-y-3">
@@ -1138,6 +1186,8 @@ function AddEngagementContent() {
                   </div>
                 </div>
               </div>
+                );
+              })()}
             </div>
           ) : engType === "match_result" ? (
             <div className="space-y-5">
