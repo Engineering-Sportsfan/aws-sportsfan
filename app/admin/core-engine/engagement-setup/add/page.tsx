@@ -115,6 +115,18 @@ function formatDatetimeLocal(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function normalizeDateForInput(raw?: string): string {
+  const clean = String(raw || "").trim();
+  if (!clean) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+  const dmyMatch = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmyMatch) {
+    const [, dd, mm, yyyy] = dmyMatch;
+    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  }
+  return clean;
+}
+
 function computeMatchStartMs(match?: MatchOption | null): number | null {
   if (!match?.date) return null;
   return parseMatchStartMs(match.date, match.time);
@@ -300,8 +312,8 @@ function AddEngagementContent() {
             team1_short: m.team1_short ? String(m.team1_short) : undefined,
             team2_short: m.team2_short ? String(m.team2_short) : undefined,
             format: m.format ? String(m.format) : undefined,
-            date: m.date ? String(m.date) : (m.start_date ? String(m.start_date) : undefined),
-            time: m.time ? String(m.time) : undefined,
+            date: m.date ? String(m.date) : (m.start_date ? String(m.start_date) : (m.startDate ? String(m.startDate) : undefined)),
+            time: m.time ? String(m.time) : (m.broadcast_time ? String(m.broadcast_time) : (m.broadcastTime ? String(m.broadcastTime) : undefined)),
             status: m.status ? String(m.status) : undefined,
           }));
           setMatches(list);
@@ -364,7 +376,7 @@ function AddEngagementContent() {
     setFollowTeam1Flag(t1Flag);
     setFollowTeam2Flag(t2Flag);
     setFollowMatchLabel(matchLabel);
-    setFollowMatchDate(mDate);
+    setFollowMatchDate(normalizeDateForInput(mDate));
     setFollowBroadcastTime(bTime);
     setFollowMatchStartMs(startMs);
     setFollowMatchTimeLabel(formatMatchTimeDisplay(activeMatch, startMs));
@@ -649,30 +661,45 @@ function AddEngagementContent() {
           }
         : {}),
       ...(engType === "follow"
-        ? {
-            followData: {
-              team1Name: activeMatch?.team1 || followTeam1Code || "Team 1",
-              team1Code: followTeam1Code.trim() || deriveTeamCode(activeMatch?.team1, activeMatch?.team1_short),
-              team1Flag: followTeam1Flag.trim(),
-              team2Name: activeMatch?.team2 || followTeam2Code || "Team 2",
-              team2Code: followTeam2Code.trim() || deriveTeamCode(activeMatch?.team2, activeMatch?.team2_short),
-              team2Flag: followTeam2Flag.trim(),
-              matchLabel: followMatchLabel.trim() || "T20 INTERNATIONAL",
-              matchDate: followMatchDate.trim() || activeMatch?.date || "",
-              broadcastTime: followBroadcastTime.trim() || activeMatch?.time || "",
-              matchTimeLabel: followMatchTimeLabel.trim() || "Upcoming",
-              matchStartMs:
-                followMatchStartMs ||
-                parseMatchStartMs(followMatchDate || activeMatch?.date, followBroadcastTime || activeMatch?.time) ||
-                undefined,
-              statusLabel:
-                activeMatch?.status === "completed"
-                  ? "Completed"
-                  : activeMatch?.status === "live"
-                  ? "LIVE"
-                  : "Upcoming",
-            },
-          }
+        ? (() => {
+            const finalStartMs =
+              followMatchStartMs ||
+              parseMatchStartMs(followMatchDate || activeMatch?.date, followBroadcastTime || activeMatch?.time) ||
+              undefined;
+            const finalTimeLabel =
+              followMatchTimeLabel.trim() ||
+              formatMatchTimeDisplay(
+                { ...activeMatch, date: followMatchDate || activeMatch?.date, time: followBroadcastTime || activeMatch?.time } as any,
+                finalStartMs
+              ) ||
+              "Upcoming";
+            return {
+              matchStartMs: finalStartMs,
+              matchStartTime: finalStartMs,
+              targetStartMs: finalStartMs,
+              followData: {
+                team1Name: activeMatch?.team1 || followTeam1Code || "Team 1",
+                team1Code: followTeam1Code.trim() || deriveTeamCode(activeMatch?.team1, activeMatch?.team1_short),
+                team1Flag: followTeam1Flag.trim(),
+                team2Name: activeMatch?.team2 || followTeam2Code || "Team 2",
+                team2Code: followTeam2Code.trim() || deriveTeamCode(activeMatch?.team2, activeMatch?.team2_short),
+                team2Flag: followTeam2Flag.trim(),
+                matchLabel: followMatchLabel.trim() || "T20 INTERNATIONAL",
+                matchDate: followMatchDate.trim() || activeMatch?.date || "",
+                broadcastTime: followBroadcastTime.trim() || activeMatch?.time || "",
+                matchTimeLabel: finalTimeLabel,
+                matchStartMs: finalStartMs,
+                matchStartTime: finalStartMs,
+                targetStartMs: finalStartMs,
+                statusLabel:
+                  activeMatch?.status === "completed"
+                    ? "Completed"
+                    : activeMatch?.status === "live"
+                    ? "LIVE"
+                    : "Upcoming",
+              },
+            };
+          })()
         : {}),
       ...(engType === "match_result"
         ? {
@@ -843,8 +870,19 @@ function AddEngagementContent() {
               <select
                 value={selectedMatchId}
                 onChange={(e) => {
-                  setSelectedMatchId(e.target.value);
+                  const newMatchId = e.target.value;
+                  setSelectedMatchId(newMatchId);
                   setSelectedMomentId("");
+                  const matchObj = matches.find((m) => m.match_id === newMatchId);
+                  if (matchObj) {
+                    const mDate = String(matchObj.date || "").trim();
+                    const bTime = String(matchObj.time || "").trim();
+                    const startMs = parseMatchStartMs(mDate, bTime);
+                    setFollowMatchDate(normalizeDateForInput(mDate));
+                    setFollowBroadcastTime(bTime);
+                    setFollowMatchStartMs(startMs);
+                    setFollowMatchTimeLabel(formatMatchTimeDisplay(matchObj, startMs));
+                  }
                 }}
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-medium"
               >
@@ -1045,7 +1083,7 @@ function AddEngagementContent() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
                     Match Date (from Match)
@@ -1058,12 +1096,13 @@ function AddEngagementContent() {
                       setFollowMatchDate(newDate);
                       const start = parseMatchStartMs(newDate, followBroadcastTime);
                       setFollowMatchStartMs(start);
-                      if (newDate) {
-                        setFollowMatchTimeLabel(formatMatchTimeDisplay({ ...activeMatch, date: newDate, time: followBroadcastTime } as any, start));
-                      }
+                      setFollowMatchTimeLabel(formatMatchTimeDisplay({ ...activeMatch, date: newDate, time: followBroadcastTime } as any, start));
                     }}
                     className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
                   />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Auto-fetched when match is selected.
+                  </p>
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
@@ -1077,51 +1116,15 @@ function AddEngagementContent() {
                       setFollowBroadcastTime(newTime);
                       const start = parseMatchStartMs(followMatchDate, newTime);
                       setFollowMatchStartMs(start);
-                      if (followMatchDate || newTime) {
-                        setFollowMatchTimeLabel(formatMatchTimeDisplay({ ...activeMatch, date: followMatchDate, time: newTime } as any, start));
-                      }
+                      setFollowMatchTimeLabel(formatMatchTimeDisplay({ ...activeMatch, date: followMatchDate, time: newTime } as any, start));
                     }}
                     placeholder="e.g. 19:30 IST or 7:30 PM"
                     className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
                   />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Reverse countdown ticks from present time to this broadcast time, switching to LIVE at 00:00.
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                    Match Date &amp; Time Label
-                  </label>
-                  <input
-                    type="text"
-                    value={followMatchTimeLabel}
-                    onChange={(e) => setFollowMatchTimeLabel(e.target.value)}
-                    placeholder="Tomorrow • 7:30 PM"
-                    className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                  Countdown Target (Match Start Date &amp; Time)
-                </label>
-                <input
-                  type="datetime-local"
-                  value={followMatchStartMs ? formatDatetimeLocal(followMatchStartMs) : ""}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (!raw) {
-                      setFollowMatchStartMs(null);
-                      return;
-                    }
-                    const parsed = new Date(raw).getTime();
-                    if (!Number.isNaN(parsed) && parsed > 0) {
-                      setFollowMatchStartMs(parsed);
-                    }
-                  }}
-                  className="w-full sm:max-w-xs bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
-                />
-                <p className="text-[10px] text-gray-500 mt-1">
-                  Prefilled from Match Date &amp; Broadcast Time. Reverse countdown ticks down to this time on frontend and changes status to LIVE at 0.
-                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
