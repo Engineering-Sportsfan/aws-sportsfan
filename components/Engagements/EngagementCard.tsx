@@ -787,16 +787,6 @@ export default function EngagementCard({
             </div>
         );
     };
-                            <div className="text-sm sm:text-base font-extrabold text-white leading-tight truncate mt-0.5">{playerName}</div>
-                            {playerStats && (
-                                <div className="text-xs text-white/80 font-normal truncate mt-1">{playerStats}</div>
-                            )}
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
-    };
 
     // ─────────────────────────────────────────────────────────────
     // RENDER: Poll / Debate Body
