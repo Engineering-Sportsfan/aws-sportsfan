@@ -93,11 +93,11 @@ export interface MatchSummaryRecord {
   type: "MATCH_SNAPSHOT_SUMMARY";
   matchId: string;
   matchTitle: string;
-  team1Name: string;
-  team1Score: string;
+  team1Name?: string;
+  team1Score?: string;
   team1Flag?: string;
-  team2Name: string;
-  team2Score: string;
+  team2Name?: string;
+  team2Score?: string;
   team2Flag?: string;
   resultSummary?: string;
   topPerformerLabel?: string;
@@ -105,6 +105,8 @@ export interface MatchSummaryRecord {
   playerStats?: string;
   playerImageUrl?: string;
   totalActions?: number;
+  totalMoments?: number;
+  totalParticipants?: number;
   predictionsRatio?: string;
   totalPredictionsCount?: number;
   totalPredictionsWon?: number;
@@ -1193,29 +1195,23 @@ export async function generateAndPersistMatchPlayerSummaries(
     const totalAllPredsCount = summaries.reduce((acc, s) => acc + (s.predictionsCount || 0), 0);
     const totalAllPredsWon = summaries.reduce((acc, s) => acc + (s.predictionsWon || 0), 0);
     const allUsersPredictionsRatio = totalAllPredsCount > 0 ? `${totalAllPredsWon}/${totalAllPredsCount}` : "8/10";
+    const distinctMoments = new Set<string>(momentsById.keys());
+    for (const eng of engagementsById.values()) {
+      if (eng.momentId) distinctMoments.add(String(eng.momentId).trim());
+    }
+    const totalMomentsCount = Math.max(distinctMoments.size, momentsById.size, 1);
+    const totalParticipantsCount = Math.max(summaries.length, 1);
 
     matchSnapshotRecord = {
       id: `MATCH_SUMMARY_${cleanM}`,
       type: "MATCH_SNAPSHOT_SUMMARY",
       matchId: cleanM,
       matchTitle,
-      team1Name: mr.team1Name || matchMeta.team1 || team1 || "India",
-      team1Score: mr.team1Score || matchMeta.team1Score || matchMeta.score1 || "198/5 (20)",
-      team1Flag: mr.team1Flag || matchMeta.team1Flag || matchMeta.flag1 || "https://flagcdn.com/w80/in.png",
-      team2Name: mr.team2Name || matchMeta.team2 || team2 || "New Zealand",
-      team2Score: mr.team2Score || matchMeta.team2Score || matchMeta.score2 || "187/8 (20)",
-      team2Flag: mr.team2Flag || matchMeta.team2Flag || matchMeta.flag2 || "https://flagcdn.com/w80/nz.png",
-      resultSummary: mr.resultSummary || matchMeta.result || `${team1} won the match!`,
-      topPerformerLabel: mr.performerLabel || "Top Performer",
-      playerName: mr.playerName || matchMeta.playerOfTheMatch?.name || matchMeta.topPerformer?.name || "Suryakumar Yadav",
-      playerStats: mr.playerStats || matchMeta.playerOfTheMatch?.stats || matchMeta.topPerformer?.stats || "65 (39) • 2 Fours • 6 Sixes",
-      playerImageUrl: mr.playerImageUrl || matchMeta.playerOfTheMatch?.imageUrl || matchMeta.topPerformer?.imageUrl || "",
       totalActions: totalAllActions > 0 ? totalAllActions : (Number(mr.totalActions) || 62),
-      predictionsRatio: totalAllPredsCount > 0 ? allUsersPredictionsRatio : (mr.predictionsRatio || "8/10"),
-      totalPredictionsCount: totalAllPredsCount,
-      totalPredictionsWon: totalAllPredsWon,
+      totalMoments: totalMomentsCount,
+      totalParticipants: totalParticipantsCount,
       totalSxp: totalAllSxp > 0 ? totalAllSxp : (Number(mr.totalSxp) || 320),
-      totalFansCount: summaries.length || 1,
+      totalFansCount: totalParticipantsCount,
       createdAt: now,
     };
 
@@ -1470,21 +1466,11 @@ export async function getMatchSnapshotSummary(matchId: string): Promise<MatchSum
       type: "MATCH_SNAPSHOT_SUMMARY",
       matchId: cleanM,
       matchTitle: `${team1} vs ${team2}`,
-      team1Name: team1,
-      team1Score: matchMeta.team1Score || matchMeta.score1 || "198/5 (20)",
-      team1Flag: matchMeta.team1Flag || matchMeta.flag1 || "https://flagcdn.com/w80/in.png",
-      team2Name: team2,
-      team2Score: matchMeta.team2Score || matchMeta.score2 || "187/8 (20)",
-      team2Flag: matchMeta.team2Flag || matchMeta.flag2 || "https://flagcdn.com/w80/nz.png",
-      resultSummary: matchMeta.result || `${team1} won the match!`,
-      topPerformerLabel: "Top Performer",
-      playerName: matchMeta.playerOfTheMatch?.name || matchMeta.topPerformer?.name || "Suryakumar Yadav",
-      playerStats: matchMeta.playerOfTheMatch?.stats || matchMeta.topPerformer?.stats || "65 (39) • 2 Fours • 6 Sixes",
-      playerImageUrl: matchMeta.playerOfTheMatch?.imageUrl || matchMeta.topPerformer?.imageUrl || "",
       totalActions: Number(matchMeta.totalActions) || 62,
-      predictionsRatio: matchMeta.predictionsRatio || "8/10",
+      totalMoments: Number(matchMeta.totalMoments) || 5,
+      totalParticipants: Number(matchMeta.totalParticipants || matchMeta.totalFansCount) || 27,
       totalSxp: Number(matchMeta.totalSxp) || 320,
-      totalFansCount: Number(matchMeta.totalFansCount) || 1,
+      totalFansCount: Number(matchMeta.totalParticipants || matchMeta.totalFansCount) || 27,
       createdAt: Date.now(),
     };
   }

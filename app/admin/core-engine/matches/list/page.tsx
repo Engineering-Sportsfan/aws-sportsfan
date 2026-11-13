@@ -478,7 +478,7 @@ function MatchListContent() {
                     <span className="text-[10px] px-1.5 py-0.5 bg-purple-500/20 text-purple-300 rounded font-semibold border border-purple-500/20">All Fans</span>
                   </div>
                   <p className="text-gray-400 text-[11px] mt-0.5">
-                    Broadcasts the final match scorecard (innings scores and overs) along with the Top Performer player card (runs, balls, boundaries) to the entire room.
+                    Broadcasts the overall in-app match room engagement summary (Total Actions, Total Moments, Total Participants) across all fans to the entire room.
                   </p>
                 </div>
               </label>
