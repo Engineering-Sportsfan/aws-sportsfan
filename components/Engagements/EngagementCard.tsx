@@ -1074,6 +1074,14 @@ export default function EngagementCard({
     // VARIANT: "post" (Matches regular room discussion posts seamlessly)
     // ─────────────────────────────────────────────────────────────
     if (variant === "post") {
+        if (item.type === "match_result") {
+            return (
+                <div ref={cardRef} className={`w-full my-2.5 ${className}`}>
+                    {renderMatchResult()}
+                </div>
+            );
+        }
+
         return (
             <motion.div
                 initial={{ opacity: 0, y: 8 }}
