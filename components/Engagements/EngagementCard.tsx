@@ -711,73 +711,82 @@ export default function EngagementCard({
     // ─────────────────────────────────────────────────────────────
     const renderMatchResult = () => {
         const mr: any = (item as any).matchResultData || (item as any).resultData || item || {};
-        const team1Label = mr.team1Name || mr.team1Code || (item as any).team1Name || (item as any).team1 || "India";
-        const team2Label = mr.team2Name || mr.team2Code || (item as any).team2Name || (item as any).team2 || "New Zealand";
-        const team1Score = mr.team1Score || (item as any).team1Score || "198/5 (20)";
-        const team2Score = mr.team2Score || (item as any).team2Score || "187/8 (20)";
-        const team1Flag = mr.team1Flag || (item as any).team1Flag || "https://flagcdn.com/w80/in.png";
-        const team2Flag = mr.team2Flag || (item as any).team2Flag || "https://flagcdn.com/w80/nz.png";
-        const playerName = mr.playerName || (item as any).playerName || (item as any).playerOfTheMatch || "Virat Kohli";
-        const playerStats = mr.playerStats || (item as any).playerStats || (item as any).playerOfTheMatchStats || "65 (39) • 2 Fours • 6 Sixes";
-        const playerImageUrl = mr.playerImageUrl || (item as any).playerImageUrl || (item as any).playerOfTheMatchPhoto || "";
-        const showSnapshot = mr.showSnapshot !== false;
-        const showTopPerformer = mr.showTopPerformer !== false;
-        const renderFlag = (flag?: string, name?: string) => {
-            const raw = String(flag || "").trim();
-            if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("/") || raw.startsWith("data:")) {
-                return <img src={raw} alt={name || "Flag"} className="w-full h-full object-cover" />;
-            }
-            if (raw) return <span className="text-xl leading-none">{raw}</span>;
-            return <span className="text-[10px] font-black text-white/80">{String(name || "T").slice(0, 3).toUpperCase()}</span>;
-        };
-        const initials = String(playerName || "PM")
-            .split(/\s+/)
-            .filter(Boolean)
-            .slice(0, 2)
-            .map((w: string) => w[0]?.toUpperCase() || "")
-            .join("") || "PM";
+        const matchTitle = mr.matchTitle || (item as any).matchTitle || (item as any).title || "Match Summary";
+        const totalActions = Number(mr.totalActions ?? (item as any).totalActions ?? (item as any).totalActionsCount ?? 4) || 4;
+        const totalMoments = Number(mr.totalMoments ?? (item as any).totalMoments ?? 1) || 1;
+        const totalParticipants = Number(mr.totalParticipants ?? (item as any).totalParticipants ?? (item as any).totalFansCount ?? 1) || 1;
 
         return (
-            <div className="space-y-2 mt-1">
-                {showSnapshot && (
-                    <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg space-y-2.5">
-                        <div className="text-sm font-bold text-white">{mr.snapshotHeading || "Match Snapshot"}</div>
-                        <div className="grid grid-cols-2 gap-3 items-center justify-between">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-11 h-8 rounded-md bg-white/[0.06] border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
-                                    {renderFlag(team1Flag, team1Label)}
-                                </div>
-                                <div className="min-w-0">
-                                    <div className="text-xs font-semibold text-white/90 truncate">{team1Label}</div>
-                                    <div className="text-sm sm:text-base font-extrabold text-white tabular-nums truncate">{team1Score}</div>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-11 h-8 rounded-md bg-white/[0.06] border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
-                                    {renderFlag(team2Flag, team2Label)}
-                                </div>
-                                <div className="min-w-0">
-                                    <div className="text-xs font-semibold text-white/90 truncate">{team2Label}</div>
-                                    <div className="text-sm sm:text-base font-extrabold text-white tabular-nums truncate">{team2Score}</div>
-                                </div>
-                            </div>
+            <div className="w-full shrink-0 rounded-2xl overflow-hidden my-3 border border-emerald-500/40 shadow-2xl" style={{ background: "linear-gradient(180deg, #091312 0%, #050b0a 100%)", minHeight: "180px" }}>
+                <div className="p-4 space-y-3.5">
+                    {/* Header in Emerald */}
+                    <div className="flex items-center justify-between">
+                        <div className="text-xs font-black tracking-wider uppercase text-emerald-400 flex items-center gap-1.5">
+                            <span>🏆</span>
+                            <span>MATCH SNAPSHOT</span>
                         </div>
-                        {mr.resultSummary && (
-                            <div className="text-[11px] font-semibold text-emerald-400 pt-1 border-t border-white/5">{mr.resultSummary}</div>
-                        )}
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            FINAL RESULT
+                        </span>
                     </div>
-                )}
-                {showTopPerformer && (
-                    <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg flex items-center gap-3.5">
-                        <div className="w-14 h-14 rounded-xl bg-gradient-to-b from-[#0284c7] to-[#1e3a8a] border border-sky-400/30 overflow-hidden shrink-0 flex items-center justify-center text-white font-black text-sm shadow-inner">
-                            {playerImageUrl ? (
-                                <img src={playerImageUrl} alt={playerName} className="w-full h-full object-cover object-top" />
-                            ) : (
-                                <span>{initials}</span>
-                            )}
+
+                    {/* Match Identity Section */}
+                    <div className="flex items-center gap-3">
+                        <div className="w-14 h-14 rounded-full bg-gradient-to-br from-emerald-600 to-teal-800 border-2 border-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.55)] flex items-center justify-center text-2xl shrink-0">
+                            ⚡
                         </div>
+
                         <div className="min-w-0 flex-1">
-                            <div className="text-xs font-bold text-[#38bdf8]">{mr.performerLabel || "Top Performer"}</div>
+                            <div className="text-base font-bold text-emerald-300 truncate leading-tight">
+                                {matchTitle}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-slate-300 mt-0.5 truncate">
+                                <span className="text-emerald-400 font-semibold">⚡ Roar Pulse Activity</span>
+                                <span className="text-slate-500">•</span>
+                                <span className="text-slate-300">All Room Fans</span>
+                            </div>
+                            <div className="text-xs text-slate-400 font-normal mt-0.5 truncate">
+                                Overall in-app fan engagement & actions summary
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 3 Stat Boxes inside dark rounded container */}
+                    <div className="grid grid-cols-3 divide-x divide-white/10 rounded-xl bg-[#0b1715] border border-emerald-500/20 py-2.5 px-1 shadow-inner text-center">
+                        <div>
+                            <div className="text-lg sm:text-xl font-black text-emerald-200 tabular-nums">
+                                {totalActions}
+                            </div>
+                            <div className="text-[11px] text-emerald-200/60 font-medium mt-0.5">
+                                Total Actions
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-lg sm:text-xl font-black text-emerald-200 tabular-nums">
+                                {totalMoments}
+                            </div>
+                            <div className="text-[11px] text-emerald-200/60 font-medium mt-0.5">
+                                Total Moments
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-lg sm:text-xl font-black text-emerald-200 tabular-nums">
+                                {totalParticipants}
+                            </div>
+                            <div className="text-[11px] text-emerald-200/60 font-medium mt-0.5">
+                                Total Participants
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Footer text */}
+                    <div className="text-center text-xs font-semibold text-emerald-400/90 tracking-wide pt-0.5">
+                        🏆 Overall App Activity Across All Room Fans
+                    </div>
+                </div>
+            </div>
+        );
+    };
                             <div className="text-sm sm:text-base font-extrabold text-white leading-tight truncate mt-0.5">{playerName}</div>
                             {playerStats && (
                                 <div className="text-xs text-white/80 font-normal truncate mt-1">{playerStats}</div>
