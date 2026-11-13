@@ -1,5 +1,5 @@
 // types/engagements.ts — Type definitions for Fan Battles, Quizzes, Polls, Predictions, and Meme Arena
-export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "question" | "debate" | "express" | "follow" | "match_result";
+export type EngagementType = "fan_battle" | "quiz" | "poll" | "prediction" | "meme" | "question" | "debate" | "express" | "follow" | "match_result" | "match_summary" | "fan_of_the_match" | "player_match_summary";
 export type EngagementStatus = "active" | "inactive" | "expired" | "settled" | "resolved" | "pending" | "open" | "scheduled";
 
 // ─── 1. Fan Battle ─────────────────────────────────────────────────────────

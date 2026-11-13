@@ -3,6 +3,8 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
+import { withEngagementGsiKeys } from "@/lib/engagementList";
+import { cacheService } from "@/lib/cacheService";
 import { GetCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 export interface PlayerEngagementSummaryRow {
@@ -1126,6 +1128,57 @@ export async function generateAndPersistMatchPlayerSummaries(
             .set({ ...summary, matchId: cleanM }, { merge: true })
             .catch(() => {});
         }
+
+        // Also persist as an in-stream Engagement so it flows directly through /api/engagements
+        const userEngId = `eng_player_summary_${cleanM}_${userKey}`;
+        const userEngagement: any = {
+          id: userEngId,
+          loopId: userEngId,
+          type: "player_match_summary",
+          title: `Your Series Progress`,
+          matchId: cleanM,
+          source: "match_moment",
+          isMatchMoment: true,
+          status: "active",
+          createdAt: now + 200,
+          updatedAt: now + 200,
+          creatorName: "SportsFan360",
+          creatorAvatar: "/images/sportsfan360logo.png",
+          targetUserId: summary.userId,
+          targetEmail: summary.userEmail,
+          userId: summary.userId,
+          userName: summary.userName,
+          userAvatar: summary.userAvatar,
+          userAliases: summary.userAliases,
+          totalActions: summary.totalActions,
+          predictionsRatio: summary.predictionsRatio,
+          predictionsCount: summary.predictionsCount,
+          predictionsWon: summary.predictionsWon,
+          sxpAwarded: summary.totals?.sxpAwarded || summary.sxpAwarded || 320,
+          persona: summary.persona,
+          countryFlag: summary.countryFlag,
+          favoritesLabel: summary.favoritesLabel,
+          leaderboardBadge: summary.leaderboardBadge,
+          rank: summary.rank,
+        };
+        await dualWrite("engagements", userEngId, TABLES.SocialAndContent, withEngagementGsiKeys({
+          contentId: `ENGAGEMENT#${userEngId}`,
+          sk: "ENGAGEMENT#META",
+          entityId: "ENGAGEMENT#PLAYER_MATCH_SUMMARY",
+          ...userEngagement,
+        })).catch(() => {});
+        await dualWrite({
+          tableName: TABLES.MatchMoments,
+          dynamoItem: withEngagementGsiKeys({
+            entityId: `MATCH#${cleanM}`,
+            sk: `LOOP#${userEngId}`,
+            contentId: `ENGAGEMENT#${userEngId}`,
+            ...userEngagement,
+          }),
+          collectionName: "match_moments_engagements",
+          docId: `${cleanM}_${userEngId}`,
+          firestoreData: userEngagement,
+        }).catch(() => {});
       } catch (writeErr) {
         console.warn(`[matchPlayerSummary] Persist notice for ${userKey}:`, writeErr);
       }
@@ -1178,6 +1231,52 @@ export async function generateAndPersistMatchPlayerSummaries(
         firestoreRef: db ? db.collection(getFirestoreCollection("match_room_notifications")).doc(`FAN_OF_THE_MATCH_${cleanM}`) : null,
         firestoreData: { ...fanOfTheMatchRecord, matchId: cleanM },
       });
+
+      // Also persist as an in-stream Engagement so it flows directly through /api/engagements
+      const fotmEngId = `eng_fotm_${cleanM}`;
+      const fotmEngagement: any = {
+        id: fotmEngId,
+        loopId: fotmEngId,
+        type: "fan_of_the_match",
+        title: `🏆 Fan of the Match: ${fotmUserName}`,
+        matchId: cleanM,
+        source: "match_moment",
+        isMatchMoment: true,
+        status: "active",
+        createdAt: now + 100,
+        updatedAt: now + 100,
+        creatorName: "SportsFan360",
+        creatorAvatar: "/images/sportsfan360logo.png",
+        userName: fotmUserName,
+        userAvatar: fotmAvatar,
+        countryFlag: topFan?.countryFlag || "🇮🇳",
+        persona: topFan?.persona || "Analytical Fan",
+        favoritesLabel: topFan?.favoritesLabel || "Bumrah • SKY | MI",
+        interactionsCount: fotmInteractions,
+        predictionsRatio: fotmRatio,
+        predictionsWon: fotmWon,
+        predictionsCount: fotmCount,
+        sxpAwarded: fotmSxp,
+        leaderboardBadge: "Top 5% in Series Leaderboard",
+      };
+      await dualWrite("engagements", fotmEngId, TABLES.SocialAndContent, withEngagementGsiKeys({
+        contentId: `ENGAGEMENT#${fotmEngId}`,
+        sk: "ENGAGEMENT#META",
+        entityId: "ENGAGEMENT#FAN_OF_THE_MATCH",
+        ...fotmEngagement,
+      })).catch(() => {});
+      await dualWrite({
+        tableName: TABLES.MatchMoments,
+        dynamoItem: withEngagementGsiKeys({
+          entityId: `MATCH#${cleanM}`,
+          sk: `LOOP#${fotmEngId}`,
+          contentId: `ENGAGEMENT#${fotmEngId}`,
+          ...fotmEngagement,
+        }),
+        collectionName: "match_moments_engagements",
+        docId: `${cleanM}_${fotmEngId}`,
+        firestoreData: fotmEngagement,
+      }).catch(() => {});
     } catch (fotmErr) {
       console.warn(`[matchPlayerSummary] Fan of the Match persist notice:`, fotmErr);
     }
@@ -1228,10 +1327,64 @@ export async function generateAndPersistMatchPlayerSummaries(
         firestoreRef: db ? db.collection(getFirestoreCollection("match_room_notifications")).doc(`MATCH_SUMMARY_${cleanM}`) : null,
         firestoreData: { ...matchSnapshotRecord, matchId: cleanM },
       });
+
+      // Also persist as an in-stream Engagement so it flows directly through /api/engagements
+      const matchSummaryEngId = `eng_summary_${cleanM}`;
+      const matchSummaryEngagement: any = {
+        id: matchSummaryEngId,
+        loopId: matchSummaryEngId,
+        type: "match_result",
+        title: `Match Summary: ${matchTitle}`,
+        matchId: cleanM,
+        source: "match_moment",
+        isMatchMoment: true,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+        creatorName: "SportsFan360",
+        creatorAvatar: "/images/sportsfan360logo.png",
+        userName: "SportsFan360",
+        userAvatar: "/images/sportsfan360logo.png",
+        totalActions: matchSnapshotRecord.totalActions,
+        totalMoments: matchSnapshotRecord.totalMoments,
+        totalParticipants: matchSnapshotRecord.totalParticipants,
+        totalSxp: matchSnapshotRecord.totalSxp,
+        matchTitle,
+        matchResultData: {
+          totalActions: matchSnapshotRecord.totalActions,
+          totalMoments: matchSnapshotRecord.totalMoments,
+          totalParticipants: matchSnapshotRecord.totalParticipants,
+          totalSxp: matchSnapshotRecord.totalSxp,
+          matchTitle,
+        },
+      };
+      await dualWrite("engagements", matchSummaryEngId, TABLES.SocialAndContent, withEngagementGsiKeys({
+        contentId: `ENGAGEMENT#${matchSummaryEngId}`,
+        sk: "ENGAGEMENT#META",
+        entityId: "ENGAGEMENT#MATCH_RESULT",
+        ...matchSummaryEngagement,
+      })).catch(() => {});
+      await dualWrite({
+        tableName: TABLES.MatchMoments,
+        dynamoItem: withEngagementGsiKeys({
+          entityId: `MATCH#${cleanM}`,
+          sk: `LOOP#${matchSummaryEngId}`,
+          contentId: `ENGAGEMENT#${matchSummaryEngId}`,
+          ...matchSummaryEngagement,
+        }),
+        collectionName: "match_moments_engagements",
+        docId: `${cleanM}_${matchSummaryEngId}`,
+        firestoreData: matchSummaryEngagement,
+      }).catch(() => {});
     } catch (msErr) {
       console.warn(`[matchPlayerSummary] Match snapshot summary persist notice:`, msErr);
     }
   }
+
+  // Clear engagement cache so frontend immediately sees newly generated summaries
+  try {
+    await cacheService.clear();
+  } catch {}
 
   return {
     generatedCount: summaries.length,
