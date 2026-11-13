@@ -932,6 +932,8 @@ export async function PUT(req: NextRequest) {
     match_id: rawId,
     data: updatedMatch,
     playerSummariesGenerated,
+    fanOfTheMatchDispatched,
+    matchSummaryDispatched,
   });
 }
 

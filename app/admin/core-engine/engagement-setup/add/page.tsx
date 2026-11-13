@@ -623,13 +623,16 @@ function AddEngagementContent() {
     setSubmitResult(null);
 
     const isFutureSched = Boolean(scheduledStartMs && scheduledStartMs > Date.now() + 30000);
+    const isNone = selectedMatchId === "none";
 
     const payload: Record<string, unknown> = {
       id: editId || undefined,
       title: resolvedTitle,
-      subtitle: `${activeMatch?.team1 || ""} vs ${activeMatch?.team2 || ""} · ${
-        activeMoment ? formatMomentTimingBadge(activeMoment) : "Live"
-      }`,
+      subtitle: isNone
+        ? `General Engagement · ${activeMoment ? formatMomentTimingBadge(activeMoment) : "Live"}`
+        : `${activeMatch?.team1 || ""} vs ${activeMatch?.team2 || ""} · ${
+            activeMoment ? formatMomentTimingBadge(activeMoment) : "Live"
+          }`,
       type: engType,
       sport: "cricket",
       status: isFutureSched ? "scheduled" : resolveStatus || "active",
@@ -734,12 +737,12 @@ function AddEngagementContent() {
       coinStake: 10,
       loopId:
         loopId.trim() ||
-        `LOOP-${String(activeMoment?.overs || activeMoment?.timingLabel || "ENG")
+        `LOOP-${String(activeMoment?.overs || activeMoment?.timingLabel || (isNone ? "GEN" : "ENG"))
           .trim()
           .replace(/\s+/g, "-")}-${Date.now().toString(36)}`,
       momentId: selectedMomentId,
-      matchId: selectedMatchId,
-      innings: activeMoment?.innings ?? 1,
+      matchId: isNone ? "none" : selectedMatchId,
+      innings: activeMoment?.innings ?? (isNone ? 0 : 1),
       overNumber: activeMoment?.overs || "",
       scoreState: activeMoment?.score || "",
       anchorTrigger: activeMoment?.matchMoment || activeMoment?.event || "",
@@ -887,12 +890,18 @@ function AddEngagementContent() {
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-medium"
               >
                 <option value="">-- Select Match --</option>
+                <option value="none">None (No Match / General Engagement)</option>
                 {matches.map((m) => (
                   <option key={m.match_id} value={m.match_id}>
                     {m.team1} vs {m.team2} ({m.format || "Match"})
                   </option>
                 ))}
               </select>
+              {selectedMatchId === "none" && (
+                <p className="mt-1 text-[11px] text-amber-300 flex items-center gap-1 font-medium">
+                  <span>⭐</span> General Engagement (standalone, not linked to a specific match fixture)
+                </p>
+              )}
             </div>
 
             <div>

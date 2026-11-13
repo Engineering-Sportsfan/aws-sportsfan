@@ -99,13 +99,14 @@ function MomentListContent() {
     fetchMoments();
   }, [fetchMoments]);
 
-  const handleDeleteMoment = async (momentId: string, overText?: string) => {
+  const handleDeleteMoment = async (momentId: string, overText?: string, itemMatchId?: string) => {
     if (!confirm(`Are you sure you want to delete this moment${overText ? ` (${overText})` : ""}? This action cannot be undone.`)) {
       return;
     }
     try {
+      const matchParam = itemMatchId || selectedMatchId || "none";
       const res = await fetch(
-        `/api/match-moments?momentId=${encodeURIComponent(momentId)}&matchId=${encodeURIComponent(selectedMatchId)}`,
+        `/api/match-moments?momentId=${encodeURIComponent(momentId)}&matchId=${encodeURIComponent(matchParam)}`,
         { method: "DELETE" }
       );
       const json = await res.json();
@@ -204,6 +205,7 @@ function MomentListContent() {
             className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 font-medium"
           >
             <option value="">-- All Matches --</option>
+            <option value="none">None (No Match / General Moments)</option>
             {matches.map((m) => (
               <option key={m.match_id} value={m.match_id}>
                 {m.team1} vs {m.team2}
@@ -319,7 +321,7 @@ function MomentListContent() {
 
                 {/* Delete */}
                 <button
-                  onClick={() => handleDeleteMoment(m.momentId, formatMomentTimingBadge(m))}
+                  onClick={() => handleDeleteMoment(m.momentId, formatMomentTimingBadge(m), m.matchId)}
                   className="p-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-all border border-red-500/20"
                   title="Delete Moment"
                 >

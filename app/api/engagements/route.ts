@@ -194,10 +194,37 @@ export async function GET(req: NextRequest) {
     const matchMomentTables = useGsi ? [TABLES.MatchMoments] : getCandidateTableNames(TABLES.MatchMoments);
     const rawSearchMatchId = searchParams.get("matchId");
     const cleanSearchMatchId = rawSearchMatchId ? rawSearchMatchId.replace(/^MATCH#/, "") : null;
+    const isNoneSearchMatch = Boolean(
+      cleanSearchMatchId &&
+        (cleanSearchMatchId.toLowerCase() === "none" || cleanSearchMatchId.toLowerCase() === "global")
+    );
     for (const table of matchMomentTables) {
       try {
         let loopItems: any[] = [];
-        if (cleanSearchMatchId) {
+        if (isNoneSearchMatch) {
+          for (const gId of ["MATCH#GLOBAL", "MATCH#NONE"]) {
+            try {
+              let qKey: Record<string, any> | undefined;
+              do {
+                const qRes = await docClient.send(
+                  new QueryCommand({
+                    TableName: table,
+                    KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skpfx)",
+                    ExpressionAttributeValues: {
+                      ":eId": gId,
+                      ":skpfx": "LOOP#",
+                    },
+                    ExclusiveStartKey: qKey,
+                  })
+                );
+                loopItems.push(...(qRes.Items || []));
+                qKey = qRes.LastEvaluatedKey;
+              } while (qKey);
+            } catch (e) {
+              // ignore
+            }
+          }
+        } else if (cleanSearchMatchId) {
           try {
             let qKey: Record<string, any> | undefined;
             do {
@@ -558,8 +585,12 @@ export async function GET(req: NextRequest) {
     const matchIdParam = searchParams.get("matchId");
     if (matchIdParam) {
       const cleanTargetMatchId = matchIdParam.replace(/^MATCH#/i, "").toLowerCase();
+      const isNoneTarget = cleanTargetMatchId === "none" || cleanTargetMatchId === "global";
       items = items.filter(i => {
         const itemMatchId = String((i as any).matchId || "").replace(/^MATCH#/i, "").toLowerCase();
+        if (isNoneTarget) {
+          return !itemMatchId || itemMatchId === "none" || itemMatchId === "global";
+        }
         return itemMatchId === cleanTargetMatchId;
       });
     }
@@ -1480,17 +1511,24 @@ export async function POST(req: NextRequest) {
     // If this engagement belongs to a match moment (or has matchId), dual-write to MatchMoments table
     if (newEngagement.isMatchMoment || newEngagement.source === "match_moment" || newEngagement.matchId) {
       try {
+        const isNoneMatch = !newEngagement.matchId || String(newEngagement.matchId).toLowerCase() === "none" || String(newEngagement.matchId).toLowerCase() === "global";
+        const matchPartitionKey = isNoneMatch ? "MATCH#GLOBAL" : `MATCH#${newEngagement.matchId}`;
+        const matchDocPrefix = isNoneMatch ? "GLOBAL" : newEngagement.matchId;
         await dualWrite({
           tableName: TABLES.MatchMoments,
           dynamoItem: withEngagementGsiKeys({
-            entityId: `MATCH#${newEngagement.matchId || "GLOBAL"}`,
+            entityId: matchPartitionKey,
             sk: `LOOP#${newEngagement.loopId || id}`,
             contentId: `ENGAGEMENT#${id}`,
             ...newEngagement,
+            matchId: isNoneMatch ? "none" : newEngagement.matchId,
           }),
           collectionName: "match_moments_engagements",
-          docId: `${newEngagement.matchId || "GLOBAL"}_${newEngagement.loopId || id}`,
-          firestoreData: newEngagement,
+          docId: `${matchDocPrefix}_${newEngagement.loopId || id}`,
+          firestoreData: {
+            ...newEngagement,
+            matchId: isNoneMatch ? "none" : newEngagement.matchId,
+          },
         });
       } catch (mmErr) {
         console.warn("[POST /api/engagements] MatchMoments table dual-write notice:", mmErr);

@@ -183,6 +183,21 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     },
   });
 
+  // Also sync to SportsData table if present
+  try {
+    const { PutCommand } = await import("@aws-sdk/lib-dynamodb");
+    await docClient.send(
+      new PutCommand({
+        TableName: TABLES.SportsData,
+        Item: {
+          entityId: `MATCH#${id}`,
+          sk: "MATCH#META",
+          ...updatedMatch,
+        },
+      })
+    );
+  } catch {}
+
   let playerSummariesGenerated = 0;
   let fanOfTheMatchDispatched = false;
   let matchSummaryDispatched = false;
