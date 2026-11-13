@@ -625,14 +625,18 @@ const getMomentKey = (item: any): string | null => {
 };
 
 // ─── Helper: look up an existing moment (DynamoDB candidates first, then Firestore) ───
-// Moment IDs are unique per match: the storage key is MATCH#<matchId> + MOMENT#<momentId>.
+// Moment IDs are unique per match (or general): the storage key is MATCH#<matchId> + MOMENT#<momentId>.
 async function findExistingMoment(matchId: string, momentId: string): Promise<any | null> {
+  const isNoneMatch = !matchId || matchId.toLowerCase() === "none" || matchId.toLowerCase() === "global" || matchId === "";
+  const entityIdKey = isNoneMatch ? "MATCH#GLOBAL" : `MATCH#${matchId}`;
+  const docKey = isNoneMatch ? `GLOBAL_${momentId}` : `${matchId}_${momentId}`;
+
   for (const table of getAllCandidateTables()) {
     try {
       const res = await docClient.send(
         new GetCommand({
           TableName: table,
-          Key: { entityId: `MATCH#${matchId}`, sk: `MOMENT#${momentId}` },
+          Key: { entityId: entityIdKey, sk: `MOMENT#${momentId}` },
           ConsistentRead: true,
         })
       );
@@ -645,7 +649,7 @@ async function findExistingMoment(matchId: string, momentId: string): Promise<an
   try {
     const snap = await db
       .collection(getFirestoreCollection("match_moments"))
-      .doc(`${matchId}_${momentId}`)
+      .doc(docKey)
       .get();
     if (snap.exists) return snap.data() || {};
   } catch {
@@ -662,6 +666,7 @@ export async function GET(req: NextRequest) {
   const rawMatchId = searchParams.get("matchId");
   const matchesOnly = searchParams.get("matchesOnly") === "true";
   const cleanMatchId = rawMatchId ? stripMatchPrefix(rawMatchId) : null;
+  const isNoneMatch = Boolean(cleanMatchId && (cleanMatchId.toLowerCase() === "none" || cleanMatchId.toLowerCase() === "global"));
 
   try {
     const candidateTables = getAllCandidateTables();
@@ -726,7 +731,25 @@ export async function GET(req: NextRequest) {
     // 1. Query ALL candidate DynamoDB tables (MatchMoments + SportsData, incl. env variants)
     for (const tbl of candidateTables) {
       try {
-        if (cleanMatchId) {
+        if (isNoneMatch) {
+          // Query MATCH#GLOBAL & MATCH#NONE partitions for standalone / general moments
+          for (const gId of ["MATCH#GLOBAL", "MATCH#NONE", "GENERAL_MOMENTS"]) {
+            try {
+              const res = await docClient.send(
+                new QueryCommand({
+                  TableName: tbl,
+                  KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skPrefix)",
+                  ExpressionAttributeValues: {
+                    ":eId": gId,
+                    ":skPrefix": "MOMENT#",
+                  },
+                  ConsistentRead: true,
+                })
+              );
+              (res.Items || []).forEach(addMoment);
+            } catch {}
+          }
+        } else if (cleanMatchId) {
           // A. entityId with MATCH# prefix (primary schema)
           try {
             const res = await docClient.send(
@@ -798,7 +821,9 @@ export async function GET(req: NextRequest) {
     if (db) {
       try {
         let q: FirebaseFirestore.Query = db.collection(getFirestoreCollection("match_moments"));
-        if (cleanMatchId) {
+        if (isNoneMatch) {
+          q = q.where("matchId", "in", ["", "none", "NONE", "global", "GLOBAL"]);
+        } else if (cleanMatchId) {
           q = q.where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`]);
         }
         const snap = await q.limit(200).get();
@@ -808,7 +833,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const moments = sortMatchMoments(Array.from(momentMap.values()));
+    let rawMoments = Array.from(momentMap.values());
+    if (isNoneMatch) {
+      rawMoments = rawMoments.filter((m) => {
+        const mid = String(m.matchId || "").trim().toLowerCase();
+        return !mid || mid === "none" || mid === "global";
+      });
+    } else if (cleanMatchId) {
+      rawMoments = rawMoments.filter((m) => {
+        const mid = stripMatchPrefix(String(m.matchId || "").trim());
+        return mid === cleanMatchId;
+      });
+    }
+
+    const moments = sortMatchMoments(rawMoments);
 
     return NextResponse.json({
       success: true,
@@ -850,20 +888,21 @@ export async function POST(req: NextRequest) {
       isEdit,
     } = body;
 
-    if (!matchId || !event || !matchMoment) {
+    if (!event || !matchMoment) {
       return NextResponse.json(
-        { success: false, error: "matchId, event, and matchMoment are required" },
+        { success: false, error: "event and matchMoment are required" },
         { status: 400 }
       );
     }
 
-    const cleanMatchId = stripMatchPrefix(matchId);
+    const isNoneMatch = !matchId || String(matchId).trim().toLowerCase() === "none" || String(matchId).trim() === "";
+    const cleanMatchId = isNoneMatch ? "none" : stripMatchPrefix(matchId);
     const cleanMomentId =
       momentId && String(momentId).trim()
         ? String(momentId).trim()
-        : `MM-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+        : `MM-${isNoneMatch ? "GEN" : "MOM"}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-    // Moment IDs must be unique within a match.
+    // Moment IDs must be unique within a match or general moments.
     // Creating with an ID that already exists is rejected; editing updates the existing one.
     const isUpdate = Boolean(isEdit);
     const hasClientId = Boolean(momentId && String(momentId).trim());
@@ -873,7 +912,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: `Moment ID ${cleanMomentId} already exists for match ${cleanMatchId}. Use Edit to update it, or refresh to get the next free ID.`,
+          error: `Moment ID ${cleanMomentId} already exists for ${isNoneMatch ? "General Moments" : `match ${cleanMatchId}`}. Use Edit to update it, or refresh to get the next free ID.`,
         },
         { status: 409 }
       );
@@ -881,7 +920,7 @@ export async function POST(req: NextRequest) {
 
     const now = Date.now();
     let resolvedSeriesId = String(body?.seriesId || existing?.seriesId || "").trim();
-    if (!resolvedSeriesId) {
+    if (!resolvedSeriesId && !isNoneMatch) {
       for (const tbl of getAllCandidateTables()) {
         try {
           const matchRes = await docClient.send(
@@ -939,18 +978,21 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     };
 
+    const entityIdVal = isNoneMatch ? "MATCH#GLOBAL" : `MATCH#${cleanMatchId}`;
+    const docIdVal = isNoneMatch ? `GLOBAL_${cleanMomentId}` : `${cleanMatchId}_${cleanMomentId}`;
+
     // Primary write to DynamoDB MatchMoments table + Firestore match_moments
     // (dual keys: entityId + pk for schema resilience)
     await dualWrite({
       tableName: TABLES.MatchMoments,
       dynamoItem: {
-        entityId: `MATCH#${cleanMatchId}`,
-        pk: `MATCH#${cleanMatchId}`,
+        entityId: entityIdVal,
+        pk: entityIdVal,
         sk: `MOMENT#${cleanMomentId}`,
         ...payload, // already includes matchId and momentId
       },
       collectionName: getFirestoreCollection("match_moments"),
-      docId: `${cleanMatchId}_${cleanMomentId}`,
+      docId: docIdVal,
       firestoreData: payload,
     });
 
@@ -959,13 +1001,13 @@ export async function POST(req: NextRequest) {
       await dualWrite({
         tableName: TABLES.SportsData,
         dynamoItem: {
-          entityId: `MATCH#${cleanMatchId}`,
-          pk: `MATCH#${cleanMatchId}`,
+          entityId: entityIdVal,
+          pk: entityIdVal,
           sk: `MOMENT#${cleanMomentId}`,
           ...payload,
         },
         collectionName: getFirestoreCollection("match_moments"),
-        docId: `${cleanMatchId}_${cleanMomentId}`,
+        docId: docIdVal,
         firestoreData: payload,
       });
     } catch (secErr) {
@@ -996,25 +1038,28 @@ export async function DELETE(req: NextRequest) {
   const momentId = searchParams.get("momentId");
   const matchId = searchParams.get("matchId");
 
-  if (!momentId || !matchId) {
+  if (!momentId) {
     return NextResponse.json(
-      { success: false, error: "momentId and matchId are required for deletion" },
+      { success: false, error: "momentId is required for deletion" },
       { status: 400 }
     );
   }
 
-  const cleanMatchId = stripMatchPrefix(matchId);
+  const isNoneMatch = !matchId || matchId.toLowerCase() === "none" || matchId.toLowerCase() === "global" || matchId === "";
+  const cleanMatchId = isNoneMatch ? "none" : stripMatchPrefix(matchId);
+  const entityIdVal = isNoneMatch ? "MATCH#GLOBAL" : `MATCH#${cleanMatchId}`;
+  const docIdVal = isNoneMatch ? `GLOBAL_${momentId}` : `${cleanMatchId}_${momentId}`;
 
   try {
     // Delete from MatchMoments table
     await dualDelete({
       tableName: TABLES.MatchMoments,
       key: {
-        entityId: `MATCH#${cleanMatchId}`,
+        entityId: entityIdVal,
         sk: `MOMENT#${momentId}`,
       },
       collectionName: getFirestoreCollection("match_moments"),
-      docId: `${cleanMatchId}_${momentId}`,
+      docId: docIdVal,
     });
 
     // Delete from SportsData table if present
@@ -1022,11 +1067,11 @@ export async function DELETE(req: NextRequest) {
       await dualDelete({
         tableName: TABLES.SportsData,
         key: {
-          entityId: `MATCH#${cleanMatchId}`,
+          entityId: entityIdVal,
           sk: `MOMENT#${momentId}`,
         },
         collectionName: getFirestoreCollection("match_moments"),
-        docId: `${cleanMatchId}_${momentId}`,
+        docId: docIdVal,
       });
     } catch {}
 

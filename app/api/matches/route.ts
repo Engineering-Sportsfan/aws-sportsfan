@@ -808,6 +808,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (matchPayload.status) {
+    try {
+      const { syncMatchStatusToFollowEngagements } = await import("@/lib/matchFollowService");
+      await syncMatchStatusToFollowEngagements(match.match_id, matchPayload.status);
+    } catch (followSyncErr) {
+      console.warn(`[matches POST ${match.match_id}] Follow engagement sync notice:`, followSyncErr);
+    }
+  }
+
   return NextResponse.json(
     {
       success: true,
@@ -892,12 +901,29 @@ export async function PUT(req: NextRequest) {
   });
 
   let playerSummariesGenerated = 0;
+  let fanOfTheMatchDispatched = false;
+  let matchSummaryDispatched = false;
   if (String(updatedMatch.status || "").trim().toLowerCase() === "completed") {
     try {
-      const summaryResult = await generateAndPersistMatchPlayerSummaries(rawId, updatedMatch);
+      const summaryResult = await generateAndPersistMatchPlayerSummaries(rawId, updatedMatch, {
+        sendUserSummary: body?.sendUserSummary !== false,
+        sendMatchSummary: body?.sendMatchSummary !== false,
+        sendFanOfMatchSummary: body?.sendFanOfMatchSummary !== false,
+      });
       playerSummariesGenerated = summaryResult.generatedCount;
+      fanOfTheMatchDispatched = Boolean(summaryResult.fanOfTheMatch);
+      matchSummaryDispatched = Boolean(summaryResult.matchSnapshot);
     } catch (summaryErr) {
       console.warn(`[matches PUT ${rawId}] Match player summary dispatch notice:`, summaryErr);
+    }
+  }
+
+  if (updatedMatch.status) {
+    try {
+      const { syncMatchStatusToFollowEngagements } = await import("@/lib/matchFollowService");
+      await syncMatchStatusToFollowEngagements(rawId, updatedMatch.status);
+    } catch (followSyncErr) {
+      console.warn(`[matches PUT ${rawId}] Follow engagement sync notice:`, followSyncErr);
     }
   }
 
@@ -906,6 +932,8 @@ export async function PUT(req: NextRequest) {
     match_id: rawId,
     data: updatedMatch,
     playerSummariesGenerated,
+    fanOfTheMatchDispatched,
+    matchSummaryDispatched,
   });
 }
 

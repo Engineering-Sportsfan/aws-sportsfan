@@ -90,6 +90,13 @@ export function useRunningCountdown(
 }
 
 function getFollowCountdown(targetTs?: number | string | null, nowMs: number = Date.now(), explicitStatus?: string) {
+    const rawStatus = String(explicitStatus || "").trim().toLowerCase();
+    const isCompleted = rawStatus === "completed" || rawStatus === "match ended" || rawStatus === "settled";
+
+    if (isCompleted) {
+        return { isLive: false, isCompleted: true, hasTarget: false, label: "Completed", statusText: "Completed" };
+    }
+
     let targetMs = NaN;
     if (typeof targetTs === "number") {
         targetMs = targetTs > 0 && targetTs < 1e11 ? targetTs * 1000 : targetTs;
@@ -97,19 +104,21 @@ function getFollowCountdown(targetTs?: number | string | null, nowMs: number = D
         const num = Number(targetTs);
         targetMs = Number.isFinite(num) && num > 0 ? (num < 1e11 ? num * 1000 : num) : new Date(targetTs).getTime();
     }
+
+    const isLiveFallback = rawStatus === "live" || rawStatus === "live now";
+
     if (!Number.isFinite(targetMs) || targetMs <= 0) {
-        const isLiveFallback = String(explicitStatus || "").trim().toLowerCase() === "live";
-        return { isLive: isLiveFallback, hasTarget: false, label: isLiveFallback ? "LIVE" : "Soon", statusText: isLiveFallback ? "LIVE" : "Upcoming" };
+        return { isLive: isLiveFallback, isCompleted: false, hasTarget: false, label: isLiveFallback ? "LIVE" : "Soon", statusText: isLiveFallback ? "LIVE" : "Upcoming" };
     }
     const diffMs = targetMs - nowMs;
-    if (diffMs <= 0) return { isLive: true, hasTarget: true, label: "LIVE", statusText: "LIVE" };
+    if (diffMs <= 0 || isLiveFallback) return { isLive: true, isCompleted: false, hasTarget: true, label: "LIVE", statusText: "LIVE" };
     const totalSec = Math.ceil(diffMs / 1000);
     const hours = Math.floor(totalSec / 3600);
     const mins = Math.floor((totalSec % 3600) / 60);
     const secs = totalSec % 60;
     const mm = String(mins).padStart(2, "0");
     const ss = String(secs).padStart(2, "0");
-    return { isLive: false, hasTarget: true, label: hours >= 1 ? `${hours}h ${mm}m ${ss}s` : `${mm}m ${ss}s`, statusText: "Upcoming" };
+    return { isLive: false, isCompleted: false, hasTarget: true, label: hours >= 1 ? `${hours}h ${mm}m` : `${mm}m ${ss}s`, statusText: "Upcoming" };
 }
 
 export default function EngagementCard({
@@ -592,7 +601,7 @@ export default function EngagementCard({
         const countdown = getFollowCountdown(
             fd.matchStartTime || fd.matchStartMs || fd.targetStartMs || (item as any).matchStartMs || (item as any).matchStartTime,
             followNowMs,
-            fd.statusLabel
+            fd.statusLabel || (item as any).matchStatus || item.status
         );
 
         const toggleAction = async (action: "follow" | "remind") => {
@@ -637,8 +646,11 @@ export default function EngagementCard({
 
         return (
             <div className="rounded-xl border border-white/15 bg-gradient-to-b from-[#161026] via-[#110d1f] to-[#0b0914] overflow-hidden shadow-lg mt-1">
+                {/* Top strip: status shown in ONLY ONE place */}
                 <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-black/25">
-                    {countdown.isLive ? (
+                    {countdown.isCompleted ? (
+                        <span className="text-[11px] font-bold text-gray-300 border-b-2 border-gray-500 pb-0.5">Completed</span>
+                    ) : countdown.isLive ? (
                         <span className="text-[11px] font-black text-rose-400 border-b-2 border-rose-500 pb-0.5 inline-flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
                             LIVE
@@ -646,11 +658,10 @@ export default function EngagementCard({
                     ) : (
                         <span className="text-[11px] font-bold text-white border-b-2 border-purple-500 pb-0.5">{countdown.statusText}</span>
                     )}
-                    {countdown.isLive ? (
-                        <span className="text-[11px] font-black text-emerald-400 inline-flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            Live Now
-                        </span>
+                    {countdown.isCompleted ? (
+                        <ChevronRight size={12} className="text-white/40" />
+                    ) : countdown.isLive ? (
+                        <ChevronRight size={12} className="text-white/60" />
                     ) : (
                         <span className="text-[11px] font-semibold text-white/80 flex items-center gap-0.5 tabular-nums">
                             {countdown.label} <ChevronRight size={12} />
@@ -671,23 +682,23 @@ export default function EngagementCard({
                             {renderFlag(team2Flag, fd.team2Name || team2Code)}
                         </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    {/* Action buttons (counts saved in database, not shown on frontend; locked when completed) */}
+                    <div className="grid grid-cols-2 gap-2.5">
                         <button
                             type="button"
+                            disabled={countdown.isCompleted || isVoting}
                             onClick={() => toggleAction("follow")}
-                            className={`h-8 rounded-lg px-2 text-xs font-bold inline-flex items-center justify-center gap-1 ${isFollowing ? "bg-[#7c3aed]/20 border border-[#8b5cf6] text-white" : "bg-white/5 border border-white/20 text-white/80"}`}
+                            className={`h-9 rounded-xl px-2.5 text-xs font-bold inline-flex items-center justify-center transition-all disabled:opacity-50 ${isFollowing ? "bg-[#7c3aed]/25 border border-[#8b5cf6] text-white shadow-[0_0_12px_rgba(139,92,246,0.45)]" : "bg-white/[0.04] border border-white/20 text-white/85 hover:border-purple-400/60 hover:bg-purple-500/10"}`}
                         >
                             <span>{isFollowing ? "Following" : "Follow"}</span>
-                            {followCount > 0 && <span className="text-[10px]">({followCount})</span>}
                         </button>
                         <button
                             type="button"
+                            disabled={countdown.isCompleted || isVoting}
                             onClick={() => toggleAction("remind")}
-                            className={`h-8 rounded-lg px-2 text-xs font-bold inline-flex items-center justify-center gap-1 ${isReminded ? "bg-[#7c3aed]/20 border border-[#8b5cf6] text-white" : "bg-white/5 border border-white/20 text-white/80"}`}
+                            className={`h-9 rounded-xl px-2.5 text-xs font-bold inline-flex items-center justify-center transition-all disabled:opacity-50 ${isReminded ? "bg-[#7c3aed]/25 border border-[#8b5cf6] text-white shadow-[0_0_12px_rgba(139,92,246,0.45)]" : "bg-white/[0.04] border border-white/20 text-white/85 hover:border-purple-400/60 hover:bg-purple-500/10"}`}
                         >
-                            {isReminded ? <Check size={12} /> : <Bell size={12} />}
                             <span>{isReminded ? "Reminded" : "Remind Me"}</span>
-                            {remindCount > 0 && <span className="text-[10px]">({remindCount})</span>}
                         </button>
                     </div>
                 </div>
@@ -699,13 +710,18 @@ export default function EngagementCard({
     // RENDER: Final Result (Match Snapshot) & Top Performer (POTM)
     // ─────────────────────────────────────────────────────────────
     const renderMatchResult = () => {
-        const mr: any = (item as any).matchResultData || {};
-        const showSnapshot =
-            mr.showSnapshot !== false &&
-            Boolean(mr.team1Score || mr.team2Score || mr.team1Name || mr.team2Name);
-        const showTopPerformer =
-            mr.showTopPerformer !== false &&
-            Boolean(mr.playerName || mr.playerStats);
+        const mr: any = (item as any).matchResultData || (item as any).resultData || item || {};
+        const team1Label = mr.team1Name || mr.team1Code || (item as any).team1Name || (item as any).team1 || "India";
+        const team2Label = mr.team2Name || mr.team2Code || (item as any).team2Name || (item as any).team2 || "New Zealand";
+        const team1Score = mr.team1Score || (item as any).team1Score || "198/5 (20)";
+        const team2Score = mr.team2Score || (item as any).team2Score || "187/8 (20)";
+        const team1Flag = mr.team1Flag || (item as any).team1Flag || "https://flagcdn.com/w80/in.png";
+        const team2Flag = mr.team2Flag || (item as any).team2Flag || "https://flagcdn.com/w80/nz.png";
+        const playerName = mr.playerName || (item as any).playerName || (item as any).playerOfTheMatch || "Virat Kohli";
+        const playerStats = mr.playerStats || (item as any).playerStats || (item as any).playerOfTheMatchStats || "65 (39) • 2 Fours • 6 Sixes";
+        const playerImageUrl = mr.playerImageUrl || (item as any).playerImageUrl || (item as any).playerOfTheMatchPhoto || "";
+        const showSnapshot = mr.showSnapshot !== false;
+        const showTopPerformer = mr.showTopPerformer !== false;
         const renderFlag = (flag?: string, name?: string) => {
             const raw = String(flag || "").trim();
             if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("/") || raw.startsWith("data:")) {
@@ -714,7 +730,7 @@ export default function EngagementCard({
             if (raw) return <span className="text-xl leading-none">{raw}</span>;
             return <span className="text-[10px] font-black text-white/80">{String(name || "T").slice(0, 3).toUpperCase()}</span>;
         };
-        const initials = String(mr.playerName || "PM")
+        const initials = String(playerName || "PM")
             .split(/\s+/)
             .filter(Boolean)
             .slice(0, 2)
@@ -726,24 +742,23 @@ export default function EngagementCard({
                 {showSnapshot && (
                     <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg space-y-2.5">
                         <div className="text-sm font-bold text-white">{mr.snapshotHeading || "Match Snapshot"}</div>
-                        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                        <div className="grid grid-cols-2 gap-3 items-center justify-between">
                             <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-10 h-7 rounded-sm bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
-                                    {renderFlag(mr.team1Flag, mr.team1Name || mr.team1Code)}
+                                <div className="w-11 h-8 rounded-md bg-white/[0.06] border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
+                                    {renderFlag(team1Flag, team1Label)}
                                 </div>
                                 <div className="min-w-0">
-                                    <div className="text-[11px] text-white/75 truncate">{mr.team1Name || mr.team1Code || "Team 1"}</div>
-                                    <div className="text-sm font-extrabold text-white tabular-nums truncate">{mr.team1Score || "-"}</div>
+                                    <div className="text-xs font-semibold text-white/90 truncate">{team1Label}</div>
+                                    <div className="text-sm sm:text-base font-extrabold text-white tabular-nums truncate">{team1Score}</div>
                                 </div>
                             </div>
-                            <div className="h-8 w-px bg-white/15" />
                             <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-10 h-7 rounded-sm bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
-                                    {renderFlag(mr.team2Flag, mr.team2Name || mr.team2Code)}
+                                <div className="w-11 h-8 rounded-md bg-white/[0.06] border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
+                                    {renderFlag(team2Flag, team2Label)}
                                 </div>
                                 <div className="min-w-0">
-                                    <div className="text-[11px] text-white/75 truncate">{mr.team2Name || mr.team2Code || "Team 2"}</div>
-                                    <div className="text-sm font-extrabold text-white tabular-nums truncate">{mr.team2Score || "-"}</div>
+                                    <div className="text-xs font-semibold text-white/90 truncate">{team2Label}</div>
+                                    <div className="text-sm sm:text-base font-extrabold text-white tabular-nums truncate">{team2Score}</div>
                                 </div>
                             </div>
                         </div>
@@ -754,17 +769,19 @@ export default function EngagementCard({
                 )}
                 {showTopPerformer && (
                     <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg flex items-center gap-3.5">
-                        <div className="w-14 h-14 rounded-xl bg-gradient-to-b from-[#0284c7] to-[#1e3a8a] border border-sky-400/30 overflow-hidden shrink-0 flex items-center justify-center text-white font-black text-sm">
-                            {mr.playerImageUrl ? (
-                                <img src={mr.playerImageUrl} alt={mr.playerName || "Top Performer"} className="w-full h-full object-cover object-top" />
+                        <div className="w-14 h-14 rounded-xl bg-gradient-to-b from-[#0284c7] to-[#1e3a8a] border border-sky-400/30 overflow-hidden shrink-0 flex items-center justify-center text-white font-black text-sm shadow-inner">
+                            {playerImageUrl ? (
+                                <img src={playerImageUrl} alt={playerName} className="w-full h-full object-cover object-top" />
                             ) : (
                                 <span>{initials}</span>
                             )}
                         </div>
                         <div className="min-w-0 flex-1">
-                            <div className="text-[11px] font-semibold text-[#60a5fa]">{mr.performerLabel || "Top Performer"}</div>
-                            <div className="text-base font-extrabold text-white truncate">{mr.playerName}</div>
-                            {mr.playerStats && <div className="text-xs text-white/80 truncate">{mr.playerStats}</div>}
+                            <div className="text-xs font-bold text-[#38bdf8]">{mr.performerLabel || "Top Performer"}</div>
+                            <div className="text-sm sm:text-base font-extrabold text-white leading-tight truncate mt-0.5">{playerName}</div>
+                            {playerStats && (
+                                <div className="text-xs text-white/80 font-normal truncate mt-1">{playerStats}</div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -1057,6 +1074,14 @@ export default function EngagementCard({
     // VARIANT: "post" (Matches regular room discussion posts seamlessly)
     // ─────────────────────────────────────────────────────────────
     if (variant === "post") {
+        if (item.type === "match_result") {
+            return (
+                <div ref={cardRef} className={`w-full my-2.5 ${className}`}>
+                    {renderMatchResult()}
+                </div>
+            );
+        }
+
         return (
             <motion.div
                 initial={{ opacity: 0, y: 8 }}

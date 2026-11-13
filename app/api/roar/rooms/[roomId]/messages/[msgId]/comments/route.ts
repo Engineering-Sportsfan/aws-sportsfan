@@ -56,6 +56,7 @@ export async function GET(
           ":r": roomCand, 
           ":p": `COMMENT#${targetMsgId}#` 
         },
+        ConsistentRead: true,
         Limit: limit
       }));
 
