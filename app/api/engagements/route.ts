@@ -681,11 +681,16 @@ export async function GET(req: NextRequest) {
 
     // ── Base list: user-independent, cached 5s (Upstash, in-memory fallback) ─────────────────────────
     type BaseList = { items: EngagementItem[]; hasMore: boolean; nextBefore: number | null };
+    const skipCache =
+      searchParams.get("fresh") === "true" ||
+      searchParams.get("noCache") === "true" ||
+      req.headers.get("cache-control") === "no-cache";
     const cacheKey = "engagements:list:v1:" + JSON.stringify([
       searchParams.get("source") || "",
       searchParams.get("category") || "",
       searchParams.get("excludeFlipArena") || "",
       searchParams.get("excludeMatchMoments") || "",
+      searchParams.get("includeScheduled") || "",
       type || "",
       status || "",
       sport || "",
@@ -694,7 +699,7 @@ export async function GET(req: NextRequest) {
       limit,
       before ?? "",
     ]);
-    let base = await cacheService.get<BaseList>(cacheKey);
+    let base = skipCache ? null : await cacheService.get<BaseList>(cacheKey);
     if (!base) {
       try {
         base = await buildBase(gsiRequested);
@@ -756,6 +761,13 @@ export async function GET(req: NextRequest) {
   } catch (error: unknown) {
     console.error("GET /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to fetch engagements";
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
@@ -861,7 +873,14 @@ export async function POST(req: NextRequest) {
     const isMeme = type === "meme";
 
     if (!type) {
-      return NextResponse.json({ error: "Type is required" }, { status: 400 });
+      // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
+    return NextResponse.json({ error: "Type is required" }, { status: 400 });
     }
 
     const resolvedImageUrl =
@@ -873,7 +892,14 @@ export async function POST(req: NextRequest) {
       "";
 
     if (isMeme && !resolvedImageUrl) {
-      return NextResponse.json({ error: "Media upload is required for meme voting" }, { status: 400 });
+      // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
+    return NextResponse.json({ error: "Media upload is required for meme voting" }, { status: 400 });
     }
 
     const now = Date.now();
@@ -1360,6 +1386,8 @@ export async function POST(req: NextRequest) {
               team2Code: String(body.followData?.team2Code || body.team2Code || "").trim().toUpperCase(),
               team2Flag: String(body.followData?.team2Flag || body.team2Flag || "").trim(),
               matchLabel: String(body.followData?.matchLabel || body.matchLabel || "T20 INTERNATIONAL").trim(),
+              matchDate: String(body.followData?.matchDate || body.matchDate || "").trim(),
+              broadcastTime: String(body.followData?.broadcastTime || body.broadcastTime || "").trim(),
               matchTimeLabel: String(body.followData?.matchTimeLabel || body.matchTimeLabel || "Upcoming").trim(),
               matchStartMs: resolvedFollowStartMs,
               statusLabel: String(body.followData?.statusLabel || "Upcoming").trim(),
@@ -1505,6 +1533,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({
       success: true,
       message: pointsAwarded > 0 ? `Engagement created successfully! +${pointsAwarded} points awarded.` : "Engagement created successfully",
@@ -1514,6 +1549,13 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     console.error("POST /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to create engagement";
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
@@ -1526,7 +1568,14 @@ export async function DELETE(req: NextRequest) {
     const rawMatchId = searchParams.get("matchId");
 
     if (!rawId) {
-      return NextResponse.json({ success: false, error: "Missing engagement id" }, { status: 400 });
+      // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
+    return NextResponse.json({ success: false, error: "Missing engagement id" }, { status: 400 });
     }
 
     const cleanId = rawId.replace(/^ENGAGEMENT#/, "").replace(/^LOOP#/, "").trim();
@@ -1618,10 +1667,24 @@ export async function DELETE(req: NextRequest) {
       }
     } catch {}
 
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({ success: true, message: `Engagement ${cleanId} deleted successfully` });
   } catch (error: unknown) {
     console.error("DELETE /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to delete engagement";
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

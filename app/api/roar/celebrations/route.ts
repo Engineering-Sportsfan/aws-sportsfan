@@ -5,7 +5,11 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { getCandidateTableNames } from "@/lib/dualWrite";
-import { getUserMatchPlayerSummary } from "@/lib/matchPlayerSummary";
+import {
+  getUserMatchPlayerSummary,
+  getMatchSnapshotSummary,
+  getFanOfTheMatchSummary,
+} from "@/lib/matchPlayerSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -240,18 +244,35 @@ export async function GET(req: NextRequest) {
     filteredRecognitions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
     outcomeRevealsList.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 
-    // Fetch personalized Match Player Summary ONLY for the requesting user (when match is completed)
+    // Fetch personalized Match Player Summary, Match Snapshot, & Fan of the Match Summary (when match is completed)
     let userMatchSummary = null;
-    if (cleanMatchId && (userId || username || email)) {
+    let matchSnapshotSummary = null;
+    let fanOfTheMatchSummary = null;
+
+    if (cleanMatchId) {
+      if (userId || username || email) {
+        try {
+          userMatchSummary = await getUserMatchPlayerSummary({
+            matchId: cleanMatchId,
+            userId,
+            username,
+            email,
+          });
+        } catch (summaryErr) {
+          console.warn("[celebrations] Player summary lookup notice:", summaryErr);
+        }
+      }
+
       try {
-        userMatchSummary = await getUserMatchPlayerSummary({
-          matchId: cleanMatchId,
-          userId,
-          username,
-          email,
-        });
-      } catch (summaryErr) {
-        console.warn("[celebrations] Player summary lookup notice:", summaryErr);
+        matchSnapshotSummary = await getMatchSnapshotSummary(cleanMatchId);
+      } catch (snapshotErr) {
+        console.warn("[celebrations] Match snapshot summary lookup notice:", snapshotErr);
+      }
+
+      try {
+        fanOfTheMatchSummary = await getFanOfTheMatchSummary(cleanMatchId);
+      } catch (fanErr) {
+        console.warn("[celebrations] Fan of the match summary lookup notice:", fanErr);
       }
     }
 
@@ -263,6 +284,8 @@ export async function GET(req: NextRequest) {
       recognitions: filteredRecognitions,
       outcomeReveals: outcomeRevealsList,
       userMatchSummary,
+      matchSnapshotSummary,
+      fanOfTheMatchSummary,
     }, {
       headers: {
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",

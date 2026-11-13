@@ -184,13 +184,30 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   });
 
   let playerSummariesGenerated = 0;
+  let fanOfTheMatchDispatched = false;
+  let matchSummaryDispatched = false;
   if (String(updatedMatch.status || "").trim().toLowerCase() === "completed") {
     try {
       const { generateAndPersistMatchPlayerSummaries } = await import("@/lib/matchPlayerSummary");
-      const summaryResult = await generateAndPersistMatchPlayerSummaries(id, updatedMatch);
+      const summaryResult = await generateAndPersistMatchPlayerSummaries(id, updatedMatch, {
+        sendUserSummary: body?.sendUserSummary !== false,
+        sendMatchSummary: body?.sendMatchSummary !== false,
+        sendFanOfMatchSummary: body?.sendFanOfMatchSummary !== false,
+      });
       playerSummariesGenerated = summaryResult.generatedCount;
+      fanOfTheMatchDispatched = Boolean(summaryResult.fanOfTheMatch);
+      matchSummaryDispatched = Boolean(summaryResult.matchSnapshot);
     } catch (summaryErr) {
       console.warn(`[matches PATCH ${id}] Match player summary dispatch notice:`, summaryErr);
+    }
+  }
+
+  if (updatedMatch.status) {
+    try {
+      const { syncMatchStatusToFollowEngagements } = await import("@/lib/matchFollowService");
+      await syncMatchStatusToFollowEngagements(id, updatedMatch.status);
+    } catch (followSyncErr) {
+      console.warn(`[matches PATCH ${id}] Follow engagement sync notice:`, followSyncErr);
     }
   }
 
@@ -199,6 +216,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     match_id: id,
     data: updatedMatch,
     playerSummariesGenerated,
+    fanOfTheMatchDispatched,
+    matchSummaryDispatched,
   });
 }
 
