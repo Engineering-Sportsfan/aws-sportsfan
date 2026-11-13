@@ -4,6 +4,8 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { getCandidateTableNames } from "@/lib/dualWrite";
 import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { cacheService } from "@/lib/cacheService";
+import { createHash } from "crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -119,12 +121,16 @@ function recoverEmailFromSanitizedUid(uid: string): string {
   return "";
 }
 
-/**
- * Loads IdentityAndAccess users (+ Firestore fallback) across env tables to map any userId / uid / email /
- * sanitized email alias onto a single canonical UserProfile.
- */
-async function buildUserResolver() {
-  const aliasToProfile = new Map<string, UserProfile>();
+// The user directory (full IdentityAndAccess Scan + 500 Firestore docs) is identical for every request, so it is
+// cached and shared across all callers instead of being re-read on every overview call.
+const USER_RECORDS_CACHE_KEY = "overview:user-records:v1";
+const USER_RECORDS_TTL_SECONDS = 300;
+const OVERVIEW_CACHE_TTL_SECONDS = 20;
+
+async function loadUserRecords(): Promise<any[]> {
+  const cached = await cacheService.get<any[]>(USER_RECORDS_CACHE_KEY);
+  if (Array.isArray(cached) && cached.length > 0) return cached;
+
   const rawRecords: any[] = [];
 
   for (const table of getCandidateTableNames(TABLES.IdentityAndAccess)) {
@@ -161,6 +167,18 @@ async function buildUserResolver() {
       // ignore firestore fallback error
     }
   }
+
+  if (rawRecords.length > 0) await cacheService.set(USER_RECORDS_CACHE_KEY, rawRecords, USER_RECORDS_TTL_SECONDS);
+  return rawRecords;
+}
+
+/**
+ * Loads IdentityAndAccess users (+ Firestore fallback) across env tables to map any userId / uid / email /
+ * sanitized email alias onto a single canonical UserProfile.
+ */
+async function buildUserResolver() {
+  const aliasToProfile = new Map<string, UserProfile>();
+  const rawRecords = await loadUserRecords();
 
   for (const item of rawRecords) {
     const rawEmail = String(item.email || "").trim().toLowerCase();
@@ -373,6 +391,15 @@ async function handleOverviewRequest(req: NextRequest, body: {
 }) {
   const engagementIds = Array.from(new Set((body.engagementIds || []).map((id) => cleanId(id)).filter(Boolean)));
   const matchIds = Array.from(new Set((body.matchIds || []).map((id) => cleanId(id)).filter(Boolean)));
+
+  // The response depends only on the requested ids (not on the caller), so identical requests share one result.
+  const cacheKey =
+    "overview:resp:v1:" +
+    createHash("sha1").update(JSON.stringify([[...engagementIds].sort(), [...matchIds].sort()])).digest("hex");
+  const cachedResponse = await cacheService.get<{ success: true; perEngagement: Record<string, EngagementTotals>; users: any[] }>(cacheKey);
+  if (cachedResponse) {
+    return NextResponse.json(cachedResponse, { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } });
+  }
 
   const { resolve } = await buildUserResolver();
 
@@ -680,14 +707,10 @@ async function handleOverviewRequest(req: NextRequest, body: {
 
   users.sort((a, b) => a.name.localeCompare(b.name));
 
-  return NextResponse.json(
-    {
-      success: true,
-      perEngagement,
-      users,
-    },
-    { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
-  );
+  const payload = { success: true as const, perEngagement, users };
+  await cacheService.set(cacheKey, payload, OVERVIEW_CACHE_TTL_SECONDS);
+
+  return NextResponse.json(payload, { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } });
 }
 
 export async function POST(req: NextRequest) {

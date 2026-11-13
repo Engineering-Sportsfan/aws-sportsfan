@@ -160,6 +160,10 @@ export async function GET(req: NextRequest) {
                 category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
                 source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
                 isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.followData || it.matchResultData || it.type === "follow" || it.type === "match_result" || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+                roomId: it.roomId || undefined,
+                seedDemo: it.seedDemo ? true : undefined,
+                auctionId: it.auctionId || undefined,
+                questionId: it.questionId || undefined,
                 matchId: it.matchId || undefined,
                 momentId: it.momentId || it.loopId || undefined,
                 loopId: it.loopId || it.momentId || undefined,
@@ -378,6 +382,10 @@ export async function GET(req: NextRequest) {
               category: it.category || "match_moment",
               source: it.source || "match_moment",
               isMatchMoment: true,
+              roomId: it.roomId || undefined,
+              seedDemo: it.seedDemo ? true : undefined,
+              auctionId: it.auctionId || undefined,
+              questionId: it.questionId || undefined,
               matchId: it.matchId || (typeof it.entityId === "string" ? it.entityId.replace(/^MATCH#/, "") : undefined),
               momentId: it.momentId || undefined,
               loopId: it.loopId || id,
@@ -617,6 +625,15 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // Demo-room scoping: with ?roomId=<id> return only the cards stamped for that room; without it,
+    // hide demo (seedDemo) cards so no other screen is affected.
+    const roomIdParam = (searchParams.get("roomId") || "").trim();
+    if (roomIdParam) {
+      items = items.filter(i => String((i as any).roomId || "") === roomIdParam);
+    } else {
+      items = items.filter(i => !(i as any).seedDemo);
+    }
+
     // Support excludeMatchMoments (for FlipArena feed / manager)
     const shouldExcludeMatchMoments =
       searchParams.get("excludeMatchMoments") === "true" ||
@@ -726,6 +743,7 @@ export async function GET(req: NextRequest) {
       status || "",
       sport || "",
       searchParams.get("matchId") || "",
+      searchParams.get("roomId") || "",
       includeAllEnvs,
       limit,
       before ?? "",
