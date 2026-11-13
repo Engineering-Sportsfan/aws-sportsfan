@@ -1,4 +1,5 @@
 // app/api/engagements/[id]/voters/route.ts — Fetch list of voters grouped by option for an engagement
+// api
 import { NextRequest, NextResponse } from "next/server";
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
