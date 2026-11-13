@@ -348,6 +348,11 @@ export interface EngagementItem {
   loopId?: string; // alias for momentId
   recognitionId?: string; // 1:1 linked Visible Recognition ID
   hasRecognition?: boolean;
+  // Demo-room linkage (optional): cards for a specific ROAR room / auction journey
+  roomId?: string;
+  seedDemo?: boolean;
+  auctionId?: string; // e.g. "Auction-93993"
+  questionId?: string; // e.g. "Q-93993-D01-1"
   matchPhase?: string; // e.g. "NZ 1st innings", "India chase"
   anchorTrigger?: string; // e.g. "NZ innings — over 6 end"
   scoreState?: string; // e.g. "65/1", "80/2"
