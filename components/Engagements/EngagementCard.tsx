@@ -90,6 +90,13 @@ export function useRunningCountdown(
 }
 
 function getFollowCountdown(targetTs?: number | string | null, nowMs: number = Date.now(), explicitStatus?: string) {
+    const rawStatus = String(explicitStatus || "").trim().toLowerCase();
+    const isCompleted = rawStatus === "completed" || rawStatus === "match ended" || rawStatus === "settled";
+
+    if (isCompleted) {
+        return { isLive: false, isCompleted: true, hasTarget: false, label: "Completed", statusText: "Completed" };
+    }
+
     let targetMs = NaN;
     if (typeof targetTs === "number") {
         targetMs = targetTs > 0 && targetTs < 1e11 ? targetTs * 1000 : targetTs;
@@ -97,19 +104,21 @@ function getFollowCountdown(targetTs?: number | string | null, nowMs: number = D
         const num = Number(targetTs);
         targetMs = Number.isFinite(num) && num > 0 ? (num < 1e11 ? num * 1000 : num) : new Date(targetTs).getTime();
     }
+
+    const isLiveFallback = rawStatus === "live" || rawStatus === "live now";
+
     if (!Number.isFinite(targetMs) || targetMs <= 0) {
-        const isLiveFallback = String(explicitStatus || "").trim().toLowerCase() === "live";
-        return { isLive: isLiveFallback, hasTarget: false, label: isLiveFallback ? "LIVE" : "Soon", statusText: isLiveFallback ? "LIVE" : "Upcoming" };
+        return { isLive: isLiveFallback, isCompleted: false, hasTarget: false, label: isLiveFallback ? "LIVE" : "Soon", statusText: isLiveFallback ? "LIVE" : "Upcoming" };
     }
     const diffMs = targetMs - nowMs;
-    if (diffMs <= 0) return { isLive: true, hasTarget: true, label: "LIVE", statusText: "LIVE" };
+    if (diffMs <= 0 || isLiveFallback) return { isLive: true, isCompleted: false, hasTarget: true, label: "LIVE", statusText: "LIVE" };
     const totalSec = Math.ceil(diffMs / 1000);
     const hours = Math.floor(totalSec / 3600);
     const mins = Math.floor((totalSec % 3600) / 60);
     const secs = totalSec % 60;
     const mm = String(mins).padStart(2, "0");
     const ss = String(secs).padStart(2, "0");
-    return { isLive: false, hasTarget: true, label: hours >= 1 ? `${hours}h ${mm}m ${ss}s` : `${mm}m ${ss}s`, statusText: "Upcoming" };
+    return { isLive: false, isCompleted: false, hasTarget: true, label: hours >= 1 ? `${hours}h ${mm}m` : `${mm}m ${ss}s`, statusText: "Upcoming" };
 }
 
 export default function EngagementCard({
@@ -592,7 +601,7 @@ export default function EngagementCard({
         const countdown = getFollowCountdown(
             fd.matchStartTime || fd.matchStartMs || fd.targetStartMs || (item as any).matchStartMs || (item as any).matchStartTime,
             followNowMs,
-            fd.statusLabel
+            fd.statusLabel || (item as any).matchStatus || item.status
         );
 
         const toggleAction = async (action: "follow" | "remind") => {
@@ -637,8 +646,11 @@ export default function EngagementCard({
 
         return (
             <div className="rounded-xl border border-white/15 bg-gradient-to-b from-[#161026] via-[#110d1f] to-[#0b0914] overflow-hidden shadow-lg mt-1">
+                {/* Top strip: status shown in ONLY ONE place */}
                 <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-black/25">
-                    {countdown.isLive ? (
+                    {countdown.isCompleted ? (
+                        <span className="text-[11px] font-bold text-gray-300 border-b-2 border-gray-500 pb-0.5">Completed</span>
+                    ) : countdown.isLive ? (
                         <span className="text-[11px] font-black text-rose-400 border-b-2 border-rose-500 pb-0.5 inline-flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
                             LIVE
@@ -646,11 +658,10 @@ export default function EngagementCard({
                     ) : (
                         <span className="text-[11px] font-bold text-white border-b-2 border-purple-500 pb-0.5">{countdown.statusText}</span>
                     )}
-                    {countdown.isLive ? (
-                        <span className="text-[11px] font-black text-emerald-400 inline-flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            Live Now
-                        </span>
+                    {countdown.isCompleted ? (
+                        <ChevronRight size={12} className="text-white/40" />
+                    ) : countdown.isLive ? (
+                        <ChevronRight size={12} className="text-white/60" />
                     ) : (
                         <span className="text-[11px] font-semibold text-white/80 flex items-center gap-0.5 tabular-nums">
                             {countdown.label} <ChevronRight size={12} />
@@ -671,23 +682,23 @@ export default function EngagementCard({
                             {renderFlag(team2Flag, fd.team2Name || team2Code)}
                         </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    {/* Action buttons (counts saved in database, not shown on frontend; locked when completed) */}
+                    <div className="grid grid-cols-2 gap-2.5">
                         <button
                             type="button"
+                            disabled={countdown.isCompleted || isVoting}
                             onClick={() => toggleAction("follow")}
-                            className={`h-8 rounded-lg px-2 text-xs font-bold inline-flex items-center justify-center gap-1 ${isFollowing ? "bg-[#7c3aed]/20 border border-[#8b5cf6] text-white" : "bg-white/5 border border-white/20 text-white/80"}`}
+                            className={`h-9 rounded-xl px-2.5 text-xs font-bold inline-flex items-center justify-center transition-all disabled:opacity-50 ${isFollowing ? "bg-[#7c3aed]/25 border border-[#8b5cf6] text-white shadow-[0_0_12px_rgba(139,92,246,0.45)]" : "bg-white/[0.04] border border-white/20 text-white/85 hover:border-purple-400/60 hover:bg-purple-500/10"}`}
                         >
                             <span>{isFollowing ? "Following" : "Follow"}</span>
-                            {followCount > 0 && <span className="text-[10px]">({followCount})</span>}
                         </button>
                         <button
                             type="button"
+                            disabled={countdown.isCompleted || isVoting}
                             onClick={() => toggleAction("remind")}
-                            className={`h-8 rounded-lg px-2 text-xs font-bold inline-flex items-center justify-center gap-1 ${isReminded ? "bg-[#7c3aed]/20 border border-[#8b5cf6] text-white" : "bg-white/5 border border-white/20 text-white/80"}`}
+                            className={`h-9 rounded-xl px-2.5 text-xs font-bold inline-flex items-center justify-center transition-all disabled:opacity-50 ${isReminded ? "bg-[#7c3aed]/25 border border-[#8b5cf6] text-white shadow-[0_0_12px_rgba(139,92,246,0.45)]" : "bg-white/[0.04] border border-white/20 text-white/85 hover:border-purple-400/60 hover:bg-purple-500/10"}`}
                         >
-                            {isReminded ? <Check size={12} /> : <Bell size={12} />}
                             <span>{isReminded ? "Reminded" : "Remind Me"}</span>
-                            {remindCount > 0 && <span className="text-[10px]">({remindCount})</span>}
                         </button>
                     </div>
                 </div>
@@ -699,75 +710,80 @@ export default function EngagementCard({
     // RENDER: Final Result (Match Snapshot) & Top Performer (POTM)
     // ─────────────────────────────────────────────────────────────
     const renderMatchResult = () => {
-        const mr: any = (item as any).matchResultData || {};
-        const showSnapshot =
-            mr.showSnapshot !== false &&
-            Boolean(mr.team1Score || mr.team2Score || mr.team1Name || mr.team2Name);
-        const showTopPerformer =
-            mr.showTopPerformer !== false &&
-            Boolean(mr.playerName || mr.playerStats);
-        const renderFlag = (flag?: string, name?: string) => {
-            const raw = String(flag || "").trim();
-            if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("/") || raw.startsWith("data:")) {
-                return <img src={raw} alt={name || "Flag"} className="w-full h-full object-cover" />;
-            }
-            if (raw) return <span className="text-xl leading-none">{raw}</span>;
-            return <span className="text-[10px] font-black text-white/80">{String(name || "T").slice(0, 3).toUpperCase()}</span>;
-        };
-        const initials = String(mr.playerName || "PM")
-            .split(/\s+/)
-            .filter(Boolean)
-            .slice(0, 2)
-            .map((w: string) => w[0]?.toUpperCase() || "")
-            .join("") || "PM";
+        const mr: any = (item as any).matchResultData || (item as any).resultData || item || {};
+        const matchTitle = mr.matchTitle || (item as any).matchTitle || (item as any).title || "Match Summary";
+        const totalActions = Number(mr.totalActions ?? (item as any).totalActions ?? (item as any).totalActionsCount ?? 4) || 4;
+        const totalMoments = Number(mr.totalMoments ?? (item as any).totalMoments ?? 1) || 1;
+        const totalParticipants = Number(mr.totalParticipants ?? (item as any).totalParticipants ?? (item as any).totalFansCount ?? 1) || 1;
 
         return (
-            <div className="space-y-2 mt-1">
-                {showSnapshot && (
-                    <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg space-y-2.5">
-                        <div className="text-sm font-bold text-white">{mr.snapshotHeading || "Match Snapshot"}</div>
-                        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-10 h-7 rounded-sm bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
-                                    {renderFlag(mr.team1Flag, mr.team1Name || mr.team1Code)}
-                                </div>
-                                <div className="min-w-0">
-                                    <div className="text-[11px] text-white/75 truncate">{mr.team1Name || mr.team1Code || "Team 1"}</div>
-                                    <div className="text-sm font-extrabold text-white tabular-nums truncate">{mr.team1Score || "-"}</div>
-                                </div>
-                            </div>
-                            <div className="h-8 w-px bg-white/15" />
-                            <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-10 h-7 rounded-sm bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
-                                    {renderFlag(mr.team2Flag, mr.team2Name || mr.team2Code)}
-                                </div>
-                                <div className="min-w-0">
-                                    <div className="text-[11px] text-white/75 truncate">{mr.team2Name || mr.team2Code || "Team 2"}</div>
-                                    <div className="text-sm font-extrabold text-white tabular-nums truncate">{mr.team2Score || "-"}</div>
-                                </div>
-                            </div>
+            <div className="w-full shrink-0 rounded-2xl overflow-hidden my-3 border border-emerald-500/40 shadow-2xl" style={{ background: "linear-gradient(180deg, #091312 0%, #050b0a 100%)", minHeight: "180px" }}>
+                <div className="p-4 space-y-3.5">
+                    {/* Header in Emerald */}
+                    <div className="flex items-center justify-between">
+                        <div className="text-xs font-black tracking-wider uppercase text-emerald-400 flex items-center gap-1.5">
+                            <span>🏆</span>
+                            <span>MATCH SNAPSHOT</span>
                         </div>
-                        {mr.resultSummary && (
-                            <div className="text-[11px] font-semibold text-emerald-400 pt-1 border-t border-white/5">{mr.resultSummary}</div>
-                        )}
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            FINAL RESULT
+                        </span>
                     </div>
-                )}
-                {showTopPerformer && (
-                    <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg flex items-center gap-3.5">
-                        <div className="w-14 h-14 rounded-xl bg-gradient-to-b from-[#0284c7] to-[#1e3a8a] border border-sky-400/30 overflow-hidden shrink-0 flex items-center justify-center text-white font-black text-sm">
-                            {mr.playerImageUrl ? (
-                                <img src={mr.playerImageUrl} alt={mr.playerName || "Top Performer"} className="w-full h-full object-cover object-top" />
-                            ) : (
-                                <span>{initials}</span>
-                            )}
+
+                    {/* Match Identity Section */}
+                    <div className="flex items-center gap-3">
+                        <div className="w-14 h-14 rounded-full bg-gradient-to-br from-emerald-600 to-teal-800 border-2 border-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.55)] flex items-center justify-center text-2xl shrink-0">
+                            ⚡
                         </div>
+
                         <div className="min-w-0 flex-1">
-                            <div className="text-[11px] font-semibold text-[#60a5fa]">{mr.performerLabel || "Top Performer"}</div>
-                            <div className="text-base font-extrabold text-white truncate">{mr.playerName}</div>
-                            {mr.playerStats && <div className="text-xs text-white/80 truncate">{mr.playerStats}</div>}
+                            <div className="text-base font-bold text-emerald-300 truncate leading-tight">
+                                {matchTitle}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-slate-300 mt-0.5 truncate">
+                                <span className="text-emerald-400 font-semibold">⚡ Roar Pulse Activity</span>
+                                <span className="text-slate-500">•</span>
+                                <span className="text-slate-300">All Room Fans</span>
+                            </div>
+                            <div className="text-xs text-slate-400 font-normal mt-0.5 truncate">
+                                Overall in-app fan engagement & actions summary
+                            </div>
                         </div>
                     </div>
-                )}
+
+                    {/* 3 Stat Boxes inside dark rounded container */}
+                    <div className="grid grid-cols-3 divide-x divide-white/10 rounded-xl bg-[#0b1715] border border-emerald-500/20 py-2.5 px-1 shadow-inner text-center">
+                        <div>
+                            <div className="text-lg sm:text-xl font-black text-emerald-200 tabular-nums">
+                                {totalActions}
+                            </div>
+                            <div className="text-[11px] text-emerald-200/60 font-medium mt-0.5">
+                                Total Actions
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-lg sm:text-xl font-black text-emerald-200 tabular-nums">
+                                {totalMoments}
+                            </div>
+                            <div className="text-[11px] text-emerald-200/60 font-medium mt-0.5">
+                                Total Moments
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-lg sm:text-xl font-black text-emerald-200 tabular-nums">
+                                {totalParticipants}
+                            </div>
+                            <div className="text-[11px] text-emerald-200/60 font-medium mt-0.5">
+                                Total Participants
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Footer text */}
+                    <div className="text-center text-xs font-semibold text-emerald-400/90 tracking-wide pt-0.5">
+                        🏆 Overall App Activity Across All Room Fans
+                    </div>
+                </div>
             </div>
         );
     };
@@ -1057,6 +1073,14 @@ export default function EngagementCard({
     // VARIANT: "post" (Matches regular room discussion posts seamlessly)
     // ─────────────────────────────────────────────────────────────
     if (variant === "post") {
+        if (item.type === "match_result") {
+            return (
+                <div ref={cardRef} className={`w-full my-2.5 ${className}`}>
+                    {renderMatchResult()}
+                </div>
+            );
+        }
+
         return (
             <motion.div
                 initial={{ opacity: 0, y: 8 }}

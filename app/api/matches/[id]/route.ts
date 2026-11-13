@@ -15,6 +15,9 @@ type Params = { params: Promise<{ id: string }> };
 // ─── GET /api/matches/[id] ────────────────────────────────────────────────────
 export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
+  if (!id || ["none", "undefined", "null", "all"].includes(String(id).trim().toLowerCase())) {
+    return NextResponse.json({ success: false, error: "Invalid match ID" }, { status: 400 });
+  }
   try {
     let matchData: any = null;
     let innings: any[] = [];
@@ -117,94 +120,146 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 // ─── PATCH /api/matches/[id] ──────────────────────────────────────────────────
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const { id } = await params;
-  let body: Record<string, any>;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  const validation = validateMatchUpdate(body);
-  if (!validation.success) {
-    return NextResponse.json({ success: false, errors: validation.errors }, { status: 422 });
-  }
-
-  let existingData: any = null;
-  const candidateTables = Array.from(
-    new Set([
-      ...getCandidateTableNames(TABLES.MatchMoments),
-      ...getCandidateTableNames(TABLES.SportsData),
-    ])
-  );
-
-  for (const table of candidateTables) {
+    const { id } = await params;
+    if (!id || ["none", "undefined", "null", "all"].includes(String(id).trim().toLowerCase())) {
+      return NextResponse.json({ success: false, error: "Invalid match ID" }, { status: 400 });
+    }
+    let body: Record<string, any>;
     try {
-      const getRes = await docClient.send(
-        new GetCommand({
-          TableName: table,
-          Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const validation = validateMatchUpdate(body);
+    if (!validation.success) {
+      return NextResponse.json({ success: false, errors: validation.errors }, { status: 422 });
+    }
+
+    let existingData: any = null;
+    const candidateTables = Array.from(
+      new Set([
+        ...getCandidateTableNames(TABLES.MatchMoments),
+        ...getCandidateTableNames(TABLES.SportsData),
+      ])
+    );
+
+    for (const table of candidateTables) {
+      try {
+        const getRes = await docClient.send(
+          new GetCommand({
+            TableName: table,
+            Key: { entityId: `MATCH#${id}`, sk: "MATCH#META" },
+          })
+        );
+        if (getRes.Item) {
+          existingData = getRes.Item;
+          break;
+        }
+      } catch (e) {}
+    }
+
+    if (!existingData) {
+      try {
+        const snap = await db.collection(getFirestoreCollection("matches")).doc(id).get();
+        if (snap.exists) existingData = snap.data();
+      } catch {}
+    }
+
+    const now = Date.now();
+    const updatedMatch = {
+      ...(existingData || {}),
+      ...validation.data,
+      match_id: id,
+      updatedAt: now,
+    };
+
+    // Primary write to MatchMoments table + Firestore dual-write
+    try {
+      await dualWrite({
+        tableName: TABLES.MatchMoments,
+        dynamoItem: {
+          entityId: `MATCH#${id}`,
+          sk: "MATCH#META",
+          ...updatedMatch,
+        },
+        firestoreRef: db.collection(getFirestoreCollection("matches")).doc(id),
+        firestoreData: {
+          ...validation.data,
+          updated_at: FieldValue.serverTimestamp(),
+        },
+      });
+    } catch (dwErr) {
+      console.warn(`[matches PATCH ${id}] Dual-write notice:`, dwErr);
+    }
+
+    // Also sync to SportsData table if present
+    try {
+      const { PutCommand } = await import("@aws-sdk/lib-dynamodb");
+      await docClient.send(
+        new PutCommand({
+          TableName: TABLES.SportsData,
+          Item: {
+            entityId: `MATCH#${id}`,
+            sk: "MATCH#META",
+            ...updatedMatch,
+          },
         })
       );
-      if (getRes.Item) {
-        existingData = getRes.Item;
-        break;
-      }
-    } catch (e) {}
-  }
-
-  if (!existingData) {
-    try {
-      const snap = await db.collection(getFirestoreCollection("matches")).doc(id).get();
-      if (snap.exists) existingData = snap.data();
     } catch {}
-  }
 
-  const now = Date.now();
-  const updatedMatch = {
-    ...(existingData || {}),
-    ...validation.data,
-    match_id: id,
-    updatedAt: now,
-  };
-
-  // Primary write to MatchMoments table + Firestore dual-write
-  await dualWrite({
-    tableName: TABLES.MatchMoments,
-    dynamoItem: {
-      entityId: `MATCH#${id}`,
-      sk: "MATCH#META",
-      ...updatedMatch,
-    },
-    firestoreRef: db.collection(getFirestoreCollection("matches")).doc(id),
-    firestoreData: {
-      ...validation.data,
-      updated_at: FieldValue.serverTimestamp(),
-    },
-  });
-
-  let playerSummariesGenerated = 0;
-  if (String(updatedMatch.status || "").trim().toLowerCase() === "completed") {
-    try {
-      const { generateAndPersistMatchPlayerSummaries } = await import("@/lib/matchPlayerSummary");
-      const summaryResult = await generateAndPersistMatchPlayerSummaries(id, updatedMatch);
-      playerSummariesGenerated = summaryResult.generatedCount;
-    } catch (summaryErr) {
-      console.warn(`[matches PATCH ${id}] Match player summary dispatch notice:`, summaryErr);
+    let playerSummariesGenerated = 0;
+    let fanOfTheMatchDispatched = false;
+    let matchSummaryDispatched = false;
+    if (String(updatedMatch.status || "").trim().toLowerCase() === "completed") {
+      try {
+        const { generateAndPersistMatchPlayerSummaries } = await import("@/lib/matchPlayerSummary");
+        const summaryResult = await generateAndPersistMatchPlayerSummaries(id, updatedMatch, {
+          sendUserSummary: body?.sendUserSummary !== false,
+          sendMatchSummary: body?.sendMatchSummary !== false,
+          sendFanOfMatchSummary: body?.sendFanOfMatchSummary !== false,
+        });
+        playerSummariesGenerated = summaryResult.generatedCount;
+        fanOfTheMatchDispatched = Boolean(summaryResult.fanOfTheMatch);
+        matchSummaryDispatched = Boolean(summaryResult.matchSnapshot);
+      } catch (summaryErr) {
+        console.warn(`[matches PATCH ${id}] Match player summary dispatch notice:`, summaryErr);
+      }
     }
-  }
 
-  return NextResponse.json({
-    success: true,
-    match_id: id,
-    data: updatedMatch,
-    playerSummariesGenerated,
-  });
+    if (updatedMatch.status) {
+      try {
+        const { syncMatchStatusToFollowEngagements } = await import("@/lib/matchFollowService");
+        await syncMatchStatusToFollowEngagements(id, updatedMatch.status);
+      } catch (followSyncErr) {
+        console.warn(`[matches PATCH ${id}] Follow engagement sync notice:`, followSyncErr);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      match_id: id,
+      data: updatedMatch,
+      playerSummariesGenerated,
+      fanOfTheMatchDispatched,
+      matchSummaryDispatched,
+    });
+  } catch (err: any) {
+    console.error("[matches PATCH] Unhandled error:", err);
+    return NextResponse.json(
+      { success: false, error: err?.message || "Failed to update match" },
+      { status: 500 }
+    );
+  }
 }
 
 // ─── DELETE /api/matches/[id] ─────────────────────────────────────────────────
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
+  if (!id || ["none", "undefined", "null", "all"].includes(String(id).trim().toLowerCase())) {
+    return NextResponse.json({ success: false, error: "Invalid match ID" }, { status: 400 });
+  }
 
   // 1. Delete from DynamoDB MatchMoments & SportsData
   const candidateTables = Array.from(

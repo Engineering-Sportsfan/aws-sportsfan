@@ -160,6 +160,10 @@ export async function GET(req: NextRequest) {
                 category: it.category || (it.isMatchMoment ? "match_moment" : (it.type === "fan_battle" || it.type === "meme" ? "fliparena" : undefined)),
                 source: it.source || (it.isMatchMoment ? "match_moment" : "fliparena"),
                 isMatchMoment: it.isMatchMoment !== undefined ? Boolean(it.isMatchMoment) : Boolean(it.debateData || it.expressData || it.questionData || it.followData || it.matchResultData || it.type === "follow" || it.type === "match_result" || it.tags?.some((t: string) => t.includes("MATCH MOMENT") || t.includes("4-MIN"))),
+                roomId: it.roomId || undefined,
+                seedDemo: it.seedDemo ? true : undefined,
+                auctionId: it.auctionId || undefined,
+                questionId: it.questionId || undefined,
                 matchId: it.matchId || undefined,
                 momentId: it.momentId || it.loopId || undefined,
                 loopId: it.loopId || it.momentId || undefined,
@@ -194,10 +198,37 @@ export async function GET(req: NextRequest) {
     const matchMomentTables = useGsi ? [TABLES.MatchMoments] : getCandidateTableNames(TABLES.MatchMoments);
     const rawSearchMatchId = searchParams.get("matchId");
     const cleanSearchMatchId = rawSearchMatchId ? rawSearchMatchId.replace(/^MATCH#/, "") : null;
+    const isNoneSearchMatch = Boolean(
+      cleanSearchMatchId &&
+        (cleanSearchMatchId.toLowerCase() === "none" || cleanSearchMatchId.toLowerCase() === "global")
+    );
     for (const table of matchMomentTables) {
       try {
         let loopItems: any[] = [];
-        if (cleanSearchMatchId) {
+        if (isNoneSearchMatch) {
+          for (const gId of ["MATCH#GLOBAL", "MATCH#NONE"]) {
+            try {
+              let qKey: Record<string, any> | undefined;
+              do {
+                const qRes = await docClient.send(
+                  new QueryCommand({
+                    TableName: table,
+                    KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skpfx)",
+                    ExpressionAttributeValues: {
+                      ":eId": gId,
+                      ":skpfx": "LOOP#",
+                    },
+                    ExclusiveStartKey: qKey,
+                  })
+                );
+                loopItems.push(...(qRes.Items || []));
+                qKey = qRes.LastEvaluatedKey;
+              } while (qKey);
+            } catch (e) {
+              // ignore
+            }
+          }
+        } else if (cleanSearchMatchId) {
           try {
             let qKey: Record<string, any> | undefined;
             do {
@@ -351,6 +382,10 @@ export async function GET(req: NextRequest) {
               category: it.category || "match_moment",
               source: it.source || "match_moment",
               isMatchMoment: true,
+              roomId: it.roomId || undefined,
+              seedDemo: it.seedDemo ? true : undefined,
+              auctionId: it.auctionId || undefined,
+              questionId: it.questionId || undefined,
               matchId: it.matchId || (typeof it.entityId === "string" ? it.entityId.replace(/^MATCH#/, "") : undefined),
               momentId: it.momentId || undefined,
               loopId: it.loopId || id,
@@ -558,8 +593,12 @@ export async function GET(req: NextRequest) {
     const matchIdParam = searchParams.get("matchId");
     if (matchIdParam) {
       const cleanTargetMatchId = matchIdParam.replace(/^MATCH#/i, "").toLowerCase();
+      const isNoneTarget = cleanTargetMatchId === "none" || cleanTargetMatchId === "global";
       items = items.filter(i => {
         const itemMatchId = String((i as any).matchId || "").replace(/^MATCH#/i, "").toLowerCase();
+        if (isNoneTarget) {
+          return !itemMatchId || itemMatchId === "none" || itemMatchId === "global";
+        }
         return itemMatchId === cleanTargetMatchId;
       });
     }
@@ -584,6 +623,15 @@ export async function GET(req: NextRequest) {
         }
         return true;
       });
+    }
+
+    // Demo-room scoping: with ?roomId=<id> return only the cards stamped for that room; without it,
+    // hide demo (seedDemo) cards so no other screen is affected.
+    const roomIdParam = (searchParams.get("roomId") || "").trim();
+    if (roomIdParam) {
+      items = items.filter(i => String((i as any).roomId || "") === roomIdParam);
+    } else {
+      items = items.filter(i => !(i as any).seedDemo);
     }
 
     // Support excludeMatchMoments (for FlipArena feed / manager)
@@ -681,20 +729,26 @@ export async function GET(req: NextRequest) {
 
     // ── Base list: user-independent, cached 5s (Upstash, in-memory fallback) ─────────────────────────
     type BaseList = { items: EngagementItem[]; hasMore: boolean; nextBefore: number | null };
+    const skipCache =
+      searchParams.get("fresh") === "true" ||
+      searchParams.get("noCache") === "true" ||
+      req.headers.get("cache-control") === "no-cache";
     const cacheKey = "engagements:list:v1:" + JSON.stringify([
       searchParams.get("source") || "",
       searchParams.get("category") || "",
       searchParams.get("excludeFlipArena") || "",
       searchParams.get("excludeMatchMoments") || "",
+      searchParams.get("includeScheduled") || "",
       type || "",
       status || "",
       sport || "",
       searchParams.get("matchId") || "",
+      searchParams.get("roomId") || "",
       includeAllEnvs,
       limit,
       before ?? "",
     ]);
-    let base = await cacheService.get<BaseList>(cacheKey);
+    let base = skipCache ? null : await cacheService.get<BaseList>(cacheKey);
     if (!base) {
       try {
         base = await buildBase(gsiRequested);
@@ -756,6 +810,13 @@ export async function GET(req: NextRequest) {
   } catch (error: unknown) {
     console.error("GET /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to fetch engagements";
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
@@ -861,7 +922,14 @@ export async function POST(req: NextRequest) {
     const isMeme = type === "meme";
 
     if (!type) {
-      return NextResponse.json({ error: "Type is required" }, { status: 400 });
+      // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
+    return NextResponse.json({ error: "Type is required" }, { status: 400 });
     }
 
     const resolvedImageUrl =
@@ -873,7 +941,14 @@ export async function POST(req: NextRequest) {
       "";
 
     if (isMeme && !resolvedImageUrl) {
-      return NextResponse.json({ error: "Media upload is required for meme voting" }, { status: 400 });
+      // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
+    return NextResponse.json({ error: "Media upload is required for meme voting" }, { status: 400 });
     }
 
     const now = Date.now();
@@ -1360,6 +1435,8 @@ export async function POST(req: NextRequest) {
               team2Code: String(body.followData?.team2Code || body.team2Code || "").trim().toUpperCase(),
               team2Flag: String(body.followData?.team2Flag || body.team2Flag || "").trim(),
               matchLabel: String(body.followData?.matchLabel || body.matchLabel || "T20 INTERNATIONAL").trim(),
+              matchDate: String(body.followData?.matchDate || body.matchDate || "").trim(),
+              broadcastTime: String(body.followData?.broadcastTime || body.broadcastTime || "").trim(),
               matchTimeLabel: String(body.followData?.matchTimeLabel || body.matchTimeLabel || "Upcoming").trim(),
               matchStartMs: resolvedFollowStartMs,
               statusLabel: String(body.followData?.statusLabel || "Upcoming").trim(),
@@ -1452,17 +1529,24 @@ export async function POST(req: NextRequest) {
     // If this engagement belongs to a match moment (or has matchId), dual-write to MatchMoments table
     if (newEngagement.isMatchMoment || newEngagement.source === "match_moment" || newEngagement.matchId) {
       try {
+        const isNoneMatch = !newEngagement.matchId || String(newEngagement.matchId).toLowerCase() === "none" || String(newEngagement.matchId).toLowerCase() === "global";
+        const matchPartitionKey = isNoneMatch ? "MATCH#GLOBAL" : `MATCH#${newEngagement.matchId}`;
+        const matchDocPrefix = isNoneMatch ? "GLOBAL" : newEngagement.matchId;
         await dualWrite({
           tableName: TABLES.MatchMoments,
           dynamoItem: withEngagementGsiKeys({
-            entityId: `MATCH#${newEngagement.matchId || "GLOBAL"}`,
+            entityId: matchPartitionKey,
             sk: `LOOP#${newEngagement.loopId || id}`,
             contentId: `ENGAGEMENT#${id}`,
             ...newEngagement,
+            matchId: isNoneMatch ? "none" : newEngagement.matchId,
           }),
           collectionName: "match_moments_engagements",
-          docId: `${newEngagement.matchId || "GLOBAL"}_${newEngagement.loopId || id}`,
-          firestoreData: newEngagement,
+          docId: `${matchDocPrefix}_${newEngagement.loopId || id}`,
+          firestoreData: {
+            ...newEngagement,
+            matchId: isNoneMatch ? "none" : newEngagement.matchId,
+          },
         });
       } catch (mmErr) {
         console.warn("[POST /api/engagements] MatchMoments table dual-write notice:", mmErr);
@@ -1505,6 +1589,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({
       success: true,
       message: pointsAwarded > 0 ? `Engagement created successfully! +${pointsAwarded} points awarded.` : "Engagement created successfully",
@@ -1514,6 +1605,13 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     console.error("POST /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to create engagement";
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
@@ -1526,7 +1624,14 @@ export async function DELETE(req: NextRequest) {
     const rawMatchId = searchParams.get("matchId");
 
     if (!rawId) {
-      return NextResponse.json({ success: false, error: "Missing engagement id" }, { status: 400 });
+      // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
+    return NextResponse.json({ success: false, error: "Missing engagement id" }, { status: 400 });
     }
 
     const cleanId = rawId.replace(/^ENGAGEMENT#/, "").replace(/^LOOP#/, "").trim();
@@ -1618,10 +1723,24 @@ export async function DELETE(req: NextRequest) {
       }
     } catch {}
 
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({ success: true, message: `Engagement ${cleanId} deleted successfully` });
   } catch (error: unknown) {
     console.error("DELETE /api/engagements error:", error);
     const msg = error instanceof Error ? error.message : "Failed to delete engagement";
+    // Invalidate list cache so newly posted engagement is instantly visible
+    try {
+      await cacheService.clear();
+    } catch {
+      // ignore
+    }
+
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

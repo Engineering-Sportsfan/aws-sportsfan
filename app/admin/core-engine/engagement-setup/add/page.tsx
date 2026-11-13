@@ -115,6 +115,18 @@ function formatDatetimeLocal(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function normalizeDateForInput(raw?: string): string {
+  const clean = String(raw || "").trim();
+  if (!clean) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+  const dmyMatch = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmyMatch) {
+    const [, dd, mm, yyyy] = dmyMatch;
+    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  }
+  return clean;
+}
+
 function computeMatchStartMs(match?: MatchOption | null): number | null {
   if (!match?.date) return null;
   return parseMatchStartMs(match.date, match.time);
@@ -248,6 +260,8 @@ function AddEngagementContent() {
   const [followTeam2Code, setFollowTeam2Code] = useState<string>("");
   const [followTeam2Flag, setFollowTeam2Flag] = useState<string>("");
   const [followMatchLabel, setFollowMatchLabel] = useState<string>("T20 INTERNATIONAL");
+  const [followMatchDate, setFollowMatchDate] = useState<string>("");
+  const [followBroadcastTime, setFollowBroadcastTime] = useState<string>("");
   const [followMatchTimeLabel, setFollowMatchTimeLabel] = useState<string>("");
   const [followMatchStartMs, setFollowMatchStartMs] = useState<number | null>(null);
   const [followPreviewNowMs, setFollowPreviewNowMs] = useState<number>(() => Date.now());
@@ -298,8 +312,8 @@ function AddEngagementContent() {
             team1_short: m.team1_short ? String(m.team1_short) : undefined,
             team2_short: m.team2_short ? String(m.team2_short) : undefined,
             format: m.format ? String(m.format) : undefined,
-            date: m.date ? String(m.date) : (m.start_date ? String(m.start_date) : undefined),
-            time: m.time ? String(m.time) : undefined,
+            date: m.date ? String(m.date) : (m.start_date ? String(m.start_date) : (m.startDate ? String(m.startDate) : undefined)),
+            time: m.time ? String(m.time) : (m.broadcast_time ? String(m.broadcast_time) : (m.broadcastTime ? String(m.broadcastTime) : undefined)),
             status: m.status ? String(m.status) : undefined,
           }));
           setMatches(list);
@@ -351,7 +365,9 @@ function AddEngagementContent() {
     const t2Code = deriveTeamCode(t2Name, activeMatch.team2_short);
     const t1Flag = deriveFlagUrl(t1Name) || deriveFlagUrl(t1Code);
     const t2Flag = deriveFlagUrl(t2Name) || deriveFlagUrl(t2Code);
-    const startMs = computeMatchStartMs(activeMatch);
+    const mDate = String(activeMatch.date || "").trim();
+    const bTime = String(activeMatch.time || "").trim();
+    const startMs = parseMatchStartMs(mDate, bTime);
     const fmt = String(activeMatch.format || "T20").toUpperCase();
     const matchLabel = fmt.includes("INTERNATIONAL") ? fmt : fmt === "T20" || fmt === "T20I" ? "T20 INTERNATIONAL" : fmt;
 
@@ -360,6 +376,8 @@ function AddEngagementContent() {
     setFollowTeam1Flag(t1Flag);
     setFollowTeam2Flag(t2Flag);
     setFollowMatchLabel(matchLabel);
+    setFollowMatchDate(normalizeDateForInput(mDate));
+    setFollowBroadcastTime(bTime);
     setFollowMatchStartMs(startMs);
     setFollowMatchTimeLabel(formatMatchTimeDisplay(activeMatch, startMs));
 
@@ -438,6 +456,8 @@ function AddEngagementContent() {
               if (fd.team2Code) setFollowTeam2Code(String(fd.team2Code));
               if (fd.team2Flag) setFollowTeam2Flag(String(fd.team2Flag));
               if (fd.matchLabel) setFollowMatchLabel(String(fd.matchLabel));
+              if (fd.matchDate) setFollowMatchDate(String(fd.matchDate));
+              if (fd.broadcastTime) setFollowBroadcastTime(String(fd.broadcastTime));
               if (fd.matchTimeLabel) setFollowMatchTimeLabel(String(fd.matchTimeLabel));
               if (fd.matchStartMs) setFollowMatchStartMs(Number(fd.matchStartMs));
             } else if (String(eng.type) === "match_result") {
@@ -603,13 +623,16 @@ function AddEngagementContent() {
     setSubmitResult(null);
 
     const isFutureSched = Boolean(scheduledStartMs && scheduledStartMs > Date.now() + 30000);
+    const isNone = selectedMatchId === "none";
 
     const payload: Record<string, unknown> = {
       id: editId || undefined,
       title: resolvedTitle,
-      subtitle: `${activeMatch?.team1 || ""} vs ${activeMatch?.team2 || ""} · ${
-        activeMoment ? formatMomentTimingBadge(activeMoment) : "Live"
-      }`,
+      subtitle: isNone
+        ? `General Engagement · ${activeMoment ? formatMomentTimingBadge(activeMoment) : "Live"}`
+        : `${activeMatch?.team1 || ""} vs ${activeMatch?.team2 || ""} · ${
+            activeMoment ? formatMomentTimingBadge(activeMoment) : "Live"
+          }`,
       type: engType,
       sport: "cricket",
       status: isFutureSched ? "scheduled" : resolveStatus || "active",
@@ -641,20 +664,45 @@ function AddEngagementContent() {
           }
         : {}),
       ...(engType === "follow"
-        ? {
-            followData: {
-              team1Name: activeMatch?.team1 || followTeam1Code || "Team 1",
-              team1Code: followTeam1Code.trim() || deriveTeamCode(activeMatch?.team1, activeMatch?.team1_short),
-              team1Flag: followTeam1Flag.trim(),
-              team2Name: activeMatch?.team2 || followTeam2Code || "Team 2",
-              team2Code: followTeam2Code.trim() || deriveTeamCode(activeMatch?.team2, activeMatch?.team2_short),
-              team2Flag: followTeam2Flag.trim(),
-              matchLabel: followMatchLabel.trim() || "T20 INTERNATIONAL",
-              matchTimeLabel: followMatchTimeLabel.trim() || "Upcoming",
-              matchStartMs: followMatchStartMs || computeMatchStartMs(activeMatch) || undefined,
-              statusLabel: "Upcoming",
-            },
-          }
+        ? (() => {
+            const finalStartMs =
+              followMatchStartMs ||
+              parseMatchStartMs(followMatchDate || activeMatch?.date, followBroadcastTime || activeMatch?.time) ||
+              undefined;
+            const finalTimeLabel =
+              followMatchTimeLabel.trim() ||
+              formatMatchTimeDisplay(
+                { ...activeMatch, date: followMatchDate || activeMatch?.date, time: followBroadcastTime || activeMatch?.time } as any,
+                finalStartMs
+              ) ||
+              "Upcoming";
+            return {
+              matchStartMs: finalStartMs,
+              matchStartTime: finalStartMs,
+              targetStartMs: finalStartMs,
+              followData: {
+                team1Name: activeMatch?.team1 || followTeam1Code || "Team 1",
+                team1Code: followTeam1Code.trim() || deriveTeamCode(activeMatch?.team1, activeMatch?.team1_short),
+                team1Flag: followTeam1Flag.trim(),
+                team2Name: activeMatch?.team2 || followTeam2Code || "Team 2",
+                team2Code: followTeam2Code.trim() || deriveTeamCode(activeMatch?.team2, activeMatch?.team2_short),
+                team2Flag: followTeam2Flag.trim(),
+                matchLabel: followMatchLabel.trim() || "T20 INTERNATIONAL",
+                matchDate: followMatchDate.trim() || activeMatch?.date || "",
+                broadcastTime: followBroadcastTime.trim() || activeMatch?.time || "",
+                matchTimeLabel: finalTimeLabel,
+                matchStartMs: finalStartMs,
+                matchStartTime: finalStartMs,
+                targetStartMs: finalStartMs,
+                statusLabel:
+                  activeMatch?.status === "completed"
+                    ? "Completed"
+                    : activeMatch?.status === "live"
+                    ? "LIVE"
+                    : "Upcoming",
+              },
+            };
+          })()
         : {}),
       ...(engType === "match_result"
         ? {
@@ -689,12 +737,12 @@ function AddEngagementContent() {
       coinStake: 10,
       loopId:
         loopId.trim() ||
-        `LOOP-${String(activeMoment?.overs || activeMoment?.timingLabel || "ENG")
+        `LOOP-${String(activeMoment?.overs || activeMoment?.timingLabel || (isNone ? "GEN" : "ENG"))
           .trim()
           .replace(/\s+/g, "-")}-${Date.now().toString(36)}`,
       momentId: selectedMomentId,
-      matchId: selectedMatchId,
-      innings: activeMoment?.innings ?? 1,
+      matchId: isNone ? "none" : selectedMatchId,
+      innings: activeMoment?.innings ?? (isNone ? 0 : 1),
       overNumber: activeMoment?.overs || "",
       scoreState: activeMoment?.score || "",
       anchorTrigger: activeMoment?.matchMoment || activeMoment?.event || "",
@@ -825,18 +873,35 @@ function AddEngagementContent() {
               <select
                 value={selectedMatchId}
                 onChange={(e) => {
-                  setSelectedMatchId(e.target.value);
+                  const newMatchId = e.target.value;
+                  setSelectedMatchId(newMatchId);
                   setSelectedMomentId("");
+                  const matchObj = matches.find((m) => m.match_id === newMatchId);
+                  if (matchObj) {
+                    const mDate = String(matchObj.date || "").trim();
+                    const bTime = String(matchObj.time || "").trim();
+                    const startMs = parseMatchStartMs(mDate, bTime);
+                    setFollowMatchDate(normalizeDateForInput(mDate));
+                    setFollowBroadcastTime(bTime);
+                    setFollowMatchStartMs(startMs);
+                    setFollowMatchTimeLabel(formatMatchTimeDisplay(matchObj, startMs));
+                  }
                 }}
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 font-medium"
               >
                 <option value="">-- Select Match --</option>
+                <option value="none">None (No Match / General Engagement)</option>
                 {matches.map((m) => (
                   <option key={m.match_id} value={m.match_id}>
                     {m.team1} vs {m.team2} ({m.format || "Match"})
                   </option>
                 ))}
               </select>
+              {selectedMatchId === "none" && (
+                <p className="mt-1 text-[11px] text-amber-300 flex items-center gap-1 font-medium">
+                  <span>⭐</span> General Engagement (standalone, not linked to a specific match fixture)
+                </p>
+              )}
             </div>
 
             <div>
@@ -999,7 +1064,7 @@ function AddEngagementContent() {
 
           {engType === "follow" ? (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
                     Match Title *
@@ -1025,43 +1090,50 @@ function AddEngagementContent() {
                     className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                    Match Date &amp; Time Label
+                    Match Date (from Match)
+                  </label>
+                  <input
+                    type="date"
+                    value={followMatchDate}
+                    onChange={(e) => {
+                      const newDate = e.target.value;
+                      setFollowMatchDate(newDate);
+                      const start = parseMatchStartMs(newDate, followBroadcastTime);
+                      setFollowMatchStartMs(start);
+                      setFollowMatchTimeLabel(formatMatchTimeDisplay({ ...activeMatch, date: newDate, time: followBroadcastTime } as any, start));
+                    }}
+                    className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Auto-fetched when match is selected.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                    Broadcast Time (from Match)
                   </label>
                   <input
                     type="text"
-                    value={followMatchTimeLabel}
-                    onChange={(e) => setFollowMatchTimeLabel(e.target.value)}
-                    placeholder="Tomorrow • 7:30 PM"
+                    value={followBroadcastTime}
+                    onChange={(e) => {
+                      const newTime = e.target.value;
+                      setFollowBroadcastTime(newTime);
+                      const start = parseMatchStartMs(followMatchDate, newTime);
+                      setFollowMatchStartMs(start);
+                      setFollowMatchTimeLabel(formatMatchTimeDisplay({ ...activeMatch, date: followMatchDate, time: newTime } as any, start));
+                    }}
+                    placeholder="e.g. 19:30 IST or 7:30 PM"
                     className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
                   />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Reverse countdown ticks from present time to this broadcast time, switching to LIVE at 00:00.
+                  </p>
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                  Countdown Target (Match Start Date &amp; Time)
-                </label>
-                <input
-                  type="datetime-local"
-                  value={followMatchStartMs ? formatDatetimeLocal(followMatchStartMs) : ""}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (!raw) {
-                      setFollowMatchStartMs(null);
-                      return;
-                    }
-                    const parsed = new Date(raw).getTime();
-                    if (!Number.isNaN(parsed) && parsed > 0) {
-                      setFollowMatchStartMs(parsed);
-                    }
-                  }}
-                  className="w-full sm:max-w-xs bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
-                />
-                <p className="text-[10px] text-gray-500 mt-1">
-                  Frontend Follow card runs a live reverse countdown to this time and switches to LIVE at 0.
-                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1133,7 +1205,7 @@ function AddEngagementContent() {
                   const s = totalSec % 60;
                   const mm = String(m).padStart(2, "0");
                   const ss = String(s).padStart(2, "0");
-                  return h >= 1 ? `${h}h ${mm}m ${ss}s ›` : `${mm}m ${ss}s ›`;
+                  return h >= 1 ? `${h}h ${mm}m ›` : `${mm}m ${ss}s ›`;
                 })();
                 return (
               <div className="max-w-sm rounded-2xl bg-[#070612] border border-purple-500/30 overflow-hidden shadow-lg">
@@ -1148,8 +1220,8 @@ function AddEngagementContent() {
                       Upcoming
                     </span>
                   )}
-                  <span className={`text-[11px] font-semibold tabular-nums ${isFollowLive ? "text-emerald-400 font-black" : "text-white/75"}`}>
-                    {countdownPreview}
+                  <span className={`text-[11px] font-semibold tabular-nums ${isFollowLive ? "text-white/50 text-sm" : "text-white/75"}`}>
+                    {isFollowLive ? "›" : countdownPreview}
                   </span>
                 </div>
                 <div className="p-3.5 space-y-3">
@@ -1378,36 +1450,34 @@ function AddEngagementContent() {
                 {resultShowSnapshot && (
                   <div className="rounded-xl bg-[#0b101b] border border-white/10 p-3.5 shadow-lg space-y-2.5">
                     <div className="text-sm font-bold text-white">Match Snapshot</div>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                    <div className="grid grid-cols-2 gap-3 items-center justify-between">
                       <div className="flex items-center gap-2.5 min-w-0">
                         {resultTeam1Flag ? (
-                          <img src={resultTeam1Flag} alt={resultTeam1Name} className="w-10 h-7 rounded-sm object-cover border border-white/10 shrink-0" />
+                          <img src={resultTeam1Flag} alt={resultTeam1Name} className="w-11 h-8 rounded-md object-cover border border-white/10 shrink-0" />
                         ) : (
-                          <div className="w-10 h-7 rounded-sm bg-white/10 flex items-center justify-center text-[10px] font-black text-white shrink-0">
+                          <div className="w-11 h-8 rounded-md bg-white/10 flex items-center justify-center text-[10px] font-black text-white shrink-0">
                             {resultTeam1Code || "T1"}
                           </div>
                         )}
                         <div className="min-w-0">
-                          <div className="text-[11px] text-white/75 truncate">{resultTeam1Name || "India"}</div>
-                          <div className="text-sm font-extrabold text-white tabular-nums truncate">
+                          <div className="text-xs font-semibold text-white/90 truncate">{resultTeam1Name || "India"}</div>
+                          <div className="text-sm sm:text-base font-extrabold text-white tabular-nums truncate">
                             {resultTeam1Score || "198/5 (20)"}
                           </div>
                         </div>
                       </div>
 
-                      <div className="h-8 w-px bg-white/15" />
-
                       <div className="flex items-center gap-2.5 min-w-0">
                         {resultTeam2Flag ? (
-                          <img src={resultTeam2Flag} alt={resultTeam2Name} className="w-10 h-7 rounded-sm object-cover border border-white/10 shrink-0" />
+                          <img src={resultTeam2Flag} alt={resultTeam2Name} className="w-11 h-8 rounded-md object-cover border border-white/10 shrink-0" />
                         ) : (
-                          <div className="w-10 h-7 rounded-sm bg-white/10 flex items-center justify-center text-[10px] font-black text-white shrink-0">
+                          <div className="w-11 h-8 rounded-md bg-white/10 flex items-center justify-center text-[10px] font-black text-white shrink-0">
                             {resultTeam2Code || "T2"}
                           </div>
                         )}
                         <div className="min-w-0">
-                          <div className="text-[11px] text-white/75 truncate">{resultTeam2Name || "New Zealand"}</div>
-                          <div className="text-sm font-extrabold text-white tabular-nums truncate">
+                          <div className="text-xs font-semibold text-white/90 truncate">{resultTeam2Name || "New Zealand"}</div>
+                          <div className="text-sm sm:text-base font-extrabold text-white tabular-nums truncate">
                             {resultTeam2Score || "187/8 (20)"}
                           </div>
                         </div>

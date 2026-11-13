@@ -60,6 +60,7 @@ const PHASE_OPTIONS = [
   "2nd Innings",
   "Strategic Timeout",
   "Post Match",
+  "General",
 ];
 
 const OVERS_PATTERN = /^\d{1,3}(\.[0-6])?(\s*overs?)?$/i;
@@ -120,7 +121,9 @@ function AddMomentContent() {
   const isPreMatch = phase === "Pre Match";
   const isInningsBreak = phase === "Innings Break";
   const isPostMatch = phase === "Post Match";
-  const requiresOverOrCheckpoint = !isPreMatch && !isInningsBreak && !isPostMatch;
+  const isNoneMatch = selectedMatchId === "none";
+  const isGeneral = phase === "General" || isNoneMatch;
+  const requiresOverOrCheckpoint = !isPreMatch && !isInningsBreak && !isPostMatch && !isGeneral;
   const [overs, setOvers] = useState<string>("");
   const [score, setScore] = useState<string>("");
   const [timingLabel, setTimingLabel] = useState<string>("");
@@ -290,19 +293,22 @@ function AddMomentContent() {
     setSubmitResult(null);
 
     // Auto-generate unique moment ID behind the scenes without troubling the admin
+    const isNone = selectedMatchId === "none";
     const t1 = activeMatch?.team1_short || activeMatch?.team1?.slice(0, 3) || "MOM";
     const t2 = activeMatch?.team2_short || activeMatch?.team2?.slice(0, 3) || "MOM";
-    const teamCode = (
-      innings === 0 ? "PRE" : innings === 3 ? "POST" : innings === 1 ? t1 : t2
-    ).toUpperCase();
+    const teamCode = isNone
+      ? "GEN"
+      : (
+          innings === 0 ? "PRE" : innings === 3 ? "POST" : innings === 1 ? t1 : t2
+        ).toUpperCase();
     const finalMomentId = momentId.trim() || getNextMomentId(teamCode, existingMoments);
     const cleanTiming = timingLabel.trim() || matchOverTimestamp.trim();
 
     const payload = {
       momentId: finalMomentId,
-      matchId: selectedMatchId,
-      innings,
-      phase: phase || (innings === 2 ? "2nd Innings" : "1st Innings"),
+      matchId: isNone ? "none" : selectedMatchId,
+      innings: isNone ? 0 : innings,
+      phase: phase || (isNone ? "General" : innings === 2 ? "2nd Innings" : "1st Innings"),
       overs: overs.trim(),
       score: score.trim(),
       ...(cleanTiming ? { timingLabel: cleanTiming } : {}),
@@ -499,12 +505,18 @@ function AddMomentContent() {
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
               >
                 <option value="">-- Select Match --</option>
+                <option value="none">None (No Match / General Moment)</option>
                 {matches.map((m) => (
                   <option key={m.match_id} value={m.match_id}>
                     {m.team1} vs {m.team2} ({m.format || "T20"})
                   </option>
                 ))}
               </select>
+              {selectedMatchId === "none" && (
+                <p className="mt-1 text-[11px] text-amber-300 flex items-center gap-1 font-medium">
+                  <span>⭐</span> General Moment (standalone, not linked to a specific match fixture)
+                </p>
+              )}
             </div>
 
             <div>

@@ -5,7 +5,11 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { db } from "@/lib/firebaseAdmin";
 import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { getCandidateTableNames } from "@/lib/dualWrite";
-import { getUserMatchPlayerSummary } from "@/lib/matchPlayerSummary";
+import {
+  getUserMatchPlayerSummary,
+  getMatchSnapshotSummary,
+  getFanOfTheMatchSummary,
+} from "@/lib/matchPlayerSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +21,73 @@ export async function GET(req: NextRequest) {
   const username = searchParams.get("username");
   const email = searchParams.get("email");
 
-  const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : "";
+  const isRealMatchId = (v?: any): boolean => {
+    if (!v) return false;
+    const s = String(v).replace(/^MATCH#/, "").trim().toLowerCase();
+    return Boolean(s && s !== "none" && s !== "undefined" && s !== "null" && s !== "all" && s !== "[object object]");
+  };
+
+  const rawClean = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : "";
+  const cleanMatchId = isRealMatchId(rawClean) ? rawClean : "";
 
   try {
+    let effectiveMatchId = cleanMatchId;
+    if (!effectiveMatchId) {
+      try {
+        if (roomId && db) {
+          const roomDoc = await db.collection("match_rooms").doc(roomId).get();
+          if (roomDoc.exists) {
+            const rd = roomDoc.data();
+            const rMid = rd?.matchId || rd?.liveMatchId || rd?.match_id;
+              if (isRealMatchId(rMid)) {
+              effectiveMatchId = String(rMid).replace(/^MATCH#/, "").trim();
+            }
+          }
+        }
+        if (!effectiveMatchId && db) {
+          const notifSnap = await db
+            .collection(getFirestoreCollection("match_room_notifications"))
+            .orderBy("createdAt", "desc")
+            .limit(20)
+            .get();
+          for (const doc of notifSnap.docs) {
+            const d = doc.data();
+              if (isRealMatchId(d.matchId)) {
+              effectiveMatchId = String(d.matchId).replace(/^MATCH#/, "").trim();
+              break;
+            }
+          }
+        }
+        if (!effectiveMatchId && db) {
+          const completedMatchSnap = await db
+            .collection(getFirestoreCollection("matches"))
+            .where("status", "==", "completed")
+            .limit(10)
+            .get();
+            for (const doc of completedMatchSnap.docs) {
+              if (isRealMatchId(doc.id)) {
+                effectiveMatchId = doc.id.replace(/^MATCH#/, "").trim();
+                break;
+              }
+            }
+          }
+          if (!effectiveMatchId && db) {
+            const anyMatchSnap = await db
+              .collection(getFirestoreCollection("matches"))
+              .limit(10)
+              .get();
+            for (const doc of anyMatchSnap.docs) {
+              if (isRealMatchId(doc.id)) {
+                effectiveMatchId = doc.id.replace(/^MATCH#/, "").trim();
+                break;
+              }
+          }
+        }
+      } catch (e) {
+        console.warn("[celebrations] Auto-resolve matchId error:", e);
+      }
+    }
+
     const recognitionsList: any[] = [];
     const outcomeRevealsList: any[] = [];
 
@@ -81,7 +149,7 @@ export async function GET(req: NextRequest) {
     const candidateTables = getCandidateTableNames("MatchMoments");
 
     // 1. Fetch Recognitions & Outcome Reveals from MatchMoments table
-    if (cleanMatchId) {
+    if (effectiveMatchId) {
       for (const tbl of candidateTables) {
         try {
           // A. Fetch Recognitions
@@ -90,7 +158,7 @@ export async function GET(req: NextRequest) {
               TableName: tbl,
               KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skpfx)",
               ExpressionAttributeValues: {
-                ":eId": `MATCH#${cleanMatchId}`,
+                ":eId": `MATCH#${effectiveMatchId}`,
                 ":skpfx": "RECOGNITION#",
               },
               Limit: 50,
@@ -108,7 +176,7 @@ export async function GET(req: NextRequest) {
               TableName: tbl,
               KeyConditionExpression: "entityId = :eId AND begins_with(sk, :skpfx)",
               ExpressionAttributeValues: {
-                ":eId": `MATCH#${cleanMatchId}`,
+                ":eId": `MATCH#${effectiveMatchId}`,
                 ":skpfx": "REVEAL#",
               },
               Limit: 50,
@@ -124,9 +192,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Fallback: If no outcome reveals found yet in DynamoDB, scan candidate tables for recent reveals
-    // Skipped when a matchId was given: the Query above already answered for that match, and this Scan (Limit 25 is applied
-    // before the filter) returns arbitrary reveals from other matches.
-    if (outcomeRevealsList.length === 0 && !cleanMatchId) {
+    if (outcomeRevealsList.length === 0 && !effectiveMatchId) {
       for (const tbl of candidateTables) {
         try {
           const scanRes = await docClient.send(
@@ -153,9 +219,9 @@ export async function GET(req: NextRequest) {
       try {
         // Build list of all matchId candidates to query against
         const matchCandidates = new Set<string>();
-        if (cleanMatchId) {
-          matchCandidates.add(cleanMatchId);
-          matchCandidates.add(`MATCH#${cleanMatchId}`);
+        if (effectiveMatchId) {
+          matchCandidates.add(effectiveMatchId);
+          matchCandidates.add(`MATCH#${effectiveMatchId}`);
         }
         if (roomId) {
           matchCandidates.add(roomId);
@@ -184,7 +250,7 @@ export async function GET(req: NextRequest) {
         // Try without orderBy if composite index not yet created
         try {
           const matchCandidates = new Set<string>();
-          if (cleanMatchId) { matchCandidates.add(cleanMatchId); matchCandidates.add(`MATCH#${cleanMatchId}`); }
+          if (effectiveMatchId) { matchCandidates.add(effectiveMatchId); matchCandidates.add(`MATCH#${effectiveMatchId}`); }
           if (roomId) { matchCandidates.add(roomId); matchCandidates.add(roomId.replace(/^MATCH#/, "")); }
           const candidateArr = [...matchCandidates].slice(0, 10);
 
@@ -223,8 +289,8 @@ export async function GET(req: NextRequest) {
       // Also check visible_recognitions collection in Firestore
       try {
         let qRec: any = db.collection(getFirestoreCollection("visible_recognitions"));
-        if (cleanMatchId) {
-          qRec = qRec.where("matchId", "in", [cleanMatchId, `MATCH#${cleanMatchId}`]);
+        if (effectiveMatchId) {
+          qRec = qRec.where("matchId", "in", [effectiveMatchId, `MATCH#${effectiveMatchId}`]);
         }
         const snapRec = await qRec.limit(30).get();
         for (const doc of snapRec.docs) {
@@ -240,29 +306,48 @@ export async function GET(req: NextRequest) {
     filteredRecognitions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
     outcomeRevealsList.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 
-    // Fetch personalized Match Player Summary ONLY for the requesting user (when match is completed)
+    // Fetch personalized Match Player Summary, Match Snapshot, & Fan of the Match Summary (when match is completed)
     let userMatchSummary = null;
-    if (cleanMatchId && (userId || username || email)) {
+    let matchSnapshotSummary = null;
+    let fanOfTheMatchSummary = null;
+
+    if (effectiveMatchId) {
+      if (userId || username || email) {
+        try {
+          userMatchSummary = await getUserMatchPlayerSummary({
+            matchId: effectiveMatchId,
+            userId,
+            username,
+            email,
+          });
+        } catch (summaryErr) {
+          console.warn("[celebrations] Player summary lookup notice:", summaryErr);
+        }
+      }
+
       try {
-        userMatchSummary = await getUserMatchPlayerSummary({
-          matchId: cleanMatchId,
-          userId,
-          username,
-          email,
-        });
-      } catch (summaryErr) {
-        console.warn("[celebrations] Player summary lookup notice:", summaryErr);
+        matchSnapshotSummary = await getMatchSnapshotSummary(effectiveMatchId);
+      } catch (snapshotErr) {
+        console.warn("[celebrations] Match snapshot summary lookup notice:", snapshotErr);
+      }
+
+      try {
+        fanOfTheMatchSummary = await getFanOfTheMatchSummary(effectiveMatchId);
+      } catch (fanErr) {
+        console.warn("[celebrations] Fan of the match summary lookup notice:", fanErr);
       }
     }
 
     return NextResponse.json({
       success: true,
-      matchId: cleanMatchId,
+      matchId: effectiveMatchId || cleanMatchId,
       recognitionsCount: filteredRecognitions.length,
       outcomeRevealsCount: outcomeRevealsList.length,
       recognitions: filteredRecognitions,
       outcomeReveals: outcomeRevealsList,
       userMatchSummary,
+      matchSnapshotSummary,
+      fanOfTheMatchSummary,
     }, {
       headers: {
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",

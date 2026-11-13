@@ -250,6 +250,7 @@ function RecognitionListContent() {
             className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
           >
             <option value="">-- All Matches --</option>
+            <option value="none">None (No Match / General Recognitions)</option>
             {matches.map((m) => (
               <option key={m.match_id} value={m.match_id}>
                 {m.team1} vs {m.team2}

@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Zap,
   CheckCircle2,
+  X,
 } from "lucide-react";
 import CoreEngineStepper from "../../components/CoreEngineStepper";
 
@@ -41,6 +42,10 @@ function MatchListContent() {
   const [statusFilter, setStatusFilter] = useState<"all" | "live" | "upcoming" | "completed">("all");
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const [completeModalMatch, setCompleteModalMatch] = useState<{ id: string; title: string } | null>(null);
+  const [sendUserSummary, setSendUserSummary] = useState(true);
+  const [sendMatchSummary, setSendMatchSummary] = useState(true);
+  const [sendFanOfMatchSummary, setSendFanOfMatchSummary] = useState(true);
 
   const fetchMatches = async () => {
     setLoading(true);
@@ -102,27 +107,46 @@ function MatchListContent() {
     }
   };
 
-  const handleCompleteMatch = async (matchId: string, matchTitle?: string) => {
-    if (!confirm(`Mark "${matchTitle || matchId}" as completed and send personalized Player Summary chat posts to all active fans?`)) {
-      return;
-    }
+  const handleOpenCompleteModal = (matchId: string, matchTitle?: string) => {
+    setCompleteModalMatch({ id: matchId, title: matchTitle || matchId });
+    setSendUserSummary(true);
+    setSendMatchSummary(true);
+    setSendFanOfMatchSummary(true);
+  };
+
+  const handleConfirmCompleteMatch = async () => {
+    if (!completeModalMatch) return;
+    const matchId = completeModalMatch.id;
     setCompletingId(matchId);
     try {
       const res = await fetch(`/api/matches/${encodeURIComponent(matchId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "completed" }),
+        body: JSON.stringify({
+          status: "completed",
+          sendUserSummary,
+          sendMatchSummary,
+          sendFanOfMatchSummary,
+        }),
       });
       const json = await res.json();
       if (res.ok && json.success) {
         setMatches((prev) =>
           prev.map((m) => (m.match_id === matchId ? { ...m, status: "completed" } : m))
         );
-        const sentCount = Number(json.playerSummariesGenerated || 0);
+        const parts: string[] = [];
+        if (sendUserSummary) {
+          const sentCount = Number(json.playerSummariesGenerated || 0);
+          parts.push(`${sentCount} User Summaries`);
+        }
+        if (sendMatchSummary) parts.push("Match Summary");
+        if (sendFanOfMatchSummary) parts.push("Fan of the Match");
+
         setFeedback({
           type: "success",
-          text: `Match marked completed. ${sentCount} personalized Player Summary chat post${sentCount === 1 ? "" : "s"} prepared for active users.`,
+          text: `Match marked completed. Dispatched: ${parts.length > 0 ? parts.join(", ") : "no summaries"}.`,
         });
+        setCompleteModalMatch(null);
       } else {
         setFeedback({ type: "error", text: json.error || "Failed to mark match completed" });
       }
@@ -366,10 +390,10 @@ function MatchListContent() {
 
                   {!isCompleted && (
                     <button
-                      onClick={() => handleCompleteMatch(m.match_id, `${m.team1} vs ${m.team2}`)}
+                      onClick={() => handleOpenCompleteModal(m.match_id, `${m.team1} vs ${m.team2}`)}
                       disabled={completingId === m.match_id}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 disabled:opacity-50 text-emerald-300 text-xs font-bold transition-all border border-emerald-500/30 flex items-center gap-1"
-                      title="Mark Completed & Send Player Summaries"
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 disabled:opacity-50 text-emerald-300 text-xs font-bold transition-all border border-emerald-500/30 flex items-center gap-1 shadow-sm"
+                      title="Mark Completed & Select Summaries to Send"
                     >
                       <CheckCircle2 size={13} />
                       <span>{completingId === m.match_id ? "Completing..." : "Mark Complete"}</span>
@@ -395,6 +419,109 @@ function MatchListContent() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Match Completion & Summary Dispatch Modal */}
+      {completeModalMatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#0b101b] border border-white/10 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5 text-white">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">Match Completion</span>
+                <h3 className="text-lg font-black text-white mt-1">Complete Match & Dispatch Summaries</h3>
+                <p className="text-xs text-gray-400 mt-0.5">{completeModalMatch.title}</p>
+              </div>
+              <button
+                onClick={() => setCompleteModalMatch(null)}
+                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-300">
+              Marking this match as <strong className="text-emerald-400">Completed</strong> finalizes the match in the system. Select which summary cards to post directly to the match room for fans:
+            </p>
+
+            <div className="space-y-3">
+              {/* Checkbox 1: User Summary */}
+              <label className="flex items-start gap-3 p-3.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-emerald-500/30 cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={sendUserSummary}
+                  onChange={(e) => setSendUserSummary(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-gray-600 text-emerald-500 focus:ring-emerald-500 bg-black/40 cursor-pointer"
+                />
+                <div className="flex-1 text-xs">
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span>User Summary (Personalized Progress)</span>
+                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded font-semibold border border-blue-500/20">Per User</span>
+                  </div>
+                  <p className="text-gray-400 text-[11px] mt-0.5">
+                    Delivers each active fan their personal progress card showing their Interactions, Predictions (e.g. 8/10), SXP earned, fan persona, and leaderboard standing.
+                  </p>
+                </div>
+              </label>
+
+              {/* Checkbox 2: Match Summary */}
+              <label className="flex items-start gap-3 p-3.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-purple-500/30 cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={sendMatchSummary}
+                  onChange={(e) => setSendMatchSummary(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-gray-600 text-purple-500 focus:ring-purple-500 bg-black/40 cursor-pointer"
+                />
+                <div className="flex-1 text-xs">
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span>Match Summary (Match Snapshot)</span>
+                    <span className="text-[10px] px-1.5 py-0.5 bg-purple-500/20 text-purple-300 rounded font-semibold border border-purple-500/20">All Fans</span>
+                  </div>
+                  <p className="text-gray-400 text-[11px] mt-0.5">
+                    Broadcasts the overall in-app match room engagement summary (Total Actions, Total Moments, Total Participants) across all fans to the entire room.
+                  </p>
+                </div>
+              </label>
+
+              {/* Checkbox 3: Fan of the Match */}
+              <label className="flex items-start gap-3 p-3.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-amber-500/30 cursor-pointer transition-colors">
+                <input
+                  type="checkbox"
+                  checked={sendFanOfMatchSummary}
+                  onChange={(e) => setSendFanOfMatchSummary(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-gray-600 text-amber-500 focus:ring-amber-500 bg-black/40 cursor-pointer"
+                />
+                <div className="flex-1 text-xs">
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span>Fan of the Match Summary</span>
+                    <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-300 rounded font-semibold border border-amber-500/20">Leaderboard #1</span>
+                  </div>
+                  <p className="text-gray-400 text-[11px] mt-0.5">
+                    Celebrates the highest-scoring fan of this match with a spotlight award card and rank #1 leaderboard recognition.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setCompleteModalMatch(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-gray-300 hover:text-white hover:bg-white/5 border border-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={completingId === completeModalMatch.id}
+                onClick={handleConfirmCompleteMatch}
+                className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black flex items-center gap-1.5 transition-all shadow-md shadow-emerald-500/20"
+              >
+                <CheckCircle2 size={14} />
+                <span>{completingId === completeModalMatch.id ? "Completing..." : "Confirm & Complete"}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

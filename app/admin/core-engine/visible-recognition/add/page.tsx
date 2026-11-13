@@ -451,12 +451,18 @@ function AddRecognitionContent() {
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-medium"
               >
                 <option value="">-- Choose Match --</option>
+                <option value="none">None (No Match / General Recognition)</option>
                 {matches.map((m) => (
                   <option key={m.match_id} value={m.match_id}>
                     {m.team1} vs {m.team2} ({m.format || "Match"})
                   </option>
                 ))}
               </select>
+              {selectedMatchId === "none" && (
+                <p className="mt-1 text-[11px] text-amber-300 flex items-center gap-1 font-medium">
+                  <span>⭐</span> General Recognition (standalone, not linked to a specific match fixture)
+                </p>
+              )}
             </div>
 
             <div>
