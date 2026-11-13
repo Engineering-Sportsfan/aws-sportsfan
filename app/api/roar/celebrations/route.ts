@@ -21,7 +21,14 @@ export async function GET(req: NextRequest) {
   const username = searchParams.get("username");
   const email = searchParams.get("email");
 
-  const cleanMatchId = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : "";
+  const isRealMatchId = (v?: any): boolean => {
+    if (!v) return false;
+    const s = String(v).replace(/^MATCH#/, "").trim().toLowerCase();
+    return Boolean(s && s !== "none" && s !== "undefined" && s !== "null" && s !== "all" && s !== "[object object]");
+  };
+
+  const rawClean = rawMatchId ? rawMatchId.trim().replace(/^MATCH#/, "") : "";
+  const cleanMatchId = isRealMatchId(rawClean) ? rawClean : "";
 
   try {
     let effectiveMatchId = cleanMatchId;
@@ -32,7 +39,7 @@ export async function GET(req: NextRequest) {
           if (roomDoc.exists) {
             const rd = roomDoc.data();
             const rMid = rd?.matchId || rd?.liveMatchId || rd?.match_id;
-            if (rMid) {
+              if (isRealMatchId(rMid)) {
               effectiveMatchId = String(rMid).replace(/^MATCH#/, "").trim();
             }
           }
@@ -41,13 +48,13 @@ export async function GET(req: NextRequest) {
           const notifSnap = await db
             .collection(getFirestoreCollection("match_room_notifications"))
             .orderBy("createdAt", "desc")
-            .limit(10)
+            .limit(20)
             .get();
           for (const doc of notifSnap.docs) {
             const d = doc.data();
-            if (d.matchId) {
+              if (isRealMatchId(d.matchId)) {
               effectiveMatchId = String(d.matchId).replace(/^MATCH#/, "").trim();
-              if (effectiveMatchId) break;
+              break;
             }
           }
         }
@@ -55,10 +62,25 @@ export async function GET(req: NextRequest) {
           const completedMatchSnap = await db
             .collection(getFirestoreCollection("matches"))
             .where("status", "==", "completed")
-            .limit(5)
+            .limit(10)
             .get();
-          if (!completedMatchSnap.empty) {
-            effectiveMatchId = completedMatchSnap.docs[0].id.replace(/^MATCH#/, "").trim();
+            for (const doc of completedMatchSnap.docs) {
+              if (isRealMatchId(doc.id)) {
+                effectiveMatchId = doc.id.replace(/^MATCH#/, "").trim();
+                break;
+              }
+            }
+          }
+          if (!effectiveMatchId && db) {
+            const anyMatchSnap = await db
+              .collection(getFirestoreCollection("matches"))
+              .limit(10)
+              .get();
+            for (const doc of anyMatchSnap.docs) {
+              if (isRealMatchId(doc.id)) {
+                effectiveMatchId = doc.id.replace(/^MATCH#/, "").trim();
+                break;
+              }
           }
         }
       } catch (e) {

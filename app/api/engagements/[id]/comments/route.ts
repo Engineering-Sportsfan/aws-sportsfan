@@ -91,6 +91,7 @@ export async function GET(
             ":c": `ENGAGEMENT#${cleanId}`,
             ":p": "COMMENT#",
           },
+          ConsistentRead: true,
           Limit: limit,
         })
       );

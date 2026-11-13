@@ -15,6 +15,9 @@ type Params = { params: Promise<{ id: string }> };
 // ─── GET /api/matches/[id] ────────────────────────────────────────────────────
 export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
+  if (!id || ["none", "undefined", "null", "all"].includes(String(id).trim().toLowerCase())) {
+    return NextResponse.json({ success: false, error: "Invalid match ID" }, { status: 400 });
+  }
   try {
     let matchData: any = null;
     let innings: any[] = [];
@@ -118,6 +121,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
 // ─── PATCH /api/matches/[id] ──────────────────────────────────────────────────
 export async function PATCH(req: NextRequest, { params }: Params) {
   const { id } = await params;
+  if (!id || ["none", "undefined", "null", "all"].includes(String(id).trim().toLowerCase())) {
+    return NextResponse.json({ success: false, error: "Invalid match ID" }, { status: 400 });
+  }
   let body: Record<string, any>;
   try {
     body = await req.json();
@@ -239,6 +245,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 // ─── DELETE /api/matches/[id] ─────────────────────────────────────────────────
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
+  if (!id || ["none", "undefined", "null", "all"].includes(String(id).trim().toLowerCase())) {
+    return NextResponse.json({ success: false, error: "Invalid match ID" }, { status: 400 });
+  }
 
   // 1. Delete from DynamoDB MatchMoments & SportsData
   const candidateTables = Array.from(
