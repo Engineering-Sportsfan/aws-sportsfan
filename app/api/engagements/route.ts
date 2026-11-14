@@ -629,7 +629,14 @@ export async function GET(req: NextRequest) {
     // hide demo (seedDemo) cards so no other screen is affected.
     const roomIdParam = (searchParams.get("roomId") || "").trim();
     if (roomIdParam) {
-      items = items.filter(i => String((i as any).roomId || "") === roomIdParam);
+      // Extra rooms that should show another room's demo data (key = requested room, value = room the cards are stamped with).
+      // Existing room IDs are not listed here, so they keep matching their own cards exactly as before.
+      // A list is used because the seeded data is stamped with a different room ID per environment (release vs dev).
+      const DEMO_ROOM_ALIASES: Record<string, string[]> = {
+        room_1794668464892_9yuf213: ["room_1794626290343_05dr3md", "room_1794564790526_juxls71"],
+      };
+      const effectiveRoomIds = DEMO_ROOM_ALIASES[roomIdParam] || [roomIdParam];
+      items = items.filter(i => effectiveRoomIds.includes(String((i as any).roomId || "")));
     } else {
       items = items.filter(i => !(i as any).seedDemo);
     }

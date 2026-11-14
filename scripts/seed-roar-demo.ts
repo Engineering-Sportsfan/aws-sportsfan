@@ -28,7 +28,10 @@ const FORCE_ENV = has("--force-env");
 const OUT = ARGS.includes("--out") ? ARGS[ARGS.indexOf("--out") + 1] : "";
 
 const BATCH = "roar-demo-1";
-const ROOM_ID = "room_1794564790526_juxls71";
+const DEFAULT_ROOM_ID = "room_1794564790526_juxls71"; // dev room
+const ROOM_ID = ARGS.includes("--room-id") ? String(ARGS[ARGS.indexOf("--room-id") + 1] || "").trim() : DEFAULT_ROOM_ID;
+// Use when the matches already exist (created via POST /api/matches): do not write/overwrite/delete the MATCH#META rows.
+const SKIP_MATCH_META = has("--skip-match-meta");
 const AUCTION_ID = "Auction-93993";
 const FAR_FUTURE = Date.UTC(2027, 11, 31);
 const DURATION_MIN = 4320;
@@ -344,8 +347,9 @@ function buildMatches(users: User[]) {
       venue: m.venue, city: m.city, date: m.date, time: m.timeLabel, status: "upcoming",
       createdAt: matchCreated, updatedAt: matchCreated, ...SEED,
     };
-    for (const t of ["MatchMoments", "SportsData"] as TableKey[])
-      push(t, { entityId: `MATCH#${m.matchId}`, pk: `MATCH#${m.matchId}`, sk: "MATCH#META", ...meta }, "match", matchCreated);
+    if (!SKIP_MATCH_META)
+      for (const t of ["MatchMoments", "SportsData"] as TableKey[])
+        push(t, { entityId: `MATCH#${m.matchId}`, pk: `MATCH#${m.matchId}`, sk: "MATCH#META", ...meta }, "match", matchCreated);
 
     m.cards.forEach((c, i) => {
       const nn = String(i + 1).padStart(2, "0");
@@ -385,7 +389,8 @@ async function inChunks<T>(arr: T[], size: number, fn: (x: T) => Promise<unknown
 (async () => {
   const mode = DELETE ? "DELETE" : COMMIT ? "COMMIT" : "DRY RUN";
   console.log(`\n=== ROAR demo seed · ${mode} · batch ${BATCH} ===`);
-  console.log(`Room ${ROOM_ID} · Auction ${AUCTION_ID}`);
+  if (!/^room_[A-Za-z0-9_]+$/.test(ROOM_ID)) { console.error(`Invalid --room-id: "${ROOM_ID}"`); process.exit(1); }
+  console.log(`Room ${ROOM_ID} · Auction ${AUCTION_ID}${SKIP_MATCH_META ? " · match META rows skipped" : ""}`);
   console.log(`Tables: SocialAndContent=${TABLES.SocialAndContent}  MatchMoments=${TABLES.MatchMoments}  SportsData=${TABLES.SportsData}  IdentityAndAccess=${TABLES.IdentityAndAccess}`);
   if ((COMMIT || DELETE) && !FORCE_ENV && !TABLES.SocialAndContent.endsWith("-dev")) {
     console.error("\nRefusing to write: tables are not the -dev tables. Set APP_ENV=dev (or pass --force-env if you really mean it).");
