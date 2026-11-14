@@ -634,6 +634,7 @@ export async function GET(req: NextRequest) {
       // A list is used because the seeded data is stamped with a different room ID per environment (release vs dev).
       const DEMO_ROOM_ALIASES: Record<string, string[]> = {
         room_1794668464892_9yuf213: ["room_1794626290343_05dr3md", "room_1794564790526_juxls71"],
+        room_1794673347552_s4myci4: ["room_1794626290343_05dr3md", "room_1794564790526_juxls71"],
       };
       const effectiveRoomIds = DEMO_ROOM_ALIASES[roomIdParam] || [roomIdParam];
       items = items.filter(i => effectiveRoomIds.includes(String((i as any).roomId || "")));
