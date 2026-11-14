@@ -504,9 +504,10 @@ async function handleUpdate(req: NextRequest) {
         likes = Math.max(0, likes - 1);
       }
 
-      // Update DynamoDB
+      // Update DynamoDB with capped likedBy array to prevent exceeding DynamoDB 400KB item limit
       if (commentData.contentId && commentData.sk) {
         try {
+          const cappedLikedBy = likedBy.slice(-50);
           await docClient.send(
             new UpdateCommand({
               TableName: TABLES.SocialAndContent,
@@ -517,11 +518,38 @@ async function handleUpdate(req: NextRequest) {
               UpdateExpression: "SET likes = :l, likeCount = :l, likedBy = :lb, updatedAt = :u",
               ExpressionAttributeValues: {
                 ":l": likes,
-                ":lb": likedBy,
+                ":lb": cappedLikedBy,
                 ":u": now,
               },
             })
           );
+
+          // Write/delete individual like item under the comment
+          const commentSk = `LIKE#${userId}`;
+          if (likedBy.includes(userId)) {
+            await docClient.send(
+              new PutCommand({
+                TableName: TABLES.SocialAndContent,
+                Item: {
+                  contentId: `COMMENT#${commentId}`,
+                  sk: commentSk,
+                  userId,
+                  commentId,
+                  likedAt: now,
+                },
+              })
+            ).catch(() => {});
+          } else {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: TABLES.SocialAndContent,
+                Key: {
+                  contentId: `COMMENT#${commentId}`,
+                  sk: commentSk,
+                },
+              })
+            ).catch(() => {});
+          }
         } catch (err) {
           console.warn("DynamoDB update comment like notice:", err);
         }
