@@ -67,6 +67,12 @@ export default function AddRoarForm() {
 
   const iconOptions = ['Ã°Å¸â€™Â¬', 'Ã°Å¸â€œÂ¢', 'Ã°Å¸Å½â„¢Ã¯Â¸Â', 'Ã°Å¸â€œÂº', 'Ã°Å¸Å½Â®', 'Ã°Å¸Ââ€ ', 'Ã¢Â­Â', 'Ã°Å¸â€Â¥', 'Ã°Å¸â€™Â¡', 'Ã°Å¸Å½Â¯'];
 
+  // Some match sources return a team as an object ({ name, overs, score }); always reduce it to a display string.
+  const teamLabel = (t: any, fallback: string): string => {
+    if (t && typeof t === 'object') return String(t.name || t.team_name || t.short || fallback);
+    return t ? String(t) : fallback;
+  };
+
   useEffect(() => {
     async function loadMatches() {
       try {
@@ -86,8 +92,8 @@ export default function AddRoarForm() {
                 combinedMap.set(id, {
                   id,
                   match_id: id,
-                  team_a: m.team1 || m.team_a || "Team 1",
-                  team_b: m.team2 || m.team_b || "Team 2",
+                  team_a: teamLabel(m.team1 || m.team_a, "Team 1"),
+                  team_b: teamLabel(m.team2 || m.team_b, "Team 2"),
                   sport: m.sport || "cricket",
                   venue: m.venue || "",
                   format: m.format || "",
@@ -108,8 +114,8 @@ export default function AddRoarForm() {
                 combinedMap.set(id, {
                   id,
                   match_id: id,
-                  team_a: m.team1 || m.team_a || "Team 1",
-                  team_b: m.team2 || m.team_b || "Team 2",
+                  team_a: teamLabel(m.team1 || m.team_a, "Team 1"),
+                  team_b: teamLabel(m.team2 || m.team_b, "Team 2"),
                   sport: m.sport || "cricket",
                   venue: m.venue || "",
                   format: m.format || "",
