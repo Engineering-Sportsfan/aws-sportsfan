@@ -110,6 +110,8 @@ export async function POST(
           return cu !== cleanTargetUid && cu !== "me";
         });
     const nextLikes = nextLikedBy.length;
+    // Cap in-item likedBy array to last 50 users to prevent exceeding DynamoDB 400KB limit
+    const cappedLikedBy = nextLikedBy.slice(-50);
 
     // Dual-write to DynamoDB
     try {
@@ -123,7 +125,7 @@ export async function POST(
           UpdateExpression: "SET likesCount = :lc, likes = :lc, likedBy = :lb",
           ExpressionAttributeValues: {
             ":lc": nextLikes,
-            ":lb": nextLikedBy,
+            ":lb": cappedLikedBy,
           },
         })
       );
