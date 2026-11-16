@@ -5,6 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { awardUserPoints, getUserInfo } from "@/lib/userPoints";
 import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { cleanMatchId, getMatchLeaderboard } from "@/lib/matchLeaderboard";
 
 export const dynamic = "force-dynamic";
 
@@ -114,6 +115,26 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const userId = searchParams.get("userId");
+
+    // Per-match leaderboard (Fan Scorecard). Without matchId the global response below is unchanged.
+    const rawMatchId = searchParams.get("matchId");
+    if (rawMatchId !== null) {
+      const matchId = cleanMatchId(rawMatchId);
+      if (!matchId || !/^[A-Za-z0-9_\-:.]{1,128}$/.test(matchId)) {
+        return NextResponse.json({ success: false, error: "Invalid matchId" }, { status: 400 });
+      }
+      const n = parseInt(searchParams.get("limit") || "5", 10);
+      const matchLimit = Math.min(Math.max(Number.isNaN(n) ? 5 : n, 1), 100);
+      const result = await getMatchLeaderboard({
+        matchId,
+        limit: matchLimit,
+        userId: userId ? decodeURIComponent(userId) : null,
+      });
+      return NextResponse.json(result, {
+        headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=30" },
+      });
+    }
+
     const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
 
     let leaderboard: Array<Record<string, unknown>> = [];
