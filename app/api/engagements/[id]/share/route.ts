@@ -7,6 +7,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { getUser } from "@/lib/getUser";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -103,6 +104,32 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     } catch (e) {
       console.warn("share mirror notice:", e);
+    }
+
+    // Award +2 SXP for sharing engagement card (idempotent per user & engagement)
+    if (!alreadyShared && userId && !String(userId).startsWith("anon_")) {
+      const cleanUserId = String(userId).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const txId = `eng_share_${cleanId}_${cleanUserId}`;
+      awardUserPoints({
+        actualUserId: userId,
+        authUserId: authUser?.userId || userId,
+        userName: userName || authUser?.name || "Sports Fan",
+        userEmail: authUser?.email || (userId.includes("@") ? userId : ""),
+        userExists: true,
+        points: 2,
+        reason: "SHARE",
+        transactionId: txId,
+        metadata: {
+          engagementId: cleanId,
+          matchId: resolvedMatchId,
+          momentId: resolvedMomentId,
+          seriesId: resolvedSeriesId,
+          action: "share",
+          statement: `Shared engagement: "${found?.item?.title || found?.item?.headline || cleanId}" (+2 SXP)`,
+        },
+      }).catch((ptsErr) => {
+        console.warn("[POST /api/engagements/[id]/share] Points award notice:", ptsErr);
+      });
     }
 
     return NextResponse.json({

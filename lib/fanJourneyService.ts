@@ -18,6 +18,7 @@ import {
   type FanArchetype,
   type SeriesJourneyState,
   type UserMatchRecap,
+  type UserMatchKPIs,
   type UserMatchWatchingIntent,
   type MatchIntentAggregates,
   type UserSeriesProgress,
@@ -419,6 +420,18 @@ interface ParticipantMatchStats {
   upvotesReceived: number;
   predictionsTotal: number;
   predictionsCorrect: number;
+  triviaAttempted: number;
+  triviaCorrect: number;
+  predictionsAttempted: number;
+  predictionsResolved: number;
+  predictionsWon: number;
+  pollsVoted: number;
+  debatesVoted: number;
+  communityComments: number;
+  takesSubmitted: number;
+  takesLikesReceived: number;
+  takesRepliesReceived: number;
+  cardsEngagedSet: Set<string>;
   sxpEarned: number;
   momentEngagementCounts: Map<string, number>;
 }
@@ -428,6 +441,10 @@ interface MatchTelemetrySnapshot {
   momentsById: Map<string, { momentId: string; title: string; mediaUrl: string; totalReactions: number }>;
   participants: Map<string, ParticipantMatchStats>;
   engagementCount: number;
+  totalCommunityCards: number;
+  totalTakesCards: number;
+  totalTriviaCards: number;
+  totalPredictionCards: number;
 }
 
 async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelemetrySnapshot> {
@@ -530,6 +547,18 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
         upvotesReceived: 0,
         predictionsTotal: 0,
         predictionsCorrect: 0,
+        triviaAttempted: 0,
+        triviaCorrect: 0,
+        predictionsAttempted: 0,
+        predictionsResolved: 0,
+        predictionsWon: 0,
+        pollsVoted: 0,
+        debatesVoted: 0,
+        communityComments: 0,
+        takesSubmitted: 0,
+        takesLikesReceived: 0,
+        takesRepliesReceived: 0,
+        cardsEngagedSet: new Set<string>(),
         sxpEarned: 0,
         momentEngagementCounts: new Map(),
       };
@@ -550,6 +579,19 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
 
   // 3. Read child interaction records (VOTE#, LIKE#, SHARE#, COMMENT#, IMPRESSION#) for every engagement
   const engEntries = Array.from(engagementsById.entries());
+  let totalCommunityCards = 0;
+  let totalTakesCards = 0;
+  let totalTriviaCards = 0;
+  let totalPredictionCards = 0;
+
+  for (const [, eng] of engEntries) {
+    const cleanType = String(eng.type || "").toLowerCase().trim();
+    if (cleanType === "question" || cleanType === "quiz") totalTriviaCards += 1;
+    else if (cleanType === "prediction") totalPredictionCards += 1;
+    else if (cleanType === "poll" || cleanType === "debate") totalCommunityCards += 1;
+    else if (cleanType === "express" || cleanType === "takes" || cleanType === "hot_take") totalTakesCards += 1;
+  }
+
   const BATCH_SIZE = 15;
   for (let i = 0; i < engEntries.length; i += BATCH_SIZE) {
     const batch = engEntries.slice(i, i + BATCH_SIZE);
@@ -617,16 +659,34 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
 
             p.participations += 1;
             p.totalInteractions += 1;
+            p.cardsEngagedSet.add(eid);
             p.sxpEarned += Number(it.pointsAwarded || it.participationPointsAwarded || 2) + Number(it.wonBonusPoints || 0);
             addMomentTouch(p, momentId, 1);
 
+            const cleanEngType = String(eng.type || "").toLowerCase().trim();
+            const selected = String(it.selectedOptionId || "").trim().toLowerCase();
+            const isWinner =
+              it.isCorrect === true ||
+              winningUserSet.has(p.userId.toLowerCase()) ||
+              (isResolved && Boolean(winningChoiceId) && selected === winningChoiceId);
+
+            if (cleanEngType === "question" || cleanEngType === "quiz") {
+              p.triviaAttempted += 1;
+              if (isWinner) p.triviaCorrect += 1;
+            } else if (cleanEngType === "prediction") {
+              p.predictionsAttempted += 1;
+              if (isResolved) p.predictionsResolved += 1;
+              if (isWinner) p.predictionsWon += 1;
+            } else if (cleanEngType === "poll") {
+              p.pollsVoted += 1;
+            } else if (cleanEngType === "debate") {
+              p.debatesVoted += 1;
+            } else if (cleanEngType === "express" || cleanEngType === "takes" || cleanEngType === "hot_take") {
+              p.takesSubmitted += 1;
+            }
+
             if (isPredictionOrQuiz) {
               p.predictionsTotal += 1;
-              const selected = String(it.selectedOptionId || "").trim().toLowerCase();
-              const isWinner =
-                it.isCorrect === true ||
-                winningUserSet.has(p.userId.toLowerCase()) ||
-                (isResolved && Boolean(winningChoiceId) && selected === winningChoiceId);
               if (isWinner) p.predictionsCorrect += 1;
             }
           } else if (sk.startsWith("LIKE#")) {
@@ -636,6 +696,7 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
             seenLikes.add(p.userId.toLowerCase());
             p.likes += 1;
             p.totalInteractions += 1;
+            p.cardsEngagedSet.add(eid);
             addMomentTouch(p, momentId, 1);
           } else if (sk.startsWith("SHARE#")) {
             const rawUid = String(it.userId || sk.slice(6));
@@ -644,6 +705,7 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
             seenShares.add(p.userId.toLowerCase());
             p.shares += 1;
             p.totalInteractions += 1;
+            p.cardsEngagedSet.add(eid);
             addMomentTouch(p, momentId, 1);
           } else if (sk.startsWith("IMPRESSION#") || sk.startsWith("VIEW#")) {
             const rawUid = String(it.userId || sk.replace(/^(IMPRESSION|VIEW)#/, "").split("#")[0]);
@@ -669,6 +731,10 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
               const targetP = getOrCreateParticipant(String(it.targetAuthorUid));
               if (targetP && targetP.userId.toLowerCase() !== likerP.userId.toLowerCase()) {
                 targetP.upvotesReceived += 1;
+                const cleanEngType = String(eng.type || "").toLowerCase().trim();
+                if (cleanEngType === "express" || cleanEngType === "takes" || cleanEngType === "hot_take") {
+                  targetP.takesLikesReceived += 1;
+                }
               }
             }
           } else if (sk.startsWith("SOCIAL_COMMENT#")) {
@@ -693,6 +759,18 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
         for (const [cid, c] of commentMap.entries()) {
           const authorP = getOrCreateParticipant(String(c.authorUid || ""), c.authorUsername, c.authorAvatarUrl);
           if (authorP) {
+            authorP.cardsEngagedSet.add(eid);
+            const cleanEngType = String(eng.type || "").toLowerCase().trim();
+            if (cleanEngType === "debate" || cleanEngType === "poll") {
+              authorP.communityComments += 1;
+            } else if (cleanEngType === "express" || cleanEngType === "takes" || cleanEngType === "hot_take") {
+              if (c.parentId) {
+                authorP.takesRepliesReceived += 1;
+              } else {
+                authorP.takesSubmitted += 1;
+              }
+            }
+
             if (c.parentId) {
               authorP.replies += 1;
               if (!seenSocialComments.has(cid)) {
@@ -715,7 +793,13 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
                 seenSocialLikes.add(dKey);
                 likerP.socialLikes += 1;
                 likerP.totalInteractions += 1;
-                if (authorP) authorP.upvotesReceived += 1;
+                if (authorP) {
+                  authorP.upvotesReceived += 1;
+                  const cleanEngType = String(eng.type || "").toLowerCase().trim();
+                  if (cleanEngType === "express" || cleanEngType === "takes" || cleanEngType === "hot_take") {
+                    authorP.takesLikesReceived += 1;
+                  }
+                }
               }
             }
           }
@@ -743,6 +827,10 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
     momentsById,
     participants,
     engagementCount: engagementsById.size,
+    totalCommunityCards,
+    totalTakesCards,
+    totalTriviaCards,
+    totalPredictionCards,
   };
 }
 
@@ -924,6 +1012,232 @@ export async function computeUserMatchRecap(
   };
 
   return saveUserMatchRecap(recap);
+}
+
+// ─── 2b. User Match KPIs (5 Pentagon Radar Pillars) (TABLES.GamificationAndWallet) ─
+
+export async function getUserMatchKPIs(userId: string, matchId: string): Promise<UserMatchKPIs | null> {
+  const uid = cleanUserId(userId);
+  const mid = cleanMatchId(matchId);
+  if (!uid || !mid) return null;
+
+  for (const table of getCandidateTableNames(TABLES.GamificationAndWallet)) {
+    try {
+      const res = await docClient.send(
+        new GetCommand({
+          TableName: table,
+          Key: { userId: `USER#${uid}`, sk: `KPI#${mid}` },
+          ConsistentRead: true,
+        })
+      );
+      if (res.Item) {
+        const it = res.Item;
+        return {
+          userId: uid,
+          matchId: mid,
+          seriesId: String(it.seriesId || ""),
+          overallScore: Number(it.overallScore || 0),
+          kpis: it.kpis,
+          radarData: it.radarData,
+          generatedAt: Number(it.generatedAt || Date.now()),
+        };
+      }
+    } catch {
+      // try next table
+    }
+  }
+  return null;
+}
+
+export async function saveUserMatchKPIs(kpis: UserMatchKPIs): Promise<UserMatchKPIs> {
+  const uid = cleanUserId(kpis.userId);
+  const mid = cleanMatchId(kpis.matchId);
+  const payload: UserMatchKPIs = {
+    ...kpis,
+    userId: uid,
+    matchId: mid,
+    generatedAt: kpis.generatedAt || Date.now(),
+  };
+
+  await docClient.send(
+    new PutCommand({
+      TableName: TABLES.GamificationAndWallet,
+      Item: {
+        ...payload,
+        userId: `USER#${uid}`,
+        sk: `KPI#${mid}`,
+        rawUserId: uid,
+      },
+    })
+  );
+
+  return payload;
+}
+
+export async function computeUserMatchKPIs(
+  rawUserId: string,
+  matchId: string,
+  seriesIdInput?: string
+): Promise<UserMatchKPIs> {
+  const uid = cleanUserId(rawUserId);
+  const mid = cleanMatchId(matchId);
+  const profile = await resolveDynamoUserProfile(uid);
+  const snapshot = await collectMatchActivitySnapshot(mid);
+
+  // Match participant across canonical keys (userId, email, or entityKeyId)
+  const candKeys = extractCandidateUserKeys(uid).concat(extractCandidateUserKeys(profile.email));
+  let statsMatch: ParticipantMatchStats | null = null;
+  for (const ck of candKeys) {
+    const found = snapshot.participants.get(ck.toLowerCase());
+    if (found) {
+      statsMatch = found;
+      break;
+    }
+  }
+
+  const seriesId = cleanSeriesId(seriesIdInput || "");
+  const totalMatchCards = Math.max(1, snapshot.engagementCount);
+
+  // 1. Knowledge (Trivia / Quiz accuracy: correct / attempted)
+  const triviaAttempted = statsMatch?.triviaAttempted || 0;
+  const triviaCorrect = statsMatch?.triviaCorrect || 0;
+  let knowledgeScore: number;
+  let knowledgeMetric: string;
+
+  if (triviaAttempted > 0) {
+    knowledgeScore = Math.min(100, Math.round((triviaCorrect / triviaAttempted) * 100));
+    knowledgeMetric = `${triviaCorrect}/${triviaAttempted} Correct (${knowledgeScore}%)`;
+  } else {
+    knowledgeScore = snapshot.totalTriviaCards === 0 ? 75 : 0;
+    knowledgeMetric = snapshot.totalTriviaCards === 0 ? "No Trivia in Match" : "0 Trivia Attempted";
+  }
+
+  // 2. Prediction (Forecasting accuracy: won / resolved)
+  const predictionsAttempted = statsMatch?.predictionsAttempted || 0;
+  const predictionsResolved = statsMatch?.predictionsResolved || 0;
+  const predictionsWon = statsMatch?.predictionsWon || 0;
+  let predictionScore: number;
+  let predictionMetric: string;
+
+  if (predictionsResolved > 0) {
+    predictionScore = Math.min(100, Math.round((predictionsWon / predictionsResolved) * 100));
+    predictionMetric = `${predictionsWon}/${predictionsResolved} Correct (${predictionScore}%)`;
+  } else if (predictionsAttempted > 0) {
+    predictionScore = 75;
+    predictionMetric = `${predictionsAttempted} Pending Resolution`;
+  } else {
+    predictionScore = snapshot.totalPredictionCards === 0 ? 75 : 0;
+    predictionMetric = snapshot.totalPredictionCards === 0 ? "No Predictions in Match" : "0 Predictions Made";
+  }
+
+  // 3. Participation (Dynamic card coverage: unique cards engaged / total match cards — NO BENCHMARK)
+  const cardsEngagedCount = statsMatch?.cardsEngagedSet ? statsMatch.cardsEngagedSet.size : 0;
+  const participationScore = Math.min(100, Math.round((cardsEngagedCount / totalMatchCards) * 100));
+  const participationMetric = `${cardsEngagedCount}/${totalMatchCards} Cards Engaged (${participationScore}%)`;
+
+  // 4. Community (Debates & Polls coverage + comments)
+  const pollsVoted = statsMatch?.pollsVoted || 0;
+  const debatesVoted = statsMatch?.debatesVoted || 0;
+  const communityVoted = pollsVoted + debatesVoted;
+  const communityComments = statsMatch?.communityComments || 0;
+  const totalCommunityCards = Math.max(1, snapshot.totalCommunityCards);
+  let communityScore: number;
+  let communityMetric: string;
+
+  if (snapshot.totalCommunityCards > 0) {
+    const coverage = Math.min(1, communityVoted / totalCommunityCards);
+    const votePart = coverage * 75;
+    const commentPart = Math.min(25, communityComments * 12.5);
+    communityScore = Math.min(100, Math.round(votePart + commentPart));
+    communityMetric = `${communityVoted}/${totalCommunityCards} Polls/Debates + ${communityComments} Comments`;
+  } else {
+    communityScore = Math.min(100, (communityVoted * 30) + (communityComments * 20));
+    communityMetric = `${communityVoted} Votes, ${communityComments} Comments`;
+  }
+
+  // 5. Insight (Takes submitted + peer likes/replies received)
+  const takesSubmitted = statsMatch?.takesSubmitted || 0;
+  const takesLikesReceived = statsMatch?.takesLikesReceived || 0;
+  const takesRepliesReceived = statsMatch?.takesRepliesReceived || 0;
+  let insightScore: number;
+  let insightMetric: string;
+
+  if (snapshot.totalTakesCards > 0 || takesSubmitted > 0) {
+    const submissionPart = Math.min(60, takesSubmitted * 30);
+    const resonancePart = Math.min(40, (takesLikesReceived * 10) + (takesRepliesReceived * 15));
+    insightScore = Math.min(100, Math.round(submissionPart + resonancePart));
+    insightMetric = `${takesSubmitted} Takes, ${takesLikesReceived} Likes, ${takesRepliesReceived} Replies`;
+  } else {
+    const commentsCount = statsMatch?.comments || 0;
+    const upvotes = statsMatch?.upvotesReceived || 0;
+    insightScore = Math.min(100, (commentsCount * 25) + (upvotes * 15));
+    insightMetric = `${commentsCount} Comments, ${upvotes} Upvotes Received`;
+  }
+
+  // Center Pentagon Overall Score: Average of all 5 pillars
+  const overallScore = Math.round(
+    (knowledgeScore + predictionScore + participationScore + communityScore + insightScore) / 5
+  );
+
+  const kpis: UserMatchKPIs = {
+    userId: uid,
+    matchId: mid,
+    seriesId,
+    overallScore,
+    kpis: {
+      knowledge: {
+        score: knowledgeScore,
+        label: "Knowledge",
+        metric: knowledgeMetric,
+        attempted: triviaAttempted,
+        correct: triviaCorrect,
+      },
+      prediction: {
+        score: predictionScore,
+        label: "Prediction",
+        metric: predictionMetric,
+        attempted: predictionsAttempted,
+        resolved: predictionsResolved,
+        correct: predictionsWon,
+      },
+      participation: {
+        score: participationScore,
+        label: "Participation",
+        metric: participationMetric,
+        cardsEngaged: cardsEngagedCount,
+        totalMatchCards,
+        totalActions: statsMatch?.totalInteractions || 0,
+      },
+      community: {
+        score: communityScore,
+        label: "Community",
+        metric: communityMetric,
+        pollsVoted,
+        debatesVoted,
+        totalCommunityCards: snapshot.totalCommunityCards,
+        commentsCount: communityComments,
+      },
+      insight: {
+        score: insightScore,
+        label: "Insight",
+        metric: insightMetric,
+        takesSubmitted,
+        totalTakesCards: snapshot.totalTakesCards,
+        peerLikesReceived: takesLikesReceived,
+        peerRepliesReceived: takesRepliesReceived,
+      },
+    },
+    radarData: [
+      { subject: "Knowledge", value: knowledgeScore, fullMark: 100, pillar: "Knowledge", score: knowledgeScore },
+      { subject: "Prediction", value: predictionScore, fullMark: 100, pillar: "Prediction", score: predictionScore },
+      { subject: "Participation", value: participationScore, fullMark: 100, pillar: "Participation", score: participationScore },
+      { subject: "Community", value: communityScore, fullMark: 100, pillar: "Community", score: communityScore },
+      { subject: "Insight", value: insightScore, fullMark: 100, pillar: "Insight", score: insightScore },
+    ],
+    generatedAt: Date.now(),
+  };
+
+  return saveUserMatchKPIs(kpis);
 }
 
 // ─── 7. User Match Intent Checklist (TABLES.GamificationAndWallet) ─────────────

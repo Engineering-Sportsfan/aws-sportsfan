@@ -668,6 +668,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           const followCleanId = String(id || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
           const followFound = await findEngagementById(followCleanId, body.matchId || req.nextUrl.searchParams.get("matchId") || undefined);
           const followItem: any = followFound?.item;
+
+          // Dual-sync follow preference to GamificationAndWallet
+          const targetMid = String(body.matchId || followItem?.matchId || "").replace(/^MATCH#/i, "").trim();
+          const cleanUid = String(userId).replace(/^USER#/i, "").trim();
+          if (targetMid && cleanUid) {
+            if (nextFollow) {
+              await docClient.send(new PutCommand({
+                TableName: TABLES.GamificationAndWallet,
+                Item: {
+                  userId: `USER#${cleanUid}`,
+                  sk: `FOLLOW#MATCH#${targetMid}`,
+                  rawUserId: cleanUid,
+                  matchId: targetMid,
+                  matchTitle: followItem?.title || followItem?.matchTitle || `Match ${targetMid}`,
+                  followedAt: toggleNow,
+                  isFollowing: true,
+                }
+              })).catch(() => {});
+            } else {
+              await docClient.send(new DeleteCommand({
+                TableName: TABLES.GamificationAndWallet,
+                Key: {
+                  userId: `USER#${cleanUid}`,
+                  sk: `FOLLOW#MATCH#${targetMid}`,
+                }
+              })).catch(() => {});
+            }
+          }
           if (followItem) {
             applyEngagementStats(followItem, await getEngagementStats(followCleanId, { consistent: true }), { exactVotes: true });
             await persistEngagementUpdate(followCleanId, followItem, followFound?.matchMomentsRecord);
@@ -1479,7 +1507,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       console.warn("DynamoDB user engagement marker notice:", dynUserEngErr);
     }
 
-    // B. Legacy DynamoDB Key: contentId = USER_VOTE#{userId}, sk = ENGAGEMENT#{id} (Backwards compatibility)
+    // A3. Follow Match Subscription: sync directly to GamificationAndWallet
+    if (item.type === "follow" || body.actionType === "follow") {
+      try {
+        const targetMid = String(body.matchId || item.matchId || "").replace(/^MATCH#/i, "").trim();
+        const cleanUid = String(userId).replace(/^USER#/i, "").trim();
+        if (targetMid && cleanUid) {
+          const action = String(body.actionType || selectedOptionId || "follow").toLowerCase();
+          if (action === "follow") {
+            await docClient.send(
+              new PutCommand({
+                TableName: TABLES.GamificationAndWallet,
+                Item: {
+                  userId: `USER#${cleanUid}`,
+                  sk: `FOLLOW#MATCH#${targetMid}`,
+                  rawUserId: cleanUid,
+                  matchId: targetMid,
+                  matchTitle: item.title || item.matchTitle || `Match ${targetMid}`,
+                  followedAt: now,
+                  isFollowing: true,
+                },
+              })
+            );
+          }
+        }
+      } catch (gwErr) {
+        console.warn("[vote follow sync to GamificationAndWallet notice]:", gwErr);
+      }
+    }
     try {
       await docClient.send(
         new PutCommand({

@@ -6,6 +6,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { UpdateCommand, GetCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 import { applyEngagementStats, getEngagementStats } from "@/lib/engagementSocial";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -110,6 +111,8 @@ export async function POST(
           return cu !== cleanTargetUid && cu !== "me";
         });
     const nextLikes = nextLikedBy.length;
+    // Cap in-item likedBy array to last 50 users to prevent exceeding DynamoDB 400KB limit
+    const cappedLikedBy = nextLikedBy.slice(-50);
 
     // Dual-write to DynamoDB
     try {
@@ -123,7 +126,7 @@ export async function POST(
           UpdateExpression: "SET likesCount = :lc, likes = :lc, likedBy = :lb",
           ExpressionAttributeValues: {
             ":lc": nextLikes,
-            ":lb": nextLikedBy,
+            ":lb": cappedLikedBy,
           },
         })
       );
@@ -168,6 +171,32 @@ export async function POST(
             })
           );
         }
+      }
+
+      // Award +2 SXP on comment like
+      if (liked && userId && userId !== "guest_fan" && !String(userId).startsWith("anon_")) {
+        const cleanUserId = String(userId).replace(/[^a-zA-Z0-9_-]/g, "_");
+        const txId = `eng_comm_like_${cleanCommentId}_${cleanUserId}`;
+        const userName = authUser?.name || body?.userName || (userId.includes("@") ? userId.split("@")[0] : "Sports Fan");
+        awardUserPoints({
+          actualUserId: userId,
+          authUserId: authUser?.userId || userId,
+          userName,
+          userEmail: authUser?.email || (userId.includes("@") ? userId : ""),
+          userExists: true,
+          points: 2,
+          reason: "LIKE",
+          transactionId: txId,
+          metadata: {
+            engagementId: cleanEngId,
+            commentId: cleanCommentId,
+            matchId: resolvedMatchId,
+            action: "like",
+            statement: `Liked comment on engagement (+2 SXP)`,
+          },
+        }).catch((ptsErr) => {
+          console.warn("[CommentLike POST] Points award notice:", ptsErr);
+        });
       }
 
       if (found?.item) {

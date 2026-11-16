@@ -255,17 +255,17 @@ export async function POST(
       console.warn("[RoomComments POST] Firestore sync notice:", fsErr);
     }
 
-    // Award points
+    // Award points (+2 SXP for comment/reply)
     awardRoarPointsByReason({
       actualUserId: resolvedAuthorId,
       authUserId: user.userId,
       userName: username,
       userEmail: user.email,
       userExists: info.exists,
-      reason: "ROAR_COMMENT",
-      points: 8,
+      reason: "COMMENT",
+      points: 2,
       transactionId: `comment_${commentId}`,
-      metadata: { roomId: cleanRoomId, msgId: targetMsgId, commentId },
+      metadata: { roomId: cleanRoomId, msgId: targetMsgId, commentId, statement: `Commented on room message (+2 SXP)` },
     }).catch(() => { });
 
     // Notify post author on reply

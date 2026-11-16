@@ -212,6 +212,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     let playerSummariesGenerated = 0;
     let fanOfTheMatchDispatched = false;
     let matchSummaryDispatched = false;
+    let recognitionsCount = 0;
     if (String(updatedMatch.status || "").trim().toLowerCase() === "completed") {
       try {
         const { generateAndPersistMatchPlayerSummaries } = await import("@/lib/matchPlayerSummary");
@@ -223,6 +224,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         playerSummariesGenerated = summaryResult.generatedCount;
         fanOfTheMatchDispatched = Boolean(summaryResult.fanOfTheMatch);
         matchSummaryDispatched = Boolean(summaryResult.matchSnapshot);
+        recognitionsCount = summaryResult.recognitionsCount || 0;
       } catch (summaryErr) {
         console.warn(`[matches PATCH ${id}] Match player summary dispatch notice:`, summaryErr);
       }
@@ -244,6 +246,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       playerSummariesGenerated,
       fanOfTheMatchDispatched,
       matchSummaryDispatched,
+      recognitionsCount,
     });
   } catch (err: any) {
     console.error("[matches PATCH] Unhandled error:", err);

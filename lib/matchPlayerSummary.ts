@@ -5,7 +5,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
 import { withEngagementGsiKeys } from "@/lib/engagementList";
 import { cacheService } from "@/lib/cacheService";
-import { GetCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 export interface PlayerEngagementSummaryRow {
   engagementId: string;
@@ -544,10 +544,11 @@ export async function generateAndPersistMatchPlayerSummaries(
   summaries: PlayerMatchSummaryRecord[];
   fanOfTheMatch?: FanOfTheMatchRecord | null;
   matchSnapshot?: MatchSummaryRecord | null;
+  recognitionsCount: number;
 }> {
   const cleanM = cleanMatchKey(rawMatchId);
   const targetMatchKey = normalizeMatchKey(cleanM);
-  if (!cleanM) return { generatedCount: 0, summaries: [] };
+  if (!cleanM) return { generatedCount: 0, summaries: [], recognitionsCount: 0 };
 
   const matchMeta = matchMetaInput || (await loadMatchMeta(cleanM)) || {};
   const team1 = String(matchMeta.team1 || "Team 1").trim();
@@ -1104,9 +1105,10 @@ export async function generateAndPersistMatchPlayerSummaries(
   const sendMatchSummary = options?.sendMatchSummary !== false;
   const sendFanOfMatchSummary = options?.sendFanOfMatchSummary !== false;
 
-  // 5a. Persist User Summaries (if marked by admin)
+  // 5a. Persist User Summaries (capped to top active fans to prevent serverless timeouts; rest evaluated on-demand)
   if (sendUserSummary && summaries.length > 0) {
-    for (const summary of summaries) {
+    const targetSummaries = summaries.slice(0, 25);
+    for (const summary of targetSummaries) {
       const userKey = safeKeyToken(summary.userId);
       const dynamoItem = {
         entityId: `MATCH#${cleanM}`,
@@ -1127,6 +1129,31 @@ export async function generateAndPersistMatchPlayerSummaries(
             .doc(`${cleanM}_${userKey}`)
             .set({ ...summary, matchId: cleanM }, { merge: true })
             .catch(() => {});
+        }
+
+        // Also persist User Recap to GamificationAndWallet
+        const cleanUid = String(summary.userId || "").replace(/^USER#/i, "").trim();
+        if (cleanUid) {
+          await docClient.send(
+            new PutCommand({
+              TableName: TABLES.GamificationAndWallet,
+              Item: {
+                userId: `USER#${cleanUid}`,
+                sk: `RECAP#MATCH#${cleanM}`,
+                rawUserId: cleanUid,
+                matchId: cleanM,
+                matchTitle,
+                totalActions: summary.totalActions,
+                predictionsWon: summary.predictionsWon,
+                predictionsCount: summary.predictionsCount,
+                sxpAwarded: summary.totals?.sxpAwarded || summary.totals?.sxpAwarded || 320,
+                rank: summary.rank,
+                leaderboardBadge: summary.leaderboardBadge,
+                persona: summary.persona,
+                createdAt: now,
+              },
+            })
+          ).catch(() => {});
         }
 
         // Also persist as an in-stream Engagement so it flows directly through /api/engagements
@@ -1154,7 +1181,7 @@ export async function generateAndPersistMatchPlayerSummaries(
           predictionsRatio: summary.predictionsRatio,
           predictionsCount: summary.predictionsCount,
           predictionsWon: summary.predictionsWon,
-          sxpAwarded: summary.totals?.sxpAwarded || summary.sxpAwarded || 320,
+          sxpAwarded: summary.totals?.sxpAwarded || (summary as any).sxpAwarded || 320,
           persona: summary.persona,
           countryFlag: summary.countryFlag,
           favoritesLabel: summary.favoritesLabel,
@@ -1231,6 +1258,30 @@ export async function generateAndPersistMatchPlayerSummaries(
         firestoreRef: db ? db.collection(getFirestoreCollection("match_room_notifications")).doc(`FAN_OF_THE_MATCH_${cleanM}`) : null,
         firestoreData: { ...fanOfTheMatchRecord, matchId: cleanM },
       });
+
+      // Persist permanent Trophy in winner's GamificationAndWallet cabinet
+      if (fotmUserId && isValidRealUid(fotmUserId)) {
+        const cleanFotmUid = String(fotmUserId).replace(/^USER#/i, "").trim();
+        await docClient.send(
+          new PutCommand({
+            TableName: TABLES.GamificationAndWallet,
+            Item: {
+              userId: `USER#${cleanFotmUid}`,
+              sk: `AWARD#FAN_OF_THE_MATCH#${cleanM}`,
+              rawUserId: cleanFotmUid,
+              badgeType: "FAN_OF_THE_MATCH",
+              title: "Fan of the Match",
+              matchId: cleanM,
+              matchTitle,
+              winnerName: fotmUserName,
+              avatar: fotmAvatar,
+              pointsBonus: 500,
+              tier: "GOLD",
+              awardedAt: now,
+            },
+          })
+        ).catch((trophyErr) => console.warn("[FotM trophy cabinet put notice]:", trophyErr));
+      }
 
       // Also persist as an in-stream Engagement so it flows directly through /api/engagements
       const fotmEngId = `eng_fotm_${cleanM}`;
@@ -1391,6 +1442,7 @@ export async function generateAndPersistMatchPlayerSummaries(
     summaries,
     fanOfTheMatch: fanOfTheMatchRecord,
     matchSnapshot: matchSnapshotRecord,
+    recognitionsCount: recognitionsList.length,
   };
 }
 

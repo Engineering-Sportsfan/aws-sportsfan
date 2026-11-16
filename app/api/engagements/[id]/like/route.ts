@@ -10,6 +10,7 @@ import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPer
 import { applyEngagementStats, countRecords, getEngagementStats } from "@/lib/engagementSocial";
 import { getCandidateTableNames } from "@/lib/dualWrite";
 import { withReactionKeys } from "@/lib/engagementReactions";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -191,6 +192,33 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             createdAt: now,
           });
         } catch {}
+      }
+
+      // 3b. Award +2 SXP for liking engagement card (idempotent per user & engagement)
+      if (userId && !String(userId).startsWith("anon_")) {
+        const cleanUserId = String(userId).replace(/[^a-zA-Z0-9_-]/g, "_");
+        const txId = `eng_like_${cleanId}_${cleanUserId}`;
+        const userName = body?.userName || authUser?.name || (userId.includes("@") ? userId.split("@")[0] : "Sports Fan");
+        awardUserPoints({
+          actualUserId: userId,
+          authUserId: authUser?.userId || userId,
+          userName,
+          userEmail: authUser?.email || (userId.includes("@") ? userId : ""),
+          userExists: true,
+          points: 2,
+          reason: "LIKE",
+          transactionId: txId,
+          metadata: {
+            engagementId: cleanId,
+            matchId: resolvedMatchId,
+            momentId: resolvedMomentId,
+            seriesId: resolvedSeriesId,
+            action: "like",
+            statement: `Liked engagement: "${item?.title || item?.headline || cleanId}" (+2 SXP)`,
+          },
+        }).catch((ptsErr) => {
+          console.warn("[POST /api/engagements/[id]/like] Points award notice:", ptsErr);
+        });
       }
 
       // 4. Dispatch FlipArena Notification to Creator (Async)

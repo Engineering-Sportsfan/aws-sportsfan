@@ -315,7 +315,7 @@ function CoreEngineDashboardContent() {
                 </h3>
               </div>
               <p className="text-xs text-gray-400 max-w-md">
-                Create live polls, predictions, express reaction taps, and resolve outcomes with verified ground truth.
+                Create live polls, predictions, fan takes, and resolve outcomes with verified ground truth.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">

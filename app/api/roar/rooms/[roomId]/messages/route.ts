@@ -282,6 +282,7 @@ export async function GET(
     const lastDocId = searchParams.get("lastDocId");
     const channelId = searchParams.get("channelId");
     const channelSlug = searchParams.get("channelSlug");
+    const matchIdParam = searchParams.get("matchId");
 
     const resolved = await resolveUser(user.email, user.userId);
     if (!resolved) {
@@ -395,6 +396,15 @@ export async function GET(
       } catch (fsErr) {
         console.warn("Firestore fallback messages notice:", fsErr);
       }
+    }
+
+    // Optional matchId filter for Event Switcher
+    if (matchIdParam && matchIdParam !== "all") {
+      const cleanFilter = matchIdParam.replace(/^MATCH#/i, "").toLowerCase();
+      messages = messages.filter((m) => {
+        if (!m.matchId) return false;
+        return String(m.matchId).replace(/^MATCH#/i, "").toLowerCase() === cleanFilter;
+      });
     }
 
     // Sort by createdAt descending and slice to limit
@@ -680,7 +690,7 @@ export async function POST(
     const {
       text, type = "chat", mediaUrls, sideA, sideB, memGifUrl, memTag,
       questions, matchTitle, matchStartAt, matchEndAt, triviaQuestions,
-      battleQuestions, clientMsgId, channelId, channelSlug,
+      battleQuestions, clientMsgId, channelId, channelSlug, matchId,
     } = body;
 
     if (!text?.trim()) return NextResponse.json({ error: "text is required" }, { status: 400 });
@@ -704,6 +714,7 @@ export async function POST(
       fireCount: 0, noChanceCount: 0, heartCount: 0,
       agreeCount: 0, disagreeCount: 0, replyCount: 0,
       createdAt: now, updatedAt: now,
+      ...(matchId && { matchId }),
       ...(channelId && { channelId }),
       ...(channelSlug && { channelSlug }),
       ...(matchStartAt && { matchStartAt }),

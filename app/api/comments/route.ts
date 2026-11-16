@@ -12,6 +12,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { FieldValue } from "firebase-admin/firestore";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -408,6 +409,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 4. Award +2 SXP for commenting
+    if (userId && !userId.startsWith("guest_")) {
+      const cleanUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const txId = `comment_${commentId}_${cleanUserId}`;
+      awardUserPoints({
+        actualUserId: userId,
+        userName,
+        userEmail,
+        userExists: true,
+        points: 2,
+        reason: "COMMENT",
+        transactionId: txId,
+        metadata: {
+          commentId,
+          contentId: cleanContentId,
+          contentType,
+          action: parentCommentId ? "reply" : "comment",
+          statement: `${parentCommentId ? "Replied to" : "Commented on"} article (+2 SXP)`,
+        },
+      }).catch((ptsErr) => {
+        console.warn("[Comments POST] Points award notice:", ptsErr);
+      });
+    }
+
     return NextResponse.json(
       {
         success: true,
@@ -504,9 +529,10 @@ async function handleUpdate(req: NextRequest) {
         likes = Math.max(0, likes - 1);
       }
 
-      // Update DynamoDB
+      // Update DynamoDB with capped likedBy array to prevent exceeding DynamoDB 400KB item limit
       if (commentData.contentId && commentData.sk) {
         try {
+          const cappedLikedBy = likedBy.slice(-50);
           await docClient.send(
             new UpdateCommand({
               TableName: TABLES.SocialAndContent,
@@ -517,11 +543,38 @@ async function handleUpdate(req: NextRequest) {
               UpdateExpression: "SET likes = :l, likeCount = :l, likedBy = :lb, updatedAt = :u",
               ExpressionAttributeValues: {
                 ":l": likes,
-                ":lb": likedBy,
+                ":lb": cappedLikedBy,
                 ":u": now,
               },
             })
           );
+
+          // Write/delete individual like item under the comment
+          const commentSk = `LIKE#${userId}`;
+          if (likedBy.includes(userId)) {
+            await docClient.send(
+              new PutCommand({
+                TableName: TABLES.SocialAndContent,
+                Item: {
+                  contentId: `COMMENT#${commentId}`,
+                  sk: commentSk,
+                  userId,
+                  commentId,
+                  likedAt: now,
+                },
+              })
+            ).catch(() => {});
+          } else {
+            await docClient.send(
+              new DeleteCommand({
+                TableName: TABLES.SocialAndContent,
+                Key: {
+                  contentId: `COMMENT#${commentId}`,
+                  sk: commentSk,
+                },
+              })
+            ).catch(() => {});
+          }
         } catch (err) {
           console.warn("DynamoDB update comment like notice:", err);
         }
@@ -540,6 +593,28 @@ async function handleUpdate(req: NextRequest) {
         );
       } catch (fbErr) {
         console.warn("Firebase comment like update notice:", fbErr);
+      }
+
+      // Award +2 SXP on like
+      if (likedBy.includes(userId) && !userId.startsWith("guest_")) {
+        const cleanUserId = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const txId = `comm_like_${commentId}_${cleanUserId}`;
+        awardUserPoints({
+          actualUserId: userId,
+          userName: "Sports Fan",
+          userEmail: "",
+          userExists: true,
+          points: 2,
+          reason: "LIKE",
+          transactionId: txId,
+          metadata: {
+            commentId,
+            action: "like",
+            statement: `Liked comment (+2 SXP)`,
+          },
+        }).catch((ptsErr) => {
+          console.warn("[Comments Update] Points award notice:", ptsErr);
+        });
       }
 
       return NextResponse.json({

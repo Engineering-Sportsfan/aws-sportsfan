@@ -46,6 +46,9 @@ function MatchListContent() {
   const [sendUserSummary, setSendUserSummary] = useState(true);
   const [sendMatchSummary, setSendMatchSummary] = useState(true);
   const [sendFanOfMatchSummary, setSendFanOfMatchSummary] = useState(true);
+  const [modalRecognitionCount, setModalRecognitionCount] = useState<number | null>(null);
+  const [loadingRecognitionCount, setLoadingRecognitionCount] = useState<boolean>(false);
+  const [matchRecognitions, setMatchRecognitions] = useState<Record<string, number>>({});
 
   const fetchMatches = async () => {
     setLoading(true);
@@ -107,11 +110,26 @@ function MatchListContent() {
     }
   };
 
-  const handleOpenCompleteModal = (matchId: string, matchTitle?: string) => {
+  const handleOpenCompleteModal = async (matchId: string, matchTitle?: string) => {
     setCompleteModalMatch({ id: matchId, title: matchTitle || matchId });
     setSendUserSummary(true);
     setSendMatchSummary(true);
     setSendFanOfMatchSummary(true);
+    setModalRecognitionCount(null);
+    setLoadingRecognitionCount(true);
+
+    try {
+      const res = await fetch(`/api/visible-recognition?matchId=${encodeURIComponent(matchId)}&_t=${Date.now()}`);
+      const json = await res.json();
+      const count = typeof json.count === "number" ? json.count : Array.isArray(json.data) ? json.data.length : 0;
+      setModalRecognitionCount(count);
+      setMatchRecognitions((prev) => ({ ...prev, [matchId]: count }));
+    } catch (err) {
+      console.warn("Failed to fetch recognition count:", err);
+      setModalRecognitionCount(0);
+    } finally {
+      setLoadingRecognitionCount(false);
+    }
   };
 
   const handleConfirmCompleteMatch = async () => {
@@ -142,9 +160,12 @@ function MatchListContent() {
         if (sendMatchSummary) parts.push("Match Summary");
         if (sendFanOfMatchSummary) parts.push("Fan of the Match");
 
+        const recCount = json.recognitionsCount ?? modalRecognitionCount;
+        const recText = typeof recCount === "number" && recCount > 0 ? ` (${recCount} Recognitions)` : "";
+
         setFeedback({
           type: "success",
-          text: `Match marked completed. Dispatched: ${parts.length > 0 ? parts.join(", ") : "no summaries"}.`,
+          text: `Match marked completed${recText}. Dispatched: ${parts.length > 0 ? parts.join(", ") : "no summaries"}.`,
         });
         setCompleteModalMatch(null);
       } else {
@@ -367,6 +388,9 @@ function MatchListContent() {
                     {m.tournament && <span>🏆 {m.tournament}</span>}
                     {m.venue && <span>📍 {m.venue}{m.city ? `, ${m.city}` : ""}</span>}
                     {m.date && <span>📅 {m.date} {m.time || ""}</span>}
+                    {matchRecognitions[m.match_id] !== undefined && (
+                      <span className="text-amber-400 font-bold">🎖️ {matchRecognitions[m.match_id]} Recognitions</span>
+                    )}
                   </div>
                 </div>
 
@@ -443,6 +467,34 @@ function MatchListContent() {
             <p className="text-xs text-gray-300">
               Marking this match as <strong className="text-emerald-400">Completed</strong> finalizes the match in the system. Select which summary cards to post directly to the match room for fans:
             </p>
+
+            {/* Recognition Count Banner */}
+            <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-pink-500/10 to-purple-500/10 border border-amber-500/30 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-base">
+                  🎖️
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>Recognitions in Match</span>
+                    <span className="text-[10px] text-gray-400 font-normal">(MatchMoments)</span>
+                  </div>
+                  <div className="text-[11px] text-gray-300">
+                    Fan & player milestone recognitions awarded in this match
+                  </div>
+                </div>
+              </div>
+              <div className="text-right">
+                {loadingRecognitionCount ? (
+                  <div className="text-xs text-amber-400 font-bold animate-pulse">Loading...</div>
+                ) : (
+                  <div className="flex items-baseline gap-1 justify-end">
+                    <span className="text-xl font-black text-amber-400">{modalRecognitionCount ?? 0}</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase">total</span>
+                  </div>
+                )}
+              </div>
+            </div>
 
             <div className="space-y-3">
               {/* Checkbox 1: User Summary */}
