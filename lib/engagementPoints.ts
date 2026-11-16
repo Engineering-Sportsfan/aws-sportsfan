@@ -105,6 +105,19 @@ export async function awardEngagementPoints({
       ? `Answered ${formattedType} correctly: "${engagementTitle || 'Arena Event'}" (+${totalPointsToAward} pts)`
       : `Participated in ${formattedType}: "${engagementTitle || 'Arena Event'}" (+${basePoints} pts)`;
 
+  // Tag the activity with its match so per-match SXP can be aggregated (activities otherwise only
+  // carry engagementId). One keyed GetItem; callers that already pass metadata.matchId skip it.
+  let resolvedMatchId = metadata?.matchId ? String(metadata.matchId) : "";
+  if (!resolvedMatchId && action !== "create") {
+    try {
+      const engRes = await docClient.send(new GetCommand({
+        TableName: TABLES.SocialAndContent,
+        Key: { contentId: `ENGAGEMENT#${engagementId}`, sk: "ENGAGEMENT#META" },
+      }));
+      resolvedMatchId = String(engRes.Item?.matchId || "").replace(/^MATCH#/i, "");
+    } catch { /* non-fatal: activity simply won't be match-tagged */ }
+  }
+
   try {
     // 1. Resolve full user profile details
     const userProfile = await getUserInfo(userId, userName, userEmail);
@@ -132,6 +145,7 @@ export async function awardEngagementPoints({
           questionId: questionId || null,
           action,
           statement,
+          ...(resolvedMatchId ? { matchId: resolvedMatchId } : {}),
           ...metadata,
         },
       });

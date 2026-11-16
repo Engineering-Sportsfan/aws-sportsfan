@@ -6,6 +6,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { findRoomMessage, normalizeReaction, reactionCountField } from "@/lib/roarRoomHelpers";
 import { QueryCommand, DeleteCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -268,6 +269,33 @@ export async function POST(
       await commentRef.collection("likes").doc(userId).set({ reaction, reactedAt: Date.now(), userId });
     } catch (fsErr) {
       console.warn("[CommentReact POST] Firestore write failed:", fsErr);
+    }
+
+    // Award +2 SXP for reacting to a room message comment
+    if (userId && userId !== "guest_fan" && !String(userId).startsWith("anon_")) {
+      const cleanUserId = String(userId).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const txId = `roar_comm_react_${cleanCommentKey}_${cleanUserId}`;
+      const userName = user?.name || (userId.includes("@") ? userId.split("@")[0] : "Sports Fan");
+      awardUserPoints({
+        actualUserId: userId,
+        authUserId: user?.userId || userId,
+        userName,
+        userEmail: user?.email || (userId.includes("@") ? userId : ""),
+        userExists: true,
+        points: 2,
+        reason: "LIKE",
+        transactionId: txId,
+        metadata: {
+          roomId: cleanRoomId,
+          msgId: targetMsgId,
+          commentId: cleanCommentKey,
+          reaction,
+          action: "react",
+          statement: `Reacted (${reaction}) to comment (+2 SXP)`,
+        },
+      }).catch((ptsErr) => {
+        console.warn("[CommentReact POST] Points award notice:", ptsErr);
+      });
     }
 
     return NextResponse.json({

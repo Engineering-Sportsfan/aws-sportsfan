@@ -110,6 +110,67 @@ export interface UserMatchWatchingIntent {
   updatedAt: number;
 }
 
+// ─── 8. User Match KPIs (TABLES.GamificationAndWallet) ────────────────────────
+// PK: userId = "USER#<userId>" | SK: sk = "KPI#<matchId>"
+export interface UserMatchKPIs {
+  sk?: string;
+  userId: string;
+  matchId: string;
+  seriesId?: string;
+  overallScore: number;
+  kpis: {
+    knowledge: {
+      score: number;
+      attempted: number;
+      correct: number;
+      label: string;
+      metric?: string;
+    };
+    prediction: {
+      score: number;
+      attempted: number;
+      resolved: number;
+      correct: number;
+      label: string;
+      metric?: string;
+    };
+    participation: {
+      score: number;
+      cardsEngaged: number;
+      totalMatchCards: number;
+      totalActions: number;
+      label: string;
+      metric?: string;
+    };
+    community: {
+      score: number;
+      pollsVoted: number;
+      debatesVoted: number;
+      totalCommunityCards: number;
+      commentsCount: number;
+      label: string;
+      metric?: string;
+    };
+    insight: {
+      score: number;
+      takesSubmitted: number;
+      totalTakesCards: number;
+      peerLikesReceived: number;
+      peerRepliesReceived: number;
+      label: string;
+      metric?: string;
+    };
+  };
+  radarData: Array<{
+    subject: string;
+    value: number;
+    fullMark: number;
+    pillar?: string;
+    score?: number;
+  }>;
+  generatedAt: number;
+}
+
 export interface MatchIntentAggregates {
   matchId: string;
   totalRespondents: number;
@@ -187,4 +248,5 @@ export interface CommunityAward {
   sxpCredited?: boolean;
   awardedAt: number;
 }
+
 

@@ -5,6 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export async function POST(
   req: NextRequest,
@@ -154,6 +155,29 @@ export async function POST(
         });
       } catch (fsErr) {
         console.warn("[PostLike] Firestore like sync failed:", fsErr);
+      }
+
+      // Award +2 SXP for liking a post
+      if (resolvedUserId && !resolvedUserId.startsWith("anon_")) {
+        const cleanUserId = resolvedUserId.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const txId = `post_like_${postId}_${cleanUserId}`;
+        awardUserPoints({
+          actualUserId: resolvedUserId,
+          authUserId: user.userId,
+          userName: user.name || "Sports Fan",
+          userEmail: user.email || (resolvedUserId.includes("@") ? resolvedUserId : ""),
+          userExists: true,
+          points: 2,
+          reason: "LIKE",
+          transactionId: txId,
+          metadata: {
+            postId,
+            action: "like",
+            statement: `Liked post (+2 SXP)`,
+          },
+        }).catch((ptsErr) => {
+          console.warn("[PostLike POST] Points award notice:", ptsErr);
+        });
       }
     }
 
