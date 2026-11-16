@@ -5,7 +5,7 @@ import { db } from "@/lib/firebaseAdmin";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
 import { withEngagementGsiKeys } from "@/lib/engagementList";
 import { cacheService } from "@/lib/cacheService";
-import { GetCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 export interface PlayerEngagementSummaryRow {
   engagementId: string;
@@ -544,10 +544,11 @@ export async function generateAndPersistMatchPlayerSummaries(
   summaries: PlayerMatchSummaryRecord[];
   fanOfTheMatch?: FanOfTheMatchRecord | null;
   matchSnapshot?: MatchSummaryRecord | null;
+  recognitionsCount: number;
 }> {
   const cleanM = cleanMatchKey(rawMatchId);
   const targetMatchKey = normalizeMatchKey(cleanM);
-  if (!cleanM) return { generatedCount: 0, summaries: [] };
+  if (!cleanM) return { generatedCount: 0, summaries: [], recognitionsCount: 0 };
 
   const matchMeta = matchMetaInput || (await loadMatchMeta(cleanM)) || {};
   const team1 = String(matchMeta.team1 || "Team 1").trim();
@@ -1180,7 +1181,7 @@ export async function generateAndPersistMatchPlayerSummaries(
           predictionsRatio: summary.predictionsRatio,
           predictionsCount: summary.predictionsCount,
           predictionsWon: summary.predictionsWon,
-          sxpAwarded: summary.totals?.sxpAwarded || summary.sxpAwarded || 320,
+          sxpAwarded: summary.totals?.sxpAwarded || (summary as any).sxpAwarded || 320,
           persona: summary.persona,
           countryFlag: summary.countryFlag,
           favoritesLabel: summary.favoritesLabel,
@@ -1441,6 +1442,7 @@ export async function generateAndPersistMatchPlayerSummaries(
     summaries,
     fanOfTheMatch: fanOfTheMatchRecord,
     matchSnapshot: matchSnapshotRecord,
+    recognitionsCount: recognitionsList.length,
   };
 }
 
