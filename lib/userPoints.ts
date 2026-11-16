@@ -4,6 +4,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { PutCommand, UpdateCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { FieldValue } from "firebase-admin/firestore";
+import { recordMatchPoints } from "@/lib/matchLeaderboard";
 import {
   notifyPointsEarned,
   notifyBadgeUnlocked,
@@ -1098,6 +1099,19 @@ export async function awardUserPoints({
             },
           })
         ).catch((dErr) => console.warn("DynamoDB user points sync notice:", dErr));
+
+        // 5. Per-match SXP aggregate (powers GET /api/user-points?matchId=...). Idempotent per transactionId.
+        if (metadata?.matchId && finalTotalXPGained > 0) {
+          recordMatchPoints({
+            userId: leaderboardUserId,
+            userName,
+            matchId: String(metadata.matchId),
+            type: reason,
+            points: finalTotalXPGained,
+            transactionId,
+            at: now,
+          }).catch((dErr) => console.warn("DynamoDB match SXP sync notice:", dErr));
+        }
       } catch (dynamoSyncErr) {
         console.warn("[PointsEngine] DynamoDB async sync notice:", dynamoSyncErr);
       }
