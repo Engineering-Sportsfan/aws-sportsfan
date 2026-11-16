@@ -11,6 +11,7 @@ import type { EngagementComment } from "@/types/engagements";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
 import { applyEngagementStats, getEngagementStats } from "@/lib/engagementSocial";
 import { withReactionKeys } from "@/lib/engagementReactions";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -430,6 +431,35 @@ export async function POST(
       } catch (syncErr) {
         console.warn("[EngagementComments POST] Engagement count sync notice:", syncErr);
       }
+    }
+
+    // 5. Award +2 SXP for commenting/replying on engagement card
+    if (userId && !String(userId).startsWith("user_anon_")) {
+      const cleanUserId = String(userId).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const txId = `eng_comment_${commentId}_${cleanUserId}`;
+      const safeUserName = userInfo.username || authorUsername || authUser?.name || "Sports Fan";
+      awardUserPoints({
+        actualUserId: userId,
+        authUserId: authUser?.userId || userId,
+        userName: safeUserName,
+        userEmail: authUser?.email || (userId.includes("@") ? userId : ""),
+        userExists: true,
+        points: 2,
+        reason: "COMMENT",
+        transactionId: txId,
+        metadata: {
+          engagementId: cleanId,
+          commentId,
+          parentId: parentId || null,
+          matchId: resolvedMatchId,
+          momentId: resolvedMomentId,
+          seriesId: resolvedSeriesId,
+          action: parentId ? "reply" : "comment",
+          statement: `${parentId ? "Replied to" : "Commented on"} engagement: "${found?.item?.title || found?.item?.headline || cleanId}" (+2 SXP)`,
+        },
+      }).catch((ptsErr) => {
+        console.warn("[EngagementComments POST] Points award notice:", ptsErr);
+      });
     }
 
     return NextResponse.json({

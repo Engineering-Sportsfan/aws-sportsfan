@@ -5,7 +5,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { GetCommand, PutCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { notifyRoomMessageReaction } from "@/lib/notifications";
-import { getUserInfo } from "@/lib/userPoints";
+import { getUserInfo, awardUserPoints } from "@/lib/userPoints";
 import { db } from "@/lib/firebaseAdmin";
 import { findRoomMessage, VALID_REACTIONS, normalizeReaction, COUNT_FIELDS } from "@/lib/roarRoomHelpers";
 
@@ -171,6 +171,32 @@ export async function POST(
         text: msgItem.text || msgItem.content,
       }).catch((notifErr) => {
         console.warn("[MessageReact POST] Notification notice:", notifErr);
+      });
+    }
+
+    // Award +2 SXP for reacting to/liking a room message
+    if (effectiveReaction && resolvedUserId && resolvedUserId !== "guest_fan" && !resolvedUserId.startsWith("anon_")) {
+      const cleanUserId = resolvedUserId.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const txId = `roar_react_${targetMsgId}_${cleanUserId}`;
+      const userName = user?.name || (resolvedUserId.includes("@") ? resolvedUserId.split("@")[0] : "Sports Fan");
+      awardUserPoints({
+        actualUserId: resolvedUserId,
+        authUserId: user?.userId || resolvedUserId,
+        userName,
+        userEmail: user?.email || (resolvedUserId.includes("@") ? resolvedUserId : ""),
+        userExists: true,
+        points: 2,
+        reason: "LIKE",
+        transactionId: txId,
+        metadata: {
+          roomId: cleanRoomId,
+          msgId: targetMsgId,
+          reaction: effectiveReaction,
+          action: "react",
+          statement: `Reacted (${effectiveReaction}) to room message (+2 SXP)`,
+        },
+      }).catch((ptsErr) => {
+        console.warn("[MessageReact POST] Points award notice:", ptsErr);
       });
     }
 

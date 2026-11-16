@@ -242,21 +242,28 @@ const DEFAULT_RULES_FALLBACKS: Record<string, { points: number; dailyLimit: numb
   UPLOAD_VIDEO: { points: 55, dailyLimit: 5 },
   WIN_FEATURED_POST: { points: 200, dailyLimit: 1 },
   CREATOR_STREAK_BONUS: { points: 50, dailyLimit: 1 },
-  LIKE: { points: 2, dailyLimit: 15 },
-  REACT: { points: 3, dailyLimit: 15 },
-  COMMENT: { points: 8, dailyLimit: 20 },
+  LIKE: { points: 2, dailyLimit: 50 },
+  REACT: { points: 2, dailyLimit: 50 },
+  COMMENT: { points: 2, dailyLimit: 50 },
   VOTE_PREDICTION: { points: 8, dailyLimit: 10 },
   JOIN_TRIVIA: { points: 8, dailyLimit: 10 },
   JOIN_BATTLE: { points: 15, dailyLimit: 10 },
-  SHARE: { points: 15, dailyLimit: 10 },
+  SHARE: { points: 2, dailyLimit: 50 },
+  ROAR_COMMENT: { points: 2, dailyLimit: 50 },
+  ROAR_LIKE: { points: 2, dailyLimit: 50 },
+  ROAR_SHARE: { points: 2, dailyLimit: 50 },
+  ROAR_REACT: { points: 2, dailyLimit: 50 },
+  ENGAGEMENT_LIKE: { points: 2, dailyLimit: 50 },
+  ENGAGEMENT_COMMENT: { points: 2, dailyLimit: 50 },
+  ENGAGEMENT_SHARE: { points: 2, dailyLimit: 50 },
   SAVE_POST: { points: 3, dailyLimit: 10 },
   FOLLOW_USER: { points: 3, dailyLimit: 10 },
   DAILY_LOGIN: { points: 15, dailyLimit: 1 },
   SIGNUP_BONUS: { points: 50, dailyLimit: 1 },
   WELCOME_BONUS: { points: 50, dailyLimit: 1 },
   WATCH_ALONG_JOIN: { points: 10, dailyLimit: 3 },
-  WATCH_ALONG_REACT: { points: 2, dailyLimit: 20 },
-  WATCH_ALONG_CHAT: { points: 3, dailyLimit: 30 },
+  WATCH_ALONG_REACT: { points: 2, dailyLimit: 50 },
+  WATCH_ALONG_CHAT: { points: 2, dailyLimit: 50 },
   WATCH_ALONG_HOST: { points: 40, dailyLimit: 1 },
   WATCH_ALONG_COMPLETE: { points: 25, dailyLimit: 2 },
   FANTASY_CREATE_TEAM: { points: 30, dailyLimit: 2 },
@@ -264,9 +271,9 @@ const DEFAULT_RULES_FALLBACKS: Record<string, { points: number; dailyLimit: numb
   FANTASY_TOP_SCORE: { points: 50, dailyLimit: 1 },
   FANTASY_WIN_CONTEST: { points: 100, dailyLimit: 1 },
   ARTICLE_READ: { points: 3, dailyLimit: 10 },
-  ARTICLE_COMMENT: { points: 5, dailyLimit: 10 },
-  ARTICLE_SHARE: { points: 8, dailyLimit: 10 },
-  ARTICLE_REACT: { points: 2, dailyLimit: 10 },
+  ARTICLE_COMMENT: { points: 2, dailyLimit: 50 },
+  ARTICLE_SHARE: { points: 2, dailyLimit: 50 },
+  ARTICLE_REACT: { points: 2, dailyLimit: 50 },
   LISTEN_AUDIO_DROP: { points: 5, dailyLimit: 5 },
   WATCH_VIDEO_DROP: { points: 8, dailyLimit: 5 },
   COMPLETE_DROP_SERIES: { points: 15, dailyLimit: 1 },
@@ -633,8 +640,15 @@ export async function awardUserPoints({
       }
 
       // 3. Dynamic points weight configuration lookup
-      const fallback = DEFAULT_RULES_FALLBACKS[reason] || { points: argPoints, dailyLimit: 9999 };
-      let basePoints = fallback.points;
+      const isTwoSxpAction = [
+        "LIKE", "COMMENT", "SHARE", "REACT",
+        "ROAR_COMMENT", "ROAR_LIKE", "ROAR_SHARE", "ROAR_REACT",
+        "ENGAGEMENT_LIKE", "ENGAGEMENT_COMMENT", "ENGAGEMENT_SHARE",
+        "ARTICLE_COMMENT", "ARTICLE_SHARE", "ARTICLE_REACT",
+      ].includes(reason);
+
+      const fallback = DEFAULT_RULES_FALLBACKS[reason] || { points: isTwoSxpAction ? 2 : argPoints, dailyLimit: 9999 };
+      let basePoints = isTwoSxpAction ? 2 : ((typeof argPoints === "number" && argPoints > 0) ? argPoints : fallback.points);
       let dailyLimit = fallback.dailyLimit;
       let isRuleActive = true;
       let ruleFound = false;
@@ -664,7 +678,11 @@ export async function awardUserPoints({
           }));
           if (ruleRes.Item) {
             const rData = ruleRes.Item;
-            basePoints = rData.points ?? basePoints;
+            if (isTwoSxpAction) {
+              basePoints = 2;
+            } else {
+              basePoints = rData.points ?? basePoints;
+            }
             dailyLimit = rData.dailyLimit ?? dailyLimit;
             if (rData.status === "inactive" || rData.status === "suspended") {
               isRuleActive = false;
@@ -685,7 +703,11 @@ export async function awardUserPoints({
             const ruleSnap = await transaction.get(ruleRef);
             if (ruleSnap.exists) {
               const rData = ruleSnap.data()!;
-              basePoints = rData.points ?? basePoints;
+              if (isTwoSxpAction) {
+                basePoints = 2;
+              } else {
+                basePoints = rData.points ?? basePoints;
+              }
               dailyLimit = rData.dailyLimit ?? dailyLimit;
               if (rData.status === "inactive" || rData.status === "suspended") {
                 isRuleActive = false;
@@ -788,9 +810,9 @@ export async function awardUserPoints({
       }
 
       // 6. Anti-Spam Caps & Daily Limits Enforcements (§9)
-      if (reason === "LIKE") {
-        if (dailyLikeCount >= 15) {
-          console.log(`[PointsEngine] Like daily cap (15) reached. Action skipped.`);
+      if (reason === "LIKE" || reason === "REACT" || reason === "ROAR_LIKE" || reason === "ROAR_REACT") {
+        if (dailyLikeCount >= 50) {
+          console.log(`[PointsEngine] Like daily cap (50) reached. Action skipped.`);
           return false;
         }
         dailyLikeCount += 1;
@@ -821,7 +843,7 @@ export async function awardUserPoints({
 
       // Apply Viral Cascade Escalation Bonus (§5)
       let viralCascadeXP = 0;
-      if (reason === "SHARE" || reason === "ARTICLE_SHARE" || reason === "SHARE_DROP") {
+      if (reason === "SHARE" || reason === "ARTICLE_SHARE" || reason === "SHARE_DROP" || reason === "ROAR_SHARE") {
         const shareCount = metadata?.shareCount ?? 0;
         let matchedCascade = 0;
         for (const c of config.multipliers.viralCascade) {

@@ -187,10 +187,10 @@ const ENGAGEMENT_TYPES: { type: EngType; label: string; icon: React.ComponentTyp
   },
   {
     type: "express",
-    label: "Express",
+    label: "Takes",
     icon: Zap,
     color: "#ec4899",
-    desc: "Open fan input box — fans write their reaction freely (no options)",
+    desc: "Open fan input box — fans write their take freely (no options)",
   },
   {
     type: "debate",
@@ -806,7 +806,7 @@ function AddEngagementContent() {
               <span>{editId ? "Edit Engagement" : "Add Engagement"}</span>
             </h1>
             <p className="text-xs text-gray-400">
-              Deploy live polls, predictions, express taps, or trivia attached to match moments
+              Deploy live polls, predictions, takes, or trivia attached to match moments
             </p>
           </div>
         </div>
@@ -1042,13 +1042,13 @@ function AddEngagementContent() {
           </div>
         </div>
 
-        {/* Step 3: Prompt & Choices / Express Input */}
+        {/* Step 3: Prompt & Choices / Takes Input */}
         <div className="p-6 rounded-2xl bg-[#111625] border border-white/10 space-y-5">
           <div className="border-b border-white/5 pb-3 flex items-center justify-between">
             <h3 className="text-xs font-black uppercase tracking-wider text-purple-400 flex items-center gap-2">
               <span>{engType === "follow" ? "🔔" : engType === "match_result" ? "🏆" : "✍️"}</span>{" "}
               {engType === "express"
-                ? "Express Prompt"
+                ? "Takes Prompt"
                 : engType === "follow"
                 ? "Follow Upcoming Match Card"
                 : engType === "match_result"
@@ -1525,7 +1525,7 @@ function AddEngagementContent() {
           ) : (
             <div>
               <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                {engType === "express" ? "Express Prompt *" : "Question / Prompt *"}
+                {engType === "express" ? "Takes Prompt *" : "Question / Prompt *"}
               </label>
               <textarea
                 rows={2}
@@ -1534,7 +1534,7 @@ function AddEngagementContent() {
                 onChange={(e) => setEngQuestion(e.target.value)}
                 placeholder={
                   engType === "express"
-                    ? "e.g. What's your instant reaction right now? Write in your own words!"
+                    ? "e.g. What's your take right now? Share your instant reaction in your own words!"
                     : "e.g. Will India score 180+ runs in 20 overs?"
                 }
                 className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-medium"

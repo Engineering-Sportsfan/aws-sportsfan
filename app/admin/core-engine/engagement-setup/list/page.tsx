@@ -460,7 +460,7 @@ function EngagementListContent() {
             <option value="all">All Types</option>
             <option value="poll">Poll</option>
             <option value="prediction">Prediction</option>
-            <option value="express">Express</option>
+            <option value="express">Takes</option>
             <option value="debate">Debate</option>
             <option value="question">Trivia</option>
             <option value="follow">Follow</option>
@@ -542,7 +542,7 @@ function EngagementListContent() {
                 <div className="space-y-2 min-w-0 max-w-2xl">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-black text-[10px] uppercase">
-                      {eng.type}
+                      {eng.type === "express" ? "takes" : eng.type}
                     </span>
 
                     {/* Scheduled Launch Badge */}
@@ -565,10 +565,10 @@ function EngagementListContent() {
                       </span>
                     )}
 
-                    {/* Settled / Express / Follow Status */}
+                    {/* Settled / Takes / Follow Status */}
                     {isExpressTextOnly ? (
                       <span className="text-[10px] font-black px-2 py-0.5 rounded bg-pink-500/20 text-pink-300 border border-pink-500/30">
-                        ✍️ Open Input Box ({Number(eng.totalResponses ?? eng.totalVotes ?? 0)} responses)
+                        ✍️ Open Takes Input ({Number(eng.totalResponses ?? eng.totalVotes ?? 0)} takes)
                       </span>
                     ) : isFollowCard ? (
                       <span className="text-[10px] font-black px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
@@ -597,7 +597,7 @@ function EngagementListContent() {
                   <div className="flex items-center gap-2 flex-wrap">
                     {isExpressTextOnly && (
                       <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-pink-500/10 text-pink-200 border border-pink-500/25">
-                        ✍️ Open Fan Text Input (No Options) — &ldquo;{eng.inputPlaceholder || eng.expressData?.placeholder || "Write your thoughts..."}&rdquo;
+                        ✍️ Open Fan Takes Input (No Options) — &ldquo;{eng.inputPlaceholder || eng.expressData?.placeholder || "Write your take..."}&rdquo;
                       </span>
                     )}
                     {isFollowCard && (
@@ -632,7 +632,7 @@ function EngagementListContent() {
 
                 {/* Right Actions */}
                 <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  {/* Reveal / Settle Outcome CTA (not applicable to open-text Express, Follow, or Match Result cards) */}
+                  {/* Reveal / Settle Outcome CTA (not applicable to open-text Takes, Follow, or Match Result cards) */}
                   {!isExpressTextOnly && !isFollowCard && !isMatchResultCard && (
                     <button
                       onClick={() => handleOpenSettleModal(eng)}

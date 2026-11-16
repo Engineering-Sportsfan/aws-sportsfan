@@ -6,6 +6,7 @@ import { notifyPostComment, notifyRoomMessageComment } from "@/lib/notifications
 import { docClient } from "@/lib/dynamodb";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, PutCommand, UpdateCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -251,6 +252,32 @@ export async function POST(
     notifyPostComment(postId, user.userId, user.email, username, text.slice(0, 80), roomId).catch((notifErr) => {
       console.warn("[Comments POST] Notification notice:", notifErr);
     });
+
+    // Award +2 SXP for commenting/replying on a post
+    if (user.userId && !user.userId.startsWith("anon_")) {
+      const cleanUserId = user.userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const txId = `post_comment_${commentId}_${cleanUserId}`;
+      awardUserPoints({
+        actualUserId: user.userId,
+        authUserId: user.userId,
+        userName: username || user.name || "Sports Fan",
+        userEmail: user.email || "",
+        userExists: true,
+        points: 2,
+        reason: "COMMENT",
+        transactionId: txId,
+        metadata: {
+          postId,
+          commentId,
+          parentId: parentCommentId || null,
+          roomId: roomId || null,
+          action: parentCommentId ? "reply" : "comment",
+          statement: `${parentCommentId ? "Replied to" : "Commented on"} post (+2 SXP)`,
+        },
+      }).catch((ptsErr) => {
+        console.warn("[Comments POST] Points award notice:", ptsErr);
+      });
+    }
 
     return NextResponse.json({
       success: true,
