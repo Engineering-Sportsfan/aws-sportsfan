@@ -177,6 +177,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         engagementItem.winningChoiceId ||
         correctAnswer ||
         "";
+    } else if (engagementItem?.type === "question" || engagementItem?.type === "quiz") {
+      correctAnswer =
+        engagementItem.correctOptionId ||
+        engagementItem.questionData?.correctOptionId ||
+        engagementItem.correctAnswer ||
+        "";
+      winningChoiceId = correctAnswer;
     }
 
     if (!voteItem && (searchParams.get("selectedOptionId") || searchParams.get("choice"))) {
@@ -192,7 +199,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     let wonBonusPoints = 0;
     let newlyAwarded = false;
 
-    if (voteItem && (engagementItem?.type === "poll" || engagementItem?.type === "prediction")) {
+    if (voteItem && (engagementItem?.type === "poll" || engagementItem?.type === "prediction" || engagementItem?.type === "question" || engagementItem?.type === "quiz")) {
       const userChoice = String(voteItem.selectedOptionId || "").trim().toLowerCase();
       const leftText = String(engagementItem.predictionData?.leftChoice?.text || "").trim().toLowerCase();
       const leftCode = String(engagementItem.predictionData?.leftChoice?.code || "").trim().toLowerCase();
@@ -230,6 +237,32 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         } else if (winTarget && userChoice === winTarget) {
           isCorrect = true;
         } else if (winTarget) {
+          isCorrect = false;
+        }
+      } else if (engagementItem.type === "question" || engagementItem.type === "quiz") {
+        const target = String(winningChoiceId || correctAnswer).trim().toLowerCase();
+        if (target && userChoice === target) {
+          isCorrect = true;
+        } else if (target) {
+          const rawOpts = engagementItem.options || engagementItem.questionData?.options || [];
+          const chosenOpt = rawOpts.find(
+            (o: any) =>
+              String(o.id).trim().toLowerCase() === userChoice ||
+              String(o.text || o.label || "").trim().toLowerCase() === userChoice
+          );
+          const targetOpt = rawOpts.find(
+            (o: any) =>
+              String(o.id).trim().toLowerCase() === target ||
+              String(o.text || o.label || "").trim().toLowerCase() === target
+          );
+          if (chosenOpt && targetOpt && chosenOpt.id === targetOpt.id) {
+            isCorrect = true;
+          } else if (chosenOpt && String(chosenOpt.id).toLowerCase() === target) {
+            isCorrect = true;
+          } else {
+            isCorrect = false;
+          }
+        } else {
           isCorrect = false;
         }
       } else if (engagementItem.type === "poll") {
@@ -538,6 +571,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           if (isLeftWinning && isUserLeft) isCorrect = true;
           else if (isRightWinning && isUserRight) isCorrect = true;
           else if (winTarget && userChoice === winTarget) isCorrect = true;
+        } else if (engagementItem?.type === "question" || engagementItem?.type === "quiz") {
+          const target = String(
+            winningChoiceId ||
+            correctAnswer ||
+            engagementItem.correctOptionId ||
+            engagementItem.questionData?.correctOptionId ||
+            ""
+          ).trim().toLowerCase();
+          if (target && userChoice === target) {
+            isCorrect = true;
+          } else if (target) {
+            const rawOpts = engagementItem.options || engagementItem.questionData?.options || [];
+            const chosenOpt = rawOpts.find(
+              (o: any) =>
+                String(o.id).trim().toLowerCase() === userChoice ||
+                String(o.text || o.label || "").trim().toLowerCase() === userChoice
+            );
+            const targetOpt = rawOpts.find(
+              (o: any) =>
+                String(o.id).trim().toLowerCase() === target ||
+                String(o.text || o.label || "").trim().toLowerCase() === target
+            );
+            if (chosenOpt && targetOpt && chosenOpt.id === targetOpt.id) {
+              isCorrect = true;
+            } else if (chosenOpt && String(chosenOpt.id).toLowerCase() === target) {
+              isCorrect = true;
+            }
+          }
         } else if (engagementItem?.type === "poll") {
           const correctLower = String(correctAnswer).trim().toLowerCase();
           if (userChoice === correctLower) {
@@ -1265,6 +1326,27 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         item.totalEngaged = (Number(item.totalEngaged) || 0) + 1;
       }
 
+      let isTriviaVoteCorrect: boolean | undefined = undefined;
+      const cleanVoteType = String(item.type || "").toLowerCase();
+      if (cleanVoteType === "question" || cleanVoteType === "quiz") {
+        const correctTarget = String(
+          item.correctOptionId ||
+          item.questionData?.correctOptionId ||
+          item.correctAnswer ||
+          ""
+        ).trim().toLowerCase();
+        const userChoiceStr = String(selectedOptionId || "").trim().toLowerCase();
+        if (correctTarget) {
+          isTriviaVoteCorrect =
+            userChoiceStr === correctTarget ||
+            options.some(
+              (o: any) =>
+                (String(o.id).toLowerCase() === userChoiceStr || String(o.text || "").trim().toLowerCase() === userChoiceStr) &&
+                (String(o.id).toLowerCase() === correctTarget || String(o.text || "").trim().toLowerCase() === correctTarget)
+            );
+        }
+      }
+
       responseData = {
         success: true,
         type: item.type || "poll",
@@ -1275,6 +1357,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         isFirstEngagement: isNewUserEngagement,
         participationPointsAwarded: 2,
         pointsAwarded: 2,
+        ...(isTriviaVoteCorrect !== undefined
+          ? { isCorrect: isTriviaVoteCorrect, correctOptionId: item.correctOptionId || item.questionData?.correctOptionId }
+          : {}),
       };
     }
 
