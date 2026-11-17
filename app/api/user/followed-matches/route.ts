@@ -15,6 +15,29 @@ function cleanMatchId(val?: string | null): string {
   return String(val || "").trim().replace(/^MATCH#/i, "");
 }
 
+function extractCandidateUserKeys(raw?: string | null): string[] {
+  const clean = cleanUserId(raw);
+  if (!clean) return [];
+  const candidates = new Set<string>([clean, clean.toLowerCase()]);
+
+  if (clean.includes("@")) {
+    const lower = clean.toLowerCase();
+    candidates.add(lower.replace(/[@.]/g, "_"));
+    candidates.add(lower.replace(/[^a-z0-9]/g, "_"));
+    candidates.add(lower.replace(/@/g, "_"));
+  } else {
+    for (const domain of ["gmail_com", "yahoo_com", "outlook_com", "hotmail_com", "icloud_com", "sportsfan360_com"]) {
+      const lower = clean.toLowerCase();
+      if (lower.endsWith(`_${domain}`)) {
+        const local = lower.slice(0, -(domain.length + 1));
+        const realDomain = domain.replace("_", ".");
+        candidates.add(`${local}@${realDomain}`);
+      }
+    }
+  }
+  return Array.from(candidates);
+}
+
 // ─── GET /api/user/followed-matches — Fetch matches followed by current user ───
 export async function GET(req: NextRequest) {
   try {
@@ -22,35 +45,56 @@ export async function GET(req: NextRequest) {
     const queryUid = req.nextUrl.searchParams.get("userId");
     const rawUserId = authUser?.userId || authUser?.email || queryUid;
 
-    if (!rawUserId) {
+    const candidateIds = Array.from(
+      new Set([
+        ...extractCandidateUserKeys(rawUserId),
+        ...extractCandidateUserKeys(queryUid),
+        ...extractCandidateUserKeys(authUser?.userId),
+        ...extractCandidateUserKeys(authUser?.email),
+      ])
+    );
+
+    if (candidateIds.length === 0) {
       return NextResponse.json({ success: true, followedMatches: [] });
     }
 
-    const uid = cleanUserId(rawUserId);
+    const matchMap = new Map<string, any>();
 
-    // 1. Query GamificationAndWallet for FOLLOW#MATCH# records
-    const res = await docClient.send(
-      new QueryCommand({
-        TableName: TABLES.GamificationAndWallet,
-        KeyConditionExpression: "userId = :uid AND begins_with(sk, :skpfx)",
-        ExpressionAttributeValues: {
-          ":uid": `USER#${uid}`,
-          ":skpfx": "FOLLOW#MATCH#",
-        },
-      })
-    );
+    // Query GamificationAndWallet for FOLLOW#MATCH# records across all candidate user keys
+    for (const uid of candidateIds) {
+      try {
+        const res = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.GamificationAndWallet,
+            KeyConditionExpression: "userId = :uid AND begins_with(sk, :skpfx)",
+            ExpressionAttributeValues: {
+              ":uid": `USER#${uid}`,
+              ":skpfx": "FOLLOW#MATCH#",
+            },
+          })
+        );
 
-    const items = res.Items || [];
-    const followedMatches = items.map((it) => ({
-      matchId: cleanMatchId(it.matchId || it.sk?.replace(/^FOLLOW#MATCH#/, "")),
-      matchTitle: it.matchTitle || it.title || "Match",
-      teamA: it.teamA || it.team1 || "",
-      teamB: it.teamB || it.team2 || "",
-      date: it.date || it.matchDate || "",
-      status: it.status || "live",
-      followedAt: it.followedAt || it.createdAt || Date.now(),
-      isFollowing: true,
-    }));
+        for (const it of res.Items || []) {
+          const mId = cleanMatchId(it.matchId || it.sk?.replace(/^FOLLOW#MATCH#/, ""));
+          if (mId && !matchMap.has(mId)) {
+            matchMap.set(mId, {
+              matchId: mId,
+              matchTitle: it.matchTitle || it.title || (it.teamA && it.teamB ? `${it.teamA} vs ${it.teamB}` : `Match ${mId}`),
+              teamA: it.teamA || it.team1 || "",
+              teamB: it.teamB || it.team2 || "",
+              date: it.date || it.matchDate || "",
+              status: it.status || "live",
+              followedAt: it.followedAt || it.createdAt || Date.now(),
+              isFollowing: true,
+            });
+          }
+        }
+      } catch (qErr) {
+        console.warn(`Query followed-matches notice for ${uid}:`, qErr);
+      }
+    }
+
+    const followedMatches = Array.from(matchMap.values());
 
     return NextResponse.json(
       { success: true, followedMatches },
@@ -78,63 +122,87 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const uid = cleanUserId(rawUserId);
+    const primaryUid = cleanUserId(rawUserId);
+    const candidateIds = Array.from(
+      new Set([
+        primaryUid,
+        ...extractCandidateUserKeys(rawUserId),
+        ...extractCandidateUserKeys(body.userId),
+        ...extractCandidateUserKeys(authUser?.userId),
+        ...extractCandidateUserKeys(authUser?.email),
+      ])
+    );
+
     const action = String(body.action || "toggle").toLowerCase();
     const now = Date.now();
 
-    // Check existing follow state
-    const existing = await docClient.send(
-      new GetCommand({
-        TableName: TABLES.GamificationAndWallet,
-        Key: {
-          userId: `USER#${uid}`,
-          sk: `FOLLOW#MATCH#${matchId}`,
-        },
-      })
-    );
+    // Check existing follow state across candidates
+    let isCurrentlyFollowing = false;
+    for (const uid of candidateIds) {
+      try {
+        const existing = await docClient.send(
+          new GetCommand({
+            TableName: TABLES.GamificationAndWallet,
+            Key: {
+              userId: `USER#${uid}`,
+              sk: `FOLLOW#MATCH#${matchId}`,
+            },
+          })
+        );
+        if (existing.Item) {
+          isCurrentlyFollowing = true;
+          break;
+        }
+      } catch {}
+    }
 
-    const isCurrentlyFollowing = Boolean(existing.Item);
     let nextFollowing = false;
-
     if (action === "follow") {
       nextFollowing = true;
     } else if (action === "unfollow") {
       nextFollowing = false;
     } else {
-      // toggle
       nextFollowing = !isCurrentlyFollowing;
     }
 
-    if (nextFollowing) {
-      const matchTitle = body.matchTitle || (body.teamA && body.teamB ? `${body.teamA} vs ${body.teamB}` : `Match ${matchId}`);
-      await docClient.send(
-        new PutCommand({
-          TableName: TABLES.GamificationAndWallet,
-          Item: {
-            userId: `USER#${uid}`,
-            sk: `FOLLOW#MATCH#${matchId}`,
-            rawUserId: uid,
-            matchId,
-            matchTitle,
-            teamA: body.teamA || "",
-            teamB: body.teamB || "",
-            date: body.date || "",
-            status: body.status || "live",
-            followedAt: now,
-            isFollowing: true,
-          },
-        })
-      );
-    } else {
-      await docClient.send(
-        new DeleteCommand({
-          TableName: TABLES.GamificationAndWallet,
-          Key: {
-            userId: `USER#${uid}`,
-            sk: `FOLLOW#MATCH#${matchId}`,
-          },
-        })
-      );
+    const matchTitle = body.matchTitle || (body.teamA && body.teamB ? `${body.teamA} vs ${body.teamB}` : `Match ${matchId}`);
+
+    // Persist across candidate IDs
+    for (const uid of candidateIds) {
+      try {
+        if (nextFollowing) {
+          await docClient.send(
+            new PutCommand({
+              TableName: TABLES.GamificationAndWallet,
+              Item: {
+                userId: `USER#${uid}`,
+                sk: `FOLLOW#MATCH#${matchId}`,
+                rawUserId: uid,
+                matchId,
+                matchTitle,
+                teamA: body.teamA || "",
+                teamB: body.teamB || "",
+                date: body.date || "",
+                status: body.status || "live",
+                followedAt: now,
+                isFollowing: true,
+              },
+            })
+          );
+        } else {
+          await docClient.send(
+            new DeleteCommand({
+              TableName: TABLES.GamificationAndWallet,
+              Key: {
+                userId: `USER#${uid}`,
+                sk: `FOLLOW#MATCH#${matchId}`,
+              },
+            })
+          );
+        }
+      } catch (wErr) {
+        console.warn(`Write followed-match error for ${uid}:`, wErr);
+      }
     }
 
     return NextResponse.json({

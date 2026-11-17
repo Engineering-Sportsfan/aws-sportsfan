@@ -1173,21 +1173,30 @@ export async function computeUserMatchKPIs(
   let insightScore: number;
   let insightMetric: string;
 
-  if (snapshot.totalTakesCards > 0 || takesSubmitted > 0) {
-    const submissionPart = Math.min(60, takesSubmitted * 30);
+  if (snapshot.totalTakesCards === 0 && takesSubmitted === 0) {
+    insightScore = 0;
+    insightMetric = "No Takes in Match";
+  } else if (takesSubmitted > 0) {
+    const totalTakes = Math.max(1, snapshot.totalTakesCards);
+    const coverage = Math.min(1, takesSubmitted / totalTakes);
+    const submissionPart = coverage * 60;
     const resonancePart = Math.min(40, (takesLikesReceived * 10) + (takesRepliesReceived * 15));
     insightScore = Math.min(100, Math.round(submissionPart + resonancePart));
-    insightMetric = `${takesSubmitted} Takes, ${takesLikesReceived} Likes, ${takesRepliesReceived} Replies`;
+    insightMetric = `${takesSubmitted}/${totalTakes} Takes Submitted (${insightScore}%)`;
   } else {
-    const commentsCount = statsMatch?.comments || 0;
-    const upvotes = statsMatch?.upvotesReceived || 0;
-    insightScore = Math.min(100, (commentsCount * 25) + (upvotes * 15));
-    insightMetric = `${commentsCount} Comments, ${upvotes} Upvotes Received`;
+    insightScore = 0;
+    insightMetric = "0 Takes Submitted";
   }
 
-  // Center Pentagon Overall Score: Average of all 5 pillars
+  // Center Pentagon Overall Score: Average of active match pillars (avoids penalizing pillars not in match)
+  const activePillarScores: number[] = [participationScore];
+  if (snapshot.totalTriviaCards > 0 || triviaAttempted > 0) activePillarScores.push(knowledgeScore);
+  if (snapshot.totalPredictionCards > 0 || predictionsAttempted > 0) activePillarScores.push(predictionScore);
+  if (snapshot.totalCommunityCards > 0 || communityVoted > 0) activePillarScores.push(communityScore);
+  if (snapshot.totalTakesCards > 0 || takesSubmitted > 0) activePillarScores.push(insightScore);
+
   const overallScore = Math.round(
-    (knowledgeScore + predictionScore + participationScore + communityScore + insightScore) / 5
+    activePillarScores.reduce((sum, s) => sum + s, 0) / activePillarScores.length
   );
 
   const kpis: UserMatchKPIs = {
