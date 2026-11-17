@@ -110,6 +110,35 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// ─── Global leaderboard hygiene ───────────────────────────────────────────────
+// Drops anonymous / placeholder ids and collapses one person's multiple ids into a single row.
+function isJunkLeaderboardId(rawId: unknown): boolean {
+  const id = String(rawId ?? "").replace(/^USER#/i, "");
+  return !id || /^(anon_|OTP#|AUTH_ISSUE#)/i.test(id);
+}
+
+function identityKey(row: Record<string, unknown>): string {
+  const email = String(row.userEmail ?? "").trim().toLowerCase();
+  if (email.includes("@")) return email;
+  return String(row.userId ?? "").replace(/^USER#/i, "").trim().toLowerCase();
+}
+
+// Rows arrive sorted by points desc, so the first row seen per person is their highest-scoring one.
+// Points are NOT summed across duplicate ids (could double count).
+function cleanGlobalLeaderboard(rows: Array<Record<string, unknown>>, limit: number) {
+  const seen = new Set<string>();
+  const out: Array<Record<string, unknown>> = [];
+  for (const r of rows) {
+    if (isJunkLeaderboardId(r.userId)) continue;
+    const key = identityKey(r);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+    if (out.length >= limit) break;
+  }
+  return out.map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
 // ─── GET — Fetch leaderboard ──────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
@@ -148,7 +177,7 @@ export async function GET(req: NextRequest) {
           KeyConditionExpression: "leaderboardType = :g",
           ExpressionAttributeValues: { ":g": "GLOBAL" },
           ScanIndexForward: false, // Descending order
-          Limit: limit,
+          Limit: Math.min(limit * 3, 300), // over-fetch: junk/duplicate rows are dropped afterwards
         })
       );
 
@@ -172,7 +201,7 @@ export async function GET(req: NextRequest) {
         const leaderboardSnap = await db
           .collection("globalLeaderboard")
           .orderBy("totalPoints", "desc")
-          .limit(limit)
+          .limit(Math.min(limit * 3, 300))
           .get();
 
         leaderboard = leaderboardSnap.docs.map((doc, idx) => ({
@@ -184,6 +213,8 @@ export async function GET(req: NextRequest) {
         console.warn("Firebase leaderboard fallback notice:", fbErr);
       }
     }
+
+    leaderboard = cleanGlobalLeaderboard(leaderboard, limit);
 
     let currentUser: Record<string, unknown> | null = null;
 
