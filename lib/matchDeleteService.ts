@@ -160,7 +160,7 @@ export async function deleteMatchPermanently(rawMatchId: string): Promise<Delete
     }
 
     // 2b. Series reverse-index in SportsData (entityId: SERIES#${seriesId}, sk: MATCH#...#${matchId})
-    for (const sid of linkedSeriesIds) {
+    for (const sid of Array.from(linkedSeriesIds)) {
       try {
         const qRes = await docClient.send(
           new QueryCommand({
@@ -198,7 +198,7 @@ export async function deleteMatchPermanently(rawMatchId: string): Promise<Delete
   const socialTables = getAllTableVariants(TABLES.SocialAndContent);
   for (const table of socialTables) {
     let tableModified = false;
-    for (const cid of linkedContentIds) {
+    for (const cid of Array.from(linkedContentIds)) {
       try {
         let lastKey: Record<string, any> | undefined;
         do {
