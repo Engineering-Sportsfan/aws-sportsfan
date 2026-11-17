@@ -1154,6 +1154,23 @@ export async function generateAndPersistMatchPlayerSummaries(
               },
             })
           ).catch(() => {});
+
+          // Also persist MATCH_SXP item so GSI leaderboard and rank queries find completed match points
+          await docClient.send(
+            new PutCommand({
+              TableName: TABLES.GamificationAndWallet,
+              Item: {
+                userId: `USER#${cleanUid}`,
+                sk: `MATCH_SXP#${cleanM}`,
+                leaderboardType: `MATCH_SXP#${cleanM}`,
+                points: Number(summary.totals?.sxpAwarded || summary.sxpAwarded || 0),
+                rawUserId: cleanUid,
+                userName: summary.userName || summary.name || cleanUid,
+                matchId: cleanM,
+                lastActivityAt: now,
+              },
+            })
+          ).catch(() => {});
         }
 
         // Also persist as an in-stream Engagement so it flows directly through /api/engagements

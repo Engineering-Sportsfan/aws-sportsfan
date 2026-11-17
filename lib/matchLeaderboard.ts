@@ -153,12 +153,22 @@ async function countInPartition(lt: string, minPointsExclusive?: number): Promis
 // Leaderboard ids are the underscore form (chandu_srikakulam_sportsfan360_com) but IdentityAndAccess is
 // usually keyed by email (USER#chandu.srikakulam@sportsfan360.com). Generate the likely keys for an id.
 function identityKeyCandidates(uid: string): string[] {
-  const out = new Set<string>([uid]);
-  if (uid.includes("@")) {
-    out.add(uid.toLowerCase());
+  const clean = String(uid || "").trim().replace(/^USER#/i, "");
+  if (!clean) return [];
+  const out = new Set<string>([clean, clean.toLowerCase()]);
+  if (clean.includes("@")) {
+    const lower = clean.toLowerCase();
+    out.add(lower);
+    out.add(lower.replace(/[@.]/g, "_"));
+    out.add(lower.replace(/[^a-z0-9]/g, "_"));
+    const local = lower.split("@")[0];
+    if (local) {
+      out.add(local);
+      out.add(local.replace(/[.]/g, "_"));
+    }
     return Array.from(out);
   }
-  const parts = uid.split("_");
+  const parts = clean.split("_");
   const SECOND = ["edu", "co", "ac", "gov", "org", "net"];
   const TLDS = ["com", "in", "org", "net", "edu", "io", "co", "ac", "gov", "app", "dev", "ai", "uk", "au", "ca"];
   const last = (parts[parts.length - 1] || "").toLowerCase();
@@ -265,7 +275,7 @@ export async function getMatchLeaderboard(opts: {
   const userId = opts.userId ? String(opts.userId).replace(/^USER#/, "") : "";
 
   const board = await cached(`board|${matchId}|${limit}`, async () => {
-    const [top, totalUsers] = await Promise.all([
+    let [top, totalUsers] = await Promise.all([
       docClient.send(
         new QueryCommand({
           TableName: TABLES.GamificationAndWallet,
@@ -278,7 +288,36 @@ export async function getMatchLeaderboard(opts: {
       ),
       countInPartition(lt),
     ]);
-    const items = top.Items ?? [];
+    let items = top.Items ?? [];
+
+    // Fallback for completed matches where MATCH_SXP# was not populated in GSI:
+    // Read PLAYER_SUMMARY# from MatchMoments table
+    if (items.length === 0) {
+      try {
+        const summariesRes = await docClient.send(
+          new QueryCommand({
+            TableName: TABLES.MatchMoments,
+            KeyConditionExpression: "entityId = :e AND begins_with(sk, :pfx)",
+            ExpressionAttributeValues: { ":e": `MATCH#${matchId}`, ":pfx": "PLAYER_SUMMARY#" },
+          })
+        );
+        if (summariesRes.Items && summariesRes.Items.length > 0) {
+          items = summariesRes.Items.map((s: any) => ({
+            rawUserId: s.userId || String(s.sk || "").replace(/^PLAYER_SUMMARY#/, ""),
+            userId: s.userId || String(s.sk || "").replace(/^PLAYER_SUMMARY#/, ""),
+            userName: s.name || s.userName,
+            points: Number(s.totals?.sxpAwarded || s.sxpAwarded || 0),
+            rank: Number(s.rank || 0),
+            avatarUrl: s.avatarUrl || s.avatar,
+          }));
+          items.sort((a, b) => b.points - a.points);
+          totalUsers = items.length;
+        }
+      } catch (sumErr) {
+        console.warn("[matchLeaderboard] fallback to player summaries notice:", sumErr);
+      }
+    }
+
     const profiles = await loadProfiles(items.map((i) => String(i.rawUserId || i.userId).replace(/^USER#/, "")));
 
     let prevPoints = -1;
@@ -298,7 +337,7 @@ export async function getMatchLeaderboard(opts: {
           String(prof?.email || "").split("@")[0] ||
           (/^[a-z0-9]+(_[a-z0-9]+)+$/i.test(String(it.userName || "")) ? "Fan" : String(it.userName || "Fan")),
         userHandle: String(prof?.handle || prof?.username || ""),
-        avatarUrl: avatarOf(prof),
+        avatarUrl: avatarOf(prof) || it.avatarUrl || null,
         matchPoints: pts,
         rank,
       };
@@ -310,24 +349,89 @@ export async function getMatchLeaderboard(opts: {
   let userMatchPoints = 0;
   if (userId && userId !== "null" && userId !== "undefined") {
     const me = await cached(`user|${matchId}|${userId}`, async () => {
-      const got = await docClient.send(
-        new GetCommand({
-          TableName: TABLES.GamificationAndWallet,
-          Key: { userId: `USER#${userId}`, sk: `MATCH_SXP#${matchId}` },
-        })
-      );
-      const pts = Number(got.Item?.points ?? 0);
-      if (!got.Item || pts <= 0) return { pts: 0, rank: null as number | null };
-      return { pts, rank: (await countInPartition(lt, pts)) + 1 };
+      const candidates = identityKeyCandidates(userId);
+      let foundPts = 0;
+      let foundRank: number | null = null;
+
+      // 1. Try MATCH_SXP# across candidate IDs
+      for (const cand of candidates) {
+        try {
+          const got = await docClient.send(
+            new GetCommand({
+              TableName: TABLES.GamificationAndWallet,
+              Key: { userId: `USER#${cand}`, sk: `MATCH_SXP#${matchId}` },
+            })
+          );
+          const pts = Number(got.Item?.points ?? 0);
+          if (got.Item && pts > 0) {
+            foundPts = pts;
+            foundRank = (await countInPartition(lt, pts)) + 1;
+            break;
+          }
+        } catch {}
+      }
+
+      // 2. If not found, try RECAP#MATCH# in GamificationAndWallet
+      if (!foundRank) {
+        for (const cand of candidates) {
+          try {
+            const got = await docClient.send(
+              new GetCommand({
+                TableName: TABLES.GamificationAndWallet,
+                Key: { userId: `USER#${cand}`, sk: `RECAP#MATCH#${matchId}` },
+              })
+            );
+            if (got.Item) {
+              foundPts = Number(got.Item.sxpAwarded ?? 0);
+              foundRank = Number(got.Item.rank) || null;
+              if (foundRank) break;
+            }
+          } catch {}
+        }
+      }
+
+      // 3. If not found, try PLAYER_SUMMARY# in MatchMoments
+      if (!foundRank) {
+        for (const cand of candidates) {
+          try {
+            const safeKey = cand.toLowerCase().replace(/[^a-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+            const got = await docClient.send(
+              new GetCommand({
+                TableName: TABLES.MatchMoments,
+                Key: { entityId: `MATCH#${matchId}`, sk: `PLAYER_SUMMARY#${safeKey}` },
+              })
+            );
+            if (got.Item) {
+              foundPts = Number(got.Item.totals?.sxpAwarded || got.Item.sxpAwarded || 0);
+              foundRank = Number(got.Item.rank) || null;
+              if (foundRank) break;
+            }
+          } catch {}
+        }
+      }
+
+      // 4. If not found, check if user exists in the resolved board rows
+      if (!foundRank && board.rows.length > 0) {
+        const candSet = new Set(candidates.map((c) => c.toLowerCase()));
+        const matched = board.rows.find((r) => candSet.has(r.userId.toLowerCase()));
+        if (matched) {
+          foundPts = matched.matchPoints;
+          foundRank = matched.rank;
+        }
+      }
+
+      return { pts: foundPts, rank: foundRank };
     });
     userRank = me.rank;
     userMatchPoints = me.pts;
   }
 
+  const resolvedTotalUsers = Math.max(board.totalUsers, board.rows.length, userRank || 0);
+
   return {
     success: true,
     matchId,
-    totalUsers: board.totalUsers,
+    totalUsers: resolvedTotalUsers,
     userRank,
     userMatchPoints,
     leaderboard: board.rows,

@@ -615,7 +615,13 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
 
         const reveal = revealsByEngId.get(eid);
         const winningChoiceId = String(
-          reveal?.winningChoiceId || eng.outcomeWinningChoiceId || eng.winningChoiceId || ""
+          reveal?.winningChoiceId ||
+          eng.outcomeWinningChoiceId ||
+          eng.winningChoiceId ||
+          eng.correctOptionId ||
+          eng.questionData?.correctOptionId ||
+          eng.correctAnswer ||
+          ""
         )
           .trim()
           .toLowerCase();
@@ -668,6 +674,7 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
             const isWinner =
               it.isCorrect === true ||
               winningUserSet.has(p.userId.toLowerCase()) ||
+              (Boolean(winningChoiceId) && selected === winningChoiceId) ||
               (isResolved && Boolean(winningChoiceId) && selected === winningChoiceId);
 
             if (cleanEngType === "question" || cleanEngType === "quiz") {
@@ -1108,7 +1115,7 @@ export async function computeUserMatchKPIs(
     knowledgeScore = Math.min(100, Math.round((triviaCorrect / triviaAttempted) * 100));
     knowledgeMetric = `${triviaCorrect}/${triviaAttempted} Correct (${knowledgeScore}%)`;
   } else {
-    knowledgeScore = snapshot.totalTriviaCards === 0 ? 75 : 0;
+    knowledgeScore = 0;
     knowledgeMetric = snapshot.totalTriviaCards === 0 ? "No Trivia in Match" : "0 Trivia Attempted";
   }
 
@@ -1123,10 +1130,10 @@ export async function computeUserMatchKPIs(
     predictionScore = Math.min(100, Math.round((predictionsWon / predictionsResolved) * 100));
     predictionMetric = `${predictionsWon}/${predictionsResolved} Correct (${predictionScore}%)`;
   } else if (predictionsAttempted > 0) {
-    predictionScore = 75;
+    predictionScore = 0;
     predictionMetric = `${predictionsAttempted} Pending Resolution`;
   } else {
-    predictionScore = snapshot.totalPredictionCards === 0 ? 75 : 0;
+    predictionScore = 0;
     predictionMetric = snapshot.totalPredictionCards === 0 ? "No Predictions in Match" : "0 Predictions Made";
   }
 
