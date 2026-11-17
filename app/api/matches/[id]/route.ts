@@ -6,7 +6,8 @@ import { validateMatchUpdate } from "@/lib/validations/matchValidation";
 import { docClient } from "@/lib/dynamodb";
 import { dualWrite, getCandidateTableNames } from "@/lib/dualWrite";
 import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
-import { GetCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { deleteMatchPermanently } from "@/lib/matchDeleteService";
+import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 export const dynamic = "force-dynamic";
 
@@ -259,54 +260,21 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 // ─── DELETE /api/matches/[id] ─────────────────────────────────────────────────
 export async function DELETE(_req: NextRequest, { params }: Params) {
-  const { id } = await params;
-  if (!id || ["none", "undefined", "null", "all"].includes(String(id).trim().toLowerCase())) {
-    return NextResponse.json({ success: false, error: "Invalid match ID" }, { status: 400 });
-  }
-
-  // 1. Delete from DynamoDB MatchMoments & SportsData
-  const candidateTables = Array.from(
-    new Set([
-      ...getCandidateTableNames(TABLES.MatchMoments),
-      ...getCandidateTableNames(TABLES.SportsData),
-    ])
-  );
-
-  for (const table of candidateTables) {
-    try {
-      const qRes = await docClient.send(
-        new QueryCommand({
-          TableName: table,
-          KeyConditionExpression: "entityId = :eId",
-          ExpressionAttributeValues: { ":eId": `MATCH#${id}` },
-        })
-      );
-      if (qRes.Items && qRes.Items.length > 0) {
-        for (const item of qRes.Items) {
-          await docClient.send(
-            new DeleteCommand({
-              TableName: table,
-              Key: { entityId: item.entityId, sk: item.sk },
-            })
-          );
-        }
-      }
-    } catch (e) {
-      console.warn(`[matches DELETE] Notice for table ${table}:`, e);
-    }
-  }
-
-  // 2. Delete from Firestore matches collection
   try {
-    const docRef = db.collection(getFirestoreCollection("matches")).doc(id);
-    const inningsSnap = await docRef.collection("innings").get();
-    const batch = db.batch();
-    inningsSnap.docs.forEach((d) => batch.delete(d.ref));
-    batch.delete(docRef);
-    await batch.commit();
-  } catch (e) {
-    console.warn("[matches DELETE] Firestore notice:", e);
+    const { id } = await params;
+    const result = await deleteMatchPermanently(id);
+    if (!result.success) {
+      return NextResponse.json({ success: false, error: result.error || "Failed to delete match" }, { status: 400 });
+    }
+    return NextResponse.json({
+      success: true,
+      deleted: id,
+      deletedItemsCount: result.deletedItemsCount,
+      tablesPurged: result.tablesPurged,
+      message: `Match ${id} deleted successfully`,
+    });
+  } catch (err: any) {
+    console.error("[matches DELETE] Error:", err);
+    return NextResponse.json({ success: false, error: err?.message || "Failed to delete match" }, { status: 500 });
   }
-
-  return NextResponse.json({ success: true, deleted: id, message: `Match ${id} deleted successfully` });
 }
