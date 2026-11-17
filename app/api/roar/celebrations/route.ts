@@ -299,8 +299,26 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
-    // All recognitions (both stadium-wide broadcasts and targeted user spotlights) are included in the room stream
-    const filteredRecognitions = recognitionsList;
+    // Filter recognitions: general recognitions (targetType === "all") go to everyone,
+    // but targeted user recognitions (targetType === "user") only go to that specific recipient!
+    const filteredRecognitions = recognitionsList.filter((rec) => {
+      if (rec.targetType === "user" && rec.targetUserId) {
+        if (!userId && !username && !email) return false;
+        const targetClean = String(rec.targetUserId).trim().toLowerCase().replace(/^user#/i, "");
+        const userClean = userId ? String(userId).trim().toLowerCase().replace(/^user#/i, "") : "";
+        const usernameClean = username ? String(username).trim().toLowerCase() : "";
+        const emailClean = email ? String(email).trim().toLowerCase() : "";
+        const targetNameClean = rec.targetUserName ? String(rec.targetUserName).trim().toLowerCase() : "";
+
+        const matches = Boolean(
+          (userClean && (targetClean === userClean || targetClean.includes(userClean) || userClean.includes(targetClean))) ||
+          (emailClean && (targetClean === emailClean || targetClean.includes(emailClean) || emailClean.includes(targetClean))) ||
+          (usernameClean && (targetClean === usernameClean || targetNameClean === usernameClean))
+        );
+        return matches;
+      }
+      return true;
+    });
 
     // Sort newest first
     filteredRecognitions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));

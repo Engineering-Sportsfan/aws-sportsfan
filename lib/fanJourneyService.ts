@@ -829,6 +829,15 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
           Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
         p.sxpEarned += sxp;
       }
+    } else if (rec.targetType === "all") {
+      const reward = rec.rewards || {};
+      const sxp =
+        Number(reward.totalSxp || 0) ||
+        Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
+      for (const p of participants.values()) {
+        p.recognitionsReceived = (p.recognitionsReceived || 0) + 1;
+        p.sxpEarned += sxp;
+      }
     }
   }
 
@@ -1199,11 +1208,34 @@ export async function computeUserMatchKPIs(
     activePillarScores.reduce((sum, s) => sum + s, 0) / activePillarScores.length
   );
 
+  let directRecognitionsCount = statsMatch?.recognitionsReceived || 0;
+  if (directRecognitionsCount === 0) {
+    try {
+      const gKeys = extractCandidateUserKeys(uid).concat(extractCandidateUserKeys(profile.email));
+      for (const gk of gKeys) {
+        const cleanGk = cleanUserId(gk);
+        if (!cleanGk) continue;
+        const recQuery = await queryPaginated(TABLES.GamificationAndWallet, {
+          KeyConditionExpression: "userId = :uid AND begins_with(sk, :skPfx)",
+          ExpressionAttributeValues: {
+            ":uid": `USER#${cleanGk}`,
+            ":skPfx": `RECOGNITION#MATCH#${mid}`,
+          },
+        });
+        if (recQuery && recQuery.length > 0) {
+          directRecognitionsCount = recQuery.length;
+          break;
+        }
+      }
+    } catch {}
+  }
+
   const kpis: UserMatchKPIs = {
     userId: uid,
     matchId: mid,
     seriesId,
     overallScore,
+    recognitionsCount: directRecognitionsCount,
     kpis: {
       knowledge: {
         score: knowledgeScore,
@@ -1245,7 +1277,7 @@ export async function computeUserMatchKPIs(
         totalTakesCards: snapshot.totalTakesCards,
         peerLikesReceived: takesLikesReceived,
         peerRepliesReceived: takesRepliesReceived,
-        recognitionsCount: statsMatch?.recognitionsReceived || 0,
+        recognitionsCount: directRecognitionsCount,
       },
     },
     radarData: [

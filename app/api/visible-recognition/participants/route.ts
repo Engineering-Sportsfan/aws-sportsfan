@@ -189,10 +189,10 @@ export async function GET(req: NextRequest) {
               if (seenUserMomentKeys.has(userKey)) continue;
               seenUserMomentKeys.add(userKey);
 
-              const optId = String(v.selectedOptionId || v.choiceId || v.choice || "1").trim();
-              const optLabel = optionsMap.get(optId) || v.selectedOptionLabel || v.choiceText || `Option ${optId}`;
+              const optId = String(v.selectedOptionId || v.choiceId || v.choice || v.responseText || "1").trim();
+              const optLabel = optionsMap.get(optId) || v.responseText || v.selectedOptionLabel || v.choiceText || `Option ${optId}`;
               const resolvedEmail = resolveEmail(v.userEmail, uid);
-              const actualName = formatActualName(v.userName, resolvedEmail, uid);
+              const actualName = formatActualName(v.userName || v.displayName || v.name, resolvedEmail, uid);
 
               participantsList.push({
                 userId: uid,
@@ -228,10 +228,10 @@ export async function GET(req: NextRequest) {
             if (seenUserMomentKeys.has(userKey)) continue;
             seenUserMomentKeys.add(userKey);
 
-            const optId = String(v.selectedOptionId || v.choiceId || "1").trim();
-            const optLabel = optionsMap.get(optId) || `Option ${optId}`;
+            const optId = String(v.selectedOptionId || v.choiceId || v.responseText || "1").trim();
+            const optLabel = optionsMap.get(optId) || v.responseText || v.selectedOptionLabel || `Option ${optId}`;
             const resolvedEmail = resolveEmail(v.userEmail, uid);
-            const actualName = formatActualName(v.userName, resolvedEmail, uid);
+            const actualName = formatActualName(v.userName || v.displayName || v.name, resolvedEmail, uid);
 
             participantsList.push({
               userId: uid,
@@ -328,6 +328,29 @@ export async function GET(req: NextRequest) {
                 actualName = it.name || it.displayName || it.username || actualName;
                 actualEmail = it.email || actualEmail;
                 actualAvatar = it.avatarUrl || it.photoURL || it.profileImage || it.image || it.avatar || actualAvatar;
+                break;
+              }
+            } catch {}
+          }
+        }
+
+        // Also check Firestore users collection if name is still unresolved or generic
+        if (db && (!actualName || actualName === "Sports Fan" || !actualEmail)) {
+          for (const candId of candidateKeys) {
+            const cleanCand = candId.replace(/^USER#/i, "").trim();
+            if (!cleanCand) continue;
+            try {
+              const uDoc = await db.collection("users").doc(cleanCand).get();
+              if (uDoc.exists) {
+                const uData = uDoc.data() || {};
+                const fullName = uData.firstName
+                  ? [uData.firstName, uData.lastName].filter(Boolean).join(" ")
+                  : (uData.name || uData.displayName || uData.username);
+                if (fullName) actualName = fullName;
+                if (uData.email) actualEmail = uData.email;
+                if (uData.avatar || uData.photoURL || uData.avatarUrl) {
+                  actualAvatar = uData.avatar || uData.photoURL || uData.avatarUrl;
+                }
                 break;
               }
             } catch {}

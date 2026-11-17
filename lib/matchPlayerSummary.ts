@@ -1554,40 +1554,40 @@ export async function getUserMatchPlayerSummary(params: {
         id: `SUMMARY-${cleanM}-${safeKeyToken(profile.userId)}`,
         type: "MATCH_PLAYER_SUMMARY",
         matchId: cleanM,
-        matchTitle: matchMeta ? `${matchMeta.team1 || "India"} vs ${matchMeta.team2 || "New Zealand"}` : `Match ${cleanM}`,
-        team1: matchMeta?.team1 || "India",
-        team2: matchMeta?.team2 || "New Zealand",
+        matchTitle: matchMeta ? `${matchMeta.team1 || "Team 1"} vs ${matchMeta.team2 || "Team 2"}` : `Match ${cleanM}`,
+        team1: matchMeta?.team1 || "Team 1",
+        team2: matchMeta?.team2 || "Team 2",
         userId: profile.userId,
-        userName: profile.name || "Aarav",
-        userEmail: profile.email,
+        userName: profile.name || params.username || (profile.email ? profile.email.split("@")[0] : "Sports Fan"),
+        userEmail: profile.email || params.email || undefined,
         userAvatar: profile.avatar || null,
         userAliases: Array.from(profile.aliases),
-        totalActions: 18,
-        totalSocial: 4,
-        activeEngagements: 8,
-        totalServedEngagements: 10,
-        percentageReturn: 80,
+        totalActions: 0,
+        totalSocial: 0,
+        activeEngagements: 0,
+        totalServedEngagements: 0,
+        percentageReturn: 0,
         totals: {
-          participations: 8,
-          likes: 5,
-          comments: 3,
-          shares: 2,
-          impressions: 15,
-          socialLikes: 2,
-          socialComments: 2,
+          participations: 0,
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          impressions: 0,
+          socialLikes: 0,
+          socialComments: 0,
           socialShares: 0,
-          socialImpressions: 4,
-          sxpAwarded: 320,
+          socialImpressions: 0,
+          sxpAwarded: 0,
         },
         engagements: [],
-        predictionsCount: 10,
-        predictionsWon: 8,
-        predictionsRatio: "8/10",
-        persona: "Analytical Fan",
+        predictionsCount: 0,
+        predictionsWon: 0,
+        predictionsRatio: "0/0",
+        persona: "Active Fan",
         countryFlag: "🇮🇳",
-        favoritesLabel: "Bumrah • SKY | MI",
-        leaderboardBadge: "Top 5% in Series Leaderboard",
-        createdAt: Date.now(),
+        favoritesLabel: "",
+        leaderboardBadge: "Match Participant",
+        createdAt: matchMeta?.completedAt || Date.now(),
         updatedAt: Date.now(),
       };
       return fallbackSummary;
@@ -1657,12 +1657,12 @@ export async function getMatchSnapshotSummary(matchId: string): Promise<MatchSum
       type: "MATCH_SNAPSHOT_SUMMARY",
       matchId: cleanM,
       matchTitle: `${team1} vs ${team2}`,
-      totalActions: Number(matchMeta.totalActions) || 62,
-      totalMoments: Number(matchMeta.totalMoments) || 5,
-      totalParticipants: Number(matchMeta.totalParticipants || matchMeta.totalFansCount) || 27,
-      totalSxp: Number(matchMeta.totalSxp) || 320,
-      totalFansCount: Number(matchMeta.totalParticipants || matchMeta.totalFansCount) || 27,
-      createdAt: Date.now(),
+      totalActions: Number(matchMeta.totalActions) || 0,
+      totalMoments: Number(matchMeta.totalMoments) || 0,
+      totalParticipants: Number(matchMeta.totalParticipants || matchMeta.totalFansCount) || 0,
+      totalSxp: Number(matchMeta.totalSxp) || 0,
+      totalFansCount: Number(matchMeta.totalParticipants || matchMeta.totalFansCount) || 0,
+      createdAt: matchMeta.completedAt || Date.now(),
     };
   }
 
@@ -1719,29 +1719,18 @@ export async function getFanOfTheMatchSummary(matchId: string): Promise<FanOfThe
     }
   }
 
-  // If match is completed, return fallback Fan of the Match
+  // If match is completed, compute actual summaries to resolve authentic Fan of the Match
   const matchMeta = await loadMatchMeta(cleanM);
   if (matchMeta && String(matchMeta.status || "").trim().toLowerCase() === "completed") {
-    return {
-      id: `FAN_OF_THE_MATCH_${cleanM}_aarav`,
-      type: "FAN_OF_THE_MATCH",
-      matchId: cleanM,
-      matchTitle: `${matchMeta.team1 || "India"} vs ${matchMeta.team2 || "New Zealand"}`,
-      userId: "aarav_superfan",
-      userName: "Aarav",
-      userAvatar: null,
-      countryFlag: "🇮🇳",
-      persona: "Analytical Fan",
-      favoritesLabel: "Bumrah • SKY | MI",
-      interactionsCount: 18,
-      predictionsRatio: "8/10",
-      predictionsWon: 8,
-      predictionsCount: 10,
-      sxpAwarded: 320,
-      leaderboardBadge: "Top 5% in Series Leaderboard",
-      createdAt: Date.now(),
-    };
+    try {
+      const generated = await generateAndPersistMatchPlayerSummaries(cleanM, matchMeta);
+      if (generated.fanOfTheMatch) {
+        return generated.fanOfTheMatch;
+      }
+    } catch {}
   }
+
+  return null;
 
   return null;
 }

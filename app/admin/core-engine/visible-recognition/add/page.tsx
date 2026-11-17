@@ -200,14 +200,16 @@ function AddRecognitionContent() {
     fetchMoments();
   }, [selectedMatchId, selectedMomentId]);
 
-  // Fetch participants for moment
+  // Fetch participants for moment / engagement
   useEffect(() => {
     if (!selectedMatchId || !selectedMomentId) return;
     const fetchParticipants = async () => {
       try {
-        const res = await fetch(
-          `/api/visible-recognition/participants?matchId=${encodeURIComponent(selectedMatchId)}&momentId=${encodeURIComponent(selectedMomentId)}`
-        );
+        let url = `/api/visible-recognition/participants?matchId=${encodeURIComponent(selectedMatchId)}&momentId=${encodeURIComponent(selectedMomentId)}`;
+        if (selectedEngagementId) {
+          url += `&engagementId=${encodeURIComponent(selectedEngagementId)}`;
+        }
+        const res = await fetch(url);
         const json = await res.json();
         if (json.success && Array.isArray(json.participants)) {
           setParticipants(json.participants);
@@ -217,7 +219,10 @@ function AddRecognitionContent() {
       }
     };
     fetchParticipants();
+  }, [selectedMatchId, selectedMomentId, selectedEngagementId]);
 
+  useEffect(() => {
+    if (!selectedMatchId || !selectedMomentId) return;
     const fetchMomentEngagements = async () => {
       try {
         const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&includeScheduled=true&limit=1000&_t=${Date.now()}`);
@@ -290,9 +295,21 @@ function AddRecognitionContent() {
       setSubmitResult({ success: false, message: "Headline and Message are required" });
       return;
     }
+    if (targetType === "user" && !selectedUserId && !customUserName.trim()) {
+      setSubmitResult({ success: false, message: "Please select a participating fan or enter a custom fan name" });
+      return;
+    }
 
     setIsSubmitting(true);
     setSubmitResult(null);
+
+    const chosenParticipant = participants.find((x) => x.userId === selectedUserId);
+    const resolvedTargetUserId = targetType === "user"
+      ? (selectedUserId || (customUserName ? `USER#${customUserName.trim().toLowerCase().replace(/\s+/g, "_")}` : null))
+      : null;
+    const resolvedTargetUserName = targetType === "user"
+      ? (customUserName.trim() || chosenParticipant?.userName || selectedUserId || "Top Fan")
+      : "All Participants";
 
     const payload = {
       recognitionId: editId || undefined,
@@ -300,12 +317,10 @@ function AddRecognitionContent() {
       momentId: selectedMomentId,
       engagementId: selectedEngagementId || undefined,
       targetType,
-      targetUserId: targetType === "user" ? (selectedUserId || `usr_custom_${Date.now()}`) : null,
-      targetUserName:
-        targetType === "user"
-          ? (customUserName.trim() || selectedUserId || "Top Fan")
-          : "All Participants",
-      targetUserAvatar: null,
+      targetUserId: resolvedTargetUserId,
+      targetUserName: resolvedTargetUserName,
+      targetUserAvatar: chosenParticipant?.userAvatar || null,
+      targetUserEmail: chosenParticipant?.userEmail || null,
       roomId: "NMryj1w7t8mJpGzEvF9q",
       archetype: selectedArchetype,
       badgeIcon,
@@ -544,13 +559,20 @@ function AddRecognitionContent() {
                   <label className="block text-[10px] text-gray-400 mb-1">Select Participant</label>
                   <select
                     value={selectedUserId}
-                    onChange={(e) => setSelectedUserId(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedUserId(val);
+                      const p = participants.find((x) => x.userId === val);
+                      if (p) {
+                        setCustomUserName(p.userName);
+                      }
+                    }}
                     className="w-full bg-[#0a0d17] border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
                   >
                     <option value="">-- Choose User --</option>
                     {participants.map((p) => (
-                      <option key={p.userId} value={p.userId}>
-                        {p.userName} ({p.userId})
+                      <option key={`${p.userId}_${p.engagementId || ""}`} value={p.userId}>
+                        {p.userName} {p.userEmail ? `(${p.userEmail})` : `(${p.userId})`} {p.selectedOptionLabel ? `— Choice: "${p.selectedOptionLabel.slice(0, 30)}"` : ""}
                       </option>
                     ))}
                   </select>
