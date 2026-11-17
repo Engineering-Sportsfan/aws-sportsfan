@@ -8,6 +8,7 @@ import { TABLES, getFirestoreCollection } from "@/lib/tableNames";
 import { QueryCommand, ScanCommand, DeleteCommand, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { createNotification } from "@/lib/notifications";
 import { findEngagementById, persistEngagementUpdate } from "@/lib/engagementPersistence";
+import { awardUserPoints } from "@/lib/userPoints";
 
 export const dynamic = "force-dynamic";
 
@@ -585,6 +586,79 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
       }
     }
 
+    // 1c. Dual-Write to GamificationAndWallet for user ledger & award SXPs
+    try {
+      const gamificationTable = TABLES.GamificationAndWallet;
+      const totalSxp = Number(payload.rewards?.totalSxp) || 0;
+
+      if (targetType === "user" && cleanTargetUserId) {
+        // Record in user's recognition ledger
+        await docClient.send(
+          new PutCommand({
+            TableName: gamificationTable,
+            Item: {
+              userId: `USER#${cleanTargetUserId}`,
+              sk: `RECOGNITION#MATCH#${cleanMatchId}#${recognitionId}`,
+              rawUserId: cleanTargetUserId,
+              recognitionId,
+              matchId: cleanMatchId,
+              momentId: cleanMomentId,
+              engagementId: cleanEngagementId || undefined,
+              archetype,
+              headline,
+              message,
+              badgeIcon,
+              themeColor,
+              rewards: payload.rewards,
+              awardedAt: now,
+              createdAt: payload.createdAt,
+            },
+          })
+        ).catch(() => {});
+
+        // Record in user's activity stream
+        await docClient.send(
+          new PutCommand({
+            TableName: gamificationTable,
+            Item: {
+              userId: `USER#${cleanTargetUserId}`,
+              sk: `ACTIVITY#${now}#RECOGNITION#${cleanMatchId}`,
+              type: "RECOGNITION",
+              points: totalSxp,
+              reason: "VISUAL_RECOGNITION_AWARD",
+              matchId: cleanMatchId,
+              momentId: cleanMomentId,
+              recognitionId,
+              headline,
+              timestamp: now,
+            },
+          })
+        ).catch(() => {});
+
+        // Award total SXP to user account and leaderboard
+        if (totalSxp > 0) {
+          const targetUserEmail = (body as any).targetUserEmail || (cleanTargetUserId.includes("@") ? cleanTargetUserId : "");
+          await awardUserPoints({
+            actualUserId: cleanTargetUserId,
+            userName: payload.targetUserName || cleanTargetUserId,
+            userEmail: targetUserEmail,
+            userExists: true,
+            points: totalSxp,
+            reason: "RECOGNITION_AWARD",
+            transactionId: `tx_rec_${recognitionId}_${cleanTargetUserId}`,
+            metadata: {
+              matchId: cleanMatchId,
+              momentId: cleanMomentId,
+              recognitionId,
+              archetype,
+            },
+          }).catch((ptsErr) => console.warn("[visible-recognition] User points award notice:", ptsErr));
+        }
+      }
+    } catch (gamErr) {
+      console.warn("[visible-recognition] GamificationAndWallet sync notice:", gamErr);
+    }
+
     // 2. Real-time Cache in Redis for instant WebSocket / In-App Retrieval
     try {
       const cacheKey = targetType === "user"
@@ -671,6 +745,33 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
                 archetype,
               },
             }).catch(() => {});
+
+            // Also record in participant's recognition ledger
+            const cleanP = String(pUid).trim().replace(/^USER#/i, "");
+            if (cleanP && !cleanP.toLowerCase().startsWith("anon")) {
+              await docClient.send(
+                new PutCommand({
+                  TableName: TABLES.GamificationAndWallet,
+                  Item: {
+                    userId: `USER#${cleanP}`,
+                    sk: `RECOGNITION#MATCH#${cleanMatchId}#${recognitionId}`,
+                    rawUserId: cleanP,
+                    recognitionId,
+                    matchId: cleanMatchId,
+                    momentId: cleanMomentId,
+                    engagementId: cleanEngagementId || undefined,
+                    archetype,
+                    headline,
+                    message,
+                    badgeIcon,
+                    themeColor,
+                    rewards: payload.rewards,
+                    awardedAt: now,
+                    createdAt: payload.createdAt,
+                  },
+                })
+              ).catch(() => {});
+            }
           }
         } catch (allNotifErr) {
           console.warn("[visible-recognition] Broadcast notification notice:", allNotifErr);

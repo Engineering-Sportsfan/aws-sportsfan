@@ -94,14 +94,16 @@ function MatchListContent() {
       return;
     }
     try {
-      let res = await fetch(`/api/matches/${matchId}`, { method: "DELETE" });
+      let res = await fetch(`/api/matches/${encodeURIComponent(matchId)}`, { method: "DELETE" });
       if (!res.ok) {
-        res = await fetch(`/api/matches?match_id=${matchId}`, { method: "DELETE" });
+        res = await fetch(`/api/matches?match_id=${encodeURIComponent(matchId)}`, { method: "DELETE" });
       }
       const json = await res.json();
       if (res.ok && json.success) {
         setFeedback({ type: "success", text: `Match deleted successfully.` });
         setMatches((prev) => prev.filter((m) => m.match_id !== matchId && m.id !== matchId));
+        // Refresh to confirm clean synchronization with database
+        fetchMatches();
       } else {
         setFeedback({ type: "error", text: json.error || "Failed to delete match" });
       }
