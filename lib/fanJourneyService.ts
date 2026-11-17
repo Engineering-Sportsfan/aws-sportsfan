@@ -431,6 +431,7 @@ interface ParticipantMatchStats {
   takesSubmitted: number;
   takesLikesReceived: number;
   takesRepliesReceived: number;
+  recognitionsReceived: number;
   cardsEngagedSet: Set<string>;
   sxpEarned: number;
   momentEngagementCounts: Map<string, number>;
@@ -558,6 +559,7 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
         takesSubmitted: 0,
         takesLikesReceived: 0,
         takesRepliesReceived: 0,
+        recognitionsReceived: 0,
         cardsEngagedSet: new Set<string>(),
         sxpEarned: 0,
         momentEngagementCounts: new Map(),
@@ -820,10 +822,20 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
     if (rec.targetType === "user" && rec.targetUserId) {
       const p = getOrCreateParticipant(String(rec.targetUserId), rec.targetUserName);
       if (p) {
+        p.recognitionsReceived = (p.recognitionsReceived || 0) + 1;
         const reward = rec.rewards || {};
         const sxp =
           Number(reward.totalSxp || 0) ||
           Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
+        p.sxpEarned += sxp;
+      }
+    } else if (rec.targetType === "all") {
+      const reward = rec.rewards || {};
+      const sxp =
+        Number(reward.totalSxp || 0) ||
+        Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
+      for (const p of participants.values()) {
+        p.recognitionsReceived = (p.recognitionsReceived || 0) + 1;
         p.sxpEarned += sxp;
       }
     }
@@ -1126,9 +1138,10 @@ export async function computeUserMatchKPIs(
   let predictionScore: number;
   let predictionMetric: string;
 
-  if (predictionsResolved > 0) {
-    predictionScore = Math.min(100, Math.round((predictionsWon / predictionsResolved) * 100));
-    predictionMetric = `${predictionsWon}/${predictionsResolved} Correct (${predictionScore}%)`;
+  if (predictionsResolved > 0 || predictionsWon > 0) {
+    const denom = Math.max(predictionsResolved, predictionsWon, 1);
+    predictionScore = Math.min(100, Math.round((predictionsWon / denom) * 100));
+    predictionMetric = `${predictionsWon}/${denom} Correct (${predictionScore}%)`;
   } else if (predictionsAttempted > 0) {
     predictionScore = 0;
     predictionMetric = `${predictionsAttempted} Pending Resolution`;
@@ -1169,28 +1182,60 @@ export async function computeUserMatchKPIs(
   let insightScore: number;
   let insightMetric: string;
 
-  if (snapshot.totalTakesCards > 0 || takesSubmitted > 0) {
-    const submissionPart = Math.min(60, takesSubmitted * 30);
+  if (snapshot.totalTakesCards === 0 && takesSubmitted === 0) {
+    insightScore = 0;
+    insightMetric = "No Takes in Match";
+  } else if (takesSubmitted > 0) {
+    const totalTakes = Math.max(1, snapshot.totalTakesCards);
+    const coverage = Math.min(1, takesSubmitted / totalTakes);
+    const submissionPart = coverage * 60;
     const resonancePart = Math.min(40, (takesLikesReceived * 10) + (takesRepliesReceived * 15));
     insightScore = Math.min(100, Math.round(submissionPart + resonancePart));
-    insightMetric = `${takesSubmitted} Takes, ${takesLikesReceived} Likes, ${takesRepliesReceived} Replies`;
+    insightMetric = `${takesSubmitted}/${totalTakes} Takes Submitted (${insightScore}%)`;
   } else {
-    const commentsCount = statsMatch?.comments || 0;
-    const upvotes = statsMatch?.upvotesReceived || 0;
-    insightScore = Math.min(100, (commentsCount * 25) + (upvotes * 15));
-    insightMetric = `${commentsCount} Comments, ${upvotes} Upvotes Received`;
+    insightScore = 0;
+    insightMetric = "0 Takes Submitted";
   }
 
-  // Center Pentagon Overall Score: Average of all 5 pillars
+  // Center Pentagon Overall Score: Average of active match pillars (avoids penalizing pillars not in match)
+  const activePillarScores: number[] = [participationScore];
+  if (snapshot.totalTriviaCards > 0 || triviaAttempted > 0) activePillarScores.push(knowledgeScore);
+  if (snapshot.totalPredictionCards > 0 || predictionsAttempted > 0) activePillarScores.push(predictionScore);
+  if (snapshot.totalCommunityCards > 0 || communityVoted > 0) activePillarScores.push(communityScore);
+  if (snapshot.totalTakesCards > 0 || takesSubmitted > 0) activePillarScores.push(insightScore);
+
   const overallScore = Math.round(
-    (knowledgeScore + predictionScore + participationScore + communityScore + insightScore) / 5
+    activePillarScores.reduce((sum, s) => sum + s, 0) / activePillarScores.length
   );
+
+  let directRecognitionsCount = statsMatch?.recognitionsReceived || 0;
+  if (directRecognitionsCount === 0) {
+    try {
+      const gKeys = extractCandidateUserKeys(uid).concat(extractCandidateUserKeys(profile.email));
+      for (const gk of gKeys) {
+        const cleanGk = cleanUserId(gk);
+        if (!cleanGk) continue;
+        const recQuery = await queryPaginated(TABLES.GamificationAndWallet, {
+          KeyConditionExpression: "userId = :uid AND begins_with(sk, :skPfx)",
+          ExpressionAttributeValues: {
+            ":uid": `USER#${cleanGk}`,
+            ":skPfx": `RECOGNITION#MATCH#${mid}`,
+          },
+        });
+        if (recQuery && recQuery.length > 0) {
+          directRecognitionsCount = recQuery.length;
+          break;
+        }
+      }
+    } catch {}
+  }
 
   const kpis: UserMatchKPIs = {
     userId: uid,
     matchId: mid,
     seriesId,
     overallScore,
+    recognitionsCount: directRecognitionsCount,
     kpis: {
       knowledge: {
         score: knowledgeScore,
@@ -1232,6 +1277,7 @@ export async function computeUserMatchKPIs(
         totalTakesCards: snapshot.totalTakesCards,
         peerLikesReceived: takesLikesReceived,
         peerRepliesReceived: takesRepliesReceived,
+        recognitionsCount: directRecognitionsCount,
       },
     },
     radarData: [

@@ -157,10 +157,12 @@ export interface UserMatchKPIs {
       totalTakesCards: number;
       peerLikesReceived: number;
       peerRepliesReceived: number;
+      recognitionsCount?: number;
       label: string;
       metric?: string;
     };
   };
+  recognitionsCount?: number;
   radarData: Array<{
     subject: string;
     value: number;

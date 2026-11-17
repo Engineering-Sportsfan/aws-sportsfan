@@ -167,8 +167,9 @@ export async function GET(req: NextRequest) {
         await Promise.all(
           missingCoreIds.map(async (cid) => {
             const k = normalizeMatchKey(cid);
+            const strCid = String(cid);
             const lookupIds = Array.from(
-              new Set([cid, cid.toUpperCase().startsWith("MATCH-") ? cid.slice(6) : `MATCH-${cid}`])
+              new Set([strCid, strCid.toUpperCase().startsWith("MATCH-") ? strCid.slice(6) : `MATCH-${strCid}`])
             );
             let hydrated: any = null;
             for (const lid of lookupIds) {

@@ -28,6 +28,10 @@ export async function GET(req: NextRequest) {
     }
 
     let kpis: UserMatchKPIs | null = recompute ? null : await getUserMatchKPIs(userId, matchId);
+    // If previous snapshot had pending predictions, recompute to see if admin has resolved them
+    if (kpis && kpis.kpis?.prediction && (Number(kpis.kpis.prediction.attempted) || 0) > 0 && (Number(kpis.kpis.prediction.resolved) || 0) === 0) {
+      kpis = null;
+    }
     const source = kpis ? "snapshot" : "computed";
 
     if (!kpis) {
@@ -43,6 +47,7 @@ export async function GET(req: NextRequest) {
         seriesId: kpis.seriesId,
         overallScore: kpis.overallScore,
         kpis: kpis.kpis,
+        recognitionsCount: (kpis as any).recognitionsCount ?? (kpis.kpis as any)?.insight?.recognitionsCount ?? 0,
         radarData: kpis.radarData,
         generatedAt: kpis.generatedAt,
       },

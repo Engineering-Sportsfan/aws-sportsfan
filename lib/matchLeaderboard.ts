@@ -340,29 +340,58 @@ export async function getMatchLeaderboard(opts: {
 
     const profiles = await loadProfiles(items.map((i) => String(i.rawUserId || i.userId).replace(/^USER#/, "")));
 
+    // Deduplicate users who appear under multiple identifier formats (e.g. email, uid, username)
+    // to guarantee one point of consistency and zero duplicate rows
+    const dedupedMap = new Map<string, { it: any; prof: any; points: number }>();
+    for (const it of items) {
+      const uid = String(it.rawUserId || it.userId).replace(/^USER#/, "");
+      const prof = profiles.get(uid);
+      const email = String(prof?.email || (uid.includes("@") ? uid : "")).toLowerCase().trim();
+      const resolvedName = (displayNameOf(prof) || String(it.userName || "")).trim();
+      const isGenericFan = !resolvedName || resolvedName.toLowerCase() === "fan";
+      const canonKey =
+        email ||
+        (prof?.handle ? String(prof.handle).toLowerCase() : "") ||
+        (!isGenericFan ? resolvedName.toLowerCase() : "") ||
+        uid.toLowerCase().replace(/[@.]/g, "_");
+
+      const pts = Number(it.points ?? 0);
+      const existing = dedupedMap.get(canonKey);
+      if (!existing) {
+        dedupedMap.set(canonKey, { it, prof, points: pts });
+      } else {
+        // Keep the highest match points for consistency across transactions
+        if (pts > existing.points) {
+          existing.points = pts;
+          existing.it = it;
+        }
+        if (!existing.prof && prof) {
+          existing.prof = prof;
+        }
+      }
+    }
+
+    const dedupedItems = Array.from(dedupedMap.values()).sort((a, b) => b.points - a.points);
     let prevPoints = -1;
     let prevRank = 0;
-    const rows: MatchLeaderboardRow[] = items.map((it, idx) => {
+    const rows: MatchLeaderboardRow[] = dedupedItems.map(({ it, prof, points }, idx) => {
       const uid = String(it.rawUserId || it.userId).replace(/^USER#/, "");
-      const pts = Number(it.points ?? 0);
-      const rank = pts === prevPoints ? prevRank : idx + 1; // ties share a rank (1,2,2,4)
-      prevPoints = pts;
+      const rank = points === prevPoints ? prevRank : idx + 1; // ties share a rank (1,2,2,4)
+      prevPoints = points;
       prevRank = rank;
-      const prof = profiles.get(uid);
       return {
         userId: uid,
-        // Never expose the raw underscore id: profile name -> email local part -> stored name only if it isn't an id.
         userName:
           displayNameOf(prof) ||
           String(prof?.email || "").split("@")[0] ||
           (/^[a-z0-9]+(_[a-z0-9]+)+$/i.test(String(it.userName || "")) ? "Fan" : String(it.userName || "Fan")),
         userHandle: String(prof?.handle || prof?.username || ""),
         avatarUrl: avatarOf(prof) || it.avatarUrl || null,
-        matchPoints: pts,
+        matchPoints: points,
         rank,
       };
     });
-    return { totalUsers, rows };
+    return { totalUsers: rows.length, rows };
   });
 
   let userRank: number | null = null;
