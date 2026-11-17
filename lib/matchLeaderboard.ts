@@ -283,11 +283,12 @@ export async function getMatchLeaderboard(opts: {
           KeyConditionExpression: "leaderboardType = :lt",
           ExpressionAttributeValues: { ":lt": lt },
           ScanIndexForward: false,
-          Limit: limit,
+          Limit: Math.min(Math.max(limit * 3, 50), 300), // over-fetch: one person can appear under several ids
         })
       ),
       countInPartition(lt),
     ]);
+    const fetchedAll = (top.Items?.length ?? 0) >= totalUsers;
     let items = top.Items ?? [];
 
     // Fallback for completed matches where MATCH_SXP# was not populated in GSI:
@@ -317,6 +318,25 @@ export async function getMatchLeaderboard(opts: {
         console.warn("[matchLeaderboard] fallback to player summaries notice:", sumErr);
       }
     }
+
+    // Collapse one person's multiple ids (email form / underscore form) into one row, summing their points.
+    // Key = id with every non-alphanumeric removed: chandu.srikakulam@x.com and chandu_srikakulam_x_com match.
+    const merged = new Map<string, any>();
+    for (const it of items) {
+      const rid = String(it.rawUserId || it.userId).replace(/^USER#/, "");
+      const key = rid.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const prev = merged.get(key);
+      if (!prev) {
+        merged.set(key, { ...it, rawUserId: rid, userId: rid, points: Number(it.points ?? 0) });
+      } else {
+        prev.points += Number(it.points ?? 0);
+        // prefer the underscore-form id (the canonical leaderboard id) as the displayed userId
+        if (!rid.includes("@") && String(prev.rawUserId).includes("@")) { prev.rawUserId = rid; prev.userId = rid; }
+      }
+    }
+    items = Array.from(merged.values()).sort((a, b) => b.points - a.points);
+    if (fetchedAll) totalUsers = items.length;
+    items = items.slice(0, limit);
 
     const profiles = await loadProfiles(items.map((i) => String(i.rawUserId || i.userId).replace(/^USER#/, "")));
 
