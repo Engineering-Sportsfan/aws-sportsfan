@@ -431,6 +431,7 @@ interface ParticipantMatchStats {
   takesSubmitted: number;
   takesLikesReceived: number;
   takesRepliesReceived: number;
+  recognitionsReceived: number;
   cardsEngagedSet: Set<string>;
   sxpEarned: number;
   momentEngagementCounts: Map<string, number>;
@@ -558,6 +559,7 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
         takesSubmitted: 0,
         takesLikesReceived: 0,
         takesRepliesReceived: 0,
+        recognitionsReceived: 0,
         cardsEngagedSet: new Set<string>(),
         sxpEarned: 0,
         momentEngagementCounts: new Map(),
@@ -820,6 +822,7 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
     if (rec.targetType === "user" && rec.targetUserId) {
       const p = getOrCreateParticipant(String(rec.targetUserId), rec.targetUserName);
       if (p) {
+        p.recognitionsReceived = (p.recognitionsReceived || 0) + 1;
         const reward = rec.rewards || {};
         const sxp =
           Number(reward.totalSxp || 0) ||
@@ -1126,9 +1129,10 @@ export async function computeUserMatchKPIs(
   let predictionScore: number;
   let predictionMetric: string;
 
-  if (predictionsResolved > 0) {
-    predictionScore = Math.min(100, Math.round((predictionsWon / predictionsResolved) * 100));
-    predictionMetric = `${predictionsWon}/${predictionsResolved} Correct (${predictionScore}%)`;
+  if (predictionsResolved > 0 || predictionsWon > 0) {
+    const denom = Math.max(predictionsResolved, predictionsWon, 1);
+    predictionScore = Math.min(100, Math.round((predictionsWon / denom) * 100));
+    predictionMetric = `${predictionsWon}/${denom} Correct (${predictionScore}%)`;
   } else if (predictionsAttempted > 0) {
     predictionScore = 0;
     predictionMetric = `${predictionsAttempted} Pending Resolution`;
@@ -1232,6 +1236,7 @@ export async function computeUserMatchKPIs(
         totalTakesCards: snapshot.totalTakesCards,
         peerLikesReceived: takesLikesReceived,
         peerRepliesReceived: takesRepliesReceived,
+        recognitionsCount: statsMatch?.recognitionsReceived || 0,
       },
     },
     radarData: [

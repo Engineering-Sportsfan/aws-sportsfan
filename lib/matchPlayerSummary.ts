@@ -925,35 +925,8 @@ export async function generateAndPersistMatchPlayerSummaries(
     }
   }
 
-  // Fallback: If no users interacted with this match specifically, pull active users from recent votes/app participation
-  if (userStore.size === 0 && db) {
-    try {
-      const snapVotes = await db.collection(getFirestoreCollection("user_engagements")).limit(60).get();
-      for (const doc of snapVotes.docs) {
-        const v = doc.data();
-        if (v.userId && isValidRealUid(v.userId)) {
-          const profile = resolve(v.userId, v.userName || v.name, v.userAvatar);
-          if (profile) {
-            const dummyEid = `eng_series_${String(v.engagementId || "match").slice(-8)}`;
-            const dummyEng = { title: "Series Prediction", type: v.type || "prediction", momentLabel: "Live Match" };
-            const row = getOrInitRow(profile, dummyEid, dummyEng);
-            row.participations += 1;
-            row.sxpAwarded += Number(v.pointsAwarded || v.participationPointsAwarded || 12);
-            if (v.selectedOptionId) {
-              row.userVote = String(v.selectedOptionText || v.selectedOptionId);
-            }
-            const accUser = userStore.get(profile.userId);
-            if (accUser) {
-              accUser.predictionsAttempted = (accUser.predictionsAttempted || 0) + 1;
-              if (v.isCorrect || v.won) accUser.predictionsWon = (accUser.predictionsWon || 0) + 1;
-            }
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
+  // Fallback: If no users interacted with this match specifically, do not invent dummy participants
+  // User summaries are strictly based on authentic match engagement telemetry.
 
   // 4. Add direct recognition SXP bonuses for targeted users on this match
   for (const rec of recognitionsList) {
@@ -1036,10 +1009,8 @@ export async function generateAndPersistMatchPlayerSummaries(
     const userKey = safeKeyToken(acc.profile.userId);
     const summaryId = `SUMMARY-${cleanM}-${userKey}`;
 
-    const rawPredAtt = acc.predictionsAttempted ?? 0;
-    const rawPredWon = acc.predictionsWon ?? 0;
-    const predictionsAttempted = rawPredAtt > 0 ? rawPredAtt : totals.participations > 0 ? Math.min(totals.participations, 10) : 10;
-    const predictionsWon = rawPredWon > 0 ? rawPredWon : rawPredAtt > 0 ? 0 : predictionsAttempted > 0 ? Math.max(1, Math.round(predictionsAttempted * 0.8)) : 8;
+    const predictionsAttempted = acc.predictionsAttempted ?? 0;
+    const predictionsWon = acc.predictionsWon ?? 0;
     const predictionsRatio = `${predictionsWon}/${predictionsAttempted}`;
     const persona =
       predictionsAttempted > 0 && predictionsWon / Math.max(1, predictionsAttempted) >= 0.7
@@ -1048,7 +1019,7 @@ export async function generateAndPersistMatchPlayerSummaries(
         ? "Vocal Superfan"
         : totals.likes > 3
         ? "Passionate Supporter"
-        : "Analytical Fan";
+        : "Cricket Fan";
 
     const summary: PlayerMatchSummaryRecord = {
       id: summaryId,
@@ -1062,7 +1033,7 @@ export async function generateAndPersistMatchPlayerSummaries(
       ...(acc.profile.email ? { userEmail: acc.profile.email } : {}),
       ...(acc.profile.avatar ? { userAvatar: acc.profile.avatar } : {}),
       userAliases: Array.from(acc.profile.aliases),
-      totalActions: totalActions || 18,
+      totalActions: totalActions,
       totalSocial,
       activeEngagements,
       totalServedEngagements,
@@ -1073,8 +1044,6 @@ export async function generateAndPersistMatchPlayerSummaries(
       predictionsWon,
       predictionsRatio,
       persona,
-      countryFlag: "🇮🇳",
-      favoritesLabel: "Bumrah • SKY | MI",
       createdAt: now,
       updatedAt: now,
     };
@@ -1231,16 +1200,16 @@ export async function generateAndPersistMatchPlayerSummaries(
 
   // 5b. Persist Fan of the Match Summary (if marked by admin)
   let fanOfTheMatchRecord: FanOfTheMatchRecord | null = null;
-  if (sendFanOfMatchSummary) {
-    const topFan = summaries.length > 0 ? summaries[0] : null;
-    const fotmUserId = topFan?.userId || "aarav_superfan";
-    const fotmUserName = topFan?.userName || "Aarav";
-    const fotmAvatar = topFan?.userAvatar || null;
-    const fotmInteractions = topFan ? topFan.totalActions : 18;
-    const fotmRatio = topFan?.predictionsRatio || "8/10";
-    const fotmWon = topFan?.predictionsWon ?? 8;
-    const fotmCount = topFan?.predictionsCount ?? 10;
-    const fotmSxp = topFan ? (topFan.totals.sxpAwarded || 320) : 320;
+  if (sendFanOfMatchSummary && summaries.length > 0) {
+    const topFan = summaries[0];
+    const fotmUserId = topFan.userId;
+    const fotmUserName = topFan.userName;
+    const fotmAvatar = topFan.userAvatar || null;
+    const fotmInteractions = topFan.totalActions;
+    const fotmRatio = topFan.predictionsRatio || "0/0";
+    const fotmWon = topFan.predictionsWon ?? 0;
+    const fotmCount = topFan.predictionsCount ?? 0;
+    const fotmSxp = topFan.totals?.sxpAwarded || 0;
 
     fanOfTheMatchRecord = {
       id: `FAN_OF_THE_MATCH_${cleanM}_${safeKeyToken(fotmUserId)}`,
@@ -1250,15 +1219,15 @@ export async function generateAndPersistMatchPlayerSummaries(
       userId: fotmUserId,
       userName: fotmUserName,
       userAvatar: fotmAvatar,
-      countryFlag: topFan?.countryFlag || "🇮🇳",
-      persona: topFan?.persona || "Analytical Fan",
-      favoritesLabel: topFan?.favoritesLabel || "Bumrah • SKY | MI",
+      countryFlag: topFan.countryFlag || "🇮🇳",
+      persona: topFan.persona || "Champion Fan",
+      favoritesLabel: topFan.favoritesLabel || "",
       interactionsCount: fotmInteractions,
       predictionsRatio: fotmRatio,
       predictionsWon: fotmWon,
       predictionsCount: fotmCount,
       sxpAwarded: fotmSxp,
-      leaderboardBadge: "Top 5% in Series Leaderboard",
+      leaderboardBadge: "Match Leaderboard Winner",
       createdAt: now,
     };
 
@@ -1361,23 +1330,23 @@ export async function generateAndPersistMatchPlayerSummaries(
     const totalAllSxp = summaries.reduce((acc, s) => acc + (s.totals?.sxpAwarded || 0), 0);
     const totalAllPredsCount = summaries.reduce((acc, s) => acc + (s.predictionsCount || 0), 0);
     const totalAllPredsWon = summaries.reduce((acc, s) => acc + (s.predictionsWon || 0), 0);
-    const allUsersPredictionsRatio = totalAllPredsCount > 0 ? `${totalAllPredsWon}/${totalAllPredsCount}` : "8/10";
+    const allUsersPredictionsRatio = `${totalAllPredsWon}/${totalAllPredsCount}`;
     const distinctMoments = new Set<string>(momentsById.keys());
     for (const eng of engagementsById.values()) {
       if (eng.momentId) distinctMoments.add(String(eng.momentId).trim());
     }
-    const totalMomentsCount = Math.max(distinctMoments.size, momentsById.size, 1);
-    const totalParticipantsCount = Math.max(summaries.length, 1);
+    const totalMomentsCount = distinctMoments.size || momentsById.size || 0;
+    const totalParticipantsCount = summaries.length;
 
     matchSnapshotRecord = {
       id: `MATCH_SUMMARY_${cleanM}`,
       type: "MATCH_SNAPSHOT_SUMMARY",
       matchId: cleanM,
       matchTitle,
-      totalActions: totalAllActions > 0 ? totalAllActions : (Number(mr.totalActions) || 62),
+      totalActions: totalAllActions,
       totalMoments: totalMomentsCount,
       totalParticipants: totalParticipantsCount,
-      totalSxp: totalAllSxp > 0 ? totalAllSxp : (Number(mr.totalSxp) || 320),
+      totalSxp: totalAllSxp,
       totalFansCount: totalParticipantsCount,
       createdAt: now,
     };
