@@ -4,6 +4,7 @@ import { docClient } from "@/lib/dynamodb";
 import { TABLES } from "@/lib/tableNames";
 import { getCandidateTableNames } from "@/lib/dualWrite";
 import { getUser } from "@/lib/getUser";
+import { isMatchScoredType } from "@/lib/matchLeaderboard";
 import {
   GetCommand,
   PutCommand,
@@ -81,13 +82,20 @@ function extractCandidateUserKeys(raw?: string | null): string[] {
     candidates.add(lower.replace(/[^a-z0-9]/g, "_"));
     candidates.add(lower.replace(/@/g, "_"));
   } else {
-    for (const domain of ["gmail_com", "yahoo_com", "outlook_com", "hotmail_com", "icloud_com"]) {
-      const lower = clean.toLowerCase();
-      if (lower.endsWith(`_${domain}`)) {
-        const local = lower.slice(0, -(domain.length + 1));
-        const realDomain = domain.replace("_", ".");
-        candidates.add(`${local}@${realDomain}`);
-        candidates.add(`${local.replace(/_/g, ".")}@${realDomain}`);
+    const lower = clean.toLowerCase();
+    const parts = lower.split("_");
+    const SECOND_LEVEL = ["edu", "co", "ac", "gov", "org", "net"];
+    const TLDS = ["com", "in", "org", "net", "edu", "io", "co", "ac", "gov", "app", "dev", "ai", "uk", "au", "ca"];
+    const last = parts[parts.length - 1] || "";
+    if (parts.length >= 3 && TLDS.includes(last)) {
+      const second = parts[parts.length - 2] || "";
+      const domainLen = SECOND_LEVEL.includes(second) && parts.length >= 4 ? 3 : 2;
+      const domain = parts.slice(parts.length - domainLen).join(".");
+      const localParts = parts.slice(0, parts.length - domainLen);
+      if (localParts.length > 0) {
+        candidates.add(`${localParts.join(".")}@${domain}`);
+        candidates.add(`${localParts.join("_")}@${domain}`);
+        candidates.add(`${localParts.join("-")}@${domain}`);
       }
     }
   }
@@ -403,6 +411,82 @@ export async function advanceSeriesJourneyStage(
 
 // ─── Shared Core Engine Telemetry Collector (DynamoDB Read Layer) ──────────────
 
+type ImpactPillar = "knowledge" | "prediction" | "participation" | "community" | "insight";
+
+interface PillarSxpBucket {
+  base: number;
+  recognition: number;
+}
+
+type PillarSxpBuckets = Record<ImpactPillar, PillarSxpBucket>;
+
+function createEmptyPillarBuckets(): PillarSxpBuckets {
+  return {
+    knowledge: { base: 0, recognition: 0 },
+    prediction: { base: 0, recognition: 0 },
+    participation: { base: 0, recognition: 0 },
+    community: { base: 0, recognition: 0 },
+    insight: { base: 0, recognition: 0 },
+  };
+}
+
+function pillarForEngagementType(engType?: string | null): ImpactPillar {
+  const t = String(engType || "").trim().toLowerCase();
+  if (t === "question" || t === "quiz" || t === "trivia") return "knowledge";
+  if (t === "prediction") return "prediction";
+  if (t === "poll" || t === "debate") return "community";
+  if (t === "express" || t === "takes" || t === "hot_take" || t === "hottake") return "insight";
+  return "participation";
+}
+
+function pillarForActivityType(actType: string, engType?: string | null): ImpactPillar {
+  const upper = String(actType || "").trim().toUpperCase();
+  // Likes / Comments / Shares / Reactions go into Participation
+  if (
+    upper.includes("LIKE") ||
+    upper.includes("COMMENT") ||
+    upper.includes("SHARE") ||
+    upper.includes("REACT")
+  ) {
+    return "participation";
+  }
+  if (engType) {
+    return pillarForEngagementType(engType);
+  }
+  if (upper.includes("QUIZ") || upper.includes("TRIVIA") || upper.includes("QUESTION")) return "knowledge";
+  if (upper.includes("PREDICT")) return "prediction";
+  if (upper.includes("POLL") || upper.includes("DEBATE")) return "community";
+  if (upper.includes("EXPRESS") || upper.includes("TAKE")) return "insight";
+  return "participation";
+}
+
+function allocatePercentages(values: number[]): number[] {
+  const total = values.reduce((a, b) => a + b, 0);
+  if (total <= 0) return values.map(() => 0);
+  const exact = values.map((v) => (v / total) * 100);
+  const floored = exact.map((e) => Math.floor(e));
+  const remainder = 100 - floored.reduce((a, b) => a + b, 0);
+  const order = exact
+    .map((e, idx) => ({ idx, frac: e - floored[idx], val: values[idx] }))
+    .sort((a, b) => (b.frac !== a.frac ? b.frac - a.frac : b.val - a.val));
+  for (let i = 0; i < remainder && i < order.length; i++) {
+    floored[order[i].idx] += 1;
+  }
+  return floored;
+}
+
+function formatPillarSxpMetric(baseSxp: number, recognitionSxp: number): string {
+  const total = baseSxp + recognitionSxp;
+  if (total <= 0) return "0 SXP";
+  if (recognitionSxp > 0 && baseSxp > 0) {
+    return `${total} SXP (${baseSxp} SXP + ${recognitionSxp} SXP Recognition)`;
+  }
+  if (recognitionSxp > 0) {
+    return `${total} SXP (${recognitionSxp} SXP Recognition)`;
+  }
+  return `${total} SXP`;
+}
+
 interface ParticipantMatchStats {
   userId: string;
   userName: string;
@@ -434,12 +518,15 @@ interface ParticipantMatchStats {
   recognitionsReceived: number;
   cardsEngagedSet: Set<string>;
   sxpEarned: number;
+  pillarSxp: PillarSxpBuckets;
   momentEngagementCounts: Map<string, number>;
 }
 
 interface MatchTelemetrySnapshot {
   matchId: string;
   momentsById: Map<string, { momentId: string; title: string; mediaUrl: string; totalReactions: number }>;
+  engagementsById: Map<string, any>;
+  recognitionsList: any[];
   participants: Map<string, ParticipantMatchStats>;
   engagementCount: number;
   totalCommunityCards: number;
@@ -562,6 +649,7 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
         recognitionsReceived: 0,
         cardsEngagedSet: new Set<string>(),
         sxpEarned: 0,
+        pillarSxp: createEmptyPillarBuckets(),
         momentEngagementCounts: new Map(),
       };
       participants.set(key, p);
@@ -668,10 +756,12 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
             p.participations += 1;
             p.totalInteractions += 1;
             p.cardsEngagedSet.add(eid);
-            p.sxpEarned += Number(it.pointsAwarded || it.participationPointsAwarded || 2) + Number(it.wonBonusPoints || 0);
+            const votePts = Number(it.pointsAwarded || it.participationPointsAwarded || 2) + Number(it.wonBonusPoints || 0);
+            p.sxpEarned += votePts;
             addMomentTouch(p, momentId, 1);
 
             const cleanEngType = String(eng.type || "").toLowerCase().trim();
+            p.pillarSxp[pillarForEngagementType(cleanEngType)].base += votePts;
             const selected = String(it.selectedOptionId || "").trim().toLowerCase();
             const isWinner =
               it.isCorrect === true ||
@@ -819,24 +909,33 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
 
   // 4. Add direct recognition SXP earned for this match
   for (const rec of recognitionsList) {
+    const recEngId = String(rec.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+    const recArch = String(rec.archetype || "").trim().toUpperCase();
+    const recEngType = String(
+      rec.engagementType ||
+        engagementsById.get(recEngId)?.type ||
+        (recArch === "SHARP_ORACLE" || recArch === "CLUTCH_CALLER" ? "prediction" : "")
+    )
+      .trim()
+      .toLowerCase();
+    const recPillar = pillarForEngagementType(recEngType);
+    const reward = rec.rewards || {};
+    const sxp =
+      Number(reward.totalSxp || 0) ||
+      Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
+
     if (rec.targetType === "user" && rec.targetUserId) {
       const p = getOrCreateParticipant(String(rec.targetUserId), rec.targetUserName);
       if (p) {
         p.recognitionsReceived = (p.recognitionsReceived || 0) + 1;
-        const reward = rec.rewards || {};
-        const sxp =
-          Number(reward.totalSxp || 0) ||
-          Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
         p.sxpEarned += sxp;
+        p.pillarSxp[recPillar].recognition += sxp;
       }
     } else if (rec.targetType === "all") {
-      const reward = rec.rewards || {};
-      const sxp =
-        Number(reward.totalSxp || 0) ||
-        Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
       for (const p of participants.values()) {
         p.recognitionsReceived = (p.recognitionsReceived || 0) + 1;
         p.sxpEarned += sxp;
+        p.pillarSxp[recPillar].recognition += sxp;
       }
     }
   }
@@ -844,6 +943,8 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
   return {
     matchId: cleanM,
     momentsById,
+    engagementsById,
+    recognitionsList,
     participants,
     engagementCount: engagementsById.size,
     totalCommunityCards,
@@ -1100,11 +1201,30 @@ export async function computeUserMatchKPIs(
 ): Promise<UserMatchKPIs> {
   const uid = cleanUserId(rawUserId);
   const mid = cleanMatchId(matchId);
+  const targetMatchKey = normalizeMatchKey(mid);
   const profile = await resolveDynamoUserProfile(uid);
   const snapshot = await collectMatchActivitySnapshot(mid);
 
   // Match participant across canonical keys (userId, email, or entityKeyId)
-  const candKeys = extractCandidateUserKeys(uid).concat(extractCandidateUserKeys(profile.email));
+  const rawKeys = [
+    ...extractCandidateUserKeys(uid),
+    ...extractCandidateUserKeys(profile.email),
+    ...extractCandidateUserKeys(profile.userId),
+  ];
+  const candKeySet = new Set<string>();
+  for (const k of rawKeys) {
+    const clean = cleanUserId(k);
+    if (!clean) continue;
+    candKeySet.add(clean);
+    candKeySet.add(clean.toLowerCase());
+    if (clean.includes("@") || clean.includes(".")) {
+      candKeySet.add(clean.toLowerCase().replace(/[@.]/g, "_"));
+    }
+  }
+  const candKeys = Array.from(candKeySet);
+  const candLowerSet = new Set(candKeys.map((k) => k.toLowerCase()));
+  const candAlnumSet = new Set(candKeys.map((k) => k.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean));
+
   let statsMatch: ParticipantMatchStats | null = null;
   for (const ck of candKeys) {
     const found = snapshot.participants.get(ck.toLowerCase());
@@ -1117,128 +1237,254 @@ export async function computeUserMatchKPIs(
   const seriesId = cleanSeriesId(seriesIdInput || "");
   const totalMatchCards = Math.max(1, snapshot.engagementCount);
 
-  // 1. Knowledge (Trivia / Quiz accuracy: correct / attempted)
+  // Preserve raw counts for the 5 top scorecard tiles & badges
   const triviaAttempted = statsMatch?.triviaAttempted || 0;
   const triviaCorrect = statsMatch?.triviaCorrect || 0;
-  let knowledgeScore: number;
-  let knowledgeMetric: string;
-
-  if (triviaAttempted > 0) {
-    knowledgeScore = Math.min(100, Math.round((triviaCorrect / triviaAttempted) * 100));
-    knowledgeMetric = `${triviaCorrect}/${triviaAttempted} Correct (${knowledgeScore}%)`;
-  } else {
-    knowledgeScore = 0;
-    knowledgeMetric = snapshot.totalTriviaCards === 0 ? "No Trivia in Match" : "0 Trivia Attempted";
-  }
-
-  // 2. Prediction (Forecasting accuracy: won / resolved)
   const predictionsAttempted = statsMatch?.predictionsAttempted || 0;
   const predictionsResolved = statsMatch?.predictionsResolved || 0;
   const predictionsWon = statsMatch?.predictionsWon || 0;
-  let predictionScore: number;
-  let predictionMetric: string;
-
-  if (predictionsResolved > 0 || predictionsWon > 0) {
-    const denom = Math.max(predictionsResolved, predictionsWon, 1);
-    predictionScore = Math.min(100, Math.round((predictionsWon / denom) * 100));
-    predictionMetric = `${predictionsWon}/${denom} Correct (${predictionScore}%)`;
-  } else if (predictionsAttempted > 0) {
-    predictionScore = 0;
-    predictionMetric = `${predictionsAttempted} Pending Resolution`;
-  } else {
-    predictionScore = 0;
-    predictionMetric = snapshot.totalPredictionCards === 0 ? "No Predictions in Match" : "0 Predictions Made";
-  }
-
-  // 3. Participation (Dynamic card coverage: unique cards engaged / total match cards — NO BENCHMARK)
   const cardsEngagedCount = statsMatch?.cardsEngagedSet ? statsMatch.cardsEngagedSet.size : 0;
-  const participationScore = Math.min(100, Math.round((cardsEngagedCount / totalMatchCards) * 100));
-  const participationMetric = `${cardsEngagedCount}/${totalMatchCards} Cards Engaged (${participationScore}%)`;
-
-  // 4. Community (Debates & Polls coverage + comments)
   const pollsVoted = statsMatch?.pollsVoted || 0;
   const debatesVoted = statsMatch?.debatesVoted || 0;
-  const communityVoted = pollsVoted + debatesVoted;
   const communityComments = statsMatch?.communityComments || 0;
-  const totalCommunityCards = Math.max(1, snapshot.totalCommunityCards);
-  let communityScore: number;
-  let communityMetric: string;
-
-  if (snapshot.totalCommunityCards > 0) {
-    const coverage = Math.min(1, communityVoted / totalCommunityCards);
-    const votePart = coverage * 75;
-    const commentPart = Math.min(25, communityComments * 12.5);
-    communityScore = Math.min(100, Math.round(votePart + commentPart));
-    communityMetric = `${communityVoted}/${totalCommunityCards} Polls/Debates + ${communityComments} Comments`;
-  } else {
-    communityScore = Math.min(100, (communityVoted * 30) + (communityComments * 20));
-    communityMetric = `${communityVoted} Votes, ${communityComments} Comments`;
-  }
-
-  // 5. Insight (Takes submitted + peer likes/replies received)
   const takesSubmitted = statsMatch?.takesSubmitted || 0;
   const takesLikesReceived = statsMatch?.takesLikesReceived || 0;
   const takesRepliesReceived = statsMatch?.takesRepliesReceived || 0;
-  let insightScore: number;
-  let insightMetric: string;
 
-  if (snapshot.totalTakesCards === 0 && takesSubmitted === 0) {
-    insightScore = 0;
-    insightMetric = "No Takes in Match";
-  } else if (takesSubmitted > 0) {
-    const totalTakes = Math.max(1, snapshot.totalTakesCards);
-    const coverage = Math.min(1, takesSubmitted / totalTakes);
-    const submissionPart = coverage * 60;
-    const resonancePart = Math.min(40, (takesLikesReceived * 10) + (takesRepliesReceived * 15));
-    insightScore = Math.min(100, Math.round(submissionPart + resonancePart));
-    insightMetric = `${takesSubmitted}/${totalTakes} Takes Submitted (${insightScore}%)`;
-  } else {
-    insightScore = 0;
-    insightMetric = "0 Takes Submitted";
+  // Build recognition lookup by id so ACT# recognition entries can resolve their parent engagementType
+  const recById = new Map<string, any>();
+  for (const rec of snapshot.recognitionsList) {
+    const rid = String(rec.recognitionId || rec.id || "").trim();
+    if (rid) recById.set(rid, rec);
   }
 
-  // Center Pentagon Overall Score: Average of active match pillars (avoids penalizing pillars not in match)
-  const activePillarScores: number[] = [participationScore];
-  if (snapshot.totalTriviaCards > 0 || triviaAttempted > 0) activePillarScores.push(knowledgeScore);
-  if (snapshot.totalPredictionCards > 0 || predictionsAttempted > 0) activePillarScores.push(predictionScore);
-  if (snapshot.totalCommunityCards > 0 || communityVoted > 0) activePillarScores.push(communityScore);
-  if (snapshot.totalTakesCards > 0 || takesSubmitted > 0) activePillarScores.push(insightScore);
+  const resolveRecognitionPillar = (recLike: any): ImpactPillar => {
+    const explicitType = String(recLike?.engagementType || "").trim().toLowerCase();
+    if (explicitType) return pillarForEngagementType(explicitType);
+    const engId = String(recLike?.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+    if (engId) {
+      const eng = snapshot.engagementsById.get(engId);
+      if (eng?.type) return pillarForEngagementType(eng.type);
+    }
+    const rid = String(recLike?.recognitionId || recLike?.id || "").trim();
+    const fullRec = rid && recById.has(rid) ? recById.get(rid) : null;
+    if (fullRec) {
+      const fullType = String(fullRec?.engagementType || "").trim().toLowerCase();
+      if (fullType) return pillarForEngagementType(fullType);
+      const fullEngId = String(fullRec?.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+      if (fullEngId && snapshot.engagementsById.get(fullEngId)?.type) {
+        return pillarForEngagementType(snapshot.engagementsById.get(fullEngId).type);
+      }
+    }
+    if (rid) {
+      // Fallback: extract embedded engagementId from VR_eng_<ts>_<hash>_...
+      const engMatch = rid.match(/(eng_\d+_[a-z0-9]+)/i);
+      if (engMatch?.[1] && snapshot.engagementsById.get(engMatch[1])?.type) {
+        return pillarForEngagementType(snapshot.engagementsById.get(engMatch[1]).type);
+      }
+    }
+    // Fallback for prediction archetypes when admin did not pick a linked engagementId
+    const arch = String(recLike?.archetype || fullRec?.archetype || "").trim().toUpperCase();
+    if (arch === "SHARP_ORACLE" || arch === "CLUTCH_CALLER") {
+      return "prediction";
+    }
+    return "participation";
+  };
 
-  const overallScore = Math.round(
-    activePillarScores.reduce((sum, s) => sum + s, 0) / activePillarScores.length
-  );
+  // ── Aggregate authentic per-pillar SXPs from GamificationAndWallet (same ledger as Match Leaderboard) ──
+  const buckets: PillarSxpBuckets = createEmptyPillarBuckets();
+  const seenTxIds = new Set<string>();
+  const seenRecIds = new Set<string>();
+  const seenMatchSxpKeys = new Set<string>();
+  const matchSkVariants = Array.from(new Set([mid, mid.replace(/^MATCH-/i, "")].filter(Boolean)));
+  let leaderboardMatchSxp = 0;
 
-  let directRecognitionsCount = statsMatch?.recognitionsReceived || 0;
-  if (directRecognitionsCount === 0) {
+  for (const ck of candKeys) {
+    const pkUser = `USER#${ck}`;
+
+    // 1) Read exact materialized Leaderboard Match SXP across both MATCH- and stripped variants
+    for (const mVar of matchSkVariants) {
+      const dedupeKey = `${pkUser.toLowerCase()}#${mVar.toLowerCase()}`;
+      if (seenMatchSxpKeys.has(dedupeKey)) continue;
+      seenMatchSxpKeys.add(dedupeKey);
+      try {
+        const msRes = await docClient.send(
+          new GetCommand({
+            TableName: TABLES.GamificationAndWallet,
+            Key: { userId: pkUser, sk: `MATCH_SXP#${mVar}` },
+          })
+        );
+        if (msRes.Item && Number(msRes.Item.points) > 0) {
+          leaderboardMatchSxp += Number(msRes.Item.points);
+        }
+      } catch {}
+    }
+
+    // 2) Read individual point activity transactions (ACT#) for this match
     try {
-      const gKeys = extractCandidateUserKeys(uid).concat(extractCandidateUserKeys(profile.email));
-      for (const gk of gKeys) {
-        const cleanGk = cleanUserId(gk);
-        if (!cleanGk) continue;
-        const recQuery = await queryPaginated(TABLES.GamificationAndWallet, {
-          KeyConditionExpression: "userId = :uid AND begins_with(sk, :skPfx)",
-          ExpressionAttributeValues: {
-            ":uid": `USER#${cleanGk}`,
-            ":skPfx": `RECOGNITION#MATCH#${mid}`,
-          },
-        });
-        if (recQuery && recQuery.length > 0) {
-          directRecognitionsCount = recQuery.length;
-          break;
+      const actItems = await queryPaginated(TABLES.GamificationAndWallet, {
+        KeyConditionExpression: "userId = :uid AND begins_with(sk, :pfx)",
+        ExpressionAttributeValues: { ":uid": pkUser, ":pfx": "ACT#" },
+      });
+      for (const act of actItems) {
+        const txKey = String(act.transactionId || act.sk || "").trim();
+        if (!txKey || seenTxIds.has(txKey)) continue;
+
+        const actType = String(act.type || "").trim();
+        if (!isMatchScoredType(actType)) continue;
+
+        const pts = Number(act.matchPoints ?? act.points ?? 0);
+        if (pts <= 0) continue;
+
+        const meta = act.metadata || {};
+        const actMatchId = String(meta.matchId || act.matchId || "").trim();
+        const actEngId = String(meta.engagementId || act.engagementId || "")
+          .replace(/^ENGAGEMENT#/i, "")
+          .replace(/^LOOP#/i, "")
+          .trim();
+
+        const belongsToMatch =
+          (actMatchId && normalizeMatchKey(actMatchId) === targetMatchKey) ||
+          (actEngId && snapshot.engagementsById.has(actEngId));
+        if (!belongsToMatch) continue;
+
+        seenTxIds.add(txKey);
+
+        const upperType = actType.toUpperCase();
+        if (upperType.includes("RECOGNITION")) {
+          const recId = String(meta.recognitionId || "").trim();
+          if (recId) seenRecIds.add(recId);
+          const pillar = resolveRecognitionPillar({
+            engagementType: meta.engagementType,
+            engagementId: actEngId,
+            recognitionId: recId,
+            archetype: meta.archetype || act.archetype,
+          });
+          buckets[pillar].recognition += pts;
+        } else {
+          const engType = String(meta.engagementType || snapshot.engagementsById.get(actEngId)?.type || "").trim();
+          const pillar = pillarForActivityType(actType, engType);
+          buckets[pillar].base += pts;
         }
       }
     } catch {}
+
+    // 3) Read user recognition ledger items across both MATCH- and stripped variants
+    for (const mVar of matchSkVariants) {
+      try {
+        const recItems = await queryPaginated(TABLES.GamificationAndWallet, {
+          KeyConditionExpression: "userId = :uid AND begins_with(sk, :skPfx)",
+          ExpressionAttributeValues: {
+            ":uid": pkUser,
+            ":skPfx": `RECOGNITION#MATCH#${mVar}`,
+          },
+        });
+        for (const rec of recItems) {
+          const rid = String(rec.recognitionId || rec.sk || "").trim();
+          if (!rid || seenRecIds.has(rid)) continue;
+          seenRecIds.add(rid);
+          const reward = rec.rewards || {};
+          const recSxp =
+            Number(reward.totalSxp || 0) ||
+            Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
+          if (recSxp > 0) {
+            const pillar = resolveRecognitionPillar(rec);
+            buckets[pillar].recognition += recSxp;
+          }
+        }
+      } catch {}
+    }
   }
+
+  // 4) Include any MatchMoments recognitions for this user that were not already counted via ACT# / wallet ledger
+  const userParticipatedInMatch = Boolean(statsMatch && (statsMatch.totalInteractions > 0 || statsMatch.participations > 0));
+  for (const rec of snapshot.recognitionsList) {
+    const rid = String(rec.recognitionId || rec.id || rec.sk || "").trim();
+    if (!rid || seenRecIds.has(rid)) continue;
+
+    let appliesToUser = false;
+    if (rec.targetType === "user" && rec.targetUserId) {
+      const tClean = cleanUserId(String(rec.targetUserId)).toLowerCase();
+      const tAlnum = tClean.replace(/[^a-z0-9]/g, "");
+      appliesToUser = candLowerSet.has(tClean) || (Boolean(tAlnum) && candAlnumSet.has(tAlnum));
+    } else if (rec.targetType === "all" && userParticipatedInMatch) {
+      appliesToUser = true;
+    }
+
+    if (appliesToUser) {
+      seenRecIds.add(rid);
+      const reward = rec.rewards || {};
+      const recSxp =
+        Number(reward.totalSxp || 0) ||
+        Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
+      if (recSxp > 0) {
+        const pillar = resolveRecognitionPillar(rec);
+        buckets[pillar].recognition += recSxp;
+      }
+    }
+  }
+
+  const sumBuckets = (b: PillarSxpBuckets): number =>
+    b.knowledge.base + b.knowledge.recognition +
+    b.prediction.base + b.prediction.recognition +
+    b.participation.base + b.participation.recognition +
+    b.community.base + b.community.recognition +
+    b.insight.base + b.insight.recognition;
+
+  // Fallback to snapshot per-pillar SXP if no ACT# transactions were found for legacy match data
+  if (sumBuckets(buckets) === 0 && statsMatch?.pillarSxp) {
+    for (const pKey of ["knowledge", "prediction", "participation", "community", "insight"] as ImpactPillar[]) {
+      buckets[pKey].base += statsMatch.pillarSxp[pKey]?.base || 0;
+      buckets[pKey].recognition += statsMatch.pillarSxp[pKey]?.recognition || 0;
+    }
+  }
+
+  // Reconcile against materialized Match Leaderboard SXP so sum(all 5 pillars) === Leaderboard SXP
+  let totalMatchSxp = sumBuckets(buckets);
+  if (leaderboardMatchSxp > totalMatchSxp) {
+    buckets.participation.base += leaderboardMatchSxp - totalMatchSxp;
+    totalMatchSxp = leaderboardMatchSxp;
+  }
+
+  // Exact SXP totals per pillar
+  const knowledgeTotalSxp = buckets.knowledge.base + buckets.knowledge.recognition;
+  const predictionTotalSxp = buckets.prediction.base + buckets.prediction.recognition;
+  const participationTotalSxp = buckets.participation.base + buckets.participation.recognition;
+  const communityTotalSxp = buckets.community.base + buckets.community.recognition;
+  const insightTotalSxp = buckets.insight.base + buckets.insight.recognition;
+
+  // Percentage share per pillar using Largest Remainder Rounding (always sums to 100% when totalMatchSxp > 0)
+  const [knowledgeScore, predictionScore, participationScore, communityScore, insightScore] = allocatePercentages([
+    knowledgeTotalSxp,
+    predictionTotalSxp,
+    participationTotalSxp,
+    communityTotalSxp,
+    insightTotalSxp,
+  ]);
+
+  // Subfield display text showing SXP earned (+ explicit Recognition SXP if awarded in that category)
+  const knowledgeMetric = formatPillarSxpMetric(buckets.knowledge.base, buckets.knowledge.recognition);
+  const predictionMetric = formatPillarSxpMetric(buckets.prediction.base, buckets.prediction.recognition);
+  const participationMetric = formatPillarSxpMetric(buckets.participation.base, buckets.participation.recognition);
+  const communityMetric = formatPillarSxpMetric(buckets.community.base, buckets.community.recognition);
+  const insightMetric = formatPillarSxpMetric(buckets.insight.base, buckets.insight.recognition);
+
+  const directRecognitionsCount = Math.max(statsMatch?.recognitionsReceived || 0, seenRecIds.size);
+  const overallScore = totalMatchSxp;
 
   const kpis: UserMatchKPIs = {
     userId: uid,
     matchId: mid,
     seriesId,
     overallScore,
+    totalMatchSxp,
     recognitionsCount: directRecognitionsCount,
     kpis: {
       knowledge: {
         score: knowledgeScore,
+        sxp: knowledgeTotalSxp,
+        baseSxp: buckets.knowledge.base,
+        recognitionSxp: buckets.knowledge.recognition,
         label: "Knowledge",
         metric: knowledgeMetric,
         attempted: triviaAttempted,
@@ -1246,6 +1492,9 @@ export async function computeUserMatchKPIs(
       },
       prediction: {
         score: predictionScore,
+        sxp: predictionTotalSxp,
+        baseSxp: buckets.prediction.base,
+        recognitionSxp: buckets.prediction.recognition,
         label: "Prediction",
         metric: predictionMetric,
         attempted: predictionsAttempted,
@@ -1254,6 +1503,9 @@ export async function computeUserMatchKPIs(
       },
       participation: {
         score: participationScore,
+        sxp: participationTotalSxp,
+        baseSxp: buckets.participation.base,
+        recognitionSxp: buckets.participation.recognition,
         label: "Participation",
         metric: participationMetric,
         cardsEngaged: cardsEngagedCount,
@@ -1262,6 +1514,9 @@ export async function computeUserMatchKPIs(
       },
       community: {
         score: communityScore,
+        sxp: communityTotalSxp,
+        baseSxp: buckets.community.base,
+        recognitionSxp: buckets.community.recognition,
         label: "Community",
         metric: communityMetric,
         pollsVoted,
@@ -1271,6 +1526,9 @@ export async function computeUserMatchKPIs(
       },
       insight: {
         score: insightScore,
+        sxp: insightTotalSxp,
+        baseSxp: buckets.insight.base,
+        recognitionSxp: buckets.insight.recognition,
         label: "Insight",
         metric: insightMetric,
         takesSubmitted,

@@ -48,7 +48,9 @@ export async function recordMatchPoints(p: {
   at?: number;
 }): Promise<boolean> {
   const matchId = cleanMatchId(p.matchId);
-  const uid = String(p.userId || "").replace(/^USER#/, "");
+  const rawUid = String(p.userId || "").trim().replace(/^USER#/i, "");
+  // Canonicalize emails to underscore form so one user never splits across two MATCH_SXP# rows
+  const uid = rawUid.includes("@") ? rawUid.toLowerCase().replace(/[@.]/g, "_") : rawUid;
   if (!matchId || !uid || !(p.points > 0) || !isMatchScoredType(p.type)) return false;
 
   const now = p.at ?? Date.now();
@@ -275,7 +277,10 @@ export async function getMatchLeaderboard(opts: {
   const userId = opts.userId ? String(opts.userId).replace(/^USER#/, "") : "";
 
   const board = await cached(`board|${matchId}|${limit}`, async () => {
-    let [top, totalUsers] = await Promise.all([
+    const altMatchId = /^MATCH-/i.test(matchId) ? matchId.replace(/^MATCH-/i, "") : "";
+    const altLt = altMatchId ? matchLbType(altMatchId) : "";
+
+    let [top, totalUsers, altTop] = await Promise.all([
       docClient.send(
         new QueryCommand({
           TableName: TABLES.GamificationAndWallet,
@@ -287,9 +292,23 @@ export async function getMatchLeaderboard(opts: {
         })
       ),
       countInPartition(lt),
+      altLt
+        ? docClient
+            .send(
+              new QueryCommand({
+                TableName: TABLES.GamificationAndWallet,
+                IndexName: GSI,
+                KeyConditionExpression: "leaderboardType = :lt",
+                ExpressionAttributeValues: { ":lt": altLt },
+                ScanIndexForward: false,
+                Limit: 200,
+              })
+            )
+            .catch(() => ({ Items: [] }))
+        : Promise.resolve({ Items: [] }),
     ]);
     const fetchedAll = (top.Items?.length ?? 0) >= totalUsers;
-    let items = top.Items ?? [];
+    let items = [...(top.Items ?? []), ...(altTop.Items ?? [])];
 
     // Fallback for completed matches where MATCH_SXP# was not populated in GSI:
     // Read PLAYER_SUMMARY# from MatchMoments table
