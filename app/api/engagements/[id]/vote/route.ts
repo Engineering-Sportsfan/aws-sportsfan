@@ -1347,6 +1347,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         }
       }
 
+      const triviaBonusPts = isTriviaVoteCorrect
+        ? Number(item.questionData?.points || item.points || 10)
+        : 0;
+
       responseData = {
         success: true,
         type: item.type || "poll",
@@ -1356,9 +1360,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         totalEngaged: Number(item.totalEngaged) || 0,
         isFirstEngagement: isNewUserEngagement,
         participationPointsAwarded: 2,
-        pointsAwarded: 2,
+        pointsAwarded: 2 + triviaBonusPts,
         ...(isTriviaVoteCorrect !== undefined
-          ? { isCorrect: isTriviaVoteCorrect, correctOptionId: item.correctOptionId || item.questionData?.correctOptionId }
+          ? {
+              isCorrect: isTriviaVoteCorrect,
+              correctOptionId: item.correctOptionId || item.questionData?.correctOptionId,
+              quizPointsAwarded: triviaBonusPts,
+              ...(triviaBonusPts > 0 ? { wonBonusPoints: triviaBonusPts } : {}),
+            }
           : {}),
       };
     }
@@ -1482,8 +1491,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // ─── Step 4.5: Award Participation Points (+2 points for quiz, polls, predictions, battles) ─
-    const quizBonus = item.type === "quiz" && responseData?.isCorrect ? Number(responseData.quizPointsAwarded || 0) : 0;
+    // ─── Step 4.5: Award Participation Points (+2 points for quiz/question, polls, predictions, battles + correct trivia bonus) ─
+    const lowerItemType = String(item.type || "").toLowerCase();
+    const quizBonus =
+      (lowerItemType === "quiz" || lowerItemType === "question" || lowerItemType === "trivia") && responseData?.isCorrect
+        ? Number(responseData.quizPointsAwarded || 0)
+        : 0;
     try {
       const awardRes = await awardEngagementPoints({
         userId,

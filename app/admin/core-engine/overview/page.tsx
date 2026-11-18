@@ -871,7 +871,7 @@ function OverviewContent() {
               <option value="">All Engagements ({availableEngagements.length})</option>
               {availableEngagements.map((e) => (
                 <option key={e.id} value={e.id}>
-                  [{e.type.toUpperCase()}] {e.title}
+                  [{(String(e.type || "").toLowerCase() === "express" ? "TAKES" : e.type.toUpperCase())}] {e.title}
                 </option>
               ))}
             </select>
@@ -1386,7 +1386,7 @@ function OverviewContent() {
                       <td className="py-3 px-3 font-bold text-white max-w-[280px] truncate">{eng.title}</td>
                       <td className="py-3 px-3">
                         <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-white/5 text-gray-300">
-                          {eng.type}
+                          {String(eng.type || "").toLowerCase() === "express" ? "takes" : eng.type}
                         </span>
                       </td>
                       <td className="py-3 px-3 text-gray-400">

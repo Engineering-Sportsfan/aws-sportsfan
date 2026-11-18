@@ -225,7 +225,9 @@ function AddRecognitionContent() {
     if (!selectedMatchId || !selectedMomentId) return;
     const fetchMomentEngagements = async () => {
       try {
-        const res = await fetch(`/api/engagements?excludeFlipArena=true&source=match_moment&includeScheduled=true&limit=1000&_t=${Date.now()}`);
+        const res = await fetch(
+          `/api/engagements?excludeFlipArena=true&source=match_moment&includeScheduled=true&status=all&fresh=true&matchId=${encodeURIComponent(selectedMatchId)}&limit=100&_t=${Date.now()}`
+        );
         const json = await res.json();
         const rawList = Array.isArray(json.engagements)
           ? json.engagements
@@ -304,6 +306,7 @@ function AddRecognitionContent() {
     setSubmitResult(null);
 
     const chosenParticipant = participants.find((x) => x.userId === selectedUserId);
+    const chosenEngagement = engagements.find((e) => e.id === selectedEngagementId);
     const resolvedTargetUserId = targetType === "user"
       ? (selectedUserId || (customUserName ? `USER#${customUserName.trim().toLowerCase().replace(/\s+/g, "_")}` : null))
       : null;
@@ -316,6 +319,7 @@ function AddRecognitionContent() {
       matchId: selectedMatchId,
       momentId: selectedMomentId,
       engagementId: selectedEngagementId || undefined,
+      engagementType: chosenEngagement?.type || undefined,
       targetType,
       targetUserId: resolvedTargetUserId,
       targetUserName: resolvedTargetUserName,
@@ -513,7 +517,7 @@ function AddRecognitionContent() {
                 <option value="">-- Optional: Select Engagement --</option>
                 {engagements.map((eng) => (
                   <option key={eng.id} value={eng.id}>
-                    [{String(eng.type || "loop").toUpperCase()}] {eng.title || eng.id}
+                    [{(String(eng.type || "loop").toLowerCase() === "express" ? "TAKES" : String(eng.type || "loop").toUpperCase())}] {eng.title || eng.id}
                   </option>
                 ))}
               </select>

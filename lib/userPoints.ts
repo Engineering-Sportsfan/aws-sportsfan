@@ -1082,6 +1082,7 @@ export async function awardUserPoints({
               type: reason,
               label: metadata?.statement ?? metadata?.label ?? reason,
               points: finalTotalXPGained,
+              matchPoints: pointsAwarded,
               metadata: metadata ?? {},
               createdAt: now,
             },
@@ -1123,13 +1124,15 @@ export async function awardUserPoints({
         ).catch((dErr) => console.warn("DynamoDB user points sync notice:", dErr));
 
         // 5. Per-match SXP aggregate (powers GET /api/user-points?matchId=...). Idempotent per transactionId.
-        if (metadata?.matchId && finalTotalXPGained > 0) {
+        // Uses action-level `pointsAwarded` so global daily combo/streak milestone bonuses don't inflate a match action.
+        const matchActionPoints = Math.round(pointsAwarded);
+        if (metadata?.matchId && matchActionPoints > 0) {
           recordMatchPoints({
             userId: leaderboardUserId,
             userName,
             matchId: String(metadata.matchId),
             type: reason,
-            points: finalTotalXPGained,
+            points: matchActionPoints,
             transactionId,
             at: now,
           }).catch((dErr) => console.warn("DynamoDB match SXP sync notice:", dErr));

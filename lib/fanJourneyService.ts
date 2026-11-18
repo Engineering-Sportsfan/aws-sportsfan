@@ -82,13 +82,20 @@ function extractCandidateUserKeys(raw?: string | null): string[] {
     candidates.add(lower.replace(/[^a-z0-9]/g, "_"));
     candidates.add(lower.replace(/@/g, "_"));
   } else {
-    for (const domain of ["gmail_com", "yahoo_com", "outlook_com", "hotmail_com", "icloud_com"]) {
-      const lower = clean.toLowerCase();
-      if (lower.endsWith(`_${domain}`)) {
-        const local = lower.slice(0, -(domain.length + 1));
-        const realDomain = domain.replace("_", ".");
-        candidates.add(`${local}@${realDomain}`);
-        candidates.add(`${local.replace(/_/g, ".")}@${realDomain}`);
+    const lower = clean.toLowerCase();
+    const parts = lower.split("_");
+    const SECOND_LEVEL = ["edu", "co", "ac", "gov", "org", "net"];
+    const TLDS = ["com", "in", "org", "net", "edu", "io", "co", "ac", "gov", "app", "dev", "ai", "uk", "au", "ca"];
+    const last = parts[parts.length - 1] || "";
+    if (parts.length >= 3 && TLDS.includes(last)) {
+      const second = parts[parts.length - 2] || "";
+      const domainLen = SECOND_LEVEL.includes(second) && parts.length >= 4 ? 3 : 2;
+      const domain = parts.slice(parts.length - domainLen).join(".");
+      const localParts = parts.slice(0, parts.length - domainLen);
+      if (localParts.length > 0) {
+        candidates.add(`${localParts.join(".")}@${domain}`);
+        candidates.add(`${localParts.join("_")}@${domain}`);
+        candidates.add(`${localParts.join("-")}@${domain}`);
       }
     }
   }
@@ -903,7 +910,14 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
   // 4. Add direct recognition SXP earned for this match
   for (const rec of recognitionsList) {
     const recEngId = String(rec.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
-    const recEngType = String(rec.engagementType || engagementsById.get(recEngId)?.type || "").trim().toLowerCase();
+    const recArch = String(rec.archetype || "").trim().toUpperCase();
+    const recEngType = String(
+      rec.engagementType ||
+        engagementsById.get(recEngId)?.type ||
+        (recArch === "SHARP_ORACLE" || recArch === "CLUTCH_CALLER" ? "prediction" : "")
+    )
+      .trim()
+      .toLowerCase();
     const recPillar = pillarForEngagementType(recEngType);
     const reward = rec.rewards || {};
     const sxp =
@@ -1253,14 +1267,26 @@ export async function computeUserMatchKPIs(
       if (eng?.type) return pillarForEngagementType(eng.type);
     }
     const rid = String(recLike?.recognitionId || recLike?.id || "").trim();
-    if (rid && recById.has(rid)) {
-      const fullRec = recById.get(rid);
+    const fullRec = rid && recById.has(rid) ? recById.get(rid) : null;
+    if (fullRec) {
       const fullType = String(fullRec?.engagementType || "").trim().toLowerCase();
       if (fullType) return pillarForEngagementType(fullType);
       const fullEngId = String(fullRec?.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
       if (fullEngId && snapshot.engagementsById.get(fullEngId)?.type) {
         return pillarForEngagementType(snapshot.engagementsById.get(fullEngId).type);
       }
+    }
+    if (rid) {
+      // Fallback: extract embedded engagementId from VR_eng_<ts>_<hash>_...
+      const engMatch = rid.match(/(eng_\d+_[a-z0-9]+)/i);
+      if (engMatch?.[1] && snapshot.engagementsById.get(engMatch[1])?.type) {
+        return pillarForEngagementType(snapshot.engagementsById.get(engMatch[1]).type);
+      }
+    }
+    // Fallback for prediction archetypes when admin did not pick a linked engagementId
+    const arch = String(recLike?.archetype || fullRec?.archetype || "").trim().toUpperCase();
+    if (arch === "SHARP_ORACLE" || arch === "CLUTCH_CALLER") {
+      return "prediction";
     }
     return "participation";
   };
@@ -1270,19 +1296,22 @@ export async function computeUserMatchKPIs(
   const seenTxIds = new Set<string>();
   const seenRecIds = new Set<string>();
   const seenMatchSxpKeys = new Set<string>();
+  const matchSkVariants = Array.from(new Set([mid, mid.replace(/^MATCH-/i, "")].filter(Boolean)));
   let leaderboardMatchSxp = 0;
 
   for (const ck of candKeys) {
     const pkUser = `USER#${ck}`;
 
-    // 1) Read exact materialized Leaderboard Match SXP (MATCH_SXP#<mid>)
-    if (!seenMatchSxpKeys.has(pkUser.toLowerCase())) {
-      seenMatchSxpKeys.add(pkUser.toLowerCase());
+    // 1) Read exact materialized Leaderboard Match SXP across both MATCH- and stripped variants
+    for (const mVar of matchSkVariants) {
+      const dedupeKey = `${pkUser.toLowerCase()}#${mVar.toLowerCase()}`;
+      if (seenMatchSxpKeys.has(dedupeKey)) continue;
+      seenMatchSxpKeys.add(dedupeKey);
       try {
         const msRes = await docClient.send(
           new GetCommand({
             TableName: TABLES.GamificationAndWallet,
-            Key: { userId: pkUser, sk: `MATCH_SXP#${mid}` },
+            Key: { userId: pkUser, sk: `MATCH_SXP#${mVar}` },
           })
         );
         if (msRes.Item && Number(msRes.Item.points) > 0) {
@@ -1304,7 +1333,7 @@ export async function computeUserMatchKPIs(
         const actType = String(act.type || "").trim();
         if (!isMatchScoredType(actType)) continue;
 
-        const pts = Number(act.points || 0);
+        const pts = Number(act.matchPoints ?? act.points ?? 0);
         if (pts <= 0) continue;
 
         const meta = act.metadata || {};
@@ -1329,6 +1358,7 @@ export async function computeUserMatchKPIs(
             engagementType: meta.engagementType,
             engagementId: actEngId,
             recognitionId: recId,
+            archetype: meta.archetype || act.archetype,
           });
           buckets[pillar].recognition += pts;
         } else {
@@ -1339,29 +1369,31 @@ export async function computeUserMatchKPIs(
       }
     } catch {}
 
-    // 3) Read user recognition ledger items (RECOGNITION#MATCH#<mid>)
-    try {
-      const recItems = await queryPaginated(TABLES.GamificationAndWallet, {
-        KeyConditionExpression: "userId = :uid AND begins_with(sk, :skPfx)",
-        ExpressionAttributeValues: {
-          ":uid": pkUser,
-          ":skPfx": `RECOGNITION#MATCH#${mid}`,
-        },
-      });
-      for (const rec of recItems) {
-        const rid = String(rec.recognitionId || rec.sk || "").trim();
-        if (!rid || seenRecIds.has(rid)) continue;
-        seenRecIds.add(rid);
-        const reward = rec.rewards || {};
-        const recSxp =
-          Number(reward.totalSxp || 0) ||
-          Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
-        if (recSxp > 0) {
-          const pillar = resolveRecognitionPillar(rec);
-          buckets[pillar].recognition += recSxp;
+    // 3) Read user recognition ledger items across both MATCH- and stripped variants
+    for (const mVar of matchSkVariants) {
+      try {
+        const recItems = await queryPaginated(TABLES.GamificationAndWallet, {
+          KeyConditionExpression: "userId = :uid AND begins_with(sk, :skPfx)",
+          ExpressionAttributeValues: {
+            ":uid": pkUser,
+            ":skPfx": `RECOGNITION#MATCH#${mVar}`,
+          },
+        });
+        for (const rec of recItems) {
+          const rid = String(rec.recognitionId || rec.sk || "").trim();
+          if (!rid || seenRecIds.has(rid)) continue;
+          seenRecIds.add(rid);
+          const reward = rec.rewards || {};
+          const recSxp =
+            Number(reward.totalSxp || 0) ||
+            Number(reward.accuracySxp || 0) + Number(reward.participationSxp || 0) + Number(reward.streakBonusSxp || 0);
+          if (recSxp > 0) {
+            const pillar = resolveRecognitionPillar(rec);
+            buckets[pillar].recognition += recSxp;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
   }
 
   // 4) Include any MatchMoments recognitions for this user that were not already counted via ACT# / wallet ledger
