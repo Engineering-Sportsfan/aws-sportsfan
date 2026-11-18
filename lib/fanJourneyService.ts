@@ -910,7 +910,14 @@ async function collectMatchActivitySnapshot(matchId: string): Promise<MatchTelem
   // 4. Add direct recognition SXP earned for this match
   for (const rec of recognitionsList) {
     const recEngId = String(rec.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
-    const recEngType = String(rec.engagementType || engagementsById.get(recEngId)?.type || "").trim().toLowerCase();
+    const recArch = String(rec.archetype || "").trim().toUpperCase();
+    const recEngType = String(
+      rec.engagementType ||
+        engagementsById.get(recEngId)?.type ||
+        (recArch === "SHARP_ORACLE" || recArch === "CLUTCH_CALLER" ? "prediction" : "")
+    )
+      .trim()
+      .toLowerCase();
     const recPillar = pillarForEngagementType(recEngType);
     const reward = rec.rewards || {};
     const sxp =
@@ -1260,21 +1267,26 @@ export async function computeUserMatchKPIs(
       if (eng?.type) return pillarForEngagementType(eng.type);
     }
     const rid = String(recLike?.recognitionId || recLike?.id || "").trim();
-    if (rid) {
-      if (recById.has(rid)) {
-        const fullRec = recById.get(rid);
-        const fullType = String(fullRec?.engagementType || "").trim().toLowerCase();
-        if (fullType) return pillarForEngagementType(fullType);
-        const fullEngId = String(fullRec?.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
-        if (fullEngId && snapshot.engagementsById.get(fullEngId)?.type) {
-          return pillarForEngagementType(snapshot.engagementsById.get(fullEngId).type);
-        }
+    const fullRec = rid && recById.has(rid) ? recById.get(rid) : null;
+    if (fullRec) {
+      const fullType = String(fullRec?.engagementType || "").trim().toLowerCase();
+      if (fullType) return pillarForEngagementType(fullType);
+      const fullEngId = String(fullRec?.engagementId || "").replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "").trim();
+      if (fullEngId && snapshot.engagementsById.get(fullEngId)?.type) {
+        return pillarForEngagementType(snapshot.engagementsById.get(fullEngId).type);
       }
+    }
+    if (rid) {
       // Fallback: extract embedded engagementId from VR_eng_<ts>_<hash>_...
       const engMatch = rid.match(/(eng_\d+_[a-z0-9]+)/i);
       if (engMatch?.[1] && snapshot.engagementsById.get(engMatch[1])?.type) {
         return pillarForEngagementType(snapshot.engagementsById.get(engMatch[1]).type);
       }
+    }
+    // Fallback for prediction archetypes when admin did not pick a linked engagementId
+    const arch = String(recLike?.archetype || fullRec?.archetype || "").trim().toUpperCase();
+    if (arch === "SHARP_ORACLE" || arch === "CLUTCH_CALLER") {
+      return "prediction";
     }
     return "participation";
   };
@@ -1346,6 +1358,7 @@ export async function computeUserMatchKPIs(
             engagementType: meta.engagementType,
             engagementId: actEngId,
             recognitionId: recId,
+            archetype: meta.archetype || act.archetype,
           });
           buckets[pillar].recognition += pts;
         } else {

@@ -362,9 +362,16 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
 
     // Resolve parent Engagement (1:1 link) & seriesId if omitted
     const parentEng = cleanEngagementId
-      ? await findEngagementById(cleanEngagementId, cleanMatchId).catch(() => null)
+      ? await findEngagementById(cleanEngagementId, canonicalMatchId).catch(() => null)
       : null;
-    const parentEngType = String(parentEng?.item?.type || (body as any).engagementType || "").trim().toLowerCase();
+    const archUpper = String(archetype || "").trim().toUpperCase();
+    const parentEngType = String(
+      parentEng?.item?.type ||
+        (body as any).engagementType ||
+        (archUpper === "SHARP_ORACLE" || archUpper === "CLUTCH_CALLER" ? "prediction" : "")
+    )
+      .trim()
+      .toLowerCase();
     let resolvedSeriesId = String(seriesId || parentEng?.item?.seriesId || "").trim();
     if (!resolvedSeriesId) {
       for (const tbl of Array.from(new Set([TABLES.MatchMoments, TABLES.SportsData]))) {
