@@ -35,6 +35,9 @@ function getTypeLabel(type: string): string {
   if (clean === "poll") return "Poll";
   if (clean === "fan_battle" || clean === "battle") return "Fan Battle";
   if (clean === "prediction") return "Prediction";
+  if (clean === "express") return "Take";
+  if (clean === "debate") return "Debate";
+  if (clean === "question") return "Trivia";
   if (clean === "meme") return "Meme";
   return "Event";
 }
