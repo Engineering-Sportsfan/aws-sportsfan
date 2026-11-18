@@ -357,6 +357,7 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
     const parentEng = cleanEngagementId
       ? await findEngagementById(cleanEngagementId, cleanMatchId).catch(() => null)
       : null;
+    const parentEngType = String(parentEng?.item?.type || (body as any).engagementType || "").trim().toLowerCase();
     let resolvedSeriesId = String(seriesId || parentEng?.item?.seriesId || "").trim();
     if (!resolvedSeriesId) {
       for (const tbl of Array.from(new Set([TABLES.MatchMoments, TABLES.SportsData]))) {
@@ -381,6 +382,7 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
       matchId: cleanMatchId,
       momentId: cleanMomentId,
       ...(cleanEngagementId ? { engagementId: cleanEngagementId } : {}),
+      ...(parentEngType ? { engagementType: parentEngType } : {}),
       targetType,
       targetUserId: cleanTargetUserId,
       targetUserName: targetUserName ? String(targetUserName).trim() : (targetType === "all" ? "All Participants" : "Valued Fan"),
@@ -604,6 +606,7 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
               matchId: cleanMatchId,
               momentId: cleanMomentId,
               engagementId: cleanEngagementId || undefined,
+              ...(parentEngType ? { engagementType: parentEngType } : {}),
               archetype,
               headline,
               message,
@@ -628,6 +631,8 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
               reason: "VISUAL_RECOGNITION_AWARD",
               matchId: cleanMatchId,
               momentId: cleanMomentId,
+              engagementId: cleanEngagementId || undefined,
+              ...(parentEngType ? { engagementType: parentEngType } : {}),
               recognitionId,
               headline,
               timestamp: now,
@@ -649,6 +654,8 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
             metadata: {
               matchId: cleanMatchId,
               momentId: cleanMomentId,
+              ...(cleanEngagementId ? { engagementId: cleanEngagementId } : {}),
+              ...(parentEngType ? { engagementType: parentEngType } : {}),
               recognitionId,
               archetype,
             },
@@ -746,7 +753,7 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
               },
             }).catch(() => {});
 
-            // Also record in participant's recognition ledger
+            // Also record in participant's recognition ledger & award SXP if configured
             const cleanP = String(pUid).trim().replace(/^USER#/i, "");
             if (cleanP && !cleanP.toLowerCase().startsWith("anon")) {
               await docClient.send(
@@ -760,6 +767,7 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
                     matchId: cleanMatchId,
                     momentId: cleanMomentId,
                     engagementId: cleanEngagementId || undefined,
+                    ...(parentEngType ? { engagementType: parentEngType } : {}),
                     archetype,
                     headline,
                     message,
@@ -771,6 +779,27 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
                   },
                 })
               ).catch(() => {});
+
+              const allTotalSxp = Number(payload.rewards?.totalSxp) || 0;
+              if (allTotalSxp > 0) {
+                await awardUserPoints({
+                  actualUserId: cleanP,
+                  userName: cleanP,
+                  userEmail: cleanP.includes("@") ? cleanP : "",
+                  userExists: true,
+                  points: allTotalSxp,
+                  reason: "RECOGNITION_AWARD",
+                  transactionId: `tx_rec_${recognitionId}_${cleanP}`,
+                  metadata: {
+                    matchId: cleanMatchId,
+                    momentId: cleanMomentId,
+                    ...(cleanEngagementId ? { engagementId: cleanEngagementId } : {}),
+                    ...(parentEngType ? { engagementType: parentEngType } : {}),
+                    recognitionId,
+                    archetype,
+                  },
+                }).catch(() => {});
+              }
             }
           }
         } catch (allNotifErr) {

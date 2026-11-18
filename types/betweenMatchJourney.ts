@@ -118,9 +118,13 @@ export interface UserMatchKPIs {
   matchId: string;
   seriesId?: string;
   overallScore: number;
+  totalMatchSxp?: number;
   kpis: {
     knowledge: {
       score: number;
+      sxp?: number;
+      baseSxp?: number;
+      recognitionSxp?: number;
       attempted: number;
       correct: number;
       label: string;
@@ -128,6 +132,9 @@ export interface UserMatchKPIs {
     };
     prediction: {
       score: number;
+      sxp?: number;
+      baseSxp?: number;
+      recognitionSxp?: number;
       attempted: number;
       resolved: number;
       correct: number;
@@ -136,6 +143,9 @@ export interface UserMatchKPIs {
     };
     participation: {
       score: number;
+      sxp?: number;
+      baseSxp?: number;
+      recognitionSxp?: number;
       cardsEngaged: number;
       totalMatchCards: number;
       totalActions: number;
@@ -144,6 +154,9 @@ export interface UserMatchKPIs {
     };
     community: {
       score: number;
+      sxp?: number;
+      baseSxp?: number;
+      recognitionSxp?: number;
       pollsVoted: number;
       debatesVoted: number;
       totalCommunityCards: number;
@@ -153,6 +166,9 @@ export interface UserMatchKPIs {
     };
     insight: {
       score: number;
+      sxp?: number;
+      baseSxp?: number;
+      recognitionSxp?: number;
       takesSubmitted: number;
       totalTakesCards: number;
       peerLikesReceived: number;
