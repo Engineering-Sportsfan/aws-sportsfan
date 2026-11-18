@@ -124,7 +124,8 @@ const PROFILE_SECTIONS = [
   { key: "My Interests", hint: "Short chips, e.g. Live match chat, Match polls, Transfer news", showImage: false },
 ] as const;
 
-const DEFAULT_TITLES = ["Sports", "Teams", "Athletes", "Competitions"];
+const TEAM_TITLES = ["International Teams", "League / IPL Teams"];
+const DEFAULT_TITLES = ["Sports", ...TEAM_TITLES, "Athletes", "Competitions"];
 
 const SPREADSHEET_SPORTS_OPTIONS = [
   { label: "Cricket", tag: "", active: true },
@@ -2024,7 +2025,7 @@ export default function OnboardingConfigAdmin() {
                     />
                   </div>
 
-                  {(activeTitle === "Teams" || activeTitle === "Athletes") && (
+                  {(activeTitle === "Teams" || TEAM_TITLES.includes(activeTitle) || activeTitle === "Athletes") && (
                     <div>
                       <label className={labelClass}>Sport (optional)</label>
                       <select
