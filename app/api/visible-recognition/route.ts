@@ -342,12 +342,19 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
     }
 
     const now = Date.now();
-    const cleanMatchId = String(matchId).trim().replace(/^MATCH[#-]/i, "");
+    // canonicalMatchId preserves "MATCH-..." (used by MATCH_SXP# leaderboard & engagements),
+    // while cleanMatchId strips both "MATCH#" and "MATCH-" (used by MatchMoments entityId keys).
+    const canonicalMatchId = String(matchId).trim().replace(/^MATCH#/i, "");
+    const cleanMatchId = canonicalMatchId.replace(/^MATCH-/i, "");
     const cleanMomentId = String(momentId).trim().replace(/^MOMENT#/, "");
     const cleanEngagementId = engagementId
       ? String(engagementId).trim().replace(/^ENGAGEMENT#/i, "").replace(/^LOOP#/i, "")
       : "";
     const cleanTargetUserId = targetUserId ? String(targetUserId).trim().replace(/^USER#/, "") : null;
+    const toCanonicalLeaderboardUid = (raw: string) => {
+      const c = String(raw || "").trim().replace(/^USER#/i, "");
+      return c.includes("@") ? c.toLowerCase().replace(/[@.]/g, "_") : c;
+    };
     const targetKey = targetType === "user" && cleanTargetUserId ? `USER#${cleanTargetUserId}` : "GLOBAL";
     const recognitionId =
       body.recognitionId ||
@@ -594,16 +601,17 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
       const totalSxp = Number(payload.rewards?.totalSxp) || 0;
 
       if (targetType === "user" && cleanTargetUserId) {
+        const canonicalUid = toCanonicalLeaderboardUid(cleanTargetUserId);
         // Record in user's recognition ledger
         await docClient.send(
           new PutCommand({
             TableName: gamificationTable,
             Item: {
-              userId: `USER#${cleanTargetUserId}`,
-              sk: `RECOGNITION#MATCH#${cleanMatchId}#${recognitionId}`,
-              rawUserId: cleanTargetUserId,
+              userId: `USER#${canonicalUid}`,
+              sk: `RECOGNITION#MATCH#${canonicalMatchId}#${recognitionId}`,
+              rawUserId: canonicalUid,
               recognitionId,
-              matchId: cleanMatchId,
+              matchId: canonicalMatchId,
               momentId: cleanMomentId,
               engagementId: cleanEngagementId || undefined,
               ...(parentEngType ? { engagementType: parentEngType } : {}),
@@ -624,12 +632,12 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
           new PutCommand({
             TableName: gamificationTable,
             Item: {
-              userId: `USER#${cleanTargetUserId}`,
-              sk: `ACTIVITY#${now}#RECOGNITION#${cleanMatchId}`,
+              userId: `USER#${canonicalUid}`,
+              sk: `ACTIVITY#${now}#RECOGNITION#${canonicalMatchId}`,
               type: "RECOGNITION",
               points: totalSxp,
               reason: "VISUAL_RECOGNITION_AWARD",
-              matchId: cleanMatchId,
+              matchId: canonicalMatchId,
               momentId: cleanMomentId,
               engagementId: cleanEngagementId || undefined,
               ...(parentEngType ? { engagementType: parentEngType } : {}),
@@ -640,19 +648,20 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
           })
         ).catch(() => {});
 
-        // Award total SXP to user account and leaderboard
+        // Award total SXP to user account and leaderboard under canonical matchId & userId
         if (totalSxp > 0) {
           const targetUserEmail = (body as any).targetUserEmail || (cleanTargetUserId.includes("@") ? cleanTargetUserId : "");
           await awardUserPoints({
-            actualUserId: cleanTargetUserId,
-            userName: payload.targetUserName || cleanTargetUserId,
+            actualUserId: canonicalUid,
+            authUserId: canonicalUid,
+            userName: payload.targetUserName || canonicalUid,
             userEmail: targetUserEmail,
             userExists: true,
             points: totalSxp,
             reason: "RECOGNITION_AWARD",
-            transactionId: `tx_rec_${recognitionId}_${cleanTargetUserId}`,
+            transactionId: `tx_rec_${recognitionId}_${canonicalUid}`,
             metadata: {
-              matchId: cleanMatchId,
+              matchId: canonicalMatchId,
               momentId: cleanMomentId,
               ...(cleanEngagementId ? { engagementId: cleanEngagementId } : {}),
               ...(parentEngType ? { engagementType: parentEngType } : {}),
@@ -708,34 +717,106 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
           console.warn("[visible-recognition] User notification notice:", notifErr);
         }
       } else if (targetType === "all") {
-        // Broadcast to participants of this moment / match
+        // Broadcast to ALL actual participants of this engagement / match
         try {
-          const participantSet = new Set<string>();
-          // Query recent voters for this moment from SocialAndContent
-          try {
-            const voteRes = await docClient.send(
-              new ScanCommand({
-                TableName: TABLES.SocialAndContent,
-                FilterExpression: "begins_with(contentId, :eng) AND begins_with(sk, :vsk)",
-                ExpressionAttributeValues: {
-                  ":eng": "ENGAGEMENT#",
-                  ":vsk": "VOTE#",
-                },
-                Limit: 50,
-              })
+          const participantMap = new Map<string, string>(); // canonicalUid -> rawUid (email if available)
+          const addParticipant = (rawUid?: string | null) => {
+            const raw = String(rawUid || "").trim().replace(/^USER#/i, "");
+            if (!raw || raw.toLowerCase().startsWith("anon") || raw.toLowerCase() === "guest") return;
+            const canon = toCanonicalLeaderboardUid(raw);
+            if (!participantMap.has(canon) || (raw.includes("@") && !participantMap.get(canon)?.includes("@"))) {
+              participantMap.set(canon, raw);
+            }
+          };
+
+          // 1) Collect target engagement IDs (either the specific engagementId or all engagements of this match)
+          const targetEngIds = new Set<string>();
+          if (cleanEngagementId) {
+            targetEngIds.add(cleanEngagementId);
+          } else {
+            const matchEntityCandidates = Array.from(
+              new Set([`MATCH#${canonicalMatchId}`, `MATCH#${cleanMatchId}`, `MATCH#MATCH-${cleanMatchId}`])
             );
-            if (voteRes.Items) {
-              for (const v of voteRes.Items) {
-                const uid = v.userId || String(v.sk || "").replace(/^VOTE#/, "");
-                if (uid && !uid.toLowerCase().startsWith("anon")) participantSet.add(uid);
+            for (const tbl of candidateTables) {
+              for (const mEntity of matchEntityCandidates) {
+                try {
+                  let lastKey: Record<string, any> | undefined;
+                  do {
+                    const qEng = await docClient.send(
+                      new QueryCommand({
+                        TableName: tbl,
+                        KeyConditionExpression: "entityId = :eId",
+                        ExpressionAttributeValues: { ":eId": mEntity },
+                        ExclusiveStartKey: lastKey,
+                      })
+                    );
+                    for (const it of qEng.Items || []) {
+                      const sk = String(it.sk || "");
+                      if (sk.startsWith("LOOP#") || sk.startsWith("ENGAGEMENT#")) {
+                        const eid = String(it.id || it.engagementId || sk.replace(/^(LOOP|ENGAGEMENT)#/, "")).trim();
+                        if (eid) targetEngIds.add(eid);
+                      }
+                    }
+                    lastKey = qEng.LastEvaluatedKey;
+                  } while (lastKey);
+                } catch {}
               }
             }
-          } catch {}
+          }
 
-          for (const pUid of Array.from(participantSet)) {
+          // 2) Query every engagement's actual voters/likers/commenters in SocialAndContent
+          for (const eid of Array.from(targetEngIds)) {
+            try {
+              let lastKey: Record<string, any> | undefined;
+              do {
+                const engRes = await docClient.send(
+                  new QueryCommand({
+                    TableName: TABLES.SocialAndContent,
+                    KeyConditionExpression: "contentId = :cid",
+                    ExpressionAttributeValues: { ":cid": `ENGAGEMENT#${eid}` },
+                    ExclusiveStartKey: lastKey,
+                  })
+                );
+                for (const it of engRes.Items || []) {
+                  const sk = String(it.sk || "");
+                  if (sk.startsWith("VOTE#")) {
+                    addParticipant(it.userId || sk.replace(/^VOTE#/, "").split("#")[0]);
+                  } else if (sk.startsWith("LIKE#")) {
+                    addParticipant(it.userId || sk.slice(5));
+                  } else if (sk.startsWith("SHARE#")) {
+                    addParticipant(it.userId || sk.slice(6));
+                  } else if (sk.startsWith("COMMENT#")) {
+                    addParticipant(it.authorUid || it.userId);
+                  }
+                }
+                lastKey = engRes.LastEvaluatedKey;
+              } while (lastKey);
+            } catch {}
+          }
+
+          // 3) Also include participants already on this match's MATCH_SXP# leaderboard (for moment-level broadcasts)
+          if (!cleanEngagementId) {
+            try {
+              const lbRes = await docClient.send(
+                new QueryCommand({
+                  TableName: TABLES.GamificationAndWallet,
+                  IndexName: "leaderboardType-points-index",
+                  KeyConditionExpression: "leaderboardType = :lt",
+                  ExpressionAttributeValues: { ":lt": `MATCH_SXP#${canonicalMatchId}` },
+                  Limit: 300,
+                })
+              );
+              for (const it of lbRes.Items || []) {
+                addParticipant(it.rawUserId || it.userId);
+              }
+            } catch {}
+          }
+
+          const allTotalSxp = Number(payload.rewards?.totalSxp) || 0;
+          for (const [canonicalP, rawP] of participantMap.entries()) {
             await createNotification({
-              userId: pUid,
-              recipientEmail: pUid.includes("@") ? pUid : null,
+              userId: canonicalP,
+              recipientEmail: rawP.includes("@") ? rawP : null,
               category: "roar",
               notification_type: "roar.visual_recognition",
               title: `📢 Stadium Recognition: ${headline}`,
@@ -747,59 +828,56 @@ async function handleSaveRecognition(req: NextRequest, isExplicitEdit: boolean) 
               roomId: targetRoomId,
               metadata: {
                 recognitionId,
-                matchId: cleanMatchId,
+                matchId: canonicalMatchId,
                 momentId: cleanMomentId,
                 archetype,
               },
             }).catch(() => {});
 
-            // Also record in participant's recognition ledger & award SXP if configured
-            const cleanP = String(pUid).trim().replace(/^USER#/i, "");
-            if (cleanP && !cleanP.toLowerCase().startsWith("anon")) {
-              await docClient.send(
-                new PutCommand({
-                  TableName: TABLES.GamificationAndWallet,
-                  Item: {
-                    userId: `USER#${cleanP}`,
-                    sk: `RECOGNITION#MATCH#${cleanMatchId}#${recognitionId}`,
-                    rawUserId: cleanP,
-                    recognitionId,
-                    matchId: cleanMatchId,
-                    momentId: cleanMomentId,
-                    engagementId: cleanEngagementId || undefined,
-                    ...(parentEngType ? { engagementType: parentEngType } : {}),
-                    archetype,
-                    headline,
-                    message,
-                    badgeIcon,
-                    themeColor,
-                    rewards: payload.rewards,
-                    awardedAt: now,
-                    createdAt: payload.createdAt,
-                  },
-                })
-              ).catch(() => {});
+            // Record in participant's recognition ledger under canonical userId & matchId
+            await docClient.send(
+              new PutCommand({
+                TableName: TABLES.GamificationAndWallet,
+                Item: {
+                  userId: `USER#${canonicalP}`,
+                  sk: `RECOGNITION#MATCH#${canonicalMatchId}#${recognitionId}`,
+                  rawUserId: canonicalP,
+                  recognitionId,
+                  matchId: canonicalMatchId,
+                  momentId: cleanMomentId,
+                  engagementId: cleanEngagementId || undefined,
+                  ...(parentEngType ? { engagementType: parentEngType } : {}),
+                  archetype,
+                  headline,
+                  message,
+                  badgeIcon,
+                  themeColor,
+                  rewards: payload.rewards,
+                  awardedAt: now,
+                  createdAt: payload.createdAt,
+                },
+              })
+            ).catch(() => {});
 
-              const allTotalSxp = Number(payload.rewards?.totalSxp) || 0;
-              if (allTotalSxp > 0) {
-                await awardUserPoints({
-                  actualUserId: cleanP,
-                  userName: cleanP,
-                  userEmail: cleanP.includes("@") ? cleanP : "",
-                  userExists: true,
-                  points: allTotalSxp,
-                  reason: "RECOGNITION_AWARD",
-                  transactionId: `tx_rec_${recognitionId}_${cleanP}`,
-                  metadata: {
-                    matchId: cleanMatchId,
-                    momentId: cleanMomentId,
-                    ...(cleanEngagementId ? { engagementId: cleanEngagementId } : {}),
-                    ...(parentEngType ? { engagementType: parentEngType } : {}),
-                    recognitionId,
-                    archetype,
-                  },
-                }).catch(() => {});
-              }
+            if (allTotalSxp > 0) {
+              await awardUserPoints({
+                actualUserId: canonicalP,
+                authUserId: canonicalP,
+                userName: canonicalP,
+                userEmail: rawP.includes("@") ? rawP : "",
+                userExists: true,
+                points: allTotalSxp,
+                reason: "RECOGNITION_AWARD",
+                transactionId: `tx_rec_${recognitionId}_${canonicalP}`,
+                metadata: {
+                  matchId: canonicalMatchId,
+                  momentId: cleanMomentId,
+                  ...(cleanEngagementId ? { engagementId: cleanEngagementId } : {}),
+                  ...(parentEngType ? { engagementType: parentEngType } : {}),
+                  recognitionId,
+                  archetype,
+                },
+              }).catch(() => {});
             }
           }
         } catch (allNotifErr) {
