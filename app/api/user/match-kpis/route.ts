@@ -28,8 +28,12 @@ export async function GET(req: NextRequest) {
     }
 
     let kpis: UserMatchKPIs | null = recompute ? null : await getUserMatchKPIs(userId, matchId);
-    // If previous snapshot had pending predictions, recompute to see if admin has resolved them
-    if (kpis && kpis.kpis?.prediction && (Number(kpis.kpis.prediction.attempted) || 0) > 0 && (Number(kpis.kpis.prediction.resolved) || 0) === 0) {
+    // If previous snapshot had pending predictions or predates SXP-based breakdown, recompute
+    if (
+      kpis &&
+      (kpis.totalMatchSxp == null ||
+        (kpis.kpis?.prediction && (Number(kpis.kpis.prediction.attempted) || 0) > 0 && (Number(kpis.kpis.prediction.resolved) || 0) === 0))
+    ) {
       kpis = null;
     }
     const source = kpis ? "snapshot" : "computed";
@@ -46,6 +50,7 @@ export async function GET(req: NextRequest) {
         matchId: kpis.matchId,
         seriesId: kpis.seriesId,
         overallScore: kpis.overallScore,
+        totalMatchSxp: kpis.totalMatchSxp ?? kpis.overallScore ?? 0,
         kpis: kpis.kpis,
         recognitionsCount: (kpis as any).recognitionsCount ?? (kpis.kpis as any)?.insight?.recognitionsCount ?? 0,
         radarData: kpis.radarData,
