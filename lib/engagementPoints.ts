@@ -50,7 +50,7 @@ export async function awardEngagementPoints({
 
   const isAccuracyBonus = action === "accuracy_bonus" || metadata?.reason === "CORRECT_PREDICTION_BONUS";
   const cleanType = String(engagementType || "engagement").toLowerCase();
-  const formattedType = cleanType === "express" ? "take" : cleanType.replace(/_/g, " ");
+  const formattedType = cleanType === "express" ? "take" : cleanType === "question" ? "trivia" : cleanType.replace(/_/g, " ");
 
   const reason =
     action === "create"

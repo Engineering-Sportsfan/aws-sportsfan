@@ -517,7 +517,7 @@ function AddRecognitionContent() {
                 <option value="">-- Optional: Select Engagement --</option>
                 {engagements.map((eng) => (
                   <option key={eng.id} value={eng.id}>
-                    [{(String(eng.type || "loop").toLowerCase() === "express" ? "TAKES" : String(eng.type || "loop").toUpperCase())}] {eng.title || eng.id}
+                    [{(String(eng.type || "loop").toLowerCase() === "express" ? "TAKES" : String(eng.type || "loop").toLowerCase() === "question" ? "TRIVIA" : String(eng.type || "loop").toUpperCase())}] {eng.title || eng.id}
                   </option>
                 ))}
               </select>
