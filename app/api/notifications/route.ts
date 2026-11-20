@@ -98,53 +98,38 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, notifications: [], unreadCount: 0 });
     }
 
-    // Build comprehensive candidates list
+    // Build deduplicated canonical candidates list (prevents redundant 80+ DB calls)
     const candidateSet = new Set<string>();
-
-    if (uid) {
-      const cUid = cleanId(uid);
-      if (cUid) {
-        candidateSet.add(cUid);
-        candidateSet.add(cUid.toLowerCase());
-      }
-    }
-
-    if (email) {
-      const cEmail = cleanId(email);
-      if (cEmail) {
-        candidateSet.add(cEmail);
-        candidateSet.add(cEmail.toLowerCase());
-        candidateSet.add(cEmail.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_"));
-        candidateSet.add(cEmail.toLowerCase().replace(/[@.]/g, "_"));
-      }
-    }
-
-    if (actualUserIdParam) {
-      const cAct = cleanId(actualUserIdParam);
-      if (cAct) {
-        candidateSet.add(cAct);
-        candidateSet.add(cAct.toLowerCase());
-      }
-    }
 
     const resolvedActualUserId = await resolveActualUserId(uid, email);
     if (resolvedActualUserId) {
-      const cRes = cleanId(resolvedActualUserId);
-      if (cRes) {
-        candidateSet.add(cRes);
-        candidateSet.add(cRes.toLowerCase());
+      const cRes = cleanId(resolvedActualUserId).toLowerCase();
+      if (cRes) candidateSet.add(cRes);
+    }
+
+    if (actualUserIdParam) {
+      const cAct = cleanId(actualUserIdParam).toLowerCase();
+      if (cAct) candidateSet.add(cAct);
+    }
+
+    if (uid) {
+      const cUid = cleanId(uid).toLowerCase();
+      if (cUid) candidateSet.add(cUid);
+    }
+
+    if (email) {
+      const cEmail = cleanId(email).toLowerCase();
+      if (cEmail) {
+        candidateSet.add(cEmail);
+        const sanitized = sanitizeEmailFallback(cEmail);
+        if (sanitized) candidateSet.add(sanitized);
       }
     }
 
-    const sanitizedFallback = sanitizeEmailFallback(email);
-    if (sanitizedFallback) {
-      candidateSet.add(sanitizedFallback);
-    }
+    const userOnlyCandidates = Array.from(candidateSet).filter(Boolean);
 
     // Global / system notification keys
     candidateSet.add("all_users");
-    candidateSet.add("all");
-    candidateSet.add("system");
 
     const candidates = Array.from(candidateSet).filter(Boolean);
     const candidateTables = getCandidateTableNames(TABLES.Notifications);
@@ -154,10 +139,6 @@ export async function GET(req: NextRequest) {
     let userAllClearedAt = 0;
     const dismissedNotifIds = new Set<string>();
     const seenNotifKeys = new Set<string>();
-
-    const userOnlyCandidates = candidates.filter(
-      (c) => c !== "all_users" && c !== "all" && c !== "system"
-    );
 
     // 1. Fetch user watermarks & dismissed records from DynamoDB
     for (const table of candidateTables) {
@@ -264,12 +245,16 @@ export async function GET(req: NextRequest) {
       try {
         const firestoreCandidates = userOnlyCandidates;
         for (const candidateId of firestoreCandidates) {
-          const [emailSnap, uidSnap] = await Promise.all([
-            db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", candidateId).limit(20).get().catch(() => null),
-            db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", candidateId).limit(20).get().catch(() => null),
-          ]);
+          const isEmailCandidate = candidateId.includes("@");
+          const snapPromises: Promise<any>[] = [];
+          if (isEmailCandidate) {
+            snapPromises.push(db.collection(getFirestoreCollection("notifications")).where("recipientEmail", "==", candidateId).limit(20).get().catch(() => null));
+          } else {
+            snapPromises.push(db.collection(getFirestoreCollection("notifications")).where("recipientUid", "==", candidateId).limit(20).get().catch(() => null));
+          }
+          const snaps = await Promise.all(snapPromises);
 
-          for (const snap of [emailSnap, uidSnap]) {
+          for (const snap of snaps) {
             if (!snap || snap.empty) continue;
             for (const doc of snap.docs) {
               const data = doc.data();

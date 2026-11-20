@@ -697,6 +697,11 @@ export async function GET(req: NextRequest) {
             }
             lastKey = scanRes.LastEvaluatedKey;
           } while (lastKey);
+
+          // If we found moments in the primary table (MatchMoments), do not scan SportsData (10,000+ items)
+          if (seen.size > 0) {
+            break;
+          }
         } catch {
           continue;
         }
@@ -810,6 +815,11 @@ export async function GET(req: NextRequest) {
             (scanRes.Items || []).forEach(addMoment);
             lastKey = scanRes.LastEvaluatedKey;
           } while (lastKey);
+        }
+
+        // If we found moments in the primary table (MatchMoments), do not fall back to scanning SportsData (10,000+ items)
+        if (momentMap.size > 0) {
+          break;
         }
       } catch (tblErr) {
         console.warn(`[match-moments GET] table ${tbl} skipped:`, tblErr);

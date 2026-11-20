@@ -30,16 +30,13 @@ export async function GET(req: NextRequest) {
     let matches: any[] = [];
     const seenIds = new Set<string>();
 
-    // 1. Scan ALL candidate tables (MatchMoments + SportsData, incl. env variants)
-    //    for MATCH#META records with full pagination (avoiding pre-filter Limit truncation).
-    const candidateTables = Array.from(
-      new Set([
-        ...getCandidateTableNames(TABLES.MatchMoments),
-        ...getCandidateTableNames(TABLES.SportsData),
-      ])
-    );
+    // 1. Primary scan on MatchMoments (canonical matches table, small footprint).
+    // Only fall back to legacy SportsData table if MatchMoments has zero matches,
+    // avoiding an expensive 10,000+ item full-table scan on every single request.
+    const primaryTables = getCandidateTableNames(TABLES.MatchMoments);
+    const fallbackTables = getCandidateTableNames(TABLES.SportsData);
 
-    for (const table of candidateTables) {
+    const scanTableForMatches = async (table: string) => {
       try {
         const exprVals: Record<string, any> = {
           ":mPrefix": "MATCH#",
@@ -68,7 +65,6 @@ export async function GET(req: NextRequest) {
 
           for (const item of (scanRes.Items || []) as any[]) {
             const matchId: string = item.match_id || (item.entityId as string)?.replace(/^MATCH#/, "");
-            // Only include real match records: must have team1 or team2, and not duplicated
             if (matchId && !seenIds.has(matchId) && (item.team1 || item.team2)) {
               seenIds.add(matchId);
               matches.push({
@@ -84,6 +80,17 @@ export async function GET(req: NextRequest) {
         } while (lastKey);
       } catch {
         // Table doesn't exist — skip silently
+      }
+    };
+
+    for (const table of primaryTables) {
+      await scanTableForMatches(table);
+    }
+
+    // Only scan legacy SportsData if no matches were discovered in MatchMoments
+    if (matches.length === 0) {
+      for (const table of fallbackTables) {
+        await scanTableForMatches(table);
       }
     }
 
