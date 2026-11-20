@@ -542,7 +542,7 @@ function EngagementListContent() {
                 <div className="space-y-2 min-w-0 max-w-2xl">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-black text-[10px] uppercase">
-                      {eng.type === "express" ? "takes" : eng.type}
+                      {eng.type === "express" ? "takes" : eng.type === "question" ? "trivia" : eng.type}
                     </span>
 
                     {/* Scheduled Launch Badge */}

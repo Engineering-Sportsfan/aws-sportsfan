@@ -1092,7 +1092,7 @@ export default function EngagementsManagementPage() {
                           textTransform: "uppercase",
                           whiteSpace: "nowrap",
                         }}>
-                          {isDualMeme ? "🥊 DUAL MEME" : item?.type === "meme" ? "🔥 MEME" : item?.type === "express" ? "TAKES" : item?.type ? item.type.replace("_", " ") : "UNKNOWN"}
+                          {isDualMeme ? "🥊 DUAL MEME" : item?.type === "meme" ? "🔥 MEME" : item?.type === "express" ? "TAKES" : item?.type === "question" ? "TRIVIA" : item?.type ? item.type.replace("_", " ") : "UNKNOWN"}
                         </span>
                       </td>
 

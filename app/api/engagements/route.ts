@@ -1001,7 +1001,7 @@ export async function POST(req: NextRequest) {
     if (!computedTags || computedTags.length === 0) {
       if (type === "fan_battle") computedTags = ["⚔️ FAN BATTLE", "🔥 TRENDING"];
       else if (type === "quiz") computedTags = ["🧠 QUIZ", `⭐ ${quizData?.pointsReward || 50} PTS`];
-      else if (type === "question") computedTags = ["❓ QUESTION", "⚡ MATCH MOMENT"];
+      else if (type === "question") computedTags = ["❓ TRIVIA", "⚡ MATCH MOMENT"];
       else if (type === "poll") computedTags = ["📊 POLL", "⚡ 4-MIN LIVE"];
       else if (type === "prediction") computedTags = ["🎯 PREDICTION", "💎 +10 SXP", "⚡ 4-MIN LIVE"];
       else if (type === "debate") computedTags = ["⚖️ DEBATE", "🔥 LIVE VERDICT"];

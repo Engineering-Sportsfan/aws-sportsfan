@@ -53,34 +53,38 @@ export async function POST(req: NextRequest) {
     // 2. Fetch existing user from DynamoDB IdentityAndAccess (if already created)
     let existingUser: Record<string, unknown> | null = null;
 
+    // Canonical key first. The email-index also returns the OTP#<email> row and USER_ACTIVITY# log rows (they carry
+    // `email` too), and treating one of those as the user made the signup write land on the OTP row, which is then deleted.
     try {
-      const emailQuery = await docClient.send(
-        new QueryCommand({
+      const directGet = await docClient.send(
+        new GetCommand({
           TableName: TABLES.IdentityAndAccess,
-          IndexName: "email-index",
-          KeyConditionExpression: "email = :e",
-          ExpressionAttributeValues: { ":e": cleanEmail },
-          Limit: 1,
+          Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" },
         })
       );
-      if (emailQuery.Items && emailQuery.Items.length > 0) {
-        existingUser = emailQuery.Items[0] as Record<string, unknown>;
-      }
+      if (directGet.Item) existingUser = directGet.Item as Record<string, unknown>;
     } catch (err) {
-      console.warn("DynamoDB set-password user query notice:", err);
+      console.warn("DynamoDB direct get notice:", err);
     }
 
     if (!existingUser) {
       try {
-        const directGet = await docClient.send(
-          new GetCommand({
+        const emailQuery = await docClient.send(
+          new QueryCommand({
             TableName: TABLES.IdentityAndAccess,
-            Key: { entityId: `USER#${cleanEmail}`, sk: "USER#META" },
+            IndexName: "email-index",
+            KeyConditionExpression: "email = :e",
+            ExpressionAttributeValues: { ":e": cleanEmail },
+            Limit: 25,
           })
         );
-        if (directGet.Item) existingUser = directGet.Item as Record<string, unknown>;
+        // Only a real user profile row counts as an existing user.
+        const userRow = (emailQuery.Items || []).find(
+          (it) => String(it.entityId || "").startsWith("USER#") && it.sk === "USER#META"
+        );
+        if (userRow) existingUser = userRow as Record<string, unknown>;
       } catch (err) {
-        console.warn("DynamoDB direct get notice:", err);
+        console.warn("DynamoDB set-password user query notice:", err);
       }
     }
 
@@ -122,6 +126,11 @@ export async function POST(req: NextRequest) {
       lastName,
       email: cleanEmail,
       userId: (existingUser?.userId as string) || userId,
+      // Default username is the full name (users can change it later in the profile section).
+      username:
+        (existingUser?.username as string) ||
+        `${firstName} ${lastName}`.trim() ||
+        cleanEmail.split("@")[0],
       password: hashedPassword,
       isVerified: true,
       status: (existingUser?.status as string) || "active",
@@ -135,10 +144,11 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     };
 
+    // Key goes last so a spread row can never redirect the write to another partition.
     const dynamoUserItem = {
+      ...finalUserData,
       entityId: `USER#${cleanEmail}`,
       sk: "USER#META",
-      ...finalUserData,
     };
 
     await dualWrite("users", cleanEmail, TABLES.IdentityAndAccess, dynamoUserItem);
